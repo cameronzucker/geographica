@@ -11,6 +11,9 @@
   "data": {
     "southwest5": {
       "mbtiles": "southwest5.mbtiles"
+    },
+    "elevation": {
+      "mbtiles": "elevation.mbtiles"
     }
   },
   "styles": {
