@@ -26,3 +26,5 @@ tileserver/styles/darkmatter/package*
 tileserver/*.mbtiles
 tileserver/*.tsv.gz
 tileserver/sources/
+tileserver/styles/*/LICENSE*
+tileserver/styles/*/icons/
