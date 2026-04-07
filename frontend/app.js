@@ -92,13 +92,14 @@
       });
     }
 
-    // --- Hillshade overlay ---
+    // --- Elevation (used for both hillshade overlay and 3D terrain) ---
     if (!map.getSource('elevation')) {
       map.addSource('elevation', {
         type: 'raster-dem',
         tiles: ['/tiles/data/elevation/{z}/{x}/{y}.png'],
         tileSize: 256,
-        maxzoom: 14
+        maxzoom: 12,
+        encoding: 'terrarium'
       });
     }
     if (!map.getLayer('hillshade-layer')) {
@@ -238,6 +239,18 @@
     hillshadeCheckbox.addEventListener('change', function () {
       setLayerVisibility('hillshade-layer', this.checked);
     });
+
+    // 3D terrain toggle
+    var terrainCheckbox = document.getElementById('toggle-terrain');
+    if (terrainCheckbox) {
+      terrainCheckbox.addEventListener('change', function () {
+        if (this.checked) {
+          map.setTerrain({ source: 'elevation', exaggeration: 1.5 });
+        } else {
+          map.setTerrain(null);
+        }
+      });
+    }
   }
 
   /** Set layer visibility safely */
@@ -251,8 +264,12 @@
   function syncLayerVisibility() {
     var imagery   = document.getElementById('toggle-imagery').checked;
     var hillshade = document.getElementById('toggle-hillshade').checked;
+    var terrainCb = document.getElementById('toggle-terrain');
     setLayerVisibility('imagery-layer', imagery);
     setLayerVisibility('hillshade-layer', hillshade);
+    if (terrainCb && terrainCb.checked) {
+      map.setTerrain({ source: 'elevation', exaggeration: 1.5 });
+    }
   }
 
   // =====================================================================
