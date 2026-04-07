@@ -10,5 +10,19 @@ node_modules/
 frontend/vendor/*.js
 frontend/vendor/*.css
 tileserver/fonts-served/
-tileserver/styles/positron/
-tileserver/styles/darkmatter/
+# Cloned style repos — ignore everything except our patched style.local.json
+tileserver/styles/positron/.git/
+tileserver/styles/positron/style.json
+tileserver/styles/positron/sprite*
+tileserver/styles/positron/LICENSE
+tileserver/styles/positron/README*
+tileserver/styles/positron/package*
+tileserver/styles/darkmatter/.git/
+tileserver/styles/darkmatter/style.json
+tileserver/styles/darkmatter/sprite*
+tileserver/styles/darkmatter/LICENSE
+tileserver/styles/darkmatter/README*
+tileserver/styles/darkmatter/package*
+tileserver/*.mbtiles
+tileserver/*.tsv.gz
+tileserver/sources/
