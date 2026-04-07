@@ -12,6 +12,7 @@ import logging
 import os
 import socket
 from datetime import datetime, timezone
+from math import sqrt
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -39,6 +40,7 @@ _position: dict[str, Any] = {
     "heading": 0.0,
     "fix": 0,
     "stale": True,
+    "accuracy": None,
     "timestamp": datetime.now(timezone.utc).isoformat(),
 }
 _gps_connected: bool = False
@@ -105,6 +107,16 @@ def _blocking_read_gpsd() -> None:
             speed = _safe_float(data_stream.speed)
             track = _safe_float(data_stream.track)
 
+            # Horizontal accuracy (EPH) from epx/epy when available.
+            epx_raw = getattr(data_stream, "epx", "n/a")
+            epy_raw = getattr(data_stream, "epy", "n/a")
+            if epx_raw not in (None, "n/a") and epy_raw not in (None, "n/a"):
+                epx = _safe_float(epx_raw)
+                epy = _safe_float(epy_raw)
+                accuracy: float | None = round(sqrt(epx ** 2 + epy ** 2), 2)
+            else:
+                accuracy = None
+
             has_fix = mode >= 2 and lat != 0.0 and lon != 0.0
             now = datetime.now(timezone.utc).isoformat()
 
@@ -116,6 +128,7 @@ def _blocking_read_gpsd() -> None:
                 "heading": track,
                 "fix": mode if has_fix else 0,
                 "stale": not has_fix,
+                "accuracy": accuracy if has_fix else None,
                 "timestamp": now,
             }
 
