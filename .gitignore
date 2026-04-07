@@ -1,6 +1,14 @@
 .claude/skills/gstack/
+data
 data/
 __pycache__/
 *.pyc
 .env
 node_modules/
+
+# Runtime/deploy assets — vendored at deploy time, not checked in
+frontend/vendor/*.js
+frontend/vendor/*.css
+tileserver/fonts-served/
+tileserver/styles/positron/
+tileserver/styles/darkmatter/
