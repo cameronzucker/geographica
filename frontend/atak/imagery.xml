@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<customMapSource>
+  <name>Geographica OSM Basemap</name>
+  <minZoom>0</minZoom>
+  <maxZoom>14</maxZoom>
+  <tileType>png</tileType>
+  <tileUpdate>None</tileUpdate>
+  <url>http://GEOGRAPHICA_HOST:8093/tiles/styles/positron/{$z}/{$x}/{$y}.png</url>
+</customMapSource>

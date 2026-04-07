@@ -1,0 +1,539 @@
+/* =====================================================================
+   Geographica — Offline Mapping Frontend Styles
+   ===================================================================== */
+
+/* ----- CSS Custom Properties (Theming) ----- */
+:root {
+  --sidebar-bg: #1e1e2e;
+  --sidebar-text: #cdd6f4;
+  --sidebar-heading: #f5f5f5;
+  --sidebar-width: 320px;
+  --sidebar-border: #313244;
+
+  --accent: #89b4fa;
+  --accent-hover: #74c7ec;
+  --accent-muted: rgba(137, 180, 250, 0.15);
+
+  --danger: #f38ba8;
+  --success: #a6e3a1;
+  --warning: #f9e2af;
+
+  --search-bg: #ffffff;
+  --search-shadow: rgba(0, 0, 0, 0.15);
+
+  --input-bg: #313244;
+  --input-border: #45475a;
+  --input-text: #cdd6f4;
+
+  --gps-blue: #4285f4;
+  --gps-gray: #888;
+
+  --radius: 8px;
+  --radius-sm: 4px;
+  --transition: 0.2s ease;
+}
+
+/* ----- Reset & Base ----- */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+               'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  color: var(--sidebar-text);
+}
+
+/* ----- Map ----- */
+#map {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/* ----- Search Bar ----- */
+#search-container {
+  position: absolute;
+  top: 12px;
+  left: calc(var(--sidebar-width) + 16px);
+  z-index: 10;
+  width: 380px;
+  max-width: calc(100vw - var(--sidebar-width) - 32px);
+}
+
+#search-box {
+  display: flex;
+  align-items: center;
+  background: var(--search-bg);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 8px var(--search-shadow);
+  padding: 0 12px;
+}
+
+#search-icon {
+  flex-shrink: 0;
+  color: #666;
+}
+
+#search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 10px 8px;
+  font-size: 14px;
+  color: #333;
+}
+
+#search-input::placeholder {
+  color: #999;
+}
+
+#search-results {
+  list-style: none;
+  background: var(--search-bg);
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: 0 4px 12px var(--search-shadow);
+  max-height: 300px;
+  overflow-y: auto;
+  display: none;
+}
+
+#search-results.visible {
+  display: block;
+}
+
+#search-results li {
+  padding: 10px 14px;
+  cursor: pointer;
+  color: #333;
+  border-bottom: 1px solid #eee;
+  font-size: 13px;
+  transition: background var(--transition);
+}
+
+#search-results li:last-child {
+  border-bottom: none;
+}
+
+#search-results li:hover {
+  background: #f0f4ff;
+}
+
+#search-results li .result-type {
+  font-size: 11px;
+  color: #888;
+  margin-left: 6px;
+}
+
+/* ----- Sidebar ----- */
+#sidebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--sidebar-width);
+  height: 100%;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--sidebar-border);
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 12px 8px;
+  background: transparent;
+  border: none;
+  color: var(--sidebar-text);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all var(--transition);
+}
+
+.tab-btn:hover {
+  color: var(--accent);
+}
+
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ----- Panels ----- */
+.panel {
+  display: none;
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.panel.active {
+  display: block;
+}
+
+.panel h3 {
+  color: var(--sidebar-heading);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+  margin-top: 16px;
+}
+
+.panel h3:first-child {
+  margin-top: 0;
+}
+
+/* Radio / Checkbox labels */
+.radio-label,
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.radio-label input,
+.checkbox-label input {
+  accent-color: var(--accent);
+}
+
+/* Slider row (imagery opacity) */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 8px 24px;
+  font-size: 12px;
+}
+
+.slider-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+  height: 4px;
+}
+
+#imagery-opacity-row {
+  display: none;
+}
+
+#imagery-opacity-row.visible {
+  display: flex;
+}
+
+/* ----- Route Panel ----- */
+.route-field {
+  margin-bottom: 10px;
+}
+
+.route-field label {
+  display: block;
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 4px;
+}
+
+.route-field input,
+.route-field select {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  color: var(--input-text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.route-field input:focus,
+.route-field select:focus {
+  border-color: var(--accent);
+}
+
+.route-options {
+  margin-bottom: 12px;
+}
+
+#get-route-btn {
+  width: 100%;
+  padding: 10px;
+  background: var(--accent);
+  color: #1e1e2e;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition);
+  margin-bottom: 6px;
+}
+
+#get-route-btn:hover {
+  background: var(--accent-hover);
+}
+
+#get-route-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.secondary-btn {
+  width: 100%;
+  padding: 8px;
+  background: transparent;
+  color: var(--sidebar-text);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition);
+  margin-bottom: 12px;
+}
+
+.secondary-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#route-summary {
+  padding: 10px;
+  background: var(--accent-muted);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+#route-directions {
+  list-style: decimal;
+  padding-left: 20px;
+  font-size: 13px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+#route-directions li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--sidebar-border);
+  line-height: 1.4;
+}
+
+/* ----- Import Panel ----- */
+#drop-zone {
+  border: 2px dashed var(--input-border);
+  border-radius: var(--radius);
+  padding: 32px 16px;
+  text-align: center;
+  transition: all var(--transition);
+}
+
+#drop-zone.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+}
+
+#drop-zone p {
+  margin-bottom: 4px;
+}
+
+.drop-zone-sub {
+  font-size: 12px;
+  color: #666;
+}
+
+.file-btn {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #1e1e2e;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.file-btn:hover {
+  background: var(--accent-hover);
+}
+
+#import-status {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+#import-status.success {
+  background: rgba(166, 227, 161, 0.15);
+  color: var(--success);
+}
+
+#import-status.error {
+  background: rgba(243, 139, 168, 0.15);
+  color: var(--danger);
+}
+
+#import-status.warning {
+  background: rgba(249, 226, 175, 0.15);
+  color: var(--warning);
+}
+
+/* ----- GPS Badge ----- */
+#gps-badge {
+  position: absolute;
+  bottom: 24px;
+  left: calc(var(--sidebar-width) + 16px);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(30, 30, 46, 0.85);
+  backdrop-filter: blur(4px);
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  color: #cdd6f4;
+}
+
+#gps-badge.hidden {
+  display: none;
+}
+
+#gps-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--gps-blue);
+  animation: pulse 2s infinite;
+}
+
+#gps-dot.stale {
+  background: var(--gps-gray);
+  animation: none;
+}
+
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(66, 133, 244, 0.5); }
+  70%  { box-shadow: 0 0 0 8px rgba(66, 133, 244, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(66, 133, 244, 0); }
+}
+
+/* ----- Utility ----- */
+.hidden {
+  display: none !important;
+}
+
+/* ----- MapLibre Overrides ----- */
+.maplibregl-popup-content {
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.4;
+  max-width: 260px;
+}
+
+.maplibregl-popup-content h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: #333;
+}
+
+.maplibregl-popup-content p {
+  margin: 0;
+  color: #666;
+  font-size: 12px;
+}
+
+/* GPS marker on map */
+.gps-marker {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--gps-blue);
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.3), 0 2px 6px rgba(0,0,0,0.3);
+  position: relative;
+}
+
+.gps-marker.stale {
+  background: var(--gps-gray);
+  box-shadow: 0 0 0 2px rgba(136, 136, 136, 0.3), 0 2px 6px rgba(0,0,0,0.3);
+}
+
+.gps-marker .heading-arrow {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 10px solid var(--gps-blue);
+}
+
+.gps-marker.stale .heading-arrow {
+  border-bottom-color: var(--gps-gray);
+}
+
+/* ----- Mobile Responsive ----- */
+@media (max-width: 768px) {
+  :root {
+    --sidebar-width: 260px;
+  }
+
+  #search-container {
+    left: 12px;
+    width: calc(100vw - 24px);
+    max-width: none;
+  }
+
+  /* Collapse sidebar off-screen on mobile; toggle via JS */
+  #sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+  }
+
+  #sidebar.open {
+    transform: translateX(0);
+  }
+
+  #gps-badge {
+    left: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  :root {
+    --sidebar-width: 100vw;
+  }
+
+  #search-container {
+    top: 8px;
+    left: 8px;
+    width: calc(100vw - 16px);
+  }
+}

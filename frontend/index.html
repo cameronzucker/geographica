@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Geographica</title>
+
+  <!-- MapLibre GL JS (vendored locally) -->
+  <link rel="stylesheet" href="vendor/maplibre-gl.css">
+  <script src="vendor/maplibre-gl.js"></script>
+
+  <!-- KML/KMZ support (vendored locally) -->
+  <script src="vendor/togeojson.js"></script>
+  <script src="vendor/jszip.min.js"></script>
+
+  <!-- App styles -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ===== Search bar ===== -->
+  <div id="search-container">
+    <div id="search-box">
+      <svg id="search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <input id="search-input" type="text" placeholder="Search places..." autocomplete="off">
+    </div>
+    <ul id="search-results"></ul>
+  </div>
+
+  <!-- ===== Sidebar ===== -->
+  <div id="sidebar">
+    <div id="sidebar-tabs">
+      <button class="tab-btn active" data-panel="layers-panel">Layers</button>
+      <button class="tab-btn" data-panel="route-panel">Route</button>
+      <button class="tab-btn" data-panel="import-panel">Import</button>
+    </div>
+
+    <!-- Layers panel -->
+    <div id="layers-panel" class="panel active">
+      <h3>Basemap</h3>
+      <label class="radio-label">
+        <input type="radio" name="basemap" value="positron" checked> Positron (Light)
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="basemap" value="darkmatter"> Dark Matter (Dark)
+      </label>
+
+      <h3>Overlays</h3>
+      <label class="checkbox-label">
+        <input type="checkbox" id="toggle-imagery"> Aerial Imagery
+      </label>
+      <div class="slider-row" id="imagery-opacity-row">
+        <label for="imagery-opacity">Opacity</label>
+        <input type="range" id="imagery-opacity" min="0" max="100" value="80">
+        <span id="imagery-opacity-value">80%</span>
+      </div>
+      <label class="checkbox-label">
+        <input type="checkbox" id="toggle-hillshade"> Elevation Hillshade
+      </label>
+    </div>
+
+    <!-- Routing panel -->
+    <div id="route-panel" class="panel">
+      <h3>Route</h3>
+      <div class="route-field">
+        <label for="route-start">Start</label>
+        <input type="text" id="route-start" placeholder="Search start location...">
+      </div>
+      <div class="route-field">
+        <label for="route-end">End</label>
+        <input type="text" id="route-end" placeholder="Search end location...">
+      </div>
+
+      <div class="route-field">
+        <label for="costing-model">Mode</label>
+        <select id="costing-model">
+          <option value="auto">Driving</option>
+          <option value="bicycle">Bicycle</option>
+          <option value="pedestrian">Walking</option>
+        </select>
+      </div>
+
+      <div class="route-options">
+        <label class="checkbox-label"><input type="checkbox" id="avoid-highways"> Avoid highways</label>
+        <label class="checkbox-label"><input type="checkbox" id="avoid-tolls"> Avoid tolls</label>
+        <label class="checkbox-label"><input type="checkbox" id="avoid-ferries"> Avoid ferries</label>
+      </div>
+
+      <button id="get-route-btn">Get Route</button>
+      <button id="clear-route-btn" class="secondary-btn">Clear Route</button>
+
+      <div id="route-summary" class="hidden"></div>
+      <ol id="route-directions"></ol>
+    </div>
+
+    <!-- Import panel -->
+    <div id="import-panel" class="panel">
+      <h3>Import KML / KMZ</h3>
+      <div id="drop-zone">
+        <p>Drag &amp; drop a KML or KMZ file here</p>
+        <p class="drop-zone-sub">or</p>
+        <label class="file-btn">
+          Choose File
+          <input type="file" id="file-input" accept=".kml,.kmz" hidden>
+        </label>
+      </div>
+      <div id="import-status" class="hidden"></div>
+    </div>
+  </div>
+
+  <!-- ===== GPS status badge ===== -->
+  <div id="gps-badge" class="hidden">
+    <span id="gps-dot"></span>
+    <span id="gps-text">GPS</span>
+  </div>
+
+  <!-- ===== Map container ===== -->
+  <div id="map"></div>
+
+  <!-- App script -->
+  <script src="app.js"></script>
+</body>
+</html>

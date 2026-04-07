@@ -1,0 +1,1000 @@
+/* =====================================================================
+   Geographica — Offline Mapping Frontend
+   =====================================================================
+   Vanilla JS application using MapLibre GL JS.
+   No build step required; served as static files by NGINX.
+   ===================================================================== */
+
+(function () {
+  'use strict';
+
+  // =====================================================================
+  //  CONSTANTS
+  // =====================================================================
+
+  var STYLES = {
+    positron:   '/tiles/styles/positron/style.json',
+    darkmatter: '/tiles/styles/darkmatter/style.json'
+  };
+
+  var DEFAULT_CENTER = [-111.9, 34.0]; // Southwest US
+  var DEFAULT_ZOOM   = 6;
+
+  var SEARCH_DEBOUNCE_MS = 300;
+  var GPS_RECONNECT_MS   = 5000;
+
+  var MAX_FILE_SIZE_WARN   = 10 * 1024 * 1024;  // 10 MB
+  var MAX_FILE_SIZE_REJECT = 50 * 1024 * 1024;  // 50 MB
+
+  // =====================================================================
+  //  STATE
+  // =====================================================================
+
+  var map;                     // MapLibre GL map instance
+  var currentStyle = 'positron';
+  var searchMarker = null;     // marker for search results
+  var searchPopup  = null;     // popup for search results
+  var searchTimer  = null;     // debounce timer
+
+  var routeStartCoords = null; // [lng, lat]
+  var routeEndCoords   = null;
+  var routeStartMarker = null;
+  var routeEndMarker   = null;
+
+  var gpsMarker  = null;       // MapLibre marker for GPS position
+  var gpsWs      = null;       // WebSocket connection
+  var gpsStale   = true;
+
+  // =====================================================================
+  //  1. MAP INITIALIZATION
+  // =====================================================================
+
+  function initMap() {
+    map = new maplibregl.Map({
+      container: 'map',
+      style: STYLES[currentStyle],
+      center: DEFAULT_CENTER,
+      zoom: DEFAULT_ZOOM,
+      attributionControl: false
+    });
+
+    map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+    map.addControl(new maplibregl.ScaleControl({ unit: 'imperial' }), 'bottom-right');
+
+    map.on('load', function () {
+      // Add empty sources for optional overlay layers (imagery, hillshade, route, imports).
+      // Actual data is attached when the user toggles them on.
+      addPlaceholderSources();
+    });
+  }
+
+  /**
+   * Pre-register sources and layers that features will populate later.
+   * Called once on initial style load and again after every style swap.
+   */
+  function addPlaceholderSources() {
+    // --- Imagery raster overlay ---
+    if (!map.getSource('imagery')) {
+      map.addSource('imagery', {
+        type: 'raster',
+        tiles: ['/tiles/data/imagery/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        maxzoom: 18
+      });
+    }
+    if (!map.getLayer('imagery-layer')) {
+      map.addLayer({
+        id: 'imagery-layer',
+        type: 'raster',
+        source: 'imagery',
+        layout: { visibility: 'none' },
+        paint: { 'raster-opacity': 0.8 }
+      });
+    }
+
+    // --- Hillshade overlay ---
+    if (!map.getSource('elevation')) {
+      map.addSource('elevation', {
+        type: 'raster-dem',
+        tiles: ['/tiles/data/elevation/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        maxzoom: 14
+      });
+    }
+    if (!map.getLayer('hillshade-layer')) {
+      map.addLayer({
+        id: 'hillshade-layer',
+        type: 'hillshade',
+        source: 'elevation',
+        layout: { visibility: 'none' },
+        paint: {
+          'hillshade-shadow-color': '#333',
+          'hillshade-highlight-color': '#fff',
+          'hillshade-exaggeration': 0.3
+        }
+      });
+    }
+
+    // --- Route polyline ---
+    if (!map.getSource('route')) {
+      map.addSource('route', {
+        type: 'geojson',
+        data: emptyGeoJSON()
+      });
+    }
+    if (!map.getLayer('route-line')) {
+      map.addLayer({
+        id: 'route-line',
+        type: 'line',
+        source: 'route',
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': '#4285f4',
+          'line-width': 5,
+          'line-opacity': 0.85
+        }
+      });
+    }
+
+    // --- Imported KML/KMZ features ---
+    if (!map.getSource('imported')) {
+      map.addSource('imported', {
+        type: 'geojson',
+        data: emptyGeoJSON()
+      });
+    }
+    // Points
+    if (!map.getLayer('imported-points')) {
+      map.addLayer({
+        id: 'imported-points',
+        type: 'circle',
+        source: 'imported',
+        filter: ['==', '$type', 'Point'],
+        paint: {
+          'circle-radius': 6,
+          'circle-color': '#f38ba8',
+          'circle-stroke-color': '#fff',
+          'circle-stroke-width': 2
+        }
+      });
+    }
+    // Lines
+    if (!map.getLayer('imported-lines')) {
+      map.addLayer({
+        id: 'imported-lines',
+        type: 'line',
+        source: 'imported',
+        filter: ['==', '$type', 'LineString'],
+        paint: {
+          'line-color': '#f38ba8',
+          'line-width': 3
+        }
+      });
+    }
+    // Polygons
+    if (!map.getLayer('imported-polygons')) {
+      map.addLayer({
+        id: 'imported-polygons',
+        type: 'fill',
+        source: 'imported',
+        filter: ['==', '$type', 'Polygon'],
+        paint: {
+          'fill-color': '#f38ba8',
+          'fill-opacity': 0.25,
+          'fill-outline-color': '#f38ba8'
+        }
+      });
+    }
+  }
+
+  /** Helper: empty GeoJSON FeatureCollection */
+  function emptyGeoJSON() {
+    return { type: 'FeatureCollection', features: [] };
+  }
+
+  // =====================================================================
+  //  2. LAYER CONTROLS
+  // =====================================================================
+
+  function initLayerControls() {
+    // Basemap radio buttons
+    var radios = document.querySelectorAll('input[name="basemap"]');
+    radios.forEach(function (radio) {
+      radio.addEventListener('change', function () {
+        currentStyle = this.value;
+        map.setStyle(STYLES[currentStyle]);
+        // Re-add overlay sources/layers after style swap
+        map.once('style.load', function () {
+          addPlaceholderSources();
+          syncLayerVisibility();
+        });
+      });
+    });
+
+    // Imagery toggle
+    var imageryCheckbox = document.getElementById('toggle-imagery');
+    var opacityRow      = document.getElementById('imagery-opacity-row');
+    imageryCheckbox.addEventListener('change', function () {
+      setLayerVisibility('imagery-layer', this.checked);
+      opacityRow.classList.toggle('visible', this.checked);
+    });
+
+    // Imagery opacity slider
+    var opacitySlider = document.getElementById('imagery-opacity');
+    var opacityLabel  = document.getElementById('imagery-opacity-value');
+    opacitySlider.addEventListener('input', function () {
+      var val = parseInt(this.value, 10);
+      opacityLabel.textContent = val + '%';
+      if (map.getLayer('imagery-layer')) {
+        map.setPaintProperty('imagery-layer', 'raster-opacity', val / 100);
+      }
+    });
+
+    // Hillshade toggle
+    var hillshadeCheckbox = document.getElementById('toggle-hillshade');
+    hillshadeCheckbox.addEventListener('change', function () {
+      setLayerVisibility('hillshade-layer', this.checked);
+    });
+  }
+
+  /** Set layer visibility safely */
+  function setLayerVisibility(layerId, visible) {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
+    }
+  }
+
+  /** After a style swap, re-apply checkbox state to layers */
+  function syncLayerVisibility() {
+    var imagery   = document.getElementById('toggle-imagery').checked;
+    var hillshade = document.getElementById('toggle-hillshade').checked;
+    setLayerVisibility('imagery-layer', imagery);
+    setLayerVisibility('hillshade-layer', hillshade);
+  }
+
+  // =====================================================================
+  //  3. SIDEBAR TABS
+  // =====================================================================
+
+  function initSidebarTabs() {
+    var tabs   = document.querySelectorAll('.tab-btn');
+    var panels = document.querySelectorAll('.panel');
+
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        var target = this.dataset.panel;
+        tabs.forEach(function (t) { t.classList.remove('active'); });
+        panels.forEach(function (p) { p.classList.remove('active'); });
+        this.classList.add('active');
+        document.getElementById(target).classList.add('active');
+      });
+    });
+  }
+
+  // =====================================================================
+  //  4. SEARCH
+  // =====================================================================
+
+  function initSearch() {
+    var input   = document.getElementById('search-input');
+    var results = document.getElementById('search-results');
+
+    input.addEventListener('input', function () {
+      clearTimeout(searchTimer);
+      var query = input.value.trim();
+      if (query.length < 2) {
+        hideSearchResults();
+        return;
+      }
+      searchTimer = setTimeout(function () {
+        performSearch(query);
+      }, SEARCH_DEBOUNCE_MS);
+    });
+
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        clearTimeout(searchTimer);
+        var query = input.value.trim();
+        if (query.length >= 2) {
+          performSearch(query);
+        }
+      }
+    });
+
+    // Close results on outside click
+    document.addEventListener('click', function (e) {
+      if (!e.target.closest('#search-container')) {
+        hideSearchResults();
+      }
+    });
+  }
+
+  function performSearch(query) {
+    var url = '/search/search?q=' + encodeURIComponent(query) + '&limit=10';
+    fetch(url)
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        renderSearchResults(data.results || data);
+      })
+      .catch(function (err) {
+        console.error('Search error:', err);
+      });
+  }
+
+  function renderSearchResults(results) {
+    var list = document.getElementById('search-results');
+    // Clear previous results using safe DOM removal
+    while (list.firstChild) {
+      list.removeChild(list.firstChild);
+    }
+
+    if (!results || results.length === 0) {
+      var emptyLi = document.createElement('li');
+      emptyLi.textContent = 'No results found';
+      list.appendChild(emptyLi);
+      list.classList.add('visible');
+      return;
+    }
+
+    results.forEach(function (item) {
+      var li = document.createElement('li');
+      var name = item.name || item.display_name || 'Unknown';
+      var type = item.type || item.category || '';
+
+      // Build content safely using DOM methods (no innerHTML)
+      li.appendChild(document.createTextNode(name));
+      if (type) {
+        var typeSpan = document.createElement('span');
+        typeSpan.className = 'result-type';
+        typeSpan.textContent = type;
+        li.appendChild(typeSpan);
+      }
+
+      li.addEventListener('click', function () {
+        selectSearchResult(item);
+      });
+      list.appendChild(li);
+    });
+
+    list.classList.add('visible');
+  }
+
+  function selectSearchResult(item) {
+    hideSearchResults();
+
+    var lng = parseFloat(item.lon || item.longitude || item.lng);
+    var lat = parseFloat(item.lat || item.latitude);
+    if (isNaN(lng) || isNaN(lat)) return;
+
+    map.flyTo({ center: [lng, lat], zoom: 14 });
+
+    // Remove previous marker/popup
+    if (searchMarker) searchMarker.remove();
+    if (searchPopup) searchPopup.remove();
+
+    var name = item.name || item.display_name || 'Result';
+    var type = item.type || item.category || '';
+
+    // Build popup content using safe DOM methods
+    var popupContent = document.createElement('div');
+    var h4 = document.createElement('h4');
+    h4.textContent = name;
+    popupContent.appendChild(h4);
+    if (type) {
+      var p = document.createElement('p');
+      p.textContent = type;
+      popupContent.appendChild(p);
+    }
+
+    searchPopup = new maplibregl.Popup({ offset: 25, closeOnClick: true })
+      .setDOMContent(popupContent);
+
+    searchMarker = new maplibregl.Marker({ color: '#f38ba8' })
+      .setLngLat([lng, lat])
+      .setPopup(searchPopup)
+      .addTo(map);
+
+    searchPopup.addTo(map);
+  }
+
+  function hideSearchResults() {
+    document.getElementById('search-results').classList.remove('visible');
+  }
+
+  // =====================================================================
+  //  5. ROUTING
+  // =====================================================================
+
+  function initRouting() {
+    var startInput  = document.getElementById('route-start');
+    var endInput    = document.getElementById('route-end');
+    var getRouteBtn = document.getElementById('get-route-btn');
+    var clearBtn    = document.getElementById('clear-route-btn');
+
+    // Geocode start/end on Enter
+    startInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') geocodeForRoute(startInput.value, 'start');
+    });
+    endInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') geocodeForRoute(endInput.value, 'end');
+    });
+
+    getRouteBtn.addEventListener('click', requestRoute);
+    clearBtn.addEventListener('click', clearRoute);
+  }
+
+  /**
+   * Geocode a text query and store coordinates for routing.
+   * @param {string} query - search text
+   * @param {'start'|'end'} which - which endpoint
+   */
+  function geocodeForRoute(query, which) {
+    if (!query.trim()) return;
+    var url = '/search/search?q=' + encodeURIComponent(query) + '&limit=1';
+    fetch(url)
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        var results = data.results || data;
+        if (!results || results.length === 0) {
+          alert('Location not found: ' + query);
+          return;
+        }
+        var item = results[0];
+        var lng  = parseFloat(item.lon || item.longitude || item.lng);
+        var lat  = parseFloat(item.lat || item.latitude);
+        if (isNaN(lng) || isNaN(lat)) return;
+
+        if (which === 'start') {
+          routeStartCoords = [lng, lat];
+          placeRouteMarker('start', [lng, lat]);
+          document.getElementById('route-start').value = item.name || item.display_name || query;
+        } else {
+          routeEndCoords = [lng, lat];
+          placeRouteMarker('end', [lng, lat]);
+          document.getElementById('route-end').value = item.name || item.display_name || query;
+        }
+      })
+      .catch(function (err) {
+        console.error('Geocode error:', err);
+      });
+  }
+
+  function placeRouteMarker(which, lngLat) {
+    var color = which === 'start' ? '#a6e3a1' : '#f38ba8';
+    if (which === 'start') {
+      if (routeStartMarker) routeStartMarker.remove();
+      routeStartMarker = new maplibregl.Marker({ color: color })
+        .setLngLat(lngLat).addTo(map);
+    } else {
+      if (routeEndMarker) routeEndMarker.remove();
+      routeEndMarker = new maplibregl.Marker({ color: color })
+        .setLngLat(lngLat).addTo(map);
+    }
+  }
+
+  /** Build Valhalla request and render the route. */
+  function requestRoute() {
+    if (!routeStartCoords || !routeEndCoords) {
+      alert('Please set both start and end locations (press Enter in each field to geocode).');
+      return;
+    }
+
+    var costing = document.getElementById('costing-model').value;
+    var avoidHighways = document.getElementById('avoid-highways').checked;
+    var avoidTolls    = document.getElementById('avoid-tolls').checked;
+    var avoidFerries  = document.getElementById('avoid-ferries').checked;
+
+    // Build Valhalla JSON body
+    var costingOptions = {};
+    if (costing === 'auto') {
+      costingOptions.auto = {};
+      if (avoidHighways) costingOptions.auto.use_highways = 0;
+      if (avoidTolls)    costingOptions.auto.use_tolls = 0;
+      if (avoidFerries)  costingOptions.auto.use_ferry = 0;
+    } else if (costing === 'bicycle') {
+      costingOptions.bicycle = {};
+      if (avoidFerries) costingOptions.bicycle.use_ferry = 0;
+    } else {
+      costingOptions.pedestrian = {};
+      if (avoidFerries) costingOptions.pedestrian.use_ferry = 0;
+    }
+
+    var body = {
+      locations: [
+        { lat: routeStartCoords[1], lon: routeStartCoords[0] },
+        { lat: routeEndCoords[1],   lon: routeEndCoords[0] }
+      ],
+      costing: costing,
+      costing_options: costingOptions,
+      directions_options: { units: 'miles' }
+    };
+
+    var btn = document.getElementById('get-route-btn');
+    btn.disabled = true;
+    btn.textContent = 'Calculating...';
+
+    fetch('/valhalla/route', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        btn.disabled = false;
+        btn.textContent = 'Get Route';
+
+        if (data.trip) {
+          renderRoute(data.trip);
+        } else if (data.error) {
+          alert('Routing error: ' + (data.error || 'Unknown error'));
+        } else {
+          alert('No route found.');
+        }
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        btn.textContent = 'Get Route';
+        console.error('Route error:', err);
+        alert('Routing request failed.');
+      });
+  }
+
+  /**
+   * Render a Valhalla trip response on the map and display directions.
+   * @param {Object} trip - Valhalla trip object
+   */
+  function renderRoute(trip) {
+    // Decode polyline from each leg and merge
+    var allCoords = [];
+    var allManeuvers = [];
+
+    trip.legs.forEach(function (leg) {
+      var coords = decodePolyline(leg.shape);
+      allCoords = allCoords.concat(coords);
+      if (leg.maneuvers) {
+        allManeuvers = allManeuvers.concat(leg.maneuvers);
+      }
+    });
+
+    // Update route source
+    var geojson = {
+      type: 'Feature',
+      geometry: {
+        type: 'LineString',
+        coordinates: allCoords
+      }
+    };
+
+    var source = map.getSource('route');
+    if (source) {
+      source.setData(geojson);
+    }
+
+    // Fit map to route bounds
+    var bounds = allCoords.reduce(function (b, coord) {
+      return b.extend(coord);
+    }, new maplibregl.LngLatBounds(allCoords[0], allCoords[0]));
+
+    map.fitBounds(bounds, { padding: 60 });
+
+    // Show route summary
+    var summary = trip.summary || {};
+    var distMiles = (summary.length || 0).toFixed(1);
+    var timeSec   = summary.time || 0;
+    var hours     = Math.floor(timeSec / 3600);
+    var minutes   = Math.round((timeSec % 3600) / 60);
+    var timeStr   = hours > 0 ? hours + 'h ' + minutes + 'min' : minutes + ' min';
+
+    var summaryEl = document.getElementById('route-summary');
+    // Build summary using safe DOM methods
+    while (summaryEl.firstChild) {
+      summaryEl.removeChild(summaryEl.firstChild);
+    }
+    var strong = document.createElement('strong');
+    strong.textContent = distMiles + ' mi';
+    summaryEl.appendChild(strong);
+    summaryEl.appendChild(document.createTextNode(' \u00B7 ' + timeStr));
+    summaryEl.classList.remove('hidden');
+
+    // Show turn-by-turn directions (safe DOM construction)
+    var dirList = document.getElementById('route-directions');
+    while (dirList.firstChild) {
+      dirList.removeChild(dirList.firstChild);
+    }
+    allManeuvers.forEach(function (m) {
+      var li = document.createElement('li');
+      var instruction = m.instruction || m.verbal_pre_transition_instruction || '';
+      if (m.length) {
+        instruction += ' (' + m.length.toFixed(1) + ' mi)';
+      }
+      li.textContent = instruction;
+      dirList.appendChild(li);
+    });
+  }
+
+  function clearRoute() {
+    // Clear route line
+    var source = map.getSource('route');
+    if (source) source.setData(emptyGeoJSON());
+
+    // Remove markers
+    if (routeStartMarker) { routeStartMarker.remove(); routeStartMarker = null; }
+    if (routeEndMarker)   { routeEndMarker.remove();   routeEndMarker   = null; }
+
+    routeStartCoords = null;
+    routeEndCoords   = null;
+
+    // Clear inputs
+    document.getElementById('route-start').value = '';
+    document.getElementById('route-end').value   = '';
+
+    // Hide summary and directions
+    var summaryEl = document.getElementById('route-summary');
+    summaryEl.classList.add('hidden');
+    while (summaryEl.firstChild) {
+      summaryEl.removeChild(summaryEl.firstChild);
+    }
+    var dirList = document.getElementById('route-directions');
+    while (dirList.firstChild) {
+      dirList.removeChild(dirList.firstChild);
+    }
+  }
+
+  /**
+   * Decode a Valhalla encoded polyline (precision 6).
+   * Returns array of [lng, lat] coordinate pairs.
+   */
+  function decodePolyline(encoded) {
+    var coords = [];
+    var index  = 0;
+    var lat    = 0;
+    var lng    = 0;
+
+    while (index < encoded.length) {
+      var shift  = 0;
+      var result = 0;
+      var byte;
+
+      // Decode latitude
+      do {
+        byte = encoded.charCodeAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+      lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+
+      // Decode longitude
+      shift  = 0;
+      result = 0;
+      do {
+        byte = encoded.charCodeAt(index++) - 63;
+        result |= (byte & 0x1f) << shift;
+        shift += 5;
+      } while (byte >= 0x20);
+      lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+
+      // Valhalla uses precision 6
+      coords.push([lng / 1e6, lat / 1e6]);
+    }
+
+    return coords;
+  }
+
+  // =====================================================================
+  //  6. GPS POSITION (WebSocket)
+  // =====================================================================
+
+  function initGPS() {
+    connectGPS();
+  }
+
+  function connectGPS() {
+    var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var wsUrl = protocol + '//' + location.host + '/gps/ws';
+
+    try {
+      gpsWs = new WebSocket(wsUrl);
+    } catch (e) {
+      console.warn('GPS WebSocket connection failed:', e);
+      scheduleGPSReconnect();
+      return;
+    }
+
+    gpsWs.onopen = function () {
+      console.log('GPS WebSocket connected');
+      document.getElementById('gps-badge').classList.remove('hidden');
+    };
+
+    gpsWs.onmessage = function (event) {
+      try {
+        var data = JSON.parse(event.data);
+        updateGPSPosition(data);
+      } catch (e) {
+        console.warn('GPS parse error:', e);
+      }
+    };
+
+    gpsWs.onclose = function () {
+      console.log('GPS WebSocket closed');
+      setGPSStale(true);
+      scheduleGPSReconnect();
+    };
+
+    gpsWs.onerror = function () {
+      console.warn('GPS WebSocket error');
+      setGPSStale(true);
+    };
+  }
+
+  function scheduleGPSReconnect() {
+    setTimeout(function () {
+      console.log('GPS: attempting reconnect...');
+      connectGPS();
+    }, GPS_RECONNECT_MS);
+  }
+
+  /**
+   * Update the GPS marker position on the map.
+   * @param {Object} data - { lat, lon/lng, heading, speed, stale }
+   */
+  function updateGPSPosition(data) {
+    var lng = parseFloat(data.lon || data.lng || data.longitude);
+    var lat = parseFloat(data.lat || data.latitude);
+
+    if (isNaN(lng) || isNaN(lat)) return;
+
+    var stale   = !!data.stale;
+    var heading = data.heading || data.bearing || 0;
+
+    setGPSStale(stale);
+
+    // Create or update the GPS marker
+    if (!gpsMarker) {
+      var el = createGPSMarkerElement();
+      gpsMarker = new maplibregl.Marker({ element: el })
+        .setLngLat([lng, lat])
+        .addTo(map);
+    } else {
+      gpsMarker.setLngLat([lng, lat]);
+    }
+
+    // Update heading arrow rotation
+    var markerEl = gpsMarker.getElement();
+    markerEl.className = 'gps-marker' + (stale ? ' stale' : '');
+    markerEl.style.transform += ' rotate(' + heading + 'deg)';
+
+    // Update tooltip on stale
+    if (stale) {
+      markerEl.title = 'GPS signal lost';
+    } else {
+      markerEl.title = 'GPS: ' + lat.toFixed(5) + ', ' + lng.toFixed(5);
+    }
+
+    document.getElementById('gps-badge').classList.remove('hidden');
+  }
+
+  function createGPSMarkerElement() {
+    var el = document.createElement('div');
+    el.className = 'gps-marker';
+    var arrow = document.createElement('div');
+    arrow.className = 'heading-arrow';
+    el.appendChild(arrow);
+    return el;
+  }
+
+  function setGPSStale(stale) {
+    gpsStale = stale;
+    var dot  = document.getElementById('gps-dot');
+    var text = document.getElementById('gps-text');
+
+    if (stale) {
+      dot.classList.add('stale');
+      text.textContent = 'GPS signal lost';
+    } else {
+      dot.classList.remove('stale');
+      text.textContent = 'GPS';
+    }
+  }
+
+  // =====================================================================
+  //  7. KML / KMZ IMPORT
+  // =====================================================================
+
+  function initImport() {
+    var dropZone  = document.getElementById('drop-zone');
+    var fileInput = document.getElementById('file-input');
+
+    // Drag & drop handlers
+    dropZone.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    });
+    dropZone.addEventListener('dragleave', function () {
+      dropZone.classList.remove('drag-over');
+    });
+    dropZone.addEventListener('drop', function (e) {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      if (e.dataTransfer.files.length) {
+        handleImportFile(e.dataTransfer.files[0]);
+      }
+    });
+
+    // File input handler
+    fileInput.addEventListener('change', function () {
+      if (this.files.length) {
+        handleImportFile(this.files[0]);
+        this.value = ''; // reset for re-import
+      }
+    });
+  }
+
+  /**
+   * Process an imported KML or KMZ file.
+   * @param {File} file
+   */
+  function handleImportFile(file) {
+    var statusEl = document.getElementById('import-status');
+    statusEl.classList.remove('hidden', 'success', 'error', 'warning');
+
+    // File size checks
+    if (file.size > MAX_FILE_SIZE_REJECT) {
+      showImportStatus('File too large (>' + (MAX_FILE_SIZE_REJECT / 1024 / 1024) + ' MB). Import rejected.', 'error');
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE_WARN) {
+      showImportStatus('Large file (' + (file.size / 1024 / 1024).toFixed(1) + ' MB). Processing may be slow...', 'warning');
+    }
+
+    var ext = file.name.split('.').pop().toLowerCase();
+
+    if (ext === 'kmz') {
+      importKMZ(file);
+    } else if (ext === 'kml') {
+      importKML(file);
+    } else {
+      showImportStatus('Unsupported file type. Please use .kml or .kmz files.', 'error');
+    }
+  }
+
+  function importKML(file) {
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      try {
+        var parser = new DOMParser();
+        var kmlDoc = parser.parseFromString(e.target.result, 'text/xml');
+
+        if (typeof toGeoJSON === 'undefined') {
+          showImportStatus('toGeoJSON library not loaded. Cannot parse KML.', 'error');
+          return;
+        }
+
+        var geojson = toGeoJSON.kml(kmlDoc);
+        renderImportedGeoJSON(geojson, file.name);
+      } catch (err) {
+        console.error('KML parse error:', err);
+        showImportStatus('Failed to parse KML: ' + err.message, 'error');
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function importKMZ(file) {
+    if (typeof JSZip === 'undefined') {
+      showImportStatus('JSZip library not loaded. Cannot extract KMZ.', 'error');
+      return;
+    }
+
+    JSZip.loadAsync(file).then(function (zip) {
+      // Find the .kml file inside the archive
+      var kmlFile = null;
+      zip.forEach(function (path, entry) {
+        if (path.match(/\.kml$/i) && !kmlFile) {
+          kmlFile = entry;
+        }
+      });
+
+      if (!kmlFile) {
+        showImportStatus('No KML file found inside KMZ archive.', 'error');
+        return;
+      }
+
+      return kmlFile.async('string');
+    }).then(function (kmlText) {
+      if (!kmlText) return;
+
+      var parser = new DOMParser();
+      var kmlDoc = parser.parseFromString(kmlText, 'text/xml');
+
+      if (typeof toGeoJSON === 'undefined') {
+        showImportStatus('toGeoJSON library not loaded. Cannot parse KML.', 'error');
+        return;
+      }
+
+      var geojson = toGeoJSON.kml(kmlDoc);
+      renderImportedGeoJSON(geojson, file.name);
+    }).catch(function (err) {
+      console.error('KMZ extract error:', err);
+      showImportStatus('Failed to extract KMZ: ' + err.message, 'error');
+    });
+  }
+
+  /**
+   * Render imported GeoJSON features on the map.
+   * @param {Object} geojson - GeoJSON FeatureCollection
+   * @param {string} filename - original filename for status message
+   */
+  function renderImportedGeoJSON(geojson, filename) {
+    if (!geojson.features || geojson.features.length === 0) {
+      showImportStatus('No features found in ' + filename, 'warning');
+      return;
+    }
+
+    var source = map.getSource('imported');
+    if (source) {
+      source.setData(geojson);
+    }
+
+    // Fit map to imported data bounds
+    var bounds = new maplibregl.LngLatBounds();
+    geojson.features.forEach(function (f) {
+      if (!f.geometry || !f.geometry.coordinates) return;
+      addCoordsToBounds(bounds, f.geometry.coordinates, f.geometry.type);
+    });
+
+    if (!bounds.isEmpty()) {
+      map.fitBounds(bounds, { padding: 60 });
+    }
+
+    showImportStatus(
+      'Imported ' + geojson.features.length + ' feature(s) from ' + filename,
+      'success'
+    );
+  }
+
+  /**
+   * Recursively add coordinates to a LngLatBounds.
+   * Handles Point, LineString, Polygon, Multi* geometries.
+   */
+  function addCoordsToBounds(bounds, coords, type) {
+    if (type === 'Point') {
+      bounds.extend(coords);
+    } else if (type === 'LineString' || type === 'MultiPoint') {
+      coords.forEach(function (c) { bounds.extend(c); });
+    } else if (type === 'Polygon' || type === 'MultiLineString') {
+      coords.forEach(function (ring) {
+        ring.forEach(function (c) { bounds.extend(c); });
+      });
+    } else if (type === 'MultiPolygon') {
+      coords.forEach(function (poly) {
+        poly.forEach(function (ring) {
+          ring.forEach(function (c) { bounds.extend(c); });
+        });
+      });
+    }
+  }
+
+  function showImportStatus(message, level) {
+    var el = document.getElementById('import-status');
+    el.textContent = message;
+    el.className = level; // 'success', 'error', or 'warning'
+  }
+
+  // =====================================================================
+  //  BOOTSTRAP
+  // =====================================================================
+
+  document.addEventListener('DOMContentLoaded', function () {
+    initMap();
+    initSidebarTabs();
+    initLayerControls();
+    initSearch();
+    initRouting();
+    initImport();
+    initGPS();
+  });
+
+})();
