@@ -1,0 +1,136 @@
+services:
+  tileserver:
+    image: maptiler/tileserver-gl:v5.5.0-arm64
+    container_name: geographica-tileserver
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    volumes:
+      - ./tileserver:/data
+    command: ["--config", "/data/config.json"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:3.5.1
+    container_name: geographica-valhalla
+    restart: unless-stopped
+    ports:
+      - "8094:8002"
+    environment:
+      server_threads: "${VALHALLA_THREADS:-4}"
+      serve_tiles: "True"
+      use_tiles_ignore_pbf: "False"
+      build_elevation: "False"
+      build_admins: "False"
+      build_time_zones: "False"
+      build_transit: "False"
+      build_tar: "True"
+      force_rebuild: "False"
+      update_existing_config: "True"
+      tileset_name: "valhalla_tiles"
+    volumes:
+      - ./data/valhalla:/custom_files
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8002/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+  nominatim:
+    image: mediagis/nominatim:5.2.0
+    container_name: geographica-nominatim
+    restart: unless-stopped
+    shm_size: "4gb"
+    ports:
+      - "8092:8080"
+    environment:
+      PBF_PATH: /nominatim/data/region.osm.pbf
+      UPDATE_MODE: none
+      FREEZE: "true"
+      IMPORT_STYLE: full
+      THREADS: "4"
+      WARMUP_ON_STARTUP: "true"
+      POSTGRES_SHARED_BUFFERS: "${POSTGRES_SHARED_BUFFERS:-1GB}"
+      POSTGRES_MAINTENANCE_WORK_MEM: "${POSTGRES_MAINTENANCE_WORK_MEM:-1GB}"
+      POSTGRES_AUTOVACUUM_WORK_MEM: "${POSTGRES_AUTOVACUUM_WORK_MEM:-256MB}"
+      POSTGRES_WORK_MEM: "${POSTGRES_WORK_MEM:-32MB}"
+      POSTGRES_EFFECTIVE_CACHE_SIZE: "${POSTGRES_EFFECTIVE_CACHE_SIZE:-4GB}"
+    volumes:
+      - ./data/nominatim:/nominatim/data
+      - nominatim-db:/var/lib/postgresql/16/main
+      - nominatim-flatnode:/nominatim/flatnode
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 300s
+
+  gps:
+    build:
+      context: ./services/gps
+    container_name: geographica-gps
+    restart: unless-stopped
+    ports:
+      - "8095:8000"
+    devices:
+      - "/dev/ttyAMA0:/dev/ttyAMA0"
+    privileged: true
+    volumes:
+      - /run/gpsd.sock:/run/gpsd.sock:ro
+    environment:
+      GPSD_HOST: "host.docker.internal"
+      GPSD_PORT: "2947"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+  search:
+    build:
+      context: ./services/search
+    container_name: geographica-search
+    restart: unless-stopped
+    ports:
+      - "8096:8000"
+    environment:
+      NOMINATIM_URL: "http://nominatim:8080"
+      POI_DB_PATH: "/data/poi.sqlite"
+    volumes:
+      - ./data:/data:ro
+    depends_on:
+      nominatim:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+  frontend:
+    image: nginx:alpine
+    container_name: geographica-frontend
+    restart: unless-stopped
+    depends_on:
+      - tileserver
+      - nominatim
+      - valhalla
+      - gps
+      - search
+    ports:
+      - "8093:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  nominatim-db:
+  nominatim-flatnode:

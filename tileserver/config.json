@@ -1,0 +1,30 @@
+{
+  "options": {
+    "paths": {
+      "root": "/data",
+      "fonts": "fonts-served",
+      "styles": "styles"
+    },
+    "serveAllFonts": true,
+    "serveAllStyles": true
+  },
+  "data": {
+    "southwest5": {
+      "mbtiles": "southwest5.mbtiles"
+    }
+  },
+  "styles": {
+    "positron": {
+      "style": "positron/style.local.json",
+      "tilejson": {
+        "bounds": [-124.6, 31.2, -103.0, 42.2]
+      }
+    },
+    "darkmatter": {
+      "style": "darkmatter/style.local.json",
+      "tilejson": {
+        "bounds": [-124.6, 31.2, -103.0, 42.2]
+      }
+    }
+  }
+}
