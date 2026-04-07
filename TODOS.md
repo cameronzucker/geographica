@@ -1,0 +1,27 @@
+# TODOS
+
+## Deferred from Phase 1
+
+### NGINX selective compression optimization
+- **What:** Apply `sub_filter` URL rewriting only to style JSON/TileJSON endpoints, let tile data pass through with gzip compression intact.
+- **Why:** On bandwidth-constrained AREDN mesh, PBF vector tiles compress ~60-70%. Currently all TileServer GL responses are uncompressed due to blanket `Accept-Encoding ""` header required by sub_filter.
+- **Pros:** Significant bandwidth reduction for vector tile serving over mesh.
+- **Cons:** More complex NGINX config with multiple location blocks for the same upstream. URL rewriting across multiple location blocks is fragile and hard to debug.
+- **Context:** Decision made during eng review to defer. Core platform stability takes priority over bandwidth optimization. Revisit after Phase 1 is stable and field-tested.
+- **Depends on:** Phase 1 complete, NGINX config stable.
+
+### Search debounce/abort pattern
+- **What:** Add 300ms client-side debounce and AbortController to cancel in-flight search requests on new keystrokes.
+- **Why:** Rapid typing could queue up Nominatim PostgreSQL queries on the Pi. Reference stack showed instant results with single user, but untested under load.
+- **Pros:** Prevents query pile-up if multiple users or rapid interaction.
+- **Cons:** Minimal code (~10 lines), but adds complexity to search flow.
+- **Context:** Deferred because real-world testing on Pi 5 showed instant Nominatim responses. Add a diagnostic: if p95 search latency exceeds 500ms under rapid sequential queries, implement debounce.
+- **Depends on:** Frontend search implementation complete.
+
+### Data freshness / update workflow
+- **What:** Define a workflow for updating stale map data (OSM extracts, imagery, Nominatim, Valhalla routing graph).
+- **Why:** Offline maps decay. OSM data changes, roads get built, imagery gets updated. Without an update path, operators will stop trusting the data.
+- **Pros:** Keeps the platform trustworthy over time.
+- **Cons:** Re-running the full data pipeline is time-consuming (days for imagery, hours for Nominatim import).
+- **Context:** Codex outside voice raised this (point #27). For v1, "re-run the pipeline" is acceptable. A future version could support incremental OSM updates via Osmium and differential Nominatim updates.
+- **Depends on:** Phase 0 data pipeline proven.
