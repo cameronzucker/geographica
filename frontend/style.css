@@ -441,6 +441,62 @@ html, body {
   100% { box-shadow: 0 0 0 0 rgba(66, 133, 244, 0); }
 }
 
+/* ----- Map control buttons ----- */
+.map-btn {
+  position: absolute;
+  z-index: 10;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(30, 30, 46, 0.85);
+  backdrop-filter: blur(4px);
+  color: #cdd6f4;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  transition: background 0.2s;
+}
+
+.map-btn:hover {
+  background: rgba(50, 50, 70, 0.9);
+}
+
+#center-gps-btn {
+  bottom: 60px;
+  left: calc(var(--sidebar-width) + 16px);
+}
+
+#sidebar-toggle {
+  display: none;  /* Hidden on desktop, shown on mobile */
+  top: 12px;
+  left: 12px;
+}
+
+/* ----- GPS accuracy circle ----- */
+.gps-accuracy-circle {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(66, 133, 244, 0.12);
+  border: 1.5px solid rgba(66, 133, 244, 0.3);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+/* ----- Sidebar overlay (mobile) ----- */
+#sidebar-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 19;
+}
+
 /* ----- Utility ----- */
 .hidden {
   display: none !important;
@@ -465,6 +521,27 @@ html, body {
   margin: 0;
   color: #666;
   font-size: 12px;
+}
+
+.kml-description {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #555;
+  max-height: 200px;
+  overflow-y: auto;
+  word-wrap: break-word;
+}
+
+.kml-description table {
+  font-size: 11px;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.kml-description td, .kml-description th {
+  padding: 2px 6px;
+  border-bottom: 1px solid #eee;
+  text-align: left;
 }
 
 /* GPS marker on map */
@@ -502,38 +579,52 @@ html, body {
 /* ----- Mobile Responsive ----- */
 @media (max-width: 768px) {
   :root {
-    --sidebar-width: 260px;
+    --sidebar-width: 280px;
   }
 
   #search-container {
-    left: 12px;
-    width: calc(100vw - 24px);
+    left: 52px;
+    width: calc(100vw - 64px);
     max-width: none;
+  }
+
+  /* Show hamburger button on mobile */
+  #sidebar-toggle {
+    display: flex;
   }
 
   /* Collapse sidebar off-screen on mobile; toggle via JS */
   #sidebar {
     transform: translateX(-100%);
     transition: transform 0.3s ease;
+    z-index: 20;
   }
 
   #sidebar.open {
     transform: translateX(0);
   }
 
+  #sidebar-overlay.open {
+    display: block;
+  }
+
   #gps-badge {
+    left: 12px;
+  }
+
+  #center-gps-btn {
     left: 12px;
   }
 }
 
 @media (max-width: 480px) {
   :root {
-    --sidebar-width: 100vw;
+    --sidebar-width: 85vw;
   }
 
   #search-container {
     top: 8px;
-    left: 8px;
-    width: calc(100vw - 16px);
+    left: 52px;
+    width: calc(100vw - 64px);
   }
 }

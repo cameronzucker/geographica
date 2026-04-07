@@ -44,6 +44,8 @@
   var gpsMarker  = null;       // MapLibre marker for GPS position
   var gpsWs      = null;       // WebSocket connection
   var gpsStale   = true;
+  var gpsLastPos = null;       // last known [lng, lat] for center-on-GPS
+  var gpsAccuracyMarker = null; // accuracy circle DOM element inside marker
 
   // =====================================================================
   //  1. MAP INITIALIZATION
@@ -189,6 +191,81 @@
         }
       });
     }
+
+    // --- Click handlers for imported features ---
+    var importedLayers = ['imported-points', 'imported-lines', 'imported-polygons'];
+
+    importedLayers.forEach(function (layerId) {
+      // Change cursor on hover
+      map.on('mouseenter', layerId, function () {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', layerId, function () {
+        map.getCanvas().style.cursor = '';
+      });
+
+      // Click to show popup with feature properties
+      map.on('click', layerId, function (e) {
+        if (!e.features || !e.features.length) return;
+
+        var feature = e.features[0];
+        var props   = feature.properties || {};
+        var coords  = e.lngLat;
+
+        // Build popup content from KML properties
+        var content = document.createElement('div');
+
+        if (props.name) {
+          var title = document.createElement('h4');
+          title.textContent = props.name;
+          content.appendChild(title);
+        }
+
+        if (props.description) {
+          var desc = document.createElement('div');
+          desc.className = 'kml-description';
+          // KML descriptions may contain HTML — sanitize by rendering as text
+          // unless it looks like intentional HTML (contains tags)
+          if (/<[a-z][\s\S]*>/i.test(props.description)) {
+            desc.innerHTML = props.description;
+          } else {
+            desc.textContent = props.description;
+          }
+          content.appendChild(desc);
+        }
+
+        // Show any other non-internal properties
+        var skipKeys = { name: 1, description: 1, styleUrl: 1, styleHash: 1,
+                         styleMapHash: 1, stroke: 1, fill: 1, 'stroke-opacity': 1,
+                         'fill-opacity': 1, 'stroke-width': 1, icon: 1 };
+        var extras = [];
+        Object.keys(props).forEach(function (key) {
+          if (!skipKeys[key] && props[key] !== null && props[key] !== '') {
+            extras.push(key + ': ' + props[key]);
+          }
+        });
+        if (extras.length) {
+          var meta = document.createElement('p');
+          meta.style.fontSize = '11px';
+          meta.style.color = '#888';
+          meta.style.marginTop = '6px';
+          meta.textContent = extras.join(' | ');
+          content.appendChild(meta);
+        }
+
+        // If nothing to show, at least show coordinates
+        if (!content.childNodes.length) {
+          var coordP = document.createElement('p');
+          coordP.textContent = coords.lat.toFixed(5) + ', ' + coords.lng.toFixed(5);
+          content.appendChild(coordP);
+        }
+
+        new maplibregl.Popup({ maxWidth: '320px' })
+          .setLngLat(coords)
+          .setDOMContent(content)
+          .addTo(map);
+      });
+    });
   }
 
   /** Helper: empty GeoJSON FeatureCollection */
@@ -308,6 +385,35 @@
         document.getElementById(target).classList.add('active');
       });
     });
+
+    // Mobile sidebar toggle (hamburger menu)
+    var sidebarToggle = document.getElementById('sidebar-toggle');
+    var sidebar       = document.getElementById('sidebar');
+    var overlay       = document.getElementById('sidebar-overlay');
+
+    if (sidebarToggle) {
+      sidebarToggle.addEventListener('click', function () {
+        sidebar.classList.toggle('open');
+        overlay.classList.toggle('open');
+      });
+    }
+
+    if (overlay) {
+      overlay.addEventListener('click', function () {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('open');
+      });
+    }
+
+    // Center on GPS button
+    var centerBtn = document.getElementById('center-gps-btn');
+    if (centerBtn) {
+      centerBtn.addEventListener('click', function () {
+        if (gpsLastPos) {
+          map.flyTo({ center: gpsLastPos, zoom: Math.max(map.getZoom(), 14) });
+        }
+      });
+    }
   }
 
   // =====================================================================
@@ -774,7 +880,7 @@
 
   /**
    * Update the GPS marker position on the map.
-   * @param {Object} data - { lat, lon/lng, heading, speed, stale }
+   * @param {Object} data - { lat, lon, heading, speed, stale, accuracy }
    */
   function updateGPSPosition(data) {
     var lng = parseFloat(data.lon || data.lng || data.longitude);
@@ -782,10 +888,17 @@
 
     if (isNaN(lng) || isNaN(lat)) return;
 
-    var stale   = !!data.stale;
-    var heading = data.heading || data.bearing || 0;
+    var stale    = !!data.stale;
+    var heading  = data.heading || data.bearing || 0;
+    var accuracy = data.accuracy; // meters, may be null
 
     setGPSStale(stale);
+
+    if (!stale) {
+      gpsLastPos = [lng, lat];
+      // Show center button once we have a fix
+      document.getElementById('center-gps-btn').classList.remove('hidden');
+    }
 
     // Create or update the GPS marker
     if (!gpsMarker) {
@@ -802,22 +915,62 @@
     markerEl.className = 'gps-marker' + (stale ? ' stale' : '');
     markerEl.style.transform += ' rotate(' + heading + 'deg)';
 
-    // Update tooltip on stale
+    // Update accuracy circle size based on meters
+    updateAccuracyCircle(lat, accuracy);
+
+    // Update tooltip
     if (stale) {
       markerEl.title = 'GPS signal lost';
     } else {
-      markerEl.title = 'GPS: ' + lat.toFixed(5) + ', ' + lng.toFixed(5);
+      var accText = accuracy ? ' ±' + accuracy.toFixed(0) + 'm' : '';
+      markerEl.title = 'GPS: ' + lat.toFixed(5) + ', ' + lng.toFixed(5) + accText;
     }
 
     document.getElementById('gps-badge').classList.remove('hidden');
   }
 
+  /**
+   * Update the accuracy circle diameter based on GPS accuracy in meters.
+   */
+  function updateAccuracyCircle(lat, accuracyMeters) {
+    var circleEl = document.querySelector('.gps-accuracy-circle');
+    if (!circleEl) return;
+
+    if (!accuracyMeters || accuracyMeters <= 0 || gpsStale) {
+      circleEl.style.display = 'none';
+      return;
+    }
+
+    // Convert meters to pixels at current zoom and latitude
+    var metersPerPixel = 156543.03 * Math.cos(lat * Math.PI / 180) / Math.pow(2, map.getZoom());
+    var diameter = (accuracyMeters * 2) / metersPerPixel;
+
+    // Only show circle if it's meaningfully larger than the dot (>30px) and not huge (>600px)
+    if (diameter < 30 || diameter > 600) {
+      circleEl.style.display = 'none';
+      return;
+    }
+
+    circleEl.style.display = 'block';
+    circleEl.style.width = diameter + 'px';
+    circleEl.style.height = diameter + 'px';
+  }
+
   function createGPSMarkerElement() {
     var el = document.createElement('div');
     el.className = 'gps-marker';
+
+    // Accuracy circle (behind the dot)
+    var circle = document.createElement('div');
+    circle.className = 'gps-accuracy-circle';
+    circle.style.display = 'none';
+    el.appendChild(circle);
+
+    // Heading arrow
     var arrow = document.createElement('div');
     arrow.className = 'heading-arrow';
     el.appendChild(arrow);
+
     return el;
   }
 

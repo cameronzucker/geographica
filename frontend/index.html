@@ -31,6 +31,9 @@
     <ul id="search-results"></ul>
   </div>
 
+  <!-- ===== Sidebar overlay (mobile backdrop) ===== -->
+  <div id="sidebar-overlay"></div>
+
   <!-- ===== Sidebar ===== -->
   <div id="sidebar">
     <div id="sidebar-tabs">
@@ -125,6 +128,25 @@
     <span id="gps-dot"></span>
     <span id="gps-text">GPS</span>
   </div>
+
+  <!-- ===== Center on GPS button ===== -->
+  <button id="center-gps-btn" class="map-btn hidden" title="Center on GPS position">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"></circle>
+      <path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+    </svg>
+  </button>
+
+  <!-- ===== Mobile sidebar toggle ===== -->
+  <button id="sidebar-toggle" class="map-btn" title="Toggle menu">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </button>
 
   <!-- ===== Map container ===== -->
   <div id="map"></div>
