@@ -240,15 +240,32 @@
       setLayerVisibility('hillshade-layer', this.checked);
     });
 
-    // 3D terrain toggle
+    // 3D terrain toggle + exaggeration slider
     var terrainCheckbox = document.getElementById('toggle-terrain');
+    var terrainSlider = document.getElementById('terrain-exaggeration');
+    var terrainLabel = document.getElementById('terrain-exaggeration-value');
+
+    function applyTerrain() {
+      if (!terrainCheckbox || !terrainCheckbox.checked) return;
+      var val = parseFloat(terrainSlider.value) / 10;
+      map.setTerrain({ source: 'elevation', exaggeration: val });
+    }
+
     if (terrainCheckbox) {
       terrainCheckbox.addEventListener('change', function () {
         if (this.checked) {
-          map.setTerrain({ source: 'elevation', exaggeration: 1.5 });
+          applyTerrain();
         } else {
           map.setTerrain(null);
         }
+      });
+    }
+
+    if (terrainSlider) {
+      terrainSlider.addEventListener('input', function () {
+        var val = parseFloat(this.value) / 10;
+        terrainLabel.textContent = val.toFixed(1) + 'x';
+        applyTerrain();
       });
     }
   }
@@ -268,7 +285,9 @@
     setLayerVisibility('imagery-layer', imagery);
     setLayerVisibility('hillshade-layer', hillshade);
     if (terrainCb && terrainCb.checked) {
-      map.setTerrain({ source: 'elevation', exaggeration: 1.5 });
+      var exSlider = document.getElementById('terrain-exaggeration');
+      var ex = exSlider ? parseFloat(exSlider.value) / 10 : 1.5;
+      map.setTerrain({ source: 'elevation', exaggeration: ex });
     }
   }
 
@@ -1001,6 +1020,89 @@
   }
 
   // =====================================================================
+  //  8. FREE-LOOK CAMERA (Google Earth style)
+  // =====================================================================
+  //
+  // Default MapLibre Ctrl+drag: orbits around a point ON THE GROUND.
+  // Google Earth Ctrl: looks around from a fixed point IN THE SKY.
+  //
+  // We intercept Ctrl+mousedown to enter "free look" mode. While active,
+  // mouse movement changes bearing and pitch while keeping the camera
+  // position fixed (as if turning your head from a drone).
+  //
+  // Shift+drag retains MapLibre's default orbit behavior.
+
+  function initFreeLookCamera() {
+    var freeLookActive = false;
+    var startX = 0;
+    var startY = 0;
+    var startBearing = 0;
+    var startPitch = 0;
+
+    var canvas = map.getCanvas();
+
+    // Disable MapLibre's built-in Ctrl+drag rotation so we can override it
+    map.dragRotate.disable();
+
+    // Re-enable right-click drag for the default orbit (shift+drag style)
+    map.on('mousedown', function (e) {
+      if (e.originalEvent.button === 2) {
+        // Right-click drag: use default orbit behavior
+        map.dragRotate.enable();
+      }
+    });
+
+    canvas.addEventListener('mousedown', function (e) {
+      if (e.ctrlKey && e.button === 0) {
+        // Ctrl+left click: enter free-look mode
+        e.preventDefault();
+        e.stopPropagation();
+        freeLookActive = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        startBearing = map.getBearing();
+        startPitch = map.getPitch();
+        canvas.style.cursor = 'crosshair';
+
+        // Prevent map from starting a regular drag
+        map.dragPan.disable();
+      }
+    });
+
+    window.addEventListener('mousemove', function (e) {
+      if (!freeLookActive) return;
+      e.preventDefault();
+
+      var dx = e.clientX - startX;
+      var dy = e.clientY - startY;
+
+      // Horizontal movement = bearing change, vertical = pitch change
+      // Sensitivity: 0.3 degrees per pixel
+      var newBearing = startBearing + dx * 0.3;
+      var newPitch = Math.max(0, Math.min(85, startPitch - dy * 0.3));
+
+      map.jumpTo({
+        bearing: newBearing,
+        pitch: newPitch
+      });
+    });
+
+    window.addEventListener('mouseup', function (e) {
+      if (!freeLookActive) return;
+      freeLookActive = false;
+      canvas.style.cursor = '';
+      map.dragPan.enable();
+    });
+
+    // Also support Shift+drag for ground-orbit (MapLibre default behavior)
+    canvas.addEventListener('mousedown', function (e) {
+      if (e.shiftKey && e.button === 0) {
+        map.dragRotate.enable();
+      }
+    });
+  }
+
+  // =====================================================================
   //  BOOTSTRAP
   // =====================================================================
 
@@ -1012,6 +1114,10 @@
     initRouting();
     initImport();
     initGPS();
+    // Free-look camera needs map to be initialized first
+    map.on('load', function () {
+      initFreeLookCamera();
+    });
   });
 
 })();
