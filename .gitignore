@@ -28,3 +28,4 @@ tileserver/*.tsv.gz
 tileserver/sources/
 tileserver/styles/*/LICENSE*
 tileserver/styles/*/icons/
+tileserver/tmp/

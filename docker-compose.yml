@@ -8,6 +8,10 @@ services:
     volumes:
       - ./tileserver:/data
     command: ["--config", "/data/config.json"]
+    deploy:
+      resources:
+        limits:
+          memory: 1G
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
       interval: 30s
@@ -34,6 +38,10 @@ services:
       tileset_name: "valhalla_tiles"
     volumes:
       - ./data/valhalla:/custom_files
+    deploy:
+      resources:
+        limits:
+          memory: 4G
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8002/status"]
       interval: 30s
@@ -64,6 +72,10 @@ services:
       - ./data/nominatim:/nominatim/data
       - nominatim-db:/var/lib/postgresql/16/main
       - nominatim-flatnode:/nominatim/flatnode
+    deploy:
+      resources:
+        limits:
+          memory: 8G
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/status"]
       interval: 30s
@@ -88,6 +100,10 @@ services:
       GPSD_PORT: "2947"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
       interval: 15s
@@ -109,6 +125,10 @@ services:
     depends_on:
       nominatim:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
       interval: 15s
@@ -127,6 +147,10 @@ services:
       - search
     ports:
       - "8093:80"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
     volumes:
       - ./frontend:/usr/share/nginx/html:ro
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
