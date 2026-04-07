@@ -25,3 +25,11 @@
 - **Cons:** Re-running the full data pipeline is time-consuming (days for imagery, hours for Nominatim import).
 - **Context:** Codex outside voice raised this (point #27). For v1, "re-run the pipeline" is acceptable. A future version could support incremental OSM updates via Osmium and differential Nominatim updates.
 - **Depends on:** Phase 0 data pipeline proven.
+
+### Admin task monitor in UI
+- **What:** A panel in the frontend (or a dedicated /admin page) that shows the status of long-running backend tasks: Nominatim import progress, Valhalla graph build, tile downloads, POI indexing. Display progress percentage, ETA, and current phase where available.
+- **Why:** First-run setup involves multiple multi-hour imports running simultaneously. Right now the only way to check progress is SSH + `docker logs`. An operator deploying Geographica on a mesh should be able to check import status from any browser on the network without terminal access.
+- **Pros:** Dramatically improves the first-run experience. Also useful for data refresh workflows (re-importing after an OSM update). Could surface service health at a glance — which containers are up, which are still initializing.
+- **Cons:** Requires a lightweight status API that polls container logs or healthcheck endpoints. Nominatim and Valhalla don't expose structured progress — would need log parsing or periodic healthcheck probing.
+- **Context:** Identified during Phase 0 deployment while waiting ~8 hours for Nominatim to import 11 Western US states. The operator experience of "is it done yet?" with no visibility is poor.
+- **Depends on:** Phase 1 frontend complete. Could be a simple addition to the search/POI FastAPI service (add a /admin/status endpoint that checks healthchecks and parses recent Docker logs via the Docker socket).
