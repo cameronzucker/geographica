@@ -12,7 +12,7 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## Critical context — read before making any changes
 
-1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs, user preferences, and project decisions. Read the handoff at `handoff_20260408b.md` for the most recent session context.
+1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs, user preferences, and project decisions. Read the handoff at `handoff_20260408c.md` for the most recent session context.
 
 2. **Read CLAUDE.md** in the repo root — it has the project structure, commands, hardware specs, and skill routing rules.
 
@@ -61,9 +61,10 @@ Check status: `curl -s http://localhost:8096/admin/status | python3 -m json.tool
 ## What to work on next
 
 ### High priority
-1. **M2M API download access** — ERS approval was submitted. Once approved, test the `--mode m2m` pipeline end-to-end. Credentials are stored at `/srv/geographica/data/.credentials.json`.
-2. **Verify elevation download completed** — check if z13-14 finished (~62% last check). Once done, restart TileServer to pick up new tiles.
-3. **Test GPS source switching on remote device** — the async race condition fix needs field verification on a phone/tablet over Tailscale HTTPS.
+1. **Phase 2b: Whisper STT on Hailo 10H NPU** — audio→text feeds into `POST /search/spatial`. The text parser (Phase 2a) is complete and tested.
+2. **Expanded POI sources** — Nominatim has sparse coverage for rural areas (no gas stations along I-10 between Buckeye and Blythe). Overture Maps or direct OSM amenity extraction would dramatically improve results.
+3. **M2M API download access** — ERS approval was submitted. Once approved, test the `--mode m2m` pipeline end-to-end.
+4. **Verify elevation download completed** — check if z13-14 finished. Once done, restart TileServer.
 
 ### Medium priority
 4. **Phase 2: Voice AI** — Whisper on Hailo 10H NPU for spatial queries. Design doc has the full spec. The turn-by-turn navigation engine already supports voice via Web Speech API; Phase 2 adds Hailo-based offline STT.
