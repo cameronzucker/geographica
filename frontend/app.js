@@ -1929,17 +1929,17 @@
 
       row.appendChild(header);
 
-      // Detail line (tile count or feature count)
+      // Detail line (tile count, feature count, or file size fallback)
       var count = task.tiles || task.features || 0;
+      var detail = document.createElement('div');
+      detail.className = 'admin-data-detail';
+
       if (count > 0) {
-        var detail = document.createElement('div');
-        detail.className = 'admin-data-detail';
         var total = KNOWN_TOTALS[task.name];
         if (total && task.status === 'downloading') {
           var pct = (count / total * 100).toFixed(1);
           detail.textContent = count.toLocaleString() + ' / ' + total.toLocaleString() + ' tiles (' + pct + '%)';
 
-          // Progress bar
           var bar = document.createElement('div');
           bar.className = 'admin-progress-bar';
           var fill = document.createElement('div');
@@ -1952,6 +1952,10 @@
           detail.textContent = count.toLocaleString() + (task.tiles ? ' tiles' : ' features');
           row.appendChild(detail);
         }
+      } else if (task.size_mb) {
+        // Fallback when SQLite is locked: show file size
+        detail.textContent = task.size_mb + ' MB (database busy, estimate)';
+        row.appendChild(detail);
       }
 
       container.appendChild(row);

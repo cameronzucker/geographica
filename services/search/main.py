@@ -368,44 +368,53 @@ async def admin_status():
     import pathlib
     data_dir = pathlib.Path("/data")
 
-    # Elevation MBTiles
-    elev_path = data_dir / "elevation.mbtiles"
-    if elev_path.exists():
+    def _read_mbtiles_status(path, name):
+        """Read tile count from an MBTiles file, tolerating writer locks.
+
+        Strategy: try SQLite query first (accurate tile count). If the
+        database is locked by a writer, fall back to file size estimate
+        and report as 'downloading' based on the presence of a journal file.
+        """
+        import sqlite3
+
+        # Check if a write is in progress (journal/wal file exists)
+        journal = pathlib.Path(str(path) + "-journal")
+        wal = pathlib.Path(str(path) + "-wal")
+        is_writing = journal.exists() or wal.exists()
+
         try:
-            import sqlite3
-            conn = sqlite3.connect(str(elev_path))
+            conn = sqlite3.connect(str(path), timeout=2)
             tile_count = conn.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
-            # Check for checkpoint table
             has_checkpoint = conn.execute(
                 "SELECT COUNT(*) FROM sqlite_master WHERE name='_checkpoint'"
             ).fetchone()[0]
             conn.close()
-            data_tasks.append({
-                "name": "Elevation tiles",
+            return {
+                "name": name,
                 "tiles": tile_count,
-                "status": "downloading" if has_checkpoint else "complete",
-            })
-        except Exception:
-            data_tasks.append({"name": "Elevation tiles", "status": "locked"})
+                "status": "downloading" if (has_checkpoint or is_writing) else "complete",
+            }
+        except sqlite3.OperationalError:
+            # Database locked — estimate from file size
+            try:
+                size_mb = path.stat().st_size / (1024 * 1024)
+                return {
+                    "name": name,
+                    "size_mb": round(size_mb, 1),
+                    "status": "downloading" if is_writing else "processing",
+                }
+            except Exception:
+                return {"name": name, "status": "busy"}
+
+    # Elevation MBTiles
+    elev_path = data_dir / "elevation.mbtiles"
+    if elev_path.exists():
+        data_tasks.append(_read_mbtiles_status(elev_path, "Elevation tiles"))
 
     # Imagery MBTiles
     imagery_path = data_dir / "imagery.mbtiles"
     if imagery_path.exists():
-        try:
-            import sqlite3
-            conn = sqlite3.connect(str(imagery_path))
-            tile_count = conn.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
-            has_checkpoint = conn.execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE name='_checkpoint'"
-            ).fetchone()[0]
-            conn.close()
-            data_tasks.append({
-                "name": "Imagery tiles",
-                "tiles": tile_count,
-                "status": "downloading" if has_checkpoint else "complete",
-            })
-        except Exception:
-            data_tasks.append({"name": "Imagery tiles", "status": "locked"})
+        data_tasks.append(_read_mbtiles_status(imagery_path, "Imagery tiles"))
 
     # POI database
     poi_path = data_dir / "poi.sqlite"
