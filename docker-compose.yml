@@ -7,7 +7,7 @@ services:
       - "8090:8080"
     volumes:
       - ./tileserver:/data
-      - ./data:/srv/data:ro
+      - ./data:/srv/data
     command: ["--config", "/data/config.json"]
     deploy:
       resources:
