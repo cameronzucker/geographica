@@ -122,8 +122,8 @@ services:
       NOMINATIM_URL: "http://nominatim:8080"
       POI_DB_PATH: "/data/poi.sqlite"
       ADMIN_TOKEN: "${ADMIN_TOKEN:-}"
-      DATA_HOST_PATH: "${DATA_HOST_PATH:-}"
-      SCRIPTS_HOST_PATH: "${SCRIPTS_HOST_PATH:-}"
+      DATA_HOST_PATH: "${DATA_HOST_PATH:-/srv/geographica/data}"
+      SCRIPTS_HOST_PATH: "${SCRIPTS_HOST_PATH:-/home/administrator/Code/geographica/scripts}"
     volumes:
       - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro

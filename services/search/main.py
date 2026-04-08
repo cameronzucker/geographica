@@ -724,13 +724,20 @@ async def pipeline_start(body: PipelineStartBody):
             if host_scripts_path:
                 volumes[host_scripts_path] = {"bind": "/scripts", "mode": "ro"}
 
+            # Remove any stale pipeline container before starting
+            try:
+                old = client.containers.get("geographica-pipeline")
+                old.remove(force=True)
+            except Exception:
+                pass
+
             # Start the pipeline container
             container = client.containers.run(
                 "geographica-pipeline",
                 command=command,
                 name="geographica-pipeline",
                 detach=True,
-                remove=True,
+                remove=False,  # Keep container for log capture on failure
                 volumes=volumes,
                 environment=env,
                 network=network,
