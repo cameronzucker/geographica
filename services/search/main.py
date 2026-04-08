@@ -615,8 +615,8 @@ async def pipeline_start(body: PipelineStartBody):
 
     # Estimate tile count and check disk space
     tile_count = estimate_tile_count(bbox, zoom_min, zoom_max)
-    # Rough estimate: ~50 KB per tile average
-    estimated_size_gb = tile_count * 50 * 1024 / (1024 ** 3)
+    # Rough estimate: ~20 KB per tile average (measured from USGS imagery)
+    estimated_size_gb = tile_count * 20 * 1024 / (1024 ** 3)
     disk_free_gb = _get_disk_free_gb()
     if disk_free_gb - estimated_size_gb < 10.0:
         raise HTTPException(
@@ -692,30 +692,37 @@ async def pipeline_start(body: PipelineStartBody):
             # Resolve volume paths - match the compose definition for pipeline service
             # The compose file maps ./scripts:/scripts:ro and ./data:/data
             # From inside the search container, /data is already the host's ./data mount
-            # We need the host paths for Docker SDK volume mounts
-            # Use the same bind mounts that compose would use
+            # Resolve host paths for Docker SDK volume mounts.
+            # Use DATA_HOST_PATH env var if set (preferred), otherwise
+            # introspect from the search container's own mounts.
+            host_data_path = os.environ.get("DATA_HOST_PATH", "")
+            host_scripts_path = os.environ.get("SCRIPTS_HOST_PATH", "")
+
+            if not host_data_path:
+                try:
+                    search_container = client.containers.get("geographica-search")
+                    mounts = search_container.attrs.get("Mounts", [])
+                    for mount in mounts:
+                        if mount.get("Destination") == "/data":
+                            host_data_path = mount.get("Source", "")
+                            host_base = os.path.dirname(host_data_path)
+                            if not host_scripts_path:
+                                host_scripts_path = os.path.join(host_base, "scripts")
+                            break
+                except Exception:
+                    pass
+
+            if not host_data_path:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Cannot determine host data path. Set DATA_HOST_PATH env var."
+                )
+
             volumes = {
-                "/data": {"bind": "/data", "mode": "rw"},
+                host_data_path: {"bind": "/data", "mode": "rw"},
             }
-            # /scripts is read-only in the compose definition
-            # The search container doesn't have /scripts, but the host path is mapped
-            # We read the mount info to find the host source for /data
-            try:
-                search_container = client.containers.get("geographica-search")
-                mounts = search_container.attrs.get("Mounts", [])
-                for mount in mounts:
-                    if mount.get("Destination") == "/data":
-                        host_data_path = mount.get("Source", "")
-                        # Derive scripts path from data path (sibling directory)
-                        host_base = os.path.dirname(host_data_path)
-                        host_scripts_path = os.path.join(host_base, "scripts")
-                        volumes = {
-                            host_data_path: {"bind": "/data", "mode": "rw"},
-                            host_scripts_path: {"bind": "/scripts", "mode": "ro"},
-                        }
-                        break
-            except Exception:
-                pass  # Fall back to /data:/data
+            if host_scripts_path:
+                volumes[host_scripts_path] = {"bind": "/scripts", "mode": "ro"}
 
             # Start the pipeline container
             container = client.containers.run(
@@ -780,11 +787,24 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
             client.close()
 
     # Reconcile: if state says running but container is dead, mark interrupted
-    if state_data.get("status") == "running" and not container_running:
-        state_data["status"] = "interrupted"
-        # Update state file
+    # and capture last logs for crash diagnosis
+    if state_data.get("status") in ("running", "cancelling") and not container_running:
+        new_status = "cancelled" if state_data.get("status") == "cancelling" else "interrupted"
+        state_data["status"] = new_status
+
+        # Try to capture last logs from dead container (if it wasn't auto-removed)
+        if client:
+            try:
+                container = client.containers.get("geographica-pipeline")
+                logs = container.logs(tail=50, timestamps=False).decode("utf-8", errors="replace")
+                state_data["last_logs"] = logs[-2000:]  # cap at 2KB
+            except Exception:
+                pass
+
         try:
-            state_file.write_text(json.dumps(state_data, indent=2))
+            tmp = state_file.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(state_data, indent=2))
+            os.replace(str(tmp), str(state_file))
         except OSError:
             pass
 
@@ -808,17 +828,33 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
 @app.post("/admin/pipeline/cancel", dependencies=[Depends(require_admin)])
 async def pipeline_cancel():
     """Cancel a running pipeline."""
-    client = _get_docker_client()
-    if not client:
-        raise HTTPException(status_code=503, detail="Docker socket not available")
+    async with _pipeline_lock:
+        # Write "cancelling" to both possible state files immediately
+        for state_file in [
+            Path("/data/.pipeline-state.json"),
+            Path("/data/.elevation-state.json"),
+        ]:
+            if state_file.exists():
+                try:
+                    existing = json.loads(state_file.read_text())
+                    if existing.get("status") == "running":
+                        existing["status"] = "cancelling"
+                        tmp = state_file.with_suffix(".json.tmp")
+                        tmp.write_text(json.dumps(existing))
+                        os.replace(str(tmp), str(state_file))
+                except Exception:
+                    pass
 
-    try:
-        container = client.containers.get("geographica-pipeline")
-        container.stop(timeout=30)
-    except Exception:
-        # Container not found or already stopped - that's fine
-        pass
-    finally:
-        client.close()
+        client = _get_docker_client()
+        if not client:
+            raise HTTPException(status_code=503, detail="Docker socket not available")
+
+        try:
+            container = client.containers.get("geographica-pipeline")
+            container.stop(timeout=30)
+        except Exception:
+            pass
+        finally:
+            client.close()
 
     return {"status": "cancelling"}

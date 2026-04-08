@@ -72,12 +72,24 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 
 
 def write_pipeline_state(output_path: Path, state: dict):
-    """Atomically write pipeline state JSON for the admin monitor."""
+    """Atomically merge pipeline state JSON for the admin monitor.
+
+    Merges new fields into existing state to preserve API metadata
+    (bbox, zoom, type, estimated_tiles) written by the search service.
+    """
     state_path = output_path.parent / ".pipeline-state.json"
     tmp_path = state_path.with_suffix(".json.tmp")
     try:
-        tmp_path.write_text(json.dumps(state))
-        os.fsync(tmp_path.open().fileno())
+        existing = {}
+        if state_path.exists():
+            try:
+                existing = json.loads(state_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass
+        existing.update(state)
+        tmp_path.write_text(json.dumps(existing))
+        with open(tmp_path) as f:
+            os.fsync(f.fileno())
         os.replace(str(tmp_path), str(state_path))
     except Exception as exc:
         log.warning("Failed to write pipeline state: %s", exc)

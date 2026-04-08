@@ -233,10 +233,18 @@
       shapeOffset += coords.length;
     });
 
+    var summary = trip.summary || {};
+    // Convert distance from display units to meters for the engine
+    var distMeters = (summary.length || 0) * (window._geographicaUseImperial ? 1609.344 : 1000);
+
     return {
       coords: allCoords,
       maneuvers: allManeuvers,
-      summary: trip.summary || {}
+      summary: summary,
+      totalDistance: distMeters,
+      totalTime: summary.time || 0,
+      costing: trip.legs && trip.legs[0] ? (trip.legs[0].summary || {}).costing || 'auto' : 'auto',
+      remainingWaypoints: []
     };
   }
 
@@ -342,36 +350,45 @@
   function onNavUpdate(state) {
     if (!active) return;
 
+    // Read from engine's state object structure:
+    // state.nextManeuver: { instruction, type, distanceTo, lanes }
+    // state.afterNextManeuver: { instruction, type, distanceTo } | null
+    // state.distanceRemaining, state.timeRemaining, state.speed
+    // state.state: 'idle'|'joining'|'navigating'|'rerouting'|'arrived' (lowercase)
+
+    var nm = state.nextManeuver;
+
     // Update instruction card
-    if (state.instruction) {
-      instrMain.textContent = state.instruction;
+    if (nm && nm.instruction) {
+      instrMain.textContent = nm.instruction;
     }
 
     // Distance to next maneuver
-    if (state.distanceToManeuver != null) {
-      instrDist.textContent = formatNavDistance(state.distanceToManeuver);
+    if (nm && nm.distanceTo != null) {
+      instrDist.textContent = formatNavDistance(nm.distanceTo);
     }
 
     // After-next hint
-    if (state.afterNext) {
-      instrAfter.textContent = 'then ' + state.afterNext;
+    var anm = state.afterNextManeuver;
+    if (anm && anm.instruction) {
+      instrAfter.textContent = 'then ' + anm.instruction;
       instrAfter.style.display = '';
     } else {
       instrAfter.style.display = 'none';
     }
 
     // Maneuver icon
-    if (state.maneuverType != null) {
-      setManeuverIcon(state.maneuverType);
+    if (nm && nm.type != null) {
+      setManeuverIcon(nm.type);
     }
 
     // Status bar
-    if (state.remainingDistance != null) {
-      statusDist.textContent = formatNavDistance(state.remainingDistance);
+    if (state.distanceRemaining != null) {
+      statusDist.textContent = formatNavDistance(state.distanceRemaining);
     }
-    if (state.remainingTime != null) {
-      statusTime.textContent = formatDuration(state.remainingTime);
-      var eta = new Date(Date.now() + state.remainingTime * 1000);
+    if (state.timeRemaining != null) {
+      statusTime.textContent = formatDuration(state.timeRemaining);
+      var eta = new Date(Date.now() + state.timeRemaining * 1000);
       statusEta.textContent = 'ETA ' + formatTime(eta);
     }
     if (state.speed != null) {
@@ -382,14 +399,14 @@
       }
     }
 
-    // State banners
+    // State banners (engine uses lowercase state strings)
     if (state.gpsStale) {
       showBanner('GPS signal delayed', 'gps-stale');
     } else if (state.estimated) {
       showBanner('Estimated position', 'estimated');
-    } else if (state.state === 'REROUTING') {
+    } else if (state.state === 'rerouting') {
       showBanner('Recalculating...', 'recalculating');
-    } else if (state.state === 'JOINING') {
+    } else if (state.state === 'joining') {
       showBanner('Joining route...', 'joining');
     } else {
       hideBanner();

@@ -2422,7 +2422,7 @@
   }
 
   function formatTileEstimate(count) {
-    var sizeBytes = count * 15 * 1024; // 15 KB average
+    var sizeBytes = count * 20 * 1024; // 20 KB average (matches backend)
     var sizeGB = sizeBytes / (1024 * 1024 * 1024);
     var rate = 680; // tiles/sec typical
     var seconds = count / rate;
@@ -2499,7 +2499,7 @@
       var bbox = bboxInput.value.trim();
       var zoom = zoomSelect.value;
       var count = estimateTileCount(bbox, zoom);
-      var sizeGB = (count * 15 * 1024 / (1024 * 1024 * 1024)).toFixed(1);
+      var sizeGB = (count * 20 * 1024 / (1024 * 1024 * 1024)).toFixed(1);
       var countStr = count >= 1000000 ? (count / 1000000).toFixed(2) + 'M' : count.toLocaleString();
 
       var updateMode = document.getElementById('pipeline-update').checked;
