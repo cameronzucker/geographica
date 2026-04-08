@@ -71,6 +71,13 @@
 
 ---
 
+### Public land use map layer
+- **What:** Add public land boundaries (BLM, USFS, NPS, state lands) to the vector basemap or as a toggleable overlay layer. Show checkerboard ownership patterns that are invisible on the ground.
+- **Why:** Public/private land boundaries in the Western US are often unmarked. Knowing whether you're on BLM, National Forest, or private land is critical for field operations, recreation, and regulatory compliance.
+- **Depends on:** Expanded POI sources (provides the `boundary=protected_area` data with operator/agency attribution).
+
+---
+
 ## Low Priority / Deferred
 
 ### Search debounce/abort pattern
