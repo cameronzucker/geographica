@@ -475,6 +475,46 @@ html, body {
   left: 12px;
 }
 
+/* ----- Status bar (bottom of map) ----- */
+#status-bar {
+  position: absolute;
+  bottom: 0;
+  left: var(--sidebar-width);
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  background: rgba(20, 20, 30, 0.8);
+  backdrop-filter: blur(4px);
+  padding: 4px 12px;
+  font-size: 11px;
+  font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+  color: #b0b8cc;
+  gap: 0;
+  pointer-events: none;
+}
+
+.status-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+}
+
+.status-label {
+  color: #7a8299;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+
+.status-divider {
+  width: 1px;
+  height: 14px;
+  background: #3a3f50;
+}
+
 /* ----- Sidebar overlay (mobile) ----- */
 #sidebar-overlay {
   display: none;
@@ -604,6 +644,15 @@ html, body {
 
   #center-gps-btn {
     left: 12px;
+  }
+
+  #status-bar {
+    left: 0;
+    font-size: 10px;
+  }
+
+  .status-section {
+    padding: 0 6px;
   }
 }
 

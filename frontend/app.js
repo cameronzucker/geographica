@@ -949,6 +949,9 @@
     // Update accuracy circle (geographic layer, scales with map)
     updateAccuracyCircle(lat, lng, accuracy);
 
+    // Update status bar GPS readout
+    updateGPSStatus(lat, lng, data.alt, accuracy, data.fix || 0);
+
     // Update tooltip
     if (stale) {
       markerEl.title = 'GPS signal lost';
@@ -1219,7 +1222,85 @@
   }
 
   // =====================================================================
-  //  8. FREE-LOOK CAMERA (Google Earth style)
+  //  8. STATUS BAR (GPS + Camera readouts)
+  // =====================================================================
+
+  function initStatusBar() {
+    // Update camera readout on every map move
+    map.on('move', updateCameraStatus);
+    map.on('zoom', updateCameraStatus);
+    map.on('pitch', updateCameraStatus);
+    updateCameraStatus();
+  }
+
+  function updateCameraStatus() {
+    var center = map.getCenter();
+    var zoom = map.getZoom();
+    var pitch = map.getPitch();
+
+    // Approximate eye altitude from zoom level
+    // At zoom 0, altitude ≈ 35,200 km (full earth view)
+    // Each zoom halves the altitude
+    var altMeters = 35200000 / Math.pow(2, zoom);
+    // Adjust for pitch — when tilted, the effective eye altitude is higher
+    if (pitch > 0) {
+      altMeters = altMeters / Math.cos(pitch * Math.PI / 180);
+    }
+
+    var altStr = formatAltitude(altMeters);
+    var latStr = formatCoord(center.lat, 'NS');
+    var lonStr = formatCoord(center.lng, 'EW');
+
+    var el = document.getElementById('status-camera-value');
+    if (el) {
+      el.textContent = latStr + '  ' + lonStr + '  alt ' + altStr;
+    }
+  }
+
+  /**
+   * Update GPS position readout in the status bar.
+   * Called from updateGPSPosition() on each WebSocket message.
+   */
+  function updateGPSStatus(lat, lng, alt, accuracy, fix) {
+    var el = document.getElementById('status-gps-value');
+    if (!el) return;
+
+    if (fix < 2) {
+      el.textContent = 'No fix';
+      return;
+    }
+
+    var latStr = formatCoord(lat, 'NS');
+    var lonStr = formatCoord(lng, 'EW');
+    var altStr = alt ? formatAltitude(alt) : '—';
+    var accStr = accuracy ? '±' + accuracy.toFixed(0) + 'm' : '';
+    var fixStr = fix === 2 ? '2D' : '3D';
+
+    el.textContent = latStr + '  ' + lonStr + '  ' + altStr + '  ' + accStr + '  ' + fixStr;
+  }
+
+  /** Format latitude or longitude as degrees with direction (e.g., "33.6506° N") */
+  function formatCoord(value, dirs) {
+    var abs = Math.abs(value);
+    var dir = value >= 0 ? dirs[0] : dirs[1];
+    return abs.toFixed(5) + '° ' + dir;
+  }
+
+  /** Format altitude with appropriate units */
+  function formatAltitude(meters) {
+    if (meters >= 1000000) {
+      return (meters / 1000).toFixed(0) + ' km';
+    } else if (meters >= 10000) {
+      return (meters / 1000).toFixed(1) + ' km';
+    } else if (meters >= 1000) {
+      return (meters / 1000).toFixed(2) + ' km';
+    } else {
+      return meters.toFixed(0) + ' m';
+    }
+  }
+
+  // =====================================================================
+  //  9. FREE-LOOK CAMERA (Google Earth style)
   // =====================================================================
   //
   // Default MapLibre Ctrl+drag: orbits around a point ON THE GROUND.
@@ -1313,9 +1394,10 @@
     initRouting();
     initImport();
     initGPS();
-    // Free-look camera needs map to be initialized first
+    // These need the map to be initialized first
     map.on('load', function () {
       initFreeLookCamera();
+      initStatusBar();
     });
   });
 
