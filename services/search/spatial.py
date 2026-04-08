@@ -264,3 +264,209 @@ def parse_intent(
         "radius_m": radius_m,
         "interval_m": interval_m,
     }
+
+
+# ---------------------------------------------------------------------------
+# Haversine (duplicated from main.py for module independence)
+# ---------------------------------------------------------------------------
+def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Distance in metres between two lat/lon points."""
+    rlat1, rlon1, rlat2, rlon2 = (math.radians(v) for v in (lat1, lon1, lat2, lon2))
+    dlat = rlat2 - rlat1
+    dlon = rlon2 - rlon1
+    a = math.sin(dlat / 2) ** 2 + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlon / 2) ** 2
+    return 2 * EARTH_RADIUS_M * math.asin(math.sqrt(a))
+
+
+# ---------------------------------------------------------------------------
+# Douglas-Peucker polyline simplification
+# ---------------------------------------------------------------------------
+def _point_line_distance_m(
+    plng: float, plat: float,
+    a_lng: float, a_lat: float,
+    b_lng: float, b_lat: float,
+) -> float:
+    """Approximate perpendicular distance from point to line AB in meters."""
+    d_ap = haversine_m(plat, plng, a_lat, a_lng)
+    d_ab = haversine_m(a_lat, a_lng, b_lat, b_lng)
+    if d_ab < 1.0:
+        return d_ap
+    bear_ap = math.atan2(
+        math.sin(math.radians(plng - a_lng)) * math.cos(math.radians(plat)),
+        math.cos(math.radians(a_lat)) * math.sin(math.radians(plat))
+        - math.sin(math.radians(a_lat)) * math.cos(math.radians(plat))
+        * math.cos(math.radians(plng - a_lng))
+    )
+    bear_ab = math.atan2(
+        math.sin(math.radians(b_lng - a_lng)) * math.cos(math.radians(b_lat)),
+        math.cos(math.radians(a_lat)) * math.sin(math.radians(b_lat))
+        - math.sin(math.radians(a_lat)) * math.cos(math.radians(b_lat))
+        * math.cos(math.radians(b_lng - a_lng))
+    )
+    cross_track = abs(math.asin(
+        math.sin(d_ap / EARTH_RADIUS_M) * math.sin(bear_ap - bear_ab)
+    )) * EARTH_RADIUS_M
+    return cross_track
+
+
+def douglas_peucker(points: list[list[float]], tolerance_m: float = 50.0) -> list[list[float]]:
+    """Simplify a [lng, lat] polyline using Douglas-Peucker algorithm."""
+    if len(points) <= 2:
+        return list(points)
+
+    max_dist = 0.0
+    max_idx = 0
+    a_lng, a_lat = points[0]
+    b_lng, b_lat = points[-1]
+
+    for i in range(1, len(points) - 1):
+        d = _point_line_distance_m(points[i][0], points[i][1], a_lng, a_lat, b_lng, b_lat)
+        if d > max_dist:
+            max_dist = d
+            max_idx = i
+
+    if max_dist > tolerance_m:
+        left = douglas_peucker(points[:max_idx + 1], tolerance_m)
+        right = douglas_peucker(points[max_idx:], tolerance_m)
+        return left[:-1] + right
+    else:
+        return [points[0], points[-1]]
+
+
+# ---------------------------------------------------------------------------
+# Point-to-segment distance with bbox pre-check
+# ---------------------------------------------------------------------------
+def point_to_segment_distance(
+    p_lat: float, p_lng: float,
+    seg_a: list[float], seg_b: list[float],
+) -> float:
+    """Minimum distance in meters from point to line segment [seg_a, seg_b].
+
+    seg_a, seg_b are [lng, lat]. Includes bbox pre-check for performance.
+    """
+    a_lng, a_lat = seg_a
+    b_lng, b_lat = seg_b
+
+    # Bbox pre-check: skip expensive trig for clearly distant points
+    lat_min = min(a_lat, b_lat) - 0.02  # ~2.2 km margin
+    lat_max = max(a_lat, b_lat) + 0.02
+    lng_min = min(a_lng, b_lng) - 0.025
+    lng_max = max(a_lng, b_lng) + 0.025
+    if p_lat < lat_min or p_lat > lat_max or p_lng < lng_min or p_lng > lng_max:
+        return float("inf")
+
+    d_a = haversine_m(p_lat, p_lng, a_lat, a_lng)
+    d_b = haversine_m(p_lat, p_lng, b_lat, b_lng)
+    d_ab = haversine_m(a_lat, a_lng, b_lat, b_lng)
+
+    if d_ab < 1.0:
+        return d_a
+
+    # Project point onto segment using flat-earth approximation (fine at segment scale)
+    dx = b_lng - a_lng
+    dy = b_lat - a_lat
+    t = ((p_lng - a_lng) * dx + (p_lat - a_lat) * dy) / (dx * dx + dy * dy)
+    t = max(0.0, min(1.0, t))
+
+    proj_lng = a_lng + t * dx
+    proj_lat = a_lat + t * dy
+
+    return haversine_m(p_lat, p_lng, proj_lat, proj_lng)
+
+
+# ---------------------------------------------------------------------------
+# Corridor filter
+# ---------------------------------------------------------------------------
+def corridor_filter(
+    route: list[list[float]],
+    candidates: list[dict],
+    corridor_width_m: float = CORRIDOR_WIDTH_M,
+    interval_m: Optional[float] = None,
+) -> list[dict]:
+    """Filter candidates to those within corridor_width_m of the route.
+
+    Route is [[lng, lat], ...]. Candidates are dicts with 'lat' and 'lon' keys.
+    Returns candidates with 'distance_along_route_m' added, sorted by that value.
+    """
+    if len(route) < 2 or not candidates:
+        return []
+
+    simplified = douglas_peucker(route, tolerance_m=50.0)
+
+    # Pre-compute cumulative segment lengths
+    cum_lengths = [0.0]
+    for i in range(1, len(simplified)):
+        seg_len = haversine_m(
+            simplified[i - 1][1], simplified[i - 1][0],
+            simplified[i][1], simplified[i][0],
+        )
+        cum_lengths.append(cum_lengths[-1] + seg_len)
+
+    results = []
+    for cand in candidates:
+        p_lat = float(cand["lat"])
+        p_lng = float(cand["lon"])
+
+        min_dist = float("inf")
+        best_seg_idx = 0
+        best_t = 0.0
+
+        for i in range(len(simplified) - 1):
+            seg_a = simplified[i]
+            seg_b = simplified[i + 1]
+            d = point_to_segment_distance(p_lat, p_lng, seg_a, seg_b)
+            if d < min_dist:
+                min_dist = d
+                best_seg_idx = i
+                dx = seg_b[0] - seg_a[0]
+                dy = seg_b[1] - seg_a[1]
+                denom = dx * dx + dy * dy
+                if denom > 0:
+                    best_t = max(0.0, min(1.0,
+                        ((p_lng - seg_a[0]) * dx + (p_lat - seg_a[1]) * dy) / denom
+                    ))
+                else:
+                    best_t = 0.0
+
+        if min_dist <= corridor_width_m:
+            seg_len = haversine_m(
+                simplified[best_seg_idx][1], simplified[best_seg_idx][0],
+                simplified[best_seg_idx + 1][1], simplified[best_seg_idx + 1][0],
+            )
+            dist_along = cum_lengths[best_seg_idx] + best_t * seg_len
+            result = dict(cand)
+            result["distance_along_route_m"] = round(dist_along, 1)
+            results.append(result)
+
+    results.sort(key=lambda r: r["distance_along_route_m"])
+
+    # Interval filter: keep closest result per interval
+    if interval_m and interval_m > 0 and results:
+        total_route_length = cum_lengths[-1]
+        filtered = []
+        marker = 0.0
+        while marker <= total_route_length:
+            best = None
+            best_diff = float("inf")
+            for r in results:
+                diff = abs(r["distance_along_route_m"] - marker)
+                if diff < best_diff:
+                    best_diff = diff
+                    best = r
+            if best and best not in filtered:
+                filtered.append(best)
+            marker += interval_m
+        results = filtered
+
+    return results
+
+
+def distance_along_polyline(polyline: list[list[float]]) -> float:
+    """Total length of a [lng, lat] polyline in meters."""
+    total = 0.0
+    for i in range(1, len(polyline)):
+        total += haversine_m(
+            polyline[i - 1][1], polyline[i - 1][0],
+            polyline[i][1], polyline[i][0],
+        )
+    return total
