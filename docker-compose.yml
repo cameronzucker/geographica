@@ -121,7 +121,6 @@ services:
     environment:
       NOMINATIM_URL: "http://nominatim:8080"
       POI_DB_PATH: "/data/poi.sqlite"
-      ADMIN_TOKEN: "${ADMIN_TOKEN:-}"
       DATA_HOST_PATH: "${DATA_HOST_PATH:-/srv/geographica/data}"
       SCRIPTS_HOST_PATH: "${SCRIPTS_HOST_PATH:-/home/administrator/Code/geographica/scripts}"
     volumes:
@@ -152,6 +151,11 @@ services:
       - search
     ports:
       - "8093:80"
+      - "${TLS_PORT:-443}:443"
+      - "127.0.0.1:8097:8094"
+    environment:
+      TLS_MODE: "${TLS_MODE:-http}"
+    entrypoint: ["/bin/sh", "/etc/nginx/entrypoint.sh"]
     deploy:
       resources:
         limits:
@@ -159,6 +163,10 @@ services:
     volumes:
       - ./frontend:/usr/share/nginx/html:ro
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/tls-include.conf:/etc/nginx/tls-modes/tls-include.conf:ro
+      - ./nginx/tls-include-empty.conf:/etc/nginx/tls-modes/tls-include-empty.conf:ro
+      - ./nginx/entrypoint.sh:/etc/nginx/entrypoint.sh:ro
+      - ${TLS_CERT_DIR:-./tls}:/etc/nginx/tls
 
   pipeline:
     build:

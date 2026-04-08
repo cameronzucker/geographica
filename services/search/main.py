@@ -25,8 +25,6 @@ from pydantic import BaseModel
 
 NOMINATIM_URL = os.environ.get("NOMINATIM_URL", "http://nominatim:8080")
 POI_DB_PATH = os.environ.get("POI_DB_PATH", "/data/poi.sqlite")
-ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
-
 CREDENTIALS_PATH = Path("/data/.credentials.json")
 DATA_DIR = Path("/data")
 
@@ -39,14 +37,29 @@ _pipeline_lock = asyncio.Lock()
 # ---------------------------------------------------------------------------
 # Auth dependency
 # ---------------------------------------------------------------------------
-async def require_admin(authorization: str = Header(None)):
-    """Check bearer token for admin endpoints."""
-    if not ADMIN_TOKEN:
-        return  # No token configured = no auth required (dev mode)
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Admin token required")
-    if authorization[7:] != ADMIN_TOKEN:
-        raise HTTPException(status_code=403, detail="Invalid admin token")
+async def require_config_source(
+    x_config_source: str = Header(None),
+    x_geographica: str = Header(None),
+):
+    """Verify request came through the config panel NGINX block.
+
+    The config panel server block adds 'X-Config-Source: internal' header.
+    Direct requests to port 8096 or through the public NGINX port won't
+    have this header, so they're rejected.
+
+    Also checks for the X-Geographica header as CSRF protection: its presence
+    forces a CORS preflight which browsers block cross-origin.
+    """
+    if x_config_source != "internal":
+        raise HTTPException(
+            status_code=403,
+            detail="Admin operations require access through the config panel (localhost:8097)",
+        )
+    if x_geographica is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Missing X-Geographica header (CSRF protection)",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -540,7 +553,7 @@ async def admin_status():
 # ---------------------------------------------------------------------------
 # Credential management
 # ---------------------------------------------------------------------------
-@app.post("/admin/credentials", dependencies=[Depends(require_admin)])
+@app.post("/admin/credentials", dependencies=[Depends(require_config_source)])
 async def save_credentials(body: CredentialBody):
     """Store M2M API credentials securely."""
     if not body.m2m_username.strip() or not body.m2m_token.strip():
@@ -577,7 +590,7 @@ async def credentials_status():
     return {"m2m_configured": CREDENTIALS_PATH.exists()}
 
 
-@app.delete("/admin/credentials", dependencies=[Depends(require_admin)])
+@app.delete("/admin/credentials", dependencies=[Depends(require_config_source)])
 async def delete_credentials():
     """Remove stored credentials."""
     try:
@@ -626,7 +639,7 @@ def _get_disk_free_gb() -> float:
     return usage.free / (1024 ** 3)
 
 
-@app.post("/admin/pipeline/start", dependencies=[Depends(require_admin)])
+@app.post("/admin/pipeline/start", dependencies=[Depends(require_config_source)])
 async def pipeline_start(body: PipelineStartBody):
     """Start an imagery or elevation download pipeline."""
     # Validate type
@@ -866,7 +879,7 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
     return state_data
 
 
-@app.post("/admin/pipeline/cancel", dependencies=[Depends(require_admin)])
+@app.post("/admin/pipeline/cancel", dependencies=[Depends(require_config_source)])
 async def pipeline_cancel():
     """Cancel a running pipeline."""
     async with _pipeline_lock:

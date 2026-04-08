@@ -67,3 +67,18 @@
 - **Cons:** KML description content is essentially arbitrary HTML — full rendering requires careful sanitization to avoid XSS while preserving intentional formatting.
 - **Context:** Identified during testing with Ham Radio Deployment Sites.kmz. Deferred pending more reference KML files to test against.
 - **Depends on:** KML import feature complete (done).
+
+### Setup CLI tool
+- **What:** A `geographica-setup` command that detects the network environment (mesh vs internet), generates TLS certs if needed, writes the `.env` file, and restarts the frontend container. One command, one question, done.
+- **Why:** Current setup requires editing .env, running generate_tls.sh, and restarting containers separately. Field operators should have a single entry point.
+- **Pros:** Dramatically simplifies first-run and mode-switching.
+- **Cons:** Another script to maintain.
+- **Context:** Recommended by Round 5 architectural review. Deferred to a future robust setup application.
+- **Depends on:** TLS implementation complete.
+
+### AREDN TLS 1.2 published-key mode
+- **What:** TLS 1.2 with non-PFS ciphers and published server private key for Part 97 compliance.
+- **Why:** Allows HTTPS on amateur radio mesh while satisfying 47 CFR 97.113(a)(4) by making the encryption key publicly available. Provides browser secure context (for device GPS) without confidentiality.
+- **Status:** Designed and reviewed through 5 rounds of adversarial review. Deferred as the regulatory landscape is ambiguous and the implementation complexity is high for questionable benefit.
+- **Context:** HTTP works fine for AREDN. Full TLS 1.3 covers internet/Cloudflare use. The published-key mode sits in an uncomfortable middle ground.
+- **Depends on:** FCC clarification on TLS over amateur radio, or community consensus.

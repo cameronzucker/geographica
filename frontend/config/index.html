@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geographica Config</title>
+    <style>
+        /* Dark theme matching the main app sidebar */
+        body { font-family: -apple-system, sans-serif; background: #1e1e2e; color: #cdd6f4; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; }
+        h1 { font-size: 20px; color: #f5f5f5; }
+        h2 { font-size: 16px; color: #f5f5f5; margin-top: 24px; }
+        /* Form elements matching sidebar style */
+        label { display: block; font-size: 12px; color: #7a8299; margin: 8px 0 3px; }
+        input, select { width: 100%; padding: 8px; background: #313244; border: 1px solid #45475a; border-radius: 6px; color: #cdd6f4; font-size: 13px; box-sizing: border-box; }
+        button { padding: 10px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; margin: 4px 2px; }
+        .btn-primary { background: #a6e3a1; color: #1e1e2e; font-weight: 600; }
+        .btn-danger { background: #f38ba8; color: #1e1e2e; }
+        .btn-secondary { background: transparent; border: 1px solid #45475a; color: #cdd6f4; }
+        .status { padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: 12px; }
+        .status-ok { background: rgba(166,227,161,0.15); color: #a6e3a1; }
+        .status-warn { background: rgba(249,226,175,0.15); color: #f9e2af; }
+        .status-error { background: rgba(243,139,168,0.15); color: #f38ba8; }
+        .progress-bar { height: 6px; background: #313244; border-radius: 3px; margin: 8px 0; }
+        .progress-fill { height: 100%; background: #89b4fa; border-radius: 3px; transition: width 1s; }
+        .section { background: #181825; border-radius: 8px; padding: 16px; margin: 12px 0; }
+        .detail { font-size: 11px; color: #7a8299; margin: 4px 0; }
+        .mono { font-family: 'SF Mono', monospace; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Geographica Configuration</h1>
+        <p class="detail">This panel is only accessible from localhost. Changes take effect immediately.</p>
+
+        <div class="section">
+            <h2>System Status</h2>
+            <div id="system-status">Loading...</div>
+        </div>
+
+        <div class="section">
+            <h2>Imagery Acquisition</h2>
+            <label>Source</label>
+            <select id="cfg-source">
+                <option value="direct">USGS Direct (no auth needed)</option>
+                <option value="m2m">USGS M2M API (requires credentials)</option>
+            </select>
+
+            <label>Coverage area</label>
+            <input type="text" id="cfg-bbox" value="-124.8,31.3,-102.0,49.0" class="mono">
+            <div class="detail">Bounding box: west, south, east, north (decimal degrees)</div>
+
+            <label>Zoom range</label>
+            <select id="cfg-zoom">
+                <option value="0-8">Basic (0-8)</option>
+                <option value="0-10">Preview (0-10)</option>
+                <option value="0-12">Standard (0-12)</option>
+                <option value="0-14">High detail (0-14)</option>
+                <option value="0-15" selected>Very high detail (0-15)</option>
+                <option value="0-16">Maximum detail (0-16)</option>
+            </select>
+
+            <label>Download speed</label>
+            <select id="cfg-concurrency">
+                <option value="10">Conservative (10)</option>
+                <option value="20" selected>Normal (20)</option>
+                <option value="50">Fast (50)</option>
+                <option value="80">Maximum (80)</option>
+            </select>
+
+            <label><input type="checkbox" id="cfg-update" checked> Resume/extend existing data</label>
+
+            <div id="cfg-estimate" class="detail">Calculating...</div>
+
+            <div style="margin-top:12px">
+                <button type="button" class="btn-primary" id="cfg-start">Start Download</button>
+                <button type="button" class="btn-danger" id="cfg-cancel" style="display:none">Cancel</button>
+            </div>
+
+            <div id="cfg-progress" style="display:none">
+                <div class="progress-bar"><div class="progress-fill" id="cfg-progress-fill"></div></div>
+                <div id="cfg-progress-detail" class="detail"></div>
+            </div>
+        </div>
+
+        <div class="section" id="cfg-m2m-section" style="display:none">
+            <h2>M2M API Credentials</h2>
+            <label>Username</label>
+            <input type="text" id="cfg-m2m-user" placeholder="USGS ERS username">
+            <label>API Token</label>
+            <input type="password" id="cfg-m2m-token" placeholder="M2M application token">
+            <div style="margin-top:8px">
+                <button type="button" class="btn-secondary" id="cfg-m2m-save">Save Credentials</button>
+                <button type="button" class="btn-danger" id="cfg-m2m-delete" style="display:none">Delete</button>
+            </div>
+            <div id="cfg-m2m-status"></div>
+        </div>
+
+        <div class="section">
+            <h2>Data Pipeline Status</h2>
+            <div id="cfg-data-status">Loading...</div>
+        </div>
+    </div>
+
+    <script>
+    // Config panel JS -- all API calls include X-Geographica header for CSRF protection
+    (function() {
+        function cfgFetch(url, opts) {
+            opts = opts || {};
+            opts.headers = opts.headers || {};
+            opts.headers['X-Geographica'] = '1';
+            return fetch(url, opts);
+        }
+
+        // Build a status badge element safely (no innerHTML)
+        function createStatusBadge(name, health, status) {
+            var div = document.createElement('div');
+            div.className = 'status ' + (health === 'healthy' ? 'status-ok' : status === 'running' ? 'status-warn' : 'status-error');
+            div.textContent = name + ': ' + (health || status);
+            return div;
+        }
+
+        // Build a data task detail element safely
+        function createDataDetail(t) {
+            var div = document.createElement('div');
+            div.className = 'detail';
+            var count = t.tiles || t.features || 0;
+            var rate = t.rate ? ' \u00b7 ' + Math.round(t.rate) + '/sec' : '';
+            div.textContent = t.name + ': ' + count.toLocaleString() + (t.tiles ? ' tiles' : ' features') + rate + ' \u2014 ' + t.status;
+            return div;
+        }
+
+        // System status polling
+        function fetchStatus() {
+            cfgFetch('/admin/status')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    var el = document.getElementById('system-status');
+                    el.textContent = '';
+                    (d.services || []).forEach(function(s) {
+                        el.appendChild(createStatusBadge(s.name, s.health, s.status));
+                    });
+
+                    // Data tasks
+                    var dataEl = document.getElementById('cfg-data-status');
+                    dataEl.textContent = '';
+                    (d.data_tasks || []).forEach(function(t) {
+                        dataEl.appendChild(createDataDetail(t));
+                    });
+                });
+
+            // Pipeline status
+            cfgFetch('/admin/pipeline/status')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    var startBtn = document.getElementById('cfg-start');
+                    var cancelBtn = document.getElementById('cfg-cancel');
+                    var progressDiv = document.getElementById('cfg-progress');
+                    var progressFill = document.getElementById('cfg-progress-fill');
+                    var progressDetail = document.getElementById('cfg-progress-detail');
+
+                    if (d.status === 'running') {
+                        startBtn.style.display = 'none';
+                        cancelBtn.style.display = '';
+                        progressDiv.style.display = '';
+                        var total = d.tiles_total || d.estimated_tiles || 1;
+                        var done = d.tiles_done || 0;
+                        var pct = Math.min(100, (done / total * 100)).toFixed(1);
+                        progressFill.style.width = pct + '%';
+                        var rate = d.rate_per_sec ? ' \u00b7 ' + Math.round(d.rate_per_sec) + ' tiles/sec' : '';
+                        progressDetail.textContent = done.toLocaleString() + ' / ' + total.toLocaleString() + ' (' + pct + '%)' + rate;
+                    } else {
+                        startBtn.style.display = '';
+                        cancelBtn.style.display = 'none';
+                        if (d.status === 'interrupted') {
+                            startBtn.textContent = 'Resume Download';
+                            progressDiv.style.display = '';
+                        } else if (d.status === 'completed') {
+                            startBtn.textContent = 'Start New Download';
+                            progressDiv.style.display = 'none';
+                        } else {
+                            startBtn.textContent = 'Start Download';
+                            progressDiv.style.display = 'none';
+                        }
+                    }
+                });
+        }
+
+        // Tile count estimation
+        function estimateTiles(bbox, zoom) {
+            var parts = bbox.split(',').map(Number);
+            if (parts.length !== 4 || parts.some(isNaN)) return 0;
+            var west = parts[0], south = parts[1], east = parts[2], north = parts[3];
+            var zp = zoom.split('-').map(Number);
+            var total = 0;
+            for (var z = zp[0]; z <= zp[1]; z++) {
+                var n = Math.pow(2, z);
+                var xMin = Math.floor((west + 180) / 360 * n);
+                var xMax = Math.floor((east + 180) / 360 * n);
+                var yMin = Math.floor((1 - Math.log(Math.tan(north * Math.PI / 180) + 1 / Math.cos(north * Math.PI / 180)) / Math.PI) / 2 * n);
+                var yMax = Math.floor((1 - Math.log(Math.tan(south * Math.PI / 180) + 1 / Math.cos(south * Math.PI / 180)) / Math.PI) / 2 * n);
+                total += (xMax - xMin + 1) * (yMax - yMin + 1);
+            }
+            return total;
+        }
+
+        function updateEstimate() {
+            var bbox = document.getElementById('cfg-bbox').value;
+            var zoom = document.getElementById('cfg-zoom').value;
+            var count = estimateTiles(bbox, zoom);
+            var sizeGB = (count * 20 * 1024 / (1024*1024*1024)).toFixed(1);
+            var hours = (count / 680 / 3600).toFixed(1);
+            document.getElementById('cfg-estimate').textContent =
+                count > 0 ? '~' + count.toLocaleString() + ' tiles, ~' + sizeGB + ' GB, ~' + hours + ' hours' : 'Invalid bbox';
+        }
+
+        // Event handlers
+        document.getElementById('cfg-source').addEventListener('change', function() {
+            document.getElementById('cfg-m2m-section').style.display = this.value === 'm2m' ? '' : 'none';
+        });
+
+        document.getElementById('cfg-bbox').addEventListener('input', updateEstimate);
+        document.getElementById('cfg-zoom').addEventListener('change', updateEstimate);
+
+        document.getElementById('cfg-start').addEventListener('click', function() {
+            var body = {
+                type: 'imagery',
+                mode: document.getElementById('cfg-source').value,
+                bbox: document.getElementById('cfg-bbox').value,
+                zoom: document.getElementById('cfg-zoom').value,
+                concurrency: parseInt(document.getElementById('cfg-concurrency').value),
+                update: document.getElementById('cfg-update').checked
+            };
+            if (!confirm('Start download? ~' + estimateTiles(body.bbox, body.zoom).toLocaleString() + ' tiles')) return;
+            cfgFetch('/admin/pipeline/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            }).then(function(r) { return r.json(); })
+              .then(function(d) { if (d.error) alert(d.error); fetchStatus(); });
+        });
+
+        document.getElementById('cfg-cancel').addEventListener('click', function() {
+            cfgFetch('/admin/pipeline/cancel', { method: 'POST' })
+                .then(function() { fetchStatus(); });
+        });
+
+        // M2M credentials
+        document.getElementById('cfg-m2m-save').addEventListener('click', function() {
+            cfgFetch('/admin/credentials', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    m2m_username: document.getElementById('cfg-m2m-user').value,
+                    m2m_token: document.getElementById('cfg-m2m-token').value
+                })
+            }).then(function(r) { return r.json(); })
+              .then(function(d) {
+                document.getElementById('cfg-m2m-status').textContent = d.status === 'saved' ? 'Credentials saved' : 'Error: ' + (d.detail || d.error);
+                checkM2M();
+            });
+        });
+
+        document.getElementById('cfg-m2m-delete').addEventListener('click', function() {
+            cfgFetch('/admin/credentials', { method: 'DELETE' })
+                .then(function() { checkM2M(); });
+        });
+
+        function checkM2M() {
+            cfgFetch('/admin/credentials/status')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    document.getElementById('cfg-m2m-delete').style.display = d.m2m_configured ? '' : 'none';
+                    document.getElementById('cfg-m2m-status').textContent = d.m2m_configured ? 'Credentials configured' : '';
+                });
+        }
+
+        // Init
+        updateEstimate();
+        fetchStatus();
+        checkM2M();
+        setInterval(fetchStatus, 10000);
+    })();
+    </script>
+</body>
+</html>
