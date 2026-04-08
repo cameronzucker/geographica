@@ -2759,6 +2759,14 @@
       initFreeLookCamera();
       initStatusBar();
       initPositionDetail();
+
+      // Initialize voice search (STT)
+      if (typeof initSTT === 'function') {
+        initSTT(function (text) {
+          // Voice search result — trigger spatial search
+          performSearch(text);
+        });
+      }
     });
   });
 
