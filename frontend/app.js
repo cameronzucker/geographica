@@ -182,6 +182,12 @@
     }
 
     // --- Imported KML/KMZ features ---
+    // Uses data-driven styling to preserve KML colors/widths/opacity.
+    // toGeoJSON maps KML styles to properties: stroke, stroke-width,
+    // stroke-opacity, fill, fill-opacity, marker-color.
+    // We read these per-feature, falling back to defaults when absent.
+    var defaultColor = '#f38ba8';
+
     if (!map.getSource('imported')) {
       map.addSource('imported', {
         type: 'geojson',
@@ -196,10 +202,11 @@
         source: 'imported',
         filter: ['==', '$type', 'Point'],
         paint: {
-          'circle-radius': 6,
-          'circle-color': '#f38ba8',
+          'circle-radius': 7,
+          'circle-color': ['coalesce', ['get', 'marker-color'], ['get', 'fill'], ['get', 'stroke'], defaultColor],
           'circle-stroke-color': '#fff',
-          'circle-stroke-width': 2
+          'circle-stroke-width': 2,
+          'circle-opacity': ['coalesce', ['get', 'fill-opacity'], 1]
         }
       });
     }
@@ -210,13 +217,18 @@
         type: 'line',
         source: 'imported',
         filter: ['==', '$type', 'LineString'],
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
         paint: {
-          'line-color': '#f38ba8',
-          'line-width': 3
+          'line-color': ['coalesce', ['get', 'stroke'], defaultColor],
+          'line-width': ['coalesce', ['get', 'stroke-width'], 3],
+          'line-opacity': ['coalesce', ['get', 'stroke-opacity'], 1]
         }
       });
     }
-    // Polygons
+    // Polygon fills
     if (!map.getLayer('imported-polygons')) {
       map.addLayer({
         id: 'imported-polygons',
@@ -224,15 +236,28 @@
         source: 'imported',
         filter: ['==', '$type', 'Polygon'],
         paint: {
-          'fill-color': '#f38ba8',
-          'fill-opacity': 0.25,
-          'fill-outline-color': '#f38ba8'
+          'fill-color': ['coalesce', ['get', 'fill'], ['get', 'stroke'], defaultColor],
+          'fill-opacity': ['coalesce', ['get', 'fill-opacity'], 0.3]
+        }
+      });
+    }
+    // Polygon outlines (separate layer for stroke-width control)
+    if (!map.getLayer('imported-polygon-outlines')) {
+      map.addLayer({
+        id: 'imported-polygon-outlines',
+        type: 'line',
+        source: 'imported',
+        filter: ['==', '$type', 'Polygon'],
+        paint: {
+          'line-color': ['coalesce', ['get', 'stroke'], ['get', 'fill'], defaultColor],
+          'line-width': ['coalesce', ['get', 'stroke-width'], 2],
+          'line-opacity': ['coalesce', ['get', 'stroke-opacity'], 1]
         }
       });
     }
 
     // --- Click handlers for imported features ---
-    var importedLayers = ['imported-points', 'imported-lines', 'imported-polygons'];
+    var importedLayers = ['imported-points', 'imported-lines', 'imported-polygons', 'imported-polygon-outlines'];
 
     importedLayers.forEach(function (layerId) {
       // Change cursor on hover
@@ -1415,8 +1440,23 @@
           });
           item.appendChild(cb);
 
+          // Color swatch from KML style
+          var featureColor = f.properties['marker-color'] || f.properties.stroke || f.properties.fill || '#f38ba8';
+          var swatch = document.createElement('span');
+          swatch.style.display = 'inline-block';
+          swatch.style.width = '8px';
+          swatch.style.height = '8px';
+          swatch.style.borderRadius = '50%';
+          swatch.style.background = featureColor;
+          swatch.style.flexShrink = '0';
+          item.appendChild(swatch);
+
           var nameSpan = document.createElement('span');
           nameSpan.textContent = f.properties.name || 'Unnamed';
+          nameSpan.style.flex = '1';
+          nameSpan.style.overflow = 'hidden';
+          nameSpan.style.textOverflow = 'ellipsis';
+          nameSpan.style.whiteSpace = 'nowrap';
           item.appendChild(nameSpan);
 
           var typeSpan = document.createElement('span');
