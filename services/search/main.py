@@ -499,7 +499,18 @@ async def admin_status():
             try:
                 ps = json.loads(img_state.read_text())
                 if ps.get("type") == "imagery":
-                    task["tiles_total"] = ps.get("tiles_total") or ps.get("estimated_tiles")
+                    # Use estimated_tiles from the job config (based on bbox+zoom)
+                    # not tiles_total from progress (which may be from a different run)
+                    est = ps.get("estimated_tiles")
+                    prog_total = ps.get("tiles_total")
+                    # Pick the larger of estimated vs progress total to avoid >100%
+                    if est and prog_total:
+                        task["tiles_total"] = max(est, prog_total)
+                    else:
+                        task["tiles_total"] = est or prog_total
+                    # Ensure tiles_total is never less than actual tile count
+                    if task.get("tiles_total") and task["tiles"] > task["tiles_total"]:
+                        task["tiles_total"] = task["tiles"]
                     task["rate"] = ps.get("rate_per_sec")
                     if ps.get("status") in ("completed", "cancelled"):
                         task["status"] = ps["status"]
