@@ -1,0 +1,13 @@
+{"type":"Feature","geometry":{"type":"Point","coordinates":[-112.074,33.4484]},"properties":{"@type":"node","@id":12345,"amenity":"fuel","name":"Shell Station","brand":"Shell","operator":null}}
+{"type":"Feature","geometry":{"type":"Polygon","coordinates":[[[-111.95,33.42],[-111.94,33.42],[-111.94,33.43],[-111.95,33.43],[-111.95,33.42]]]},"properties":{"@type":"way","@id":23456,"amenity":"restaurant","name":"Desert Cafe","brand":null,"operator":null}}
+{"type":"Feature","geometry":{"type":"Point","coordinates":[-112.1,34.5]},"properties":{"@type":"node","@id":34567,"boundary":"protected_area","name":"Prescott National Forest","operator":"United States Forest Service"}}
+{"type":"Feature","geometry":{"type":"Point","coordinates":[-111.5,35.0]},"properties":{"@type":"relation","@id":45678,"boundary":"protected_area","name":"Coconino BLM Land","operator":"US Bureau of Land Management"}}
+{"type":"Feature","geometry":{"type":"Point","coordinates":[-112.073,33.4486]},"properties":{"@type":"way","@id":56789,"amenity":"fuel","name":"Shell Station","brand":"Shell","operator":null}}
+{"type":"Feature","geometry":{"type":"Point","coordinates":[-110.0,33.0]},"properties":{"@type":"node","@id":67890,"shop":"supermarket","brand":"Safeway","operator":null}}
+{"type":"Feature","geometry":{"type":"Point","coordinates":[-112.5,33.5]},"properties":{"@type":"node","@id":78901,"amenity":"pharmacy","name":null,"brand":null,"operator":null}}
+{"type":"Feature","geometry":{"type":"Point","coordinates":[-115.0,36.0]},"properties":{"@type":"node","@id":89012,"tourism":"hotel","name":"Desert Oasis Inn","brand":null,"operator":null}}
+{"type":"Feature","geometry":{"type":"Point","coordinates":[-130.0,50.0]},"properties":{"@type":"node","@id":90123,"amenity":"cafe","name":"Out of Bounds Cafe","brand":null,"operator":null}}
+{"type":"Feature","geometry":{"type":"Point","coordinates":[-113.0,36.5]},"properties":{"@type":"node","@id":11111,"boundary":"national_park","name":"Grand Canyon National Park","operator":"National Park Service"}}
+{"type":"Feature","geometry":{"type":"Point","coordinates":[-112.0,33.45]},"properties":{"@type":"node","@id":22222,"highway":"rest_area","name":"I-10 Rest Area","brand":null,"operator":"ADOT"}}
+{"type":"Feature","geometry":{"type":"Point","coordinates":[-111.8,33.3]},"properties":{"@type":"node","@id":33333,"leisure":"park","name":"Papago Park","brand":null,"operator":null}}
+{"type":"Feature","geometry":{"type":"LineString","coordinates":[[-112.0,33.4],[-112.1,33.5],[-112.2,33.6]]},"properties":{"@type":"way","@id":44444,"highway":"rest_area","name":"I-17 Rest Stop","brand":null,"operator":null}}
