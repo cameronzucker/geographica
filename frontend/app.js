@@ -2547,8 +2547,9 @@
         drawBtn.textContent = 'Draw on map';
         map.getCanvas().style.cursor = '';
 
-        // Fit map to drawn bbox
+        // Fit map to drawn bbox, then clear the rectangle after a brief flash
         map.fitBounds([[west, south], [east, north]], { padding: 40 });
+        setTimeout(removeBboxPreview, 2000);
       }
     });
 
