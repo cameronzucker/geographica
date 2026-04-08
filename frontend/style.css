@@ -517,6 +517,107 @@ html, body {
   background: #3a3f50;
 }
 
+/* ----- Position detail overlay ----- */
+#position-detail {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+#position-detail-inner {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border-radius: 16px 16px 0 0;
+  padding: 16px 20px 20px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.position-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.position-detail-header h3 {
+  margin: 0;
+  font-size: 15px;
+  color: #f5f5f5;
+}
+
+#position-detail-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.position-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #313244;
+  cursor: pointer;
+  -webkit-tap-highlight-color: rgba(66, 133, 244, 0.2);
+}
+
+.position-row:active {
+  background: rgba(66, 133, 244, 0.1);
+}
+
+.position-row-label {
+  font-size: 11px;
+  color: #7a8299;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  flex-shrink: 0;
+  width: 90px;
+}
+
+.position-row-value {
+  font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+  font-size: 14px;
+  color: #e0e4f0;
+  text-align: right;
+  word-break: break-all;
+}
+
+.position-section-title {
+  font-size: 12px;
+  color: #585e70;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 14px 0 6px;
+  font-weight: 600;
+}
+
+.position-detail-hint {
+  text-align: center;
+  font-size: 11px;
+  color: #585e70;
+  margin: 14px 0 0;
+}
+
+.position-copied {
+  color: var(--success) !important;
+  transition: color 0.2s;
+}
+
 /* ----- Sidebar overlay (mobile) ----- */
 #sidebar-overlay {
   display: none;
@@ -650,7 +751,7 @@ html, body {
     bottom: 70px;
   }
 
-  /* Single-line compact status bar on mobile */
+  /* Single-line compact status bar on mobile — tappable to expand */
   #status-bar {
     left: 0;
     font-size: 9px;
@@ -660,6 +761,16 @@ html, body {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    pointer-events: auto;
+    cursor: pointer;
+  }
+
+  #status-bar::after {
+    content: '▸ tap for detail';
+    color: #585e70;
+    font-size: 8px;
+    margin-left: 8px;
+    flex-shrink: 0;
   }
 
   .status-section {
@@ -695,12 +806,5 @@ html, body {
     width: calc(100vw - 64px);
   }
 
-  /* On very small screens, show only camera readout, hide GPS from status bar */
-  #status-gps {
-    display: none;
-  }
-
-  .status-divider {
-    display: none;
-  }
+  /* Compact but keep both readouts — detail overlay has the full info */
 }

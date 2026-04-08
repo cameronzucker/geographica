@@ -1551,7 +1551,115 @@
   }
 
   // =====================================================================
-  //  9. FREE-LOOK CAMERA (Google Earth style)
+  //  9. POSITION DETAIL OVERLAY
+  // =====================================================================
+
+  function initPositionDetail() {
+    var statusBar = document.getElementById('status-bar');
+    var overlay   = document.getElementById('position-detail');
+    var closeBtn  = document.getElementById('position-detail-close');
+
+    // Tap status bar to open (works on all screen sizes)
+    statusBar.style.pointerEvents = 'auto';
+    statusBar.style.cursor = 'pointer';
+    statusBar.addEventListener('click', function () {
+      populatePositionDetail();
+      overlay.classList.remove('hidden');
+    });
+
+    // Close button
+    closeBtn.addEventListener('click', function () {
+      overlay.classList.add('hidden');
+    });
+
+    // Tap backdrop to close
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) {
+        overlay.classList.add('hidden');
+      }
+    });
+  }
+
+  function populatePositionDetail() {
+    var body = document.getElementById('position-detail-body');
+    while (body.firstChild) body.removeChild(body.firstChild);
+
+    var center = map.getCenter();
+    var gpsLat = gpsLastPos ? gpsLastPos[1] : null;
+    var gpsLon = gpsLastPos ? gpsLastPos[0] : null;
+
+    // GPS section
+    body.appendChild(makeSectionTitle('GPS Receiver'));
+    if (gpsLat !== null && !gpsStale) {
+      body.appendChild(makeRow('Decimal', formatDD(gpsLat, 'NS') + '  ' + formatDD(gpsLon, 'EW')));
+      body.appendChild(makeRow('DMS', formatDMS(gpsLat, 'NS') + '  ' + formatDMS(gpsLon, 'EW')));
+      body.appendChild(makeRow('Maidenhead', latLonToMaidenhead(gpsLat, gpsLon, 8)));
+      body.appendChild(makeRow('MGRS', latLonToMGRS(gpsLat, gpsLon)));
+
+      // Show raw lat/lon for easy copy-paste into other apps
+      body.appendChild(makeRow('Lat, Lon', gpsLat.toFixed(6) + ', ' + gpsLon.toFixed(6)));
+    } else {
+      body.appendChild(makeRow('Status', gpsStale ? 'Signal lost' : 'No fix'));
+    }
+
+    // Camera section
+    body.appendChild(makeSectionTitle('Camera / Eye'));
+    body.appendChild(makeRow('Decimal', formatDD(center.lat, 'NS') + '  ' + formatDD(center.lng, 'EW')));
+    body.appendChild(makeRow('DMS', formatDMS(center.lat, 'NS') + '  ' + formatDMS(center.lng, 'EW')));
+    body.appendChild(makeRow('Maidenhead', latLonToMaidenhead(center.lat, center.lng, 8)));
+    body.appendChild(makeRow('MGRS', latLonToMGRS(center.lat, center.lng)));
+
+    // Eye altitude
+    var zoom = map.getZoom();
+    var pitch = map.getPitch();
+    var altMeters = 35200000 / Math.pow(2, zoom);
+    if (pitch > 0) altMeters = altMeters / Math.cos(pitch * Math.PI / 180);
+    body.appendChild(makeRow('Altitude', formatAltitude(altMeters)));
+    body.appendChild(makeRow('Lat, Lon', center.lat.toFixed(6) + ', ' + center.lng.toFixed(6)));
+  }
+
+  function makeSectionTitle(text) {
+    var el = document.createElement('div');
+    el.className = 'position-section-title';
+    el.textContent = text;
+    return el;
+  }
+
+  function makeRow(label, value) {
+    var row = document.createElement('div');
+    row.className = 'position-row';
+
+    var labelEl = document.createElement('span');
+    labelEl.className = 'position-row-label';
+    labelEl.textContent = label;
+
+    var valueEl = document.createElement('span');
+    valueEl.className = 'position-row-value';
+    valueEl.textContent = value;
+
+    row.appendChild(labelEl);
+    row.appendChild(valueEl);
+
+    // Tap to copy
+    row.addEventListener('click', function () {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(value).then(function () {
+          valueEl.classList.add('position-copied');
+          var orig = valueEl.textContent;
+          valueEl.textContent = 'Copied!';
+          setTimeout(function () {
+            valueEl.textContent = orig;
+            valueEl.classList.remove('position-copied');
+          }, 1200);
+        });
+      }
+    });
+
+    return row;
+  }
+
+  // =====================================================================
+  //  10. FREE-LOOK CAMERA (Google Earth style)
   // =====================================================================
   //
   // Default MapLibre Ctrl+drag: orbits around a point ON THE GROUND.
@@ -1649,6 +1757,7 @@
     map.on('load', function () {
       initFreeLookCamera();
       initStatusBar();
+      initPositionDetail();
     });
   });
 
