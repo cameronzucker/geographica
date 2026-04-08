@@ -29,32 +29,34 @@ FILLER_WORDS = {
 # ---------------------------------------------------------------------------
 SYNONYM_TABLE = [
     # Road trip / commercial (Nominatim primary)
-    {"synonyms": {"gas station", "fuel", "gas"}, "gnis_class": None, "fallback_text": "gas station"},
-    {"synonyms": {"restaurant", "food", "eat", "dining"}, "gnis_class": None, "fallback_text": "restaurant"},
-    {"synonyms": {"hotel", "motel", "lodging"}, "gnis_class": None, "fallback_text": "hotel"},
-    {"synonyms": {"hospital", "er", "emergency room"}, "gnis_class": "Hospital", "fallback_text": "hospital"},
-    {"synonyms": {"campground", "camping", "campsite"}, "gnis_class": None, "fallback_text": "campground"},
-    {"synonyms": {"rest area", "rest stop"}, "gnis_class": None, "fallback_text": "rest area"},
-    {"synonyms": {"pharmacy", "drugstore"}, "gnis_class": None, "fallback_text": "pharmacy"},
-    {"synonyms": {"grocery", "supermarket"}, "gnis_class": None, "fallback_text": "grocery"},
+    # nominatim_query: the term(s) that Nominatim's special phrase system recognizes
+    # fallback_text: user-facing display label
+    {"synonyms": {"gas station", "fuel", "gas"}, "gnis_class": None, "fallback_text": "gas station", "nominatim_query": ["fuel station", "gas"]},
+    {"synonyms": {"restaurant", "food", "eat", "dining"}, "gnis_class": None, "fallback_text": "restaurant", "nominatim_query": ["restaurant"]},
+    {"synonyms": {"hotel", "motel", "lodging"}, "gnis_class": None, "fallback_text": "hotel", "nominatim_query": ["hotel", "motel"]},
+    {"synonyms": {"hospital", "er", "emergency room"}, "gnis_class": "Hospital", "fallback_text": "hospital", "nominatim_query": ["hospital"]},
+    {"synonyms": {"campground", "camping", "campsite"}, "gnis_class": None, "fallback_text": "campground", "nominatim_query": ["camp site", "campground"]},
+    {"synonyms": {"rest area", "rest stop"}, "gnis_class": None, "fallback_text": "rest area", "nominatim_query": ["rest area"]},
+    {"synonyms": {"pharmacy", "drugstore"}, "gnis_class": None, "fallback_text": "pharmacy", "nominatim_query": ["pharmacy"]},
+    {"synonyms": {"grocery", "supermarket"}, "gnis_class": None, "fallback_text": "grocery", "nominatim_query": ["supermarket", "grocery"]},
     # Geographic / emergency ops (GNIS supplementary)
-    {"synonyms": {"water", "drinking water"}, "gnis_class": "Spring", "fallback_text": "water"},
-    {"synonyms": {"trailhead", "trail"}, "gnis_class": "Trail", "fallback_text": "trailhead"},
-    {"synonyms": {"park"}, "gnis_class": "Park", "fallback_text": "park"},
-    {"synonyms": {"school"}, "gnis_class": "School", "fallback_text": "school"},
-    {"synonyms": {"church"}, "gnis_class": "Church", "fallback_text": "church"},
-    {"synonyms": {"airport"}, "gnis_class": "Airport", "fallback_text": "airport"},
-    {"synonyms": {"fire station"}, "gnis_class": None, "fallback_text": "fire station"},
-    {"synonyms": {"police", "police station"}, "gnis_class": None, "fallback_text": "police station"},
-    {"synonyms": {"summit", "peak", "hilltop", "mountain"}, "gnis_class": "Summit", "fallback_text": "summit"},
-    {"synonyms": {"tower", "radio tower", "repeater", "comm site"}, "gnis_class": "Tower", "fallback_text": "tower"},
-    {"synonyms": {"shelter", "evacuation center", "evac"}, "gnis_class": None, "fallback_text": "shelter"},
-    {"synonyms": {"helipad", "landing zone", "lz"}, "gnis_class": None, "fallback_text": "helipad"},
-    {"synonyms": {"dam"}, "gnis_class": "Dam", "fallback_text": "dam"},
-    {"synonyms": {"mine", "quarry"}, "gnis_class": "Mine", "fallback_text": "mine"},
-    {"synonyms": {"spring", "hot spring"}, "gnis_class": "Spring", "fallback_text": "spring"},
-    {"synonyms": {"bridge"}, "gnis_class": "Bridge", "fallback_text": "bridge"},
-    {"synonyms": {"ranger station", "forest service"}, "gnis_class": "Locale", "fallback_text": "ranger station"},
+    {"synonyms": {"water", "drinking water"}, "gnis_class": "Spring", "fallback_text": "water", "nominatim_query": ["drinking water"]},
+    {"synonyms": {"trailhead", "trail"}, "gnis_class": "Trail", "fallback_text": "trailhead", "nominatim_query": ["trailhead"]},
+    {"synonyms": {"park"}, "gnis_class": "Park", "fallback_text": "park", "nominatim_query": ["park"]},
+    {"synonyms": {"school"}, "gnis_class": "School", "fallback_text": "school", "nominatim_query": ["school"]},
+    {"synonyms": {"church"}, "gnis_class": "Church", "fallback_text": "church", "nominatim_query": ["church"]},
+    {"synonyms": {"airport"}, "gnis_class": "Airport", "fallback_text": "airport", "nominatim_query": ["airport"]},
+    {"synonyms": {"fire station"}, "gnis_class": None, "fallback_text": "fire station", "nominatim_query": ["fire station"]},
+    {"synonyms": {"police", "police station"}, "gnis_class": None, "fallback_text": "police station", "nominatim_query": ["police"]},
+    {"synonyms": {"summit", "peak", "hilltop", "mountain"}, "gnis_class": "Summit", "fallback_text": "summit", "nominatim_query": ["peak", "summit"]},
+    {"synonyms": {"tower", "radio tower", "repeater", "comm site"}, "gnis_class": "Tower", "fallback_text": "tower", "nominatim_query": ["tower"]},
+    {"synonyms": {"shelter", "evacuation center", "evac"}, "gnis_class": None, "fallback_text": "shelter", "nominatim_query": ["shelter"]},
+    {"synonyms": {"helipad", "landing zone", "lz"}, "gnis_class": None, "fallback_text": "helipad", "nominatim_query": ["helipad"]},
+    {"synonyms": {"dam"}, "gnis_class": "Dam", "fallback_text": "dam", "nominatim_query": ["dam"]},
+    {"synonyms": {"mine", "quarry"}, "gnis_class": "Mine", "fallback_text": "mine", "nominatim_query": ["mine"]},
+    {"synonyms": {"spring", "hot spring"}, "gnis_class": "Spring", "fallback_text": "spring", "nominatim_query": ["spring"]},
+    {"synonyms": {"bridge"}, "gnis_class": "Bridge", "fallback_text": "bridge", "nominatim_query": ["bridge"]},
+    {"synonyms": {"ranger station", "forest service"}, "gnis_class": "Locale", "fallback_text": "ranger station", "nominatim_query": ["ranger station"]},
 ]
 
 # Build flat lookup: normalized synonym text -> table entry
@@ -261,6 +263,7 @@ def parse_intent(
         "category": entry["fallback_text"] if entry else None,
         "gnis_class": entry["gnis_class"] if entry else None,
         "search_text": search_text,
+        "nominatim_queries": entry.get("nominatim_query", [search_text]) if entry else [search_text],
         "radius_m": radius_m,
         "interval_m": interval_m,
     }
@@ -524,17 +527,33 @@ async def spatial_search(body: SpatialSearchBody):
             f"{body.position.lon + margin},{body.position.lat + margin}"
         )
 
-    # Query both sources in parallel
-    limit = 20
-    nom_results, poi_results = await asyncio.gather(
-        _query_nominatim(search_text, limit, bbox),
-        _query_poi(search_text, limit, bbox),
-        return_exceptions=True,
-    )
-    if isinstance(nom_results, BaseException):
-        nom_results = []
-    if isinstance(poi_results, BaseException):
-        poi_results = []
+    # Scale limit for corridor searches (need more candidates across a long route)
+    if intent == "route_corridor" and body.route:
+        route_len_km = distance_along_polyline(body.route) / 1000
+        limit = min(200, max(50, int(route_len_km * 0.5)))
+    else:
+        limit = 30
+
+    # Query Nominatim with each nominatim_query term in parallel, merge results
+    nominatim_queries = parsed.get("nominatim_queries", [search_text])
+    nom_tasks = [_query_nominatim(q, limit, bbox) for q in nominatim_queries]
+    poi_task = _query_poi(search_text, limit, bbox)
+
+    all_results = await asyncio.gather(*nom_tasks, poi_task, return_exceptions=True)
+
+    # Merge all Nominatim results (deduplicate by lat/lon proximity)
+    nom_results = []
+    seen_coords: set[tuple[float, float]] = set()
+    for result in all_results[:-1]:  # all except last (POI)
+        if isinstance(result, BaseException):
+            continue
+        for r in result:
+            key = (round(float(r.get("lat", 0)), 4), round(float(r.get("lon", 0)), 4))
+            if key not in seen_coords:
+                seen_coords.add(key)
+                nom_results.append(r)
+
+    poi_results = all_results[-1] if not isinstance(all_results[-1], BaseException) else []
 
     # Boost GNIS class matches when a class is specified
     gnis_class = parsed.get("gnis_class")
