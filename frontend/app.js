@@ -42,6 +42,7 @@
   var routeEndMarker   = null;
   var routeWaypoints   = [];   // [{coords: [lng,lat], name: str, marker: Marker}]
   var lastRouteTrip    = null;  // stored for export
+  var lastRouteCoords  = null;  // decoded [lng, lat] pairs for spatial search context
 
   var importedFiles = {};       // { fileId: { name, geojson, visible, folders: { name: visible }, features: { id: visible } } }
   var importCounter = 0;        // unique ID counter for imported files
@@ -592,18 +593,39 @@
   }
 
   function performSearch(query) {
-    var url = '/search/search?q=' + encodeURIComponent(query) + '&limit=10';
-    fetch(url)
-      .then(function (res) { return res.json(); })
+    var body = { query: query };
+    if (gpsLastPos && !gpsStale) {
+      body.position = { lat: gpsLastPos[1], lon: gpsLastPos[0] };
+    }
+    if (lastRouteCoords && lastRouteCoords.length >= 2) {
+      body.route = lastRouteCoords;
+    }
+
+    fetch('/search/spatial', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+      .then(function (res) {
+        if (res.status === 404 || res.status === 405) {
+          // Fallback to old endpoint if backend hasn't been updated
+          return fetch('/search/search?q=' + encodeURIComponent(query) + '&limit=10')
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              return { results: d.results || d, intent: 'plain', original_intent: 'plain', fallback_reason: null, category: null };
+            });
+        }
+        return res.json();
+      })
       .then(function (data) {
-        renderSearchResults(data.results || data);
+        renderSearchResults(data.results || [], data);
       })
       .catch(function (err) {
         console.error('Search error:', err);
       });
   }
 
-  function renderSearchResults(results) {
+  function renderSearchResults(results, metadata) {
     var list = document.getElementById('search-results');
     // Clear previous results using safe DOM removal
     while (list.firstChild) {
@@ -1072,6 +1094,9 @@
       }
     });
 
+    // Store decoded coords for spatial search context
+    lastRouteCoords = allCoords.slice();
+
     // Update route source
     var geojson = {
       type: 'Feature',
@@ -1141,6 +1166,7 @@
     routeStartCoords = null;
     routeEndCoords   = null;
     lastRouteTrip    = null;
+    lastRouteCoords  = null;
 
     document.getElementById('route-start').value = '';
     document.getElementById('route-end').value   = '';
