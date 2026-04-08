@@ -12,17 +12,22 @@ isolated LAN or standalone device.
 
 - **Vector basemaps** with two themes (Positron light, Dark Matter dark) and house number labels
 - **Aerial imagery** overlay (USGS NAIP orthophotos)
-- **3D terrain** with hillshade and adjustable exaggeration slider
+- **3D terrain** with hillshade and adjustable exaggeration slider (z0-14 elevation data)
 - **Free-look camera** for 3D terrain exploration (pitch/bearing control)
-- **Turn-by-turn routing** for car, bicycle, and pedestrian
+- **Turn-by-turn navigation** with voice guidance, off-route detection, and dead reckoning
+- **Multi-stop waypoint routing** with map click point selection for car, bicycle, and pedestrian
 - **Geocoding** — search for addresses, cities, landmarks
 - **POI search** — GNIS gazetteer with full-text search (data sourced from S3: `prd-tnm.s3.amazonaws.com`)
 - **Live GPS** — hardware GPS streaming over WebSocket with accuracy circle display
 - **KML/KMZ import** — drag-and-drop file overlay with layer management panel
 - **Coordinate display** — Maidenhead grid locator and MGRS in addition to lat/lon
 - **Imperial and metric units** — switchable distance/elevation units
+- **Draw-on-map bounding box selection** for imagery downloads
+- **Admin config panel** (localhost-only, separated from main app)
+- **Pipeline management** — start/cancel imagery downloads from the browser
+- **Print/export directions** (Mapquest-style printable page)
 - **ATAK integration** — serves as a WMS map source for TAK clients
-- **TLS support** — three configurable modes: HTTP only, HTTPS with published key (for AREDN), HTTPS standard
+- **TLS support** — two modes: HTTP or HTTPS (TLS 1.3)
 - **No build step** — vanilla JS + MapLibre GL JS frontend, no bundler required
 
 ## Hardware requirements
@@ -41,21 +46,26 @@ isolated LAN or standalone device.
 | Dataset | Size |
 |---------|------|
 | Vector basemap (OpenMapTiles) | ~2.4 GB |
-| Elevation tiles (zoom 0-12) | ~9 GB |
-| OSM extracts (state PBFs) | ~6.2 GB |
+| Elevation tiles (zoom 0-14) | ~70 GB |
+| Aerial imagery (USGS, zoom 0-15) | ~30+ GB |
+| OSM extracts (merged PBF) | ~3.1 GB |
 | Valhalla routing graph | ~4.3 GB |
-| Nominatim geocoding DB | ~20 GB |
-| POI index | < 1 MB |
-| **Total** | **~42 GB** |
+| Nominatim geocoding DB | ~30-40 GB |
+| POI index | ~32 MB |
+| **Total** | **~150+ GB** |
 
 ## Architecture
 
 ```
-Browser ──> NGINX (:8093) ──┬──> TileServer GL (:8090)   vector/raster tiles
+Browser ──> NGINX (:8093) ──┬──> TileServer GL (:8090)   vector/raster/elevation tiles
                             ├──> Valhalla (:8094)         routing engine
                             ├──> Nominatim (:8092)        geocoding (PostgreSQL)
-                            ├──> Search (:8096)           unified search API
+                            ├──> Search (:8096)           unified search + admin API
                             └──> GPS (:8095)              WebSocket GPS relay
+
+Config ──> NGINX (:8097) ──────> Search (:8096)           pipeline mgmt (localhost only)
+
+Pipeline container (on-demand) ──> acquire_imagery.py     imagery/elevation downloads
 ```
 
 Six Docker Compose services with per-container memory limits to prevent OOM on
@@ -77,7 +87,7 @@ sudo apt update
 sudo apt install -y \
   docker.io docker-compose-v2 \
   python3 python3-venv python3-pip \
-  gdal-bin osmium-tool tilemaker \
+  gdal-bin osmium-tool \
   gpsd gpsd-clients \
   git npm
 ```
@@ -105,7 +115,7 @@ cd geographica
 
 ### 2. Create the data directory
 
-Data files are large (40+ GB) and live outside the git repo. Create a directory
+Data files are large (150+ GB) and live outside the git repo. Create a directory
 on your SSD and symlink it:
 
 ```bash
@@ -160,34 +170,24 @@ cd -
 
 ### 5. Generate vector basemap tiles
 
-The vector basemap is generated from the merged PBF using tilemaker with the
-OpenMapTiles schema. The Natural Earth source data is included in
-`tileserver/sources/`.
-
-Unzip the source data:
-
-```bash
-cd tileserver/sources
-unzip -o natural_earth_vector.sqlite.zip
-unzip -o water-polygons-split-3857.zip
-unzip -o lake_centerline.shp.zip
-cd ../..
-```
+The vector basemap is generated from the merged PBF using
+[Planetiler](https://github.com/onthegomap/planetiler) with the OpenMapTiles
+profile. Planetiler downloads required source data (Natural Earth, water
+polygons) automatically.
 
 Generate tiles (1-3 hours on a Pi 5 depending on coverage area):
 
 ```bash
-tilemaker \
-  --input /srv/geographica/data/pbf/western-us.osm.pbf \
-  --output tileserver/southwest5.mbtiles \
-  --config resources/config-openmaptiles.json \
-  --process resources/process-openmaptiles.lua
+docker run --rm \
+  -e JAVA_TOOL_OPTIONS="-Xmx8g" \
+  -v /srv/geographica/data/pbf:/pbf \
+  -v $(pwd)/tileserver:/data \
+  ghcr.io/onthegomap/planetiler:0.10.2 \
+  --download \
+  --osm-path=/pbf/western-us.osm.pbf \
+  --output=/data/southwest5.mbtiles \
+  --force
 ```
-
-> **Config files:** tilemaker ships with OpenMapTiles config and process files.
-> Find them with `dpkg -L tilemaker | grep resources`. The `--config` and
-> `--process` paths above assume tilemaker's bundled resources. Adjust if your
-> installation places them elsewhere.
 
 ### 6. Download elevation tiles
 
@@ -198,12 +198,12 @@ pip install -r scripts/requirements.txt
 
 python scripts/download_elevation.py \
   --bbox "-124.8,31.3,-102.0,49.0" \
-  --zoom 0-12 \
-  --output tileserver/elevation.mbtiles
+  --zoom 0-14 \
+  --output /srv/geographica/data/elevation.mbtiles
 ```
 
-Downloads Terrain-RGB tiles from AWS (free, no API key). ~9 GB for the Western
-US at zoom 0-12. The script supports checkpoint resume — if interrupted, re-run
+Downloads Terrain-RGB tiles from AWS (free, no API key). ~70 GB for the Western
+US at zoom 0-14. The script supports checkpoint resume — if interrupted, re-run
 the same command.
 
 ### 7. Build the POI search index
@@ -224,11 +224,9 @@ Free, no API key required. Produces a small SQLite FTS5 database.
 **Fonts** (PBF glyph ranges for map label rendering):
 
 ```bash
-cd tileserver
-wget https://github.com/openmaptiles/fonts/releases/download/v3.0/fonts-served.tar.gz
-tar -xzf fonts-served.tar.gz
-rm fonts-served.tar.gz
-cd ..
+wget -O /tmp/fonts.zip https://github.com/openmaptiles/fonts/releases/download/v2.0/v2.0.zip
+unzip -q /tmp/fonts.zip -d tileserver/fonts-served
+rm /tmp/fonts.zip
 ```
 
 **Styles** — The `style.local.json` files are checked into the repo. Sprite and
@@ -383,6 +381,25 @@ docker compose restart X   # restart one service
 docker compose build && docker compose up -d
 ```
 
+## Config panel
+
+The admin config panel is accessible at **http://localhost:8097/config/** from
+the Pi only. It provides:
+
+- Imagery download management — start/cancel acquisition jobs
+- M2M credentials configuration for USGS EarthExplorer
+- Pipeline status monitoring and log viewing
+
+Security is handled via Docker port binding — port 8097 is bound to `127.0.0.1`,
+so no password is needed. The panel is unreachable from the network.
+
+To access the config panel remotely, use an SSH tunnel:
+
+```bash
+ssh -L 8097:localhost:8097 user@pi-ip
+# Then open http://localhost:8097/config/ in your local browser
+```
+
 ## Customizing coverage area
 
 To cover a different region, adjust these values consistently:
@@ -408,14 +425,17 @@ To cover a different region, adjust these values consistently:
 | Port | Service | Purpose |
 |------|---------|---------|
 | **8093** | **NGINX (frontend)** | **Main entry point — UI + API proxy** |
+| **8097** | **NGINX (config)** | **Config panel — localhost only** |
 | 8090 | TileServer GL | Vector and raster tile API |
 | 8092 | Nominatim | Geocoding and reverse geocoding |
 | 8094 | Valhalla | Routing engine |
 | 8095 | GPS | WebSocket GPS relay |
 | 8096 | Search | Unified search API |
+| — | Pipeline (on-demand) | Imagery/elevation download container |
 
-All services are proxied through NGINX on port 8093. Direct port access is only
-needed for debugging.
+All services are proxied through NGINX on port 8093. The config panel on port
+8097 is bound to 127.0.0.1 and only accessible from the Pi itself. Direct port
+access is only needed for debugging.
 
 ## Troubleshooting
 
@@ -451,6 +471,11 @@ import completes. This is expected on first run.
 The routing graph only covers the region in your PBF. Ensure your start/end
 points are within the coverage area.
 
+**TileServer crashes with SQLITE_READONLY**
+The imagery or elevation MBTiles is in WAL mode from an active download.
+TileServer reads from `/srv/data/` which must be mounted read-write in
+`docker-compose.yml`.
+
 **System crashed / OOM during first run**
 If you see a hard crash (kernel OOM killer), the per-container memory limits in
 `docker-compose.yml` should prevent this. If you modified the limits, ensure
@@ -478,7 +503,7 @@ geographica/
 │   ├── fonts-served/           # PBF glyph ranges (gitignored, see step 8)
 │   ├── sources/                # Natural Earth shapefiles (gitignored)
 │   ├── southwest5.mbtiles      # Vector basemap (gitignored, ~2.4 GB)
-│   └── elevation.mbtiles       # Terrain tiles (gitignored, ~9 GB)
+│   └── elevation.mbtiles       # Terrain tiles (gitignored, ~70 GB)
 ├── services/
 │   ├── gps/                    # FastAPI GPS WebSocket service
 │   │   ├── Dockerfile
