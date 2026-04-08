@@ -663,8 +663,8 @@ async def pipeline_start(body: PipelineStartBody):
             command = [
                 "python3", script,
                 "--mode", body.mode,
-                "--bbox", body.bbox,
-                "--zoom", body.zoom,
+                f"--bbox={body.bbox}",
+                f"--zoom={body.zoom}",
                 "--concurrency", str(body.concurrency),
                 "--output", f"/data/{mbtiles_path.name}",
             ]
