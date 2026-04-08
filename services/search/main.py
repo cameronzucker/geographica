@@ -2,23 +2,108 @@
 
 Also hosts the /admin/status endpoint for monitoring long-running tasks
 (container health, import progress, download status).
+
+Pipeline orchestration and credential management endpoints are also served here.
 """
 
 import asyncio
+import json
 import math
 import os
 import re
+import shutil
+import stat
+import tempfile
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 import aiosqlite
 import httpx
-from fastapi import FastAPI, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from pydantic import BaseModel
 
 NOMINATIM_URL = os.environ.get("NOMINATIM_URL", "http://nominatim:8080")
 POI_DB_PATH = os.environ.get("POI_DB_PATH", "/data/poi.sqlite")
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+
+CREDENTIALS_PATH = Path("/data/.credentials.json")
+DATA_DIR = Path("/data")
 
 EARTH_RADIUS_M = 6_371_000
+
+# Lock to prevent concurrent pipeline starts
+_pipeline_lock = asyncio.Lock()
+
+
+# ---------------------------------------------------------------------------
+# Auth dependency
+# ---------------------------------------------------------------------------
+async def require_admin(authorization: str = Header(None)):
+    """Check bearer token for admin endpoints."""
+    if not ADMIN_TOKEN:
+        return  # No token configured = no auth required (dev mode)
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Admin token required")
+    if authorization[7:] != ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid admin token")
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models
+# ---------------------------------------------------------------------------
+class CredentialBody(BaseModel):
+    m2m_username: str
+    m2m_token: str
+
+
+class PipelineStartBody(BaseModel):
+    type: str  # "imagery" or "elevation"
+    mode: str  # "direct" or "m2m"
+    bbox: str  # "west,south,east,north"
+    zoom: str  # "min-max"
+    concurrency: int = 20
+    update: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Tile count estimation
+# ---------------------------------------------------------------------------
+def estimate_tile_count(bbox: tuple[float, float, float, float], zoom_min: int, zoom_max: int) -> int:
+    """Estimate total tile count from bounding box and zoom range."""
+    west, south, east, north = bbox
+    total = 0
+    for z in range(zoom_min, zoom_max + 1):
+        n = 2 ** z
+        x_min = int((west + 180) / 360 * n)
+        x_max = int((east + 180) / 360 * n)
+        y_min = int(
+            (1 - math.log(math.tan(math.radians(north)) + 1 / math.cos(math.radians(north))) / math.pi) / 2 * n
+        )
+        y_max = int(
+            (1 - math.log(math.tan(math.radians(south)) + 1 / math.cos(math.radians(south))) / math.pi) / 2 * n
+        )
+        total += (x_max - x_min + 1) * (y_max - y_min + 1)
+    return total
+
+
+def _parse_bbox(bbox_str: str) -> tuple[float, float, float, float]:
+    """Parse bbox string into 4 floats. Raises ValueError on failure."""
+    parts = bbox_str.split(",")
+    if len(parts) != 4:
+        raise ValueError("bbox must have exactly 4 comma-separated values")
+    return tuple(float(p.strip()) for p in parts)  # type: ignore[return-value]
+
+
+def _parse_zoom(zoom_str: str) -> tuple[int, int]:
+    """Parse zoom string like '0-14' into (min, max). Raises ValueError on failure."""
+    parts = zoom_str.split("-")
+    if len(parts) != 2:
+        raise ValueError("zoom must be in format 'min-max'")
+    zoom_min, zoom_max = int(parts[0]), int(parts[1])
+    if zoom_min < 0 or zoom_max > 15 or zoom_min > zoom_max:
+        raise ValueError("zoom values must be 0-15 with min <= max")
+    return zoom_min, zoom_max
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -416,3 +501,324 @@ async def admin_status():
             pass
 
     return {"services": services, "data_tasks": data_tasks}
+
+
+# ---------------------------------------------------------------------------
+# Credential management
+# ---------------------------------------------------------------------------
+@app.post("/admin/credentials", dependencies=[Depends(require_admin)])
+async def save_credentials(body: CredentialBody):
+    """Store M2M API credentials securely."""
+    if not body.m2m_username.strip() or not body.m2m_token.strip():
+        raise HTTPException(status_code=422, detail="Both m2m_username and m2m_token must be non-empty")
+
+    cred_data = json.dumps({
+        "m2m_username": body.m2m_username,
+        "m2m_token": body.m2m_token,
+    })
+
+    # Atomic write: write to temp file, then os.replace
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=".tmp")
+        try:
+            os.write(fd, cred_data.encode())
+        finally:
+            os.close(fd)
+        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+        os.replace(tmp_path, str(CREDENTIALS_PATH))
+    except Exception as e:
+        # Clean up temp file if replace failed
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail=f"Failed to save credentials: {e}")
+
+    return {"status": "saved"}
+
+
+@app.get("/admin/credentials/status")
+async def credentials_status():
+    """Check if credentials are configured (no auth required)."""
+    return {"m2m_configured": CREDENTIALS_PATH.exists()}
+
+
+@app.delete("/admin/credentials", dependencies=[Depends(require_admin)])
+async def delete_credentials():
+    """Remove stored credentials."""
+    try:
+        CREDENTIALS_PATH.unlink(missing_ok=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete credentials: {e}")
+    return {"status": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# Pipeline orchestration
+# ---------------------------------------------------------------------------
+def _state_file_for_type(pipeline_type: str) -> Path:
+    """Return the state file path for a given pipeline type."""
+    if pipeline_type == "elevation":
+        return DATA_DIR / ".elevation-state.json"
+    return DATA_DIR / ".pipeline-state.json"
+
+
+def _mbtiles_path_for_type(pipeline_type: str) -> Path:
+    """Return the mbtiles output path for a given pipeline type."""
+    if pipeline_type == "elevation":
+        return DATA_DIR / "elevation.mbtiles"
+    return DATA_DIR / "imagery.mbtiles"
+
+
+def _script_for_type(pipeline_type: str) -> str:
+    """Return the script path for a given pipeline type."""
+    if pipeline_type == "elevation":
+        return "/scripts/download_elevation.py"
+    return "/scripts/acquire_imagery.py"
+
+
+def _is_pipeline_container_running(client) -> bool:
+    """Check if the pipeline container is currently running."""
+    try:
+        container = client.containers.get("geographica-pipeline")
+        return container.status == "running"
+    except Exception:
+        return False
+
+
+def _get_disk_free_gb() -> float:
+    """Return free disk space in GB for the /data partition."""
+    usage = shutil.disk_usage(str(DATA_DIR))
+    return usage.free / (1024 ** 3)
+
+
+@app.post("/admin/pipeline/start", dependencies=[Depends(require_admin)])
+async def pipeline_start(body: PipelineStartBody):
+    """Start an imagery or elevation download pipeline."""
+    # Validate type
+    if body.type not in ("imagery", "elevation"):
+        raise HTTPException(status_code=422, detail="type must be 'imagery' or 'elevation'")
+    if body.mode not in ("direct", "m2m"):
+        raise HTTPException(status_code=422, detail="mode must be 'direct' or 'm2m'")
+
+    # Parse and validate bbox
+    try:
+        bbox = _parse_bbox(body.bbox)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid bbox: {e}")
+
+    # Parse and validate zoom
+    try:
+        zoom_min, zoom_max = _parse_zoom(body.zoom)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid zoom: {e}")
+
+    # Estimate tile count and check disk space
+    tile_count = estimate_tile_count(bbox, zoom_min, zoom_max)
+    # Rough estimate: ~50 KB per tile average
+    estimated_size_gb = tile_count * 50 * 1024 / (1024 ** 3)
+    disk_free_gb = _get_disk_free_gb()
+    if disk_free_gb - estimated_size_gb < 10.0:
+        raise HTTPException(
+            status_code=507,
+            detail=f"Insufficient disk space. Free: {disk_free_gb:.1f} GB, estimated need: {estimated_size_gb:.1f} GB, minimum 10 GB buffer required",
+        )
+
+    # For M2M mode, verify credentials exist
+    if body.mode == "m2m":
+        if not CREDENTIALS_PATH.exists():
+            raise HTTPException(status_code=422, detail="M2M credentials not configured. POST to /admin/credentials first.")
+
+    async with _pipeline_lock:
+        client = _get_docker_client()
+        if not client:
+            raise HTTPException(status_code=503, detail="Docker socket not available")
+
+        try:
+            # Check if a pipeline is already running
+            if _is_pipeline_container_running(client):
+                raise HTTPException(status_code=409, detail="A pipeline job is already running")
+
+            # Also check state file
+            state_file = _state_file_for_type(body.type)
+            if state_file.exists():
+                try:
+                    state_data = json.loads(state_file.read_text())
+                    if state_data.get("status") == "running" and _is_pipeline_container_running(client):
+                        raise HTTPException(status_code=409, detail="A pipeline job is already running")
+                except json.JSONDecodeError:
+                    pass
+
+            # Handle existing mbtiles if not updating
+            mbtiles_path = _mbtiles_path_for_type(body.type)
+            if not body.update and mbtiles_path.exists():
+                prev_path = mbtiles_path.with_suffix(".mbtiles.prev")
+                try:
+                    os.replace(str(mbtiles_path), str(prev_path))
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=f"Failed to rename existing file: {e}")
+
+            # Build command
+            script = _script_for_type(body.type)
+            command = [
+                "python3", script,
+                "--mode", body.mode,
+                "--bbox", body.bbox,
+                "--zoom", body.zoom,
+                "--concurrency", str(body.concurrency),
+                "--output", f"/data/{mbtiles_path.name}",
+            ]
+
+            # Build environment
+            env = {
+                "GDAL_CACHEMAX": "1024",
+                "PYTHONUNBUFFERED": "1",
+            }
+            if body.mode == "m2m":
+                try:
+                    creds = json.loads(CREDENTIALS_PATH.read_text())
+                    env["USGS_M2M_USERNAME"] = creds["m2m_username"]
+                    env["USGS_M2M_TOKEN"] = creds["m2m_token"]
+                except (json.JSONDecodeError, KeyError) as e:
+                    raise HTTPException(status_code=500, detail=f"Failed to read credentials: {e}")
+
+            # Find the compose network
+            try:
+                networks = client.networks.list(names=["geographica_default"])
+                network = networks[0].name if networks else "bridge"
+            except Exception:
+                network = "bridge"
+
+            # Resolve volume paths - match the compose definition for pipeline service
+            # The compose file maps ./scripts:/scripts:ro and ./data:/data
+            # From inside the search container, /data is already the host's ./data mount
+            # We need the host paths for Docker SDK volume mounts
+            # Use the same bind mounts that compose would use
+            volumes = {
+                "/data": {"bind": "/data", "mode": "rw"},
+            }
+            # /scripts is read-only in the compose definition
+            # The search container doesn't have /scripts, but the host path is mapped
+            # We read the mount info to find the host source for /data
+            try:
+                search_container = client.containers.get("geographica-search")
+                mounts = search_container.attrs.get("Mounts", [])
+                for mount in mounts:
+                    if mount.get("Destination") == "/data":
+                        host_data_path = mount.get("Source", "")
+                        # Derive scripts path from data path (sibling directory)
+                        host_base = os.path.dirname(host_data_path)
+                        host_scripts_path = os.path.join(host_base, "scripts")
+                        volumes = {
+                            host_data_path: {"bind": "/data", "mode": "rw"},
+                            host_scripts_path: {"bind": "/scripts", "mode": "ro"},
+                        }
+                        break
+            except Exception:
+                pass  # Fall back to /data:/data
+
+            # Start the pipeline container
+            container = client.containers.run(
+                "geographica-pipeline",
+                command=command,
+                name="geographica-pipeline",
+                detach=True,
+                remove=True,
+                volumes=volumes,
+                environment=env,
+                network=network,
+                mem_limit="2g",
+            )
+
+            # Write state file
+            state_data = {
+                "status": "running",
+                "type": body.type,
+                "mode": body.mode,
+                "bbox": body.bbox,
+                "zoom": body.zoom,
+                "concurrency": body.concurrency,
+                "update": body.update,
+                "estimated_tiles": tile_count,
+                "container_id": container.id,
+            }
+            state_file.write_text(json.dumps(state_data, indent=2))
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to start pipeline: {e}")
+        finally:
+            client.close()
+
+    return {"status": "started"}
+
+
+@app.get("/admin/pipeline/status")
+async def pipeline_status(type: str = Query("imagery", description="Pipeline type: imagery or elevation")):
+    """Get current pipeline job status (no auth required)."""
+    if type not in ("imagery", "elevation"):
+        raise HTTPException(status_code=422, detail="type must be 'imagery' or 'elevation'")
+
+    state_file = _state_file_for_type(type)
+    state_data = {}
+    if state_file.exists():
+        try:
+            state_data = json.loads(state_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            state_data = {"status": "unknown", "error": "Could not read state file"}
+
+    # Check container status
+    client = _get_docker_client()
+    container_running = False
+    if client:
+        try:
+            container_running = _is_pipeline_container_running(client)
+        except Exception:
+            pass
+        finally:
+            client.close()
+
+    # Reconcile: if state says running but container is dead, mark interrupted
+    if state_data.get("status") == "running" and not container_running:
+        state_data["status"] = "interrupted"
+        # Update state file
+        try:
+            state_file.write_text(json.dumps(state_data, indent=2))
+        except OSError:
+            pass
+
+    # Add live fields
+    state_data["container_running"] = container_running
+
+    # Calculate estimated tiles if bbox/zoom available
+    if "bbox" in state_data and "zoom" in state_data:
+        try:
+            bbox = _parse_bbox(state_data["bbox"])
+            zoom_min, zoom_max = _parse_zoom(state_data["zoom"])
+            state_data["estimated_tiles"] = estimate_tile_count(bbox, zoom_min, zoom_max)
+        except (ValueError, TypeError):
+            pass
+
+    state_data["disk_free_gb"] = round(_get_disk_free_gb(), 2)
+
+    return state_data
+
+
+@app.post("/admin/pipeline/cancel", dependencies=[Depends(require_admin)])
+async def pipeline_cancel():
+    """Cancel a running pipeline."""
+    client = _get_docker_client()
+    if not client:
+        raise HTTPException(status_code=503, detail="Docker socket not available")
+
+    try:
+        container = client.containers.get("geographica-pipeline")
+        container.stop(timeout=30)
+    except Exception:
+        # Container not found or already stopped - that's fine
+        pass
+    finally:
+        client.close()
+
+    return {"status": "cancelling"}
