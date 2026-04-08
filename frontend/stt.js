@@ -421,6 +421,9 @@
         if (resp.status === 422) {
           throw new Error('Audio format error');
         }
+        if (resp.status === 405) {
+          throw new Error('Voice search endpoint not configured');
+        }
         if (resp.status === 502) {
           throw new Error('Voice search unavailable');
         }

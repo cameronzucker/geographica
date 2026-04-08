@@ -125,6 +125,7 @@ See `TODOS.md` for the full backlog with context. Summary:
 - `app.js` is ~2800 lines — approaching the threshold where extraction to separate modules should be considered
 - STT service needs internet during Docker build to download the ~140MB Whisper model
 - Total Docker memory allocation is ~15GB on 16GB hardware — tight but functional
+- **NGINX bind mount footgun:** `nginx/nginx.conf` is file-mounted into the frontend container. Git operations (commit, checkout, rebase) create a new file inode — Docker tracks the old inode, so the container silently serves stale config. Always run `docker compose up -d --force-recreate frontend` after editing NGINX config files.
 
 ## Cameron's preferences (from memory)
 - Prioritizes correctness and completeness over speed
