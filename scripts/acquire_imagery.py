@@ -638,27 +638,47 @@ async def m2m_get_download_urls(session: aiohttp.ClientSession, api_key: str,
         if all_product_names:
             log.info("Available product names: %s", sorted(all_product_names))
 
+        # Pick one product per entity, preferring smaller downloads.
+        # Priority: compressed > geotiff/tif > full resolution
+        entity_products: dict[str, dict] = {}
         for opt in options:
             if not opt.get("available"):
                 continue
-            # Prefer GeoTIFF products
             product_name = (opt.get("productName", "") or "").lower()
-            if "geotiff" in product_name or "tif" in product_name:
-                downloads_to_request.append({
-                    "entityId": opt["entityId"],
+            eid = opt["entityId"]
+            if "compressed" in product_name:
+                priority = 0  # best — smallest download
+            elif "geotiff" in product_name or "tif" in product_name:
+                priority = 1
+            elif "full resolution" in product_name:
+                priority = 2  # largest — fallback only
+            else:
+                continue
+            existing = entity_products.get(eid)
+            if existing is None or priority < existing["_priority"]:
+                entity_products[eid] = {
+                    "entityId": eid,
                     "productId": opt["productId"],
-                })
+                    "_productName": opt.get("productName", ""),
+                    "_priority": priority,
+                }
+        downloads_to_request.extend(entity_products.values())
 
     if not downloads_to_request:
-        log.warning("No downloadable GeoTIFF products found")
+        log.warning("No downloadable imagery products found")
         return []
+
+    # Log what we selected
+    for d in downloads_to_request:
+        log.info("Selected product for %s: %s", d["entityId"], d.get("_productName", "?"))
 
     log.info("Requesting %d downloads", len(downloads_to_request))
 
     # Request downloads (batch in groups of 100)
     labels = []
     for i in range(0, len(downloads_to_request), 100):
-        batch = downloads_to_request[i:i + 100]
+        batch = [{"entityId": d["entityId"], "productId": d["productId"]}
+                 for d in downloads_to_request[i:i + 100]]
         label = f"geographica_m2m_{int(time.time())}_{i}"
         resp = await m2m_request(session, "download-request", {
             "downloads": batch,
