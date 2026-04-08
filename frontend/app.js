@@ -749,12 +749,12 @@
       if (item.distance_along_route_m != null) {
         var dSpan = document.createElement('span');
         dSpan.className = 'search-result-distance';
-        dSpan.textContent = 'in ' + formatDistance(item.distance_along_route_m);
+        dSpan.textContent = 'in ' + formatRouteDistance(item.distance_along_route_m);
         li.appendChild(dSpan);
       } else if (item.distance_m != null) {
         var dSpan2 = document.createElement('span');
         dSpan2.className = 'search-result-distance';
-        dSpan2.textContent = formatDistance(item.distance_m);
+        dSpan2.textContent = formatRouteDistance(item.distance_m);
         li.appendChild(dSpan2);
       }
 
