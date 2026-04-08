@@ -2547,9 +2547,8 @@
         drawBtn.textContent = 'Draw on map';
         map.getCanvas().style.cursor = '';
 
-        // Fit map to drawn bbox, then clear the rectangle after a brief flash
+        // Fit map to drawn bbox — rectangle stays until download starts
         map.fitBounds([[west, south], [east, north]], { padding: 40 });
-        setTimeout(removeBboxPreview, 2000);
       }
     });
 
@@ -2645,6 +2644,7 @@
       startBtn.disabled = true;
       startBtn.textContent = 'Starting...';
       startBtn.style.opacity = '0.6';
+      removeBboxPreview();
 
       adminFetch('/admin/pipeline/start', {
         method: 'POST',
