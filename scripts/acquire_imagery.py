@@ -19,6 +19,7 @@ import json
 import logging
 import math
 import os
+import signal
 import sqlite3
 import struct
 import subprocess
@@ -53,6 +54,52 @@ USGS_TILE_URL = (
 )
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2  # seconds, doubled each attempt
+
+# ---------------------------------------------------------------------------
+# Cancellation + Structured Progress
+# ---------------------------------------------------------------------------
+_cancel_requested = False
+
+
+def _handle_sigterm(signum, frame):
+    """Handle SIGTERM for graceful shutdown (docker stop)."""
+    global _cancel_requested
+    log.info("SIGTERM received — finishing current batch and shutting down")
+    _cancel_requested = True
+
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
+
+
+def write_pipeline_state(output_path: Path, state: dict):
+    """Atomically write pipeline state JSON for the admin monitor."""
+    state_path = output_path.parent / ".pipeline-state.json"
+    tmp_path = state_path.with_suffix(".json.tmp")
+    try:
+        tmp_path.write_text(json.dumps(state))
+        os.fsync(tmp_path.open().fileno())
+        os.replace(str(tmp_path), str(state_path))
+    except Exception as exc:
+        log.warning("Failed to write pipeline state: %s", exc)
+
+
+def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
+                    tiles_done: int, tiles_total: int, rate: float = 0,
+                    status: str = "running", error: str = None):
+    """Write structured progress to the state file."""
+    import datetime
+    write_pipeline_state(output_path, {
+        "status": status,
+        "mode": mode,
+        "bbox": bbox,
+        "zoom": zoom,
+        "tiles_done": tiles_done,
+        "tiles_total": tiles_total,
+        "rate_per_sec": round(rate, 1),
+        "started_at": getattr(update_progress, '_started_at', None),
+        "last_updated": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "error": error,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -366,17 +413,41 @@ async def run_direct(args):
         )
         pbar.update(1)
 
+    total_tiles = len(all_tiles)
+    done_before = total_tiles - len(remaining)
+    import datetime
+    update_progress._started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    batch_start_time = time.time()
+
     async with aiosqlite.connect(str(output)) as db:
         await db.execute("PRAGMA journal_mode=WAL")
         async with aiohttp.ClientSession() as session:
             batch_size = 2000
             for i in range(0, len(remaining), batch_size):
+                if _cancel_requested:
+                    log.info("Cancellation requested — stopping after %d tiles",
+                             done_before + i)
+                    update_progress(output, "direct", args.bbox, args.zoom,
+                                    done_before + i, total_tiles,
+                                    status="cancelled")
+                    pbar.close()
+                    return
+
                 batch = remaining[i : i + batch_size]
                 tasks = [_fetch_tile(session, db, z, x, y) for z, x, y in batch]
                 await asyncio.gather(*tasks)
                 await db.commit()
 
+                # Update structured progress
+                tiles_done = done_before + i + len(batch)
+                elapsed = time.time() - batch_start_time
+                rate = (i + len(batch)) / elapsed if elapsed > 0 else 0
+                update_progress(output, "direct", args.bbox, args.zoom,
+                                tiles_done, total_tiles, rate)
+
     pbar.close()
+    update_progress(output, "direct", args.bbox, args.zoom,
+                    total_tiles, total_tiles, status="completed")
     log.info("MBTiles written to %s", output)
 
 

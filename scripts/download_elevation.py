@@ -9,8 +9,11 @@ Usage:
 
 import argparse
 import asyncio
+import json
 import logging
 import math
+import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -37,6 +40,34 @@ DEFAULT_BBOX = "-124.6,31.2,-103.0,42.2"
 DEFAULT_ZOOM = "0-12"
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2
+
+# ---------------------------------------------------------------------------
+# Cancellation + Structured Progress
+# ---------------------------------------------------------------------------
+_cancel_requested = False
+
+
+def _handle_sigterm(signum, frame):
+    global _cancel_requested
+    log.info("SIGTERM received — finishing current batch and shutting down")
+    _cancel_requested = True
+
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
+
+
+def write_pipeline_state(output_path, state: dict):
+    """Atomically write pipeline state JSON for the admin monitor."""
+    from pathlib import Path
+    state_path = Path(output_path).parent / ".elevation-state.json"
+    tmp_path = state_path.with_suffix(".json.tmp")
+    try:
+        tmp_path.write_text(json.dumps(state))
+        with open(tmp_path) as f:
+            os.fsync(f.fileno())
+        os.replace(str(tmp_path), str(state_path))
+    except Exception as exc:
+        log.warning("Failed to write state: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -238,11 +269,25 @@ async def run(args):
         )
         pbar.update(1)
 
+    total_tiles = len(all_tiles)
+    done_before = total_tiles - len(remaining)
+    batch_start_time = time.time()
+
     async with aiosqlite.connect(str(output)) as db:
         await db.execute("PRAGMA journal_mode=WAL")
         async with aiohttp.ClientSession() as session:
             batch_size = 500
             for i in range(0, len(remaining), batch_size):
+                if _cancel_requested:
+                    log.info("Cancellation requested — stopping")
+                    write_pipeline_state(output, {
+                        "status": "cancelled",
+                        "tiles_done": done_before + i,
+                        "tiles_total": total_tiles
+                    })
+                    pbar.close()
+                    return
+
                 batch = remaining[i : i + batch_size]
                 tasks = [
                     _fetch_tile(session, db, z, x, y)
@@ -251,7 +296,23 @@ async def run(args):
                 await asyncio.gather(*tasks)
                 await db.commit()
 
+                # Write structured progress
+                tiles_done = done_before + i + len(batch)
+                elapsed = time.time() - batch_start_time
+                rate = (i + len(batch)) / elapsed if elapsed > 0 else 0
+                write_pipeline_state(output, {
+                    "status": "running",
+                    "tiles_done": tiles_done,
+                    "tiles_total": total_tiles,
+                    "rate_per_sec": round(rate, 1),
+                })
+
     pbar.close()
+    write_pipeline_state(output, {
+        "status": "completed",
+        "tiles_done": total_tiles,
+        "tiles_total": total_tiles,
+    })
     log.info("MBTiles written to %s", output)
 
 
