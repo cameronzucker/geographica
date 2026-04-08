@@ -197,6 +197,12 @@ async def health() -> dict[str, Any]:
     }
 
 
+@app.get("/position")
+async def position() -> dict[str, Any]:
+    """Debug endpoint: returns current position dict including accuracy."""
+    return _position
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     await ws.accept()

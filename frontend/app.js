@@ -118,6 +118,37 @@
       });
     }
 
+    // --- GPS accuracy circle (geographic, scales with map) ---
+    if (!map.getSource('gps-accuracy')) {
+      map.addSource('gps-accuracy', {
+        type: 'geojson',
+        data: emptyGeoJSON()
+      });
+    }
+    if (!map.getLayer('gps-accuracy-fill')) {
+      map.addLayer({
+        id: 'gps-accuracy-fill',
+        type: 'fill',
+        source: 'gps-accuracy',
+        paint: {
+          'fill-color': '#4285f4',
+          'fill-opacity': 0.1
+        }
+      });
+    }
+    if (!map.getLayer('gps-accuracy-outline')) {
+      map.addLayer({
+        id: 'gps-accuracy-outline',
+        type: 'line',
+        source: 'gps-accuracy',
+        paint: {
+          'line-color': '#4285f4',
+          'line-opacity': 0.3,
+          'line-width': 1.5
+        }
+      });
+    }
+
     // --- Route polyline ---
     if (!map.getSource('route')) {
       map.addSource('route', {
@@ -915,8 +946,8 @@
     markerEl.className = 'gps-marker' + (stale ? ' stale' : '');
     markerEl.style.transform += ' rotate(' + heading + 'deg)';
 
-    // Update accuracy circle size based on meters
-    updateAccuracyCircle(lat, accuracy);
+    // Update accuracy circle (geographic layer, scales with map)
+    updateAccuracyCircle(lat, lng, accuracy);
 
     // Update tooltip
     if (stale) {
@@ -930,41 +961,56 @@
   }
 
   /**
-   * Update the accuracy circle diameter based on GPS accuracy in meters.
+   * Update the GPS accuracy circle as a map layer (geographic coordinates).
+   * Uses a GeoJSON polygon circle so it scales correctly with the map.
    */
-  function updateAccuracyCircle(lat, accuracyMeters) {
-    var circleEl = document.querySelector('.gps-accuracy-circle');
-    if (!circleEl) return;
-
+  function updateAccuracyCircle(lat, lng, accuracyMeters) {
     if (!accuracyMeters || accuracyMeters <= 0 || gpsStale) {
-      circleEl.style.display = 'none';
+      // Hide circle
+      var src = map.getSource('gps-accuracy');
+      if (src) src.setData(emptyGeoJSON());
       return;
     }
 
-    // Convert meters to pixels at current zoom and latitude
-    var metersPerPixel = 156543.03 * Math.cos(lat * Math.PI / 180) / Math.pow(2, map.getZoom());
-    var diameter = (accuracyMeters * 2) / metersPerPixel;
+    // Create a GeoJSON circle polygon (64 points)
+    var circle = createGeoJSONCircle([lng, lat], accuracyMeters);
 
-    // Only show circle if it's meaningfully larger than the dot (>30px) and not huge (>600px)
-    if (diameter < 30 || diameter > 600) {
-      circleEl.style.display = 'none';
-      return;
+    var src = map.getSource('gps-accuracy');
+    if (src) {
+      src.setData(circle);
+    }
+  }
+
+  /**
+   * Create a GeoJSON polygon approximating a circle.
+   * @param {Array} center - [lng, lat]
+   * @param {number} radiusMeters
+   */
+  function createGeoJSONCircle(center, radiusMeters) {
+    var points = 64;
+    var coords = [];
+    var earthRadius = 6371000; // meters
+    var lat = center[1] * Math.PI / 180;
+    var lng = center[0] * Math.PI / 180;
+    var d = radiusMeters / earthRadius;
+
+    for (var i = 0; i <= points; i++) {
+      var bearing = (i * 360 / points) * Math.PI / 180;
+      var pLat = Math.asin(Math.sin(lat) * Math.cos(d) + Math.cos(lat) * Math.sin(d) * Math.cos(bearing));
+      var pLng = lng + Math.atan2(Math.sin(bearing) * Math.sin(d) * Math.cos(lat),
+                                   Math.cos(d) - Math.sin(lat) * Math.sin(pLat));
+      coords.push([pLng * 180 / Math.PI, pLat * 180 / Math.PI]);
     }
 
-    circleEl.style.display = 'block';
-    circleEl.style.width = diameter + 'px';
-    circleEl.style.height = diameter + 'px';
+    return {
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: [coords] }
+    };
   }
 
   function createGPSMarkerElement() {
     var el = document.createElement('div');
     el.className = 'gps-marker';
-
-    // Accuracy circle (behind the dot)
-    var circle = document.createElement('div');
-    circle.className = 'gps-accuracy-circle';
-    circle.style.display = 'none';
-    el.appendChild(circle);
 
     // Heading arrow
     var arrow = document.createElement('div');
