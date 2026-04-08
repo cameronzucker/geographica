@@ -7,6 +7,7 @@ services:
       - "8090:8080"
     volumes:
       - ./tileserver:/data
+      - ./data:/srv/data:ro
     command: ["--config", "/data/config.json"]
     deploy:
       resources:
@@ -155,6 +156,25 @@ services:
     volumes:
       - ./frontend:/usr/share/nginx/html:ro
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  pipeline:
+    build:
+      context: ./services/pipeline
+    container_name: geographica-pipeline
+    profiles: ["pipeline"]
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./data:/data
+    environment:
+      GDAL_CACHEMAX: "1024"
+      PYTHONUNBUFFERED: "1"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    # Entrypoint is set when started via docker compose run
+    # Default: idle (exits immediately if no command given)
+    entrypoint: ["python3"]
 
 volumes:
   nominatim-db:
