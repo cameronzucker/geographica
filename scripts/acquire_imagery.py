@@ -745,7 +745,7 @@ def main():
         help="TNMAccess dataset name (default: %(default)s)",
     )
     parser.add_argument(
-        "--staging", default="data/staging_imagery",
+        "--staging", default="/data/staging_imagery",
         help="Staging directory for GeoTIFF downloads (default: %(default)s)",
     )
     parser.add_argument(
