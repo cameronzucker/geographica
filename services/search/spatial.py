@@ -33,7 +33,7 @@ SYNONYM_TABLE = [
     # osm_types: accepted Nominatim category/type pairs for post-filtering false positives
     #   None means no filtering (accept all results)
     {"synonyms": {"gas station", "fuel", "gas"}, "gnis_class": None, "fallback_text": "gas station",
-     "nominatim_query": ["fuel station", "gas"],
+     "nominatim_query": ["fuel station", "gas", "Shell", "Chevron", "ARCO", "76", "Mobil", "Circle K"],
      "osm_types": {("amenity", "fuel"), ("shop", "gas"), ("shop", "convenience")}},
     {"synonyms": {"restaurant", "food", "eat", "dining"}, "gnis_class": None, "fallback_text": "restaurant",
      "nominatim_query": ["restaurant"],
@@ -569,9 +569,29 @@ async def spatial_search(body: SpatialSearchBody):
     else:
         limit = 30
 
-    # Query Nominatim with each nominatim_query term in parallel, merge results
+    # Query Nominatim with each nominatim_query term in parallel, merge results.
+    # For corridor searches, segment the bbox into tiles for even geographic coverage.
     nominatim_queries = parsed.get("nominatim_queries", [search_text])
-    nom_tasks = [_query_nominatim(q, limit, bbox) for q in nominatim_queries]
+
+    segment_bboxes = [bbox] if bbox else [None]
+    if intent == "route_corridor" and body.route and len(body.route) >= 2:
+        # Split route into ~100 km segments with independent bboxes
+        lngs = [p[0] for p in body.route]
+        lats = [p[1] for p in body.route]
+        lng_range = max(lngs) - min(lngs)
+        n_segments = max(1, int(lng_range / 1.0))  # ~1 degree ≈ 90-110 km
+        segment_bboxes = []
+        for i in range(n_segments):
+            seg_lng_min = min(lngs) + (lng_range * i / n_segments) - 0.02
+            seg_lng_max = min(lngs) + (lng_range * (i + 1) / n_segments) + 0.02
+            segment_bboxes.append(
+                f"{seg_lng_min},{min(lats) - 0.02},{seg_lng_max},{max(lats) + 0.02}"
+            )
+
+    nom_tasks = []
+    for seg_bbox in segment_bboxes:
+        for q in nominatim_queries:
+            nom_tasks.append(_query_nominatim(q, limit, seg_bbox))
     poi_task = _query_poi(search_text, limit, bbox)
 
     all_results = await asyncio.gather(*nom_tasks, poi_task, return_exceptions=True)
@@ -651,8 +671,23 @@ async def spatial_search(body: SpatialSearchBody):
         if "distance_m" not in r:
             r["distance_m"] = None
 
+    # Corridor results need more entries to cover the route length.
+    # Even without an explicit "every N miles" request, apply a minimum
+    # spacing to avoid clustering all results at the route start.
+    if intent == "route_corridor" and not parsed.get("interval_m") and len(merged) > 10:
+        # Auto-space: select up to 20 results with minimum ~30 km spacing
+        spaced = [merged[0]]
+        for r in merged[1:]:
+            last_dist = spaced[-1].get("distance_along_route_m", 0)
+            this_dist = r.get("distance_along_route_m", 0)
+            if this_dist - last_dist >= 30_000:  # 30 km minimum gap
+                spaced.append(r)
+        merged = spaced
+
+    max_results = 20 if intent == "route_corridor" else 10
+
     return {
-        "results": merged[:10],
+        "results": merged[:max_results],
         "intent": parsed["intent"],
         "original_intent": parsed["original_intent"],
         "fallback_reason": parsed["fallback_reason"],
