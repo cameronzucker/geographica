@@ -285,26 +285,46 @@
           content.appendChild(title);
         }
 
+        // Show KML icon as an image if available and reachable
+        if (props.icon && typeof props.icon === 'string') {
+          var iconImg = document.createElement('img');
+          iconImg.src = props.icon;
+          iconImg.style.maxWidth = '32px';
+          iconImg.style.maxHeight = '32px';
+          iconImg.style.marginBottom = '4px';
+          // Hide if it fails to load (offline, broken URL)
+          iconImg.onerror = function () { this.style.display = 'none'; };
+          content.appendChild(iconImg);
+        }
+
         if (props.description) {
           var desc = document.createElement('div');
           desc.className = 'kml-description';
-          // KML descriptions may contain HTML — sanitize by rendering as text
-          // unless it looks like intentional HTML (contains tags)
+          // KML descriptions may contain HTML — render as HTML but fix broken images
           if (/<[a-z][\s\S]*>/i.test(props.description)) {
             desc.innerHTML = props.description;
+            // Hide any broken images within the description
+            var imgs = desc.querySelectorAll('img');
+            for (var ii = 0; ii < imgs.length; ii++) {
+              imgs[ii].onerror = function () { this.style.display = 'none'; };
+            }
           } else {
             desc.textContent = props.description;
           }
           content.appendChild(desc);
         }
 
-        // Show any other non-internal properties
-        var skipKeys = { name: 1, description: 1, styleUrl: 1, styleHash: 1,
-                         styleMapHash: 1, stroke: 1, fill: 1, 'stroke-opacity': 1,
-                         'fill-opacity': 1, 'stroke-width': 1, icon: 1 };
+        // Show user-facing properties, skip internal and style keys
+        var skipKeys = {
+          name: 1, description: 1, styleUrl: 1, styleHash: 1,
+          styleMapHash: 1, stroke: 1, fill: 1, 'stroke-opacity': 1,
+          'fill-opacity': 1, 'stroke-width': 1, icon: 1, 'marker-color': 1,
+          'marker-size': 1, 'marker-symbol': 1,
+          _importFileId: 1, _importFeatureId: 1, _folder: 1
+        };
         var extras = [];
         Object.keys(props).forEach(function (key) {
-          if (!skipKeys[key] && props[key] !== null && props[key] !== '') {
+          if (!skipKeys[key] && props[key] !== null && props[key] !== '' && !key.startsWith('_')) {
             extras.push(key + ': ' + props[key]);
           }
         });

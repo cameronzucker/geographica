@@ -33,3 +33,11 @@
 - **Cons:** Requires a lightweight status API that polls container logs or healthcheck endpoints. Nominatim and Valhalla don't expose structured progress — would need log parsing or periodic healthcheck probing.
 - **Context:** Identified during Phase 0 deployment while waiting ~8 hours for Nominatim to import 11 Western US states. The operator experience of "is it done yet?" with no visibility is poor.
 - **Depends on:** Phase 1 frontend complete. Could be a simple addition to the search/POI FastAPI service (add a /admin/status endpoint that checks healthchecks and parses recent Docker logs via the Docker socket).
+
+### Offline KML icon set for common Google Earth markers
+- **What:** Bundle the standard Google Earth/Maps icon set (pushpins, shapes, paddles) locally so KML IconStyle references to `maps.google.com/mapfiles/kml/` URLs render correctly when offline.
+- **Why:** Most KML/KMZ files reference Google-hosted icons via URLs like `http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png`. On an offline AREDN deployment these URLs are unreachable, so marker icons fail to load. Currently, broken icon URLs are hidden gracefully (onerror handler), but the intended visual distinction between marker types is lost.
+- **Pros:** KML imports look correct without internet access. The Google Earth icon set is small (~200 icons, ~2 MB total) and freely redistributable.
+- **Cons:** Requires downloading and bundling the icon set, plus URL rewriting logic in the import pipeline to map `maps.google.com/mapfiles/kml/...` paths to local equivalents.
+- **Context:** Identified when importing Ham Radio Deployment Sites.kmz which uses pushpin, caution, and triangle icons. Could also render icons as SVG symbols on the MapLibre canvas for better scaling.
+- **Depends on:** KML import feature complete (done).

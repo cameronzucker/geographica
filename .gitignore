@@ -29,3 +29,4 @@ tileserver/sources/
 tileserver/styles/*/LICENSE*
 tileserver/styles/*/icons/
 tileserver/tmp/
+.temp/
