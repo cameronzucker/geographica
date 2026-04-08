@@ -50,6 +50,8 @@
 
     // Cache DOM refs
     overlay     = document.getElementById('nav-overlay');
+    // Prevent nav overlay clicks from reaching sidebar overlay behind it
+    overlay.addEventListener('click', function (e) { e.stopPropagation(); });
     instrMain   = document.getElementById('nav-instruction-main');
     instrDist   = document.getElementById('nav-instruction-distance');
     instrAfter  = document.getElementById('nav-instruction-after');
@@ -572,7 +574,10 @@
     muteBtn.id = 'nav-mute-btn';
     muteBtn.title = muted ? 'Unmute voice' : 'Mute voice';
     updateMuteIcon();
-    muteBtn.addEventListener('click', toggleMute);
+    muteBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      toggleMute();
+    });
 
     if (!speechAvailable) {
       muteBtn.style.display = 'none';
