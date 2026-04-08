@@ -470,3 +470,119 @@ def distance_along_polyline(polyline: list[list[float]]) -> float:
             polyline[i][1], polyline[i][0],
         )
     return total
+
+
+# ---------------------------------------------------------------------------
+# FastAPI endpoint
+# ---------------------------------------------------------------------------
+import asyncio
+from fastapi import APIRouter
+from pydantic import BaseModel, Field
+from typing import Optional as Opt
+
+router = APIRouter()
+
+
+class PositionBody(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+
+
+class SpatialSearchBody(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    position: Opt[PositionBody] = None
+    route: Opt[list[list[float]]] = Field(None, max_length=10000)
+
+
+@router.post("/spatial")
+async def spatial_search(body: SpatialSearchBody):
+    """Natural language spatial search endpoint."""
+    # Deferred import to avoid circular dependency (main imports router from this file)
+    from main import _query_nominatim, _query_poi, _deduplicate
+
+    parsed = parse_intent(
+        body.query,
+        has_position=body.position is not None,
+        has_route=body.route is not None and len(body.route) >= 2,
+    )
+
+    search_text = parsed["search_text"]
+    intent = parsed["intent"]
+
+    # Build bbox for spatial queries
+    bbox = None
+    if intent == "route_corridor" and body.route:
+        lngs = [p[0] for p in body.route]
+        lats = [p[1] for p in body.route]
+        margin = 0.02  # ~2.2 km
+        bbox = f"{min(lngs)-margin},{min(lats)-margin},{max(lngs)+margin},{max(lats)+margin}"
+    elif intent == "proximity" and body.position:
+        radius_m = parsed["radius_m"] or DEFAULT_PROXIMITY_RADIUS_M
+        margin = radius_m / 111_000  # ~111 km per degree
+        bbox = (
+            f"{body.position.lon - margin},{body.position.lat - margin},"
+            f"{body.position.lon + margin},{body.position.lat + margin}"
+        )
+
+    # Query both sources in parallel
+    limit = 20
+    nom_results, poi_results = await asyncio.gather(
+        _query_nominatim(search_text, limit, bbox),
+        _query_poi(search_text, limit, bbox),
+        return_exceptions=True,
+    )
+    if isinstance(nom_results, BaseException):
+        nom_results = []
+    if isinstance(poi_results, BaseException):
+        poi_results = []
+
+    # Boost GNIS class matches when a class is specified
+    gnis_class = parsed.get("gnis_class")
+    if gnis_class and poi_results:
+        class_matches = [r for r in poi_results if (r.get("class") or "").lower() == gnis_class.lower()]
+        others = [r for r in poi_results if (r.get("class") or "").lower() != gnis_class.lower()]
+        poi_results = class_matches + others
+
+    merged = _deduplicate(nom_results, poi_results)
+
+    # Add distance_m if position available
+    if body.position:
+        for r in merged:
+            try:
+                r["distance_m"] = round(haversine_m(
+                    body.position.lat, body.position.lon,
+                    float(r["lat"]), float(r["lon"])
+                ), 1)
+            except (KeyError, TypeError, ValueError):
+                r["distance_m"] = None
+    else:
+        for r in merged:
+            r["distance_m"] = None
+
+    # Apply spatial filtering
+    if intent == "route_corridor" and body.route:
+        merged = corridor_filter(
+            body.route, merged,
+            corridor_width_m=CORRIDOR_WIDTH_M,
+            interval_m=parsed.get("interval_m"),
+        )
+    elif intent == "proximity":
+        merged = [r for r in merged if r.get("distance_m") is not None]
+        merged.sort(key=lambda r: r["distance_m"])
+        radius = parsed["radius_m"] or DEFAULT_PROXIMITY_RADIUS_M
+        merged = [r for r in merged if r["distance_m"] <= radius]
+
+    # Ensure all results have both distance fields
+    for r in merged:
+        if "distance_along_route_m" not in r:
+            r["distance_along_route_m"] = None
+        if "distance_m" not in r:
+            r["distance_m"] = None
+
+    return {
+        "results": merged[:10],
+        "intent": parsed["intent"],
+        "original_intent": parsed["original_intent"],
+        "fallback_reason": parsed["fallback_reason"],
+        "category": parsed["category"],
+    }

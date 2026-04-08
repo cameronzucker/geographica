@@ -166,6 +166,11 @@ async def _open_poi_db() -> None:
 async def lifespan(_app: FastAPI):
     state.http_client = httpx.AsyncClient(timeout=httpx.Timeout(5.0))
     await _open_poi_db()
+    # Ensure spatial index for bbox queries (corridor/proximity search)
+    if state.poi_db:
+        await state.poi_db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_poi_latlon ON poi_features (lat, lon)"
+        )
     yield
     # Shutdown
     if state.http_client:
@@ -175,6 +180,9 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Geographica Search", lifespan=lifespan)
+
+from spatial import router as spatial_router
+app.include_router(spatial_router, prefix="")
 
 
 # ---------------------------------------------------------------------------
