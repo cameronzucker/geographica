@@ -41,3 +41,19 @@
 - **Cons:** Requires downloading and bundling the icon set, plus URL rewriting logic in the import pipeline to map `maps.google.com/mapfiles/kml/...` paths to local equivalents.
 - **Context:** Identified when importing Ham Radio Deployment Sites.kmz which uses pushpin, caution, and triangle icons. Could also render icons as SVG symbols on the MapLibre canvas for better scaling.
 - **Depends on:** KML import feature complete (done).
+
+### Expanded POI data sources for better search coverage
+- **What:** Supplement Nominatim + GNIS with additional open POI datasets to improve search coverage for businesses, offices, and private landmarks that OSM doesn't map well. Three candidates: (1) Extract named POIs directly from the OSM PBF we already have using `osmium tags-filter` — catches anything with `name=*` that Nominatim ranks low or skips. (2) Ingest Who's On First gazetteer data (open, includes venues). (3) Ingest Overture Maps Places dataset (Meta/Microsoft, open, strong business coverage).
+- **Why:** Nominatim only finds what's mapped in OSM. Public landmarks (stadiums, parks) are well-covered, but private businesses and offices have major gaps — e.g., "Laserfiche, Long Beach, CA" returns zero results even on the live global Nominatim instance. This is a common complaint from users who expect Google Maps-level coverage.
+- **Pros:** Dramatically improves search hit rate for real-world place lookups. All data sources are open and can be processed offline into the existing SQLite FTS5 index.
+- **Cons:** More data = larger POI database, longer indexing. Overture Maps Places dataset is ~1 GB for the US. Deduplication against Nominatim results becomes more important as the POI database grows.
+- **Context:** Identified during testing when "Laserfiche, Long Beach, CA" returned nothing but "Chase Field, Phoenix, AZ" worked (mapped in OSM as leisure=stadium). The unified search service already handles Nominatim + POI merge with haversine dedup, so adding more POI sources is architecturally straightforward.
+- **Depends on:** POI indexer pipeline (scripts/build_poi_index.py). Consider also adding user-contributed custom waypoints/bookmarks that persist locally and are searchable — most practical path for niche locations on an AREDN mesh.
+
+### KML import popup rendering improvements
+- **What:** Improve how KML feature popups display imported data. Current issues: (1) Some KML description content doesn't render correctly. (2) Need to investigate edge cases with HTML content in descriptions, embedded images, and data tables from various KML authoring tools (Google Earth, ArcGIS, QGIS).
+- **Why:** KML files from different sources use description fields inconsistently — some embed HTML tables, some use CDATA, some reference external images. The current popup renderer handles basic cases but needs testing against a wider variety of real-world KML files.
+- **Pros:** Better fidelity when importing KML data that users have invested time creating.
+- **Cons:** KML description content is essentially arbitrary HTML — full rendering requires careful sanitization to avoid XSS while preserving intentional formatting.
+- **Context:** Identified during testing with Ham Radio Deployment Sites.kmz. Deferred pending more reference KML files to test against.
+- **Depends on:** KML import feature complete (done).
