@@ -629,6 +629,15 @@ async def m2m_get_download_urls(session: aiohttp.ClientSession, api_key: str,
             "entityIds": batch,
         }, api_key=api_key)
         options = resp.get("data", [])
+        # Log ALL product names for diagnosis before filtering
+        all_product_names = set()
+        for opt in options:
+            pn = opt.get("productName", "")
+            if pn:
+                all_product_names.add(pn)
+        if all_product_names:
+            log.info("Available product names: %s", sorted(all_product_names))
+
         for opt in options:
             if not opt.get("available"):
                 continue
@@ -694,6 +703,8 @@ async def m2m_get_download_urls(session: aiohttp.ClientSession, api_key: str,
 
 async def run_m2m(args):
     """Run the M2M imagery acquisition pipeline."""
+    global _cancel_requested
+
     username = args.m2m_username
     token = args.m2m_token
     if not username or not token:
@@ -705,39 +716,127 @@ async def run_m2m(args):
     staging = Path(args.staging)
     staging.mkdir(parents=True, exist_ok=True)
     checkpoint = staging / "m2m_checkpoint.json"
+    output = Path(args.output)
+
+    # Cap M2M concurrency to prevent API abuse
+    m2m_concurrency = min(args.concurrency, 5)
+    if args.concurrency > 5:
+        log.warning("Capping M2M concurrency from %d to %d (API rate limit safety)",
+                     args.concurrency, m2m_concurrency)
 
     os.environ.setdefault("GDAL_CACHEMAX", "1024")
 
+    import datetime
+    update_progress._started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
     async with aiohttp.ClientSession() as session:
-        api_key = await m2m_login(session, username, token)
+        # --- Login ---
         try:
-            # Find NAIP dataset alias
+            api_key = await m2m_login(session, username, token)
+        except Exception as exc:
+            log.error("M2M login failed: %s", exc)
+            update_progress(output, "m2m", args.bbox, "n/a",
+                            0, 0, status="error",
+                            error=f"Login failed: {exc}")
+            sys.exit(1)
+
+        update_progress(output, "m2m", args.bbox, "n/a",
+                        0, 0, status="running")
+
+        if _cancel_requested:
+            log.info("Cancellation requested after login — logging out")
+            await m2m_logout(session, api_key)
+            update_progress(output, "m2m", args.bbox, "n/a",
+                            0, 0, status="cancelled")
+            return
+
+        try:
+            # --- Find NAIP dataset alias ---
             dataset_alias = await m2m_find_naip_dataset(session, api_key)
 
-            # Search for scenes
-            scenes = await m2m_scene_search(session, api_key, dataset_alias, bbox)
-            if not scenes:
-                log.warning("No NAIP scenes found for bbox %s", args.bbox)
+            if _cancel_requested:
+                log.info("Cancellation requested after dataset search — logging out")
+                update_progress(output, "m2m", args.bbox, "n/a",
+                                0, 0, status="cancelled")
                 return
 
-            # Get download URLs
+            # --- Search for scenes ---
+            scenes = await m2m_scene_search(session, api_key, dataset_alias, bbox)
+            if not scenes:
+                log.error("No NAIP scenes found for bbox %s", args.bbox)
+                update_progress(output, "m2m", args.bbox, "n/a",
+                                0, 0, status="error",
+                                error=f"No NAIP scenes found for bbox {args.bbox}")
+                sys.exit(1)
+
+            update_progress(output, "m2m", args.bbox, "n/a",
+                            0, len(scenes), status="running")
+
+            if _cancel_requested:
+                log.info("Cancellation requested after scene search — logging out")
+                update_progress(output, "m2m", args.bbox, "n/a",
+                                0, len(scenes), status="cancelled")
+                return
+
+            # --- Get download URLs ---
             urls = await m2m_get_download_urls(
                 session, api_key, dataset_alias, scenes
             )
             if not urls:
-                log.warning("No downloadable URLs obtained")
-                return
+                log.error("No downloadable URLs obtained")
+                update_progress(output, "m2m", args.bbox, "n/a",
+                                0, len(scenes), status="error",
+                                error="No downloadable GeoTIFF URLs obtained from M2M API")
+                sys.exit(1)
+
+            log.info("Got %d download URLs for %d scenes", len(urls), len(scenes))
+
         finally:
             await m2m_logout(session, api_key)
 
-    # Download GeoTIFFs (reuse existing helper)
+    if _cancel_requested:
+        log.info("Cancellation requested before downloads — stopping")
+        update_progress(output, "m2m", args.bbox, "n/a",
+                        0, len(urls), status="cancelled")
+        return
+
+    # --- Download GeoTIFFs (reuse existing helper) ---
+    update_progress(output, "m2m", args.bbox, "n/a",
+                    0, len(urls), status="running")
+
     tif_paths = await download_geotiffs(
-        urls, staging, checkpoint, concurrency=args.concurrency
+        urls, staging, checkpoint, concurrency=m2m_concurrency
     )
 
-    # Convert to MBTiles
-    output = Path(args.output)
-    convert_geotiffs_to_mbtiles(tif_paths, output)
+    if _cancel_requested:
+        log.info("Cancellation requested after downloads — skipping conversion")
+        update_progress(output, "m2m", args.bbox, "n/a",
+                        len(tif_paths), len(urls), status="cancelled")
+        return
+
+    if not tif_paths:
+        log.error("No GeoTIFF files were downloaded successfully")
+        update_progress(output, "m2m", args.bbox, "n/a",
+                        0, len(urls), status="error",
+                        error="All GeoTIFF downloads failed")
+        sys.exit(1)
+
+    # --- Convert to MBTiles ---
+    update_progress(output, "m2m", args.bbox, "n/a",
+                    len(tif_paths), len(urls), status="running")
+
+    try:
+        convert_geotiffs_to_mbtiles(tif_paths, output)
+    except Exception as exc:
+        log.error("GDAL conversion failed: %s", exc)
+        update_progress(output, "m2m", args.bbox, "n/a",
+                        len(tif_paths), len(urls), status="error",
+                        error=f"GDAL conversion failed: {exc}")
+        sys.exit(1)
+
+    update_progress(output, "m2m", args.bbox, "n/a",
+                    len(urls), len(urls), status="completed")
+    log.info("M2M pipeline complete: %s", output)
 
 
 # ---------------------------------------------------------------------------
