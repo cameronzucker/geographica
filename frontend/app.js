@@ -41,6 +41,9 @@
   var routeStartMarker = null;
   var routeEndMarker   = null;
 
+  var importedFiles = {};       // { fileId: { name, geojson, visible, folders: { name: visible }, features: { id: visible } } }
+  var importCounter = 0;        // unique ID counter for imported files
+
   var gpsMarker  = null;       // MapLibre marker for GPS position
   var gpsWs      = null;       // WebSocket connection
   var gpsStale   = true;
@@ -1139,14 +1142,7 @@
       try {
         var parser = new DOMParser();
         var kmlDoc = parser.parseFromString(e.target.result, 'text/xml');
-
-        if (typeof toGeoJSON === 'undefined') {
-          showImportStatus('toGeoJSON library not loaded. Cannot parse KML.', 'error');
-          return;
-        }
-
-        var geojson = toGeoJSON.kml(kmlDoc);
-        renderImportedGeoJSON(geojson, file.name);
+        processKMLDoc(kmlDoc, file.name);
       } catch (err) {
         console.error('KML parse error:', err);
         showImportStatus('Failed to parse KML: ' + err.message, 'error');
@@ -1162,33 +1158,20 @@
     }
 
     JSZip.loadAsync(file).then(function (zip) {
-      // Find the .kml file inside the archive
       var kmlFile = null;
       zip.forEach(function (path, entry) {
-        if (path.match(/\.kml$/i) && !kmlFile) {
-          kmlFile = entry;
-        }
+        if (path.match(/\.kml$/i) && !kmlFile) kmlFile = entry;
       });
-
       if (!kmlFile) {
         showImportStatus('No KML file found inside KMZ archive.', 'error');
         return;
       }
-
       return kmlFile.async('string');
     }).then(function (kmlText) {
       if (!kmlText) return;
-
       var parser = new DOMParser();
       var kmlDoc = parser.parseFromString(kmlText, 'text/xml');
-
-      if (typeof toGeoJSON === 'undefined') {
-        showImportStatus('toGeoJSON library not loaded. Cannot parse KML.', 'error');
-        return;
-      }
-
-      var geojson = toGeoJSON.kml(kmlDoc);
-      renderImportedGeoJSON(geojson, file.name);
+      processKMLDoc(kmlDoc, file.name);
     }).catch(function (err) {
       console.error('KMZ extract error:', err);
       showImportStatus('Failed to extract KMZ: ' + err.message, 'error');
@@ -1196,36 +1179,269 @@
   }
 
   /**
-   * Render imported GeoJSON features on the map.
-   * @param {Object} geojson - GeoJSON FeatureCollection
-   * @param {string} filename - original filename for status message
+   * Parse KML document: extract folder structure, convert to GeoJSON,
+   * tag features with folder names and unique IDs, register as a managed import.
    */
-  function renderImportedGeoJSON(geojson, filename) {
+  function processKMLDoc(kmlDoc, filename) {
+    if (typeof toGeoJSON === 'undefined') {
+      showImportStatus('toGeoJSON library not loaded.', 'error');
+      return;
+    }
+
+    // Build a lookup: placemark name → folder name by walking the KML DOM
+    var folderMap = {};
+    var folders = kmlDoc.getElementsByTagName('Folder');
+    for (var i = 0; i < folders.length; i++) {
+      var folderNameEl = folders[i].childNodes;
+      var folderName = 'Ungrouped';
+      for (var j = 0; j < folderNameEl.length; j++) {
+        if (folderNameEl[j].nodeName === 'name' && folderNameEl[j].textContent) {
+          folderName = folderNameEl[j].textContent;
+          break;
+        }
+      }
+      // Direct child placemarks of this folder
+      var pms = folders[i].childNodes;
+      for (var k = 0; k < pms.length; k++) {
+        if (pms[k].nodeName === 'Placemark') {
+          var pmName = '';
+          for (var m = 0; m < pms[k].childNodes.length; m++) {
+            if (pms[k].childNodes[m].nodeName === 'name') {
+              pmName = pms[k].childNodes[m].textContent || '';
+              break;
+            }
+          }
+          // Use placemark index as fallback key
+          folderMap['pm_' + Object.keys(folderMap).length] = { folder: folderName, name: pmName };
+        }
+      }
+    }
+
+    var geojson = toGeoJSON.kml(kmlDoc);
     if (!geojson.features || geojson.features.length === 0) {
       showImportStatus('No features found in ' + filename, 'warning');
       return;
     }
 
-    var source = map.getSource('imported');
-    if (source) {
-      source.setData(geojson);
-    }
+    // Assign unique IDs and folder names to features
+    var fileId = 'import_' + (++importCounter);
+    var folderEntries = Object.values(folderMap);
+    var folderSet = {};
 
-    // Fit map to imported data bounds
+    geojson.features.forEach(function (f, idx) {
+      f.properties = f.properties || {};
+      f.properties._importFileId = fileId;
+      f.properties._importFeatureId = fileId + '_f' + idx;
+      // Match to folder by index (toGeoJSON preserves order)
+      if (folderEntries[idx]) {
+        f.properties._folder = folderEntries[idx].folder;
+      } else {
+        f.properties._folder = 'Ungrouped';
+      }
+      folderSet[f.properties._folder] = true;
+    });
+
+    // Register the import
+    var featureVisibility = {};
+    geojson.features.forEach(function (f) {
+      featureVisibility[f.properties._importFeatureId] = true;
+    });
+
+    var folderVisibility = {};
+    Object.keys(folderSet).forEach(function (fn) { folderVisibility[fn] = true; });
+
+    importedFiles[fileId] = {
+      name: filename,
+      geojson: geojson,
+      visible: true,
+      folders: folderVisibility,
+      features: featureVisibility
+    };
+
+    // Update map and UI
+    updateImportedMapData();
+    buildImportLayerUI();
+
+    // Fit map to imported data
     var bounds = new maplibregl.LngLatBounds();
     geojson.features.forEach(function (f) {
       if (!f.geometry || !f.geometry.coordinates) return;
       addCoordsToBounds(bounds, f.geometry.coordinates, f.geometry.type);
     });
-
-    if (!bounds.isEmpty()) {
-      map.fitBounds(bounds, { padding: 60 });
-    }
+    if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60 });
 
     showImportStatus(
       'Imported ' + geojson.features.length + ' feature(s) from ' + filename,
       'success'
     );
+  }
+
+  /**
+   * Merge all visible features from all imported files into the map source.
+   */
+  function updateImportedMapData() {
+    var allFeatures = [];
+    Object.keys(importedFiles).forEach(function (fileId) {
+      var entry = importedFiles[fileId];
+      if (!entry.visible) return;
+      entry.geojson.features.forEach(function (f) {
+        var fId = f.properties._importFeatureId;
+        var folder = f.properties._folder;
+        if (entry.features[fId] && entry.folders[folder]) {
+          allFeatures.push(f);
+        }
+      });
+    });
+
+    var merged = { type: 'FeatureCollection', features: allFeatures };
+    var source = map.getSource('imported');
+    if (source) source.setData(merged);
+  }
+
+  /**
+   * Build the import layer management UI in the sidebar.
+   */
+  function buildImportLayerUI() {
+    var container = document.getElementById('import-layers');
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    var fileIds = Object.keys(importedFiles);
+    if (fileIds.length === 0) return;
+
+    fileIds.forEach(function (fileId) {
+      var entry = importedFiles[fileId];
+      var group = document.createElement('div');
+      group.className = 'import-file-group';
+
+      // File header row
+      var header = document.createElement('div');
+      header.className = 'import-file-header';
+
+      var headerLabel = document.createElement('label');
+      var fileCheckbox = document.createElement('input');
+      fileCheckbox.type = 'checkbox';
+      fileCheckbox.checked = entry.visible;
+      fileCheckbox.addEventListener('change', function () {
+        entry.visible = this.checked;
+        updateImportedMapData();
+      });
+      headerLabel.appendChild(fileCheckbox);
+      headerLabel.appendChild(document.createTextNode(' ' + entry.name));
+      header.appendChild(headerLabel);
+
+      var actions = document.createElement('div');
+      actions.className = 'import-file-actions';
+
+      var zoomBtn = document.createElement('button');
+      zoomBtn.textContent = 'Zoom';
+      zoomBtn.addEventListener('click', function () {
+        var bounds = new maplibregl.LngLatBounds();
+        entry.geojson.features.forEach(function (f) {
+          if (f.geometry && f.geometry.coordinates) {
+            addCoordsToBounds(bounds, f.geometry.coordinates, f.geometry.type);
+          }
+        });
+        if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60 });
+      });
+      actions.appendChild(zoomBtn);
+
+      var removeBtn = document.createElement('button');
+      removeBtn.textContent = 'Remove';
+      removeBtn.className = 'danger';
+      removeBtn.addEventListener('click', function () {
+        delete importedFiles[fileId];
+        updateImportedMapData();
+        buildImportLayerUI();
+      });
+      actions.appendChild(removeBtn);
+      header.appendChild(actions);
+      group.appendChild(header);
+
+      // Group features by folder
+      var folderNames = Object.keys(entry.folders);
+      var hasFolders = folderNames.length > 1 || (folderNames.length === 1 && folderNames[0] !== 'Ungrouped');
+
+      folderNames.forEach(function (folderName) {
+        var folderFeatures = entry.geojson.features.filter(function (f) {
+          return f.properties._folder === folderName;
+        });
+        if (folderFeatures.length === 0) return;
+
+        var folderGroup = document.createElement('div');
+        folderGroup.className = 'import-folder-group';
+
+        // Folder header (only show if there are actual named folders)
+        if (hasFolders) {
+          var folderHeader = document.createElement('div');
+          folderHeader.className = 'import-folder-header';
+
+          var folderCb = document.createElement('input');
+          folderCb.type = 'checkbox';
+          folderCb.checked = entry.folders[folderName];
+          folderCb.addEventListener('change', (function (fn) {
+            return function () {
+              entry.folders[fn] = this.checked;
+              // Sync child feature checkboxes
+              var childCbs = folderGroup.querySelectorAll('.import-feature-item input[type="checkbox"]');
+              for (var i = 0; i < childCbs.length; i++) {
+                childCbs[i].checked = this.checked;
+              }
+              folderFeatures.forEach(function (f) {
+                entry.features[f.properties._importFeatureId] = entry.folders[fn];
+              });
+              updateImportedMapData();
+            };
+          })(folderName));
+          folderHeader.appendChild(folderCb);
+          folderHeader.appendChild(document.createTextNode(' ' + folderName + ' (' + folderFeatures.length + ')'));
+          folderGroup.appendChild(folderHeader);
+        }
+
+        // Individual features
+        var featureList = document.createElement('div');
+        featureList.className = 'import-feature-list';
+
+        folderFeatures.forEach(function (f) {
+          var fId = f.properties._importFeatureId;
+          var item = document.createElement('div');
+          item.className = 'import-feature-item';
+
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = entry.features[fId];
+          cb.addEventListener('change', function () {
+            entry.features[fId] = this.checked;
+            updateImportedMapData();
+          });
+          item.appendChild(cb);
+
+          var nameSpan = document.createElement('span');
+          nameSpan.textContent = f.properties.name || 'Unnamed';
+          item.appendChild(nameSpan);
+
+          var typeSpan = document.createElement('span');
+          typeSpan.className = 'import-feature-type';
+          typeSpan.textContent = f.geometry ? f.geometry.type : '?';
+          item.appendChild(typeSpan);
+
+          // Click feature name to zoom to it
+          nameSpan.addEventListener('click', function (e) {
+            e.preventDefault();
+            if (!f.geometry || !f.geometry.coordinates) return;
+            var b = new maplibregl.LngLatBounds();
+            addCoordsToBounds(b, f.geometry.coordinates, f.geometry.type);
+            if (!b.isEmpty()) map.fitBounds(b, { padding: 80, maxZoom: 16 });
+          });
+
+          featureList.appendChild(item);
+        });
+
+        folderGroup.appendChild(featureList);
+        group.appendChild(folderGroup);
+      });
+
+      container.appendChild(group);
+    });
   }
 
   /**

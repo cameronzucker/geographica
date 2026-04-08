@@ -523,6 +523,110 @@ html, body {
   background: #3a3f50;
 }
 
+/* ----- Import layer management ----- */
+#import-layers {
+  margin-top: 8px;
+}
+
+.import-file-group {
+  margin-bottom: 12px;
+}
+
+.import-file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--sidebar-border);
+}
+
+.import-file-header label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sidebar-heading);
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-file-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.import-file-actions button {
+  background: none;
+  border: 1px solid var(--sidebar-border);
+  border-radius: 4px;
+  color: var(--sidebar-text);
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.import-file-actions button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.import-file-actions button.danger:hover {
+  background: rgba(243, 139, 168, 0.2);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.import-folder-group {
+  margin-left: 8px;
+}
+
+.import-folder-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 11px;
+  color: #7a8299;
+  cursor: pointer;
+}
+
+.import-folder-header input[type="checkbox"] {
+  margin: 0;
+}
+
+.import-feature-list {
+  margin-left: 20px;
+}
+
+.import-feature-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 11px;
+  color: var(--sidebar-text);
+  cursor: pointer;
+}
+
+.import-feature-item input[type="checkbox"] {
+  margin: 0;
+}
+
+.import-feature-item:hover {
+  color: var(--sidebar-heading);
+}
+
+.import-feature-type {
+  font-size: 9px;
+  color: #585e70;
+  flex-shrink: 0;
+}
+
 /* ----- Position detail overlay ----- */
 #position-detail {
   position: fixed;
