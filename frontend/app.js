@@ -545,6 +545,8 @@
 
     if (overlay) {
       overlay.addEventListener('click', function () {
+        // Don't close sidebar while bbox drawing is active
+        if (window._bboxDrawingActive) return;
         setSidebarOpen(false);
       });
     }
@@ -2507,6 +2509,7 @@
         if (drawingBbox) {
           // Cancel mid-draw
           drawingBbox = false;
+          window._bboxDrawingActive = false;
           drawCorner1 = null;
           resetDrawBtn();
           map.getCanvas().style.cursor = '';
@@ -2527,17 +2530,13 @@
           return;
         }
 
-        // Start drawing
+        // Start drawing — keep sidebar open so user sees the admin panel
         drawingBbox = true;
+        window._bboxDrawingActive = true;
         drawCorner1 = null;
         drawBtn.classList.add('active');
         drawBtn.textContent = 'Click first corner...';
         map.getCanvas().style.cursor = 'crosshair';
-
-        // Close sidebar so user can see the map
-        if (document.getElementById('sidebar').classList.contains('open')) {
-          setSidebarOpen(false);
-        }
       });
     }
 
@@ -2577,6 +2576,7 @@
 
         // End drawing, switch to "Clear selection" mode
         drawingBbox = false;
+        window._bboxDrawingActive = false;
         drawCorner1 = null;
         map.getCanvas().style.cursor = '';
         setDrawBtnToClear();
