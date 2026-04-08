@@ -2483,6 +2483,15 @@
       if (!map) return;
       var bounds = map.getBounds();
       setBbox(bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth());
+      setDrawBtnToClear();
+      // Green flash confirmation
+      bboxDisplay.style.borderColor = 'var(--success)';
+      bboxDisplay.style.background = 'rgba(166,227,161,0.15)';
+      setTimeout(function () {
+        bboxDisplay.style.borderColor = '';
+        bboxDisplay.style.background = '';
+        removeBboxPreview();
+      }, 1000);
     });
 
     // --- Draw on map button ---
@@ -2491,19 +2500,34 @@
     var drawingBbox = false;
     var drawCorner1 = null;
 
+    var bboxIsSet = false; // tracks whether a custom bbox has been drawn/set
+
     if (drawBtn) {
       drawBtn.addEventListener('click', function () {
         if (drawingBbox) {
-          // Cancel drawing
+          // Cancel mid-draw
           drawingBbox = false;
           drawCorner1 = null;
-          drawBtn.classList.remove('active');
-          drawBtn.textContent = 'Draw on map';
+          resetDrawBtn();
           map.getCanvas().style.cursor = '';
           removeBboxPreview();
           return;
         }
 
+        if (bboxIsSet) {
+          // Clear selection
+          bboxIsSet = false;
+          bboxInput.value = '-124.8,31.3,-102.0,49.0';
+          bboxDisplay.textContent = 'Western US (default)';
+          bboxDisplay.style.borderColor = '';
+          bboxDisplay.style.background = '';
+          resetDrawBtn();
+          removeBboxPreview();
+          updatePipelineEstimate();
+          return;
+        }
+
+        // Start drawing
         drawingBbox = true;
         drawCorner1 = null;
         drawBtn.classList.add('active');
@@ -2511,12 +2535,26 @@
         map.getCanvas().style.cursor = 'crosshair';
 
         // Close sidebar so user can see the map
-        var sidebar = document.getElementById('sidebar');
-        var overlay = document.getElementById('sidebar-overlay');
-        if (sidebar.classList.contains('open')) {
+        if (document.getElementById('sidebar').classList.contains('open')) {
           setSidebarOpen(false);
         }
       });
+    }
+
+    function resetDrawBtn() {
+      drawBtn.classList.remove('active');
+      drawBtn.style.background = '';
+      drawBtn.style.borderColor = '';
+      drawBtn.style.color = '';
+      drawBtn.textContent = 'Draw on map';
+    }
+
+    function setDrawBtnToClear() {
+      bboxIsSet = true;
+      drawBtn.textContent = 'Clear selection';
+      drawBtn.style.background = 'rgba(243,139,168,0.15)';
+      drawBtn.style.borderColor = 'var(--danger)';
+      drawBtn.style.color = 'var(--danger)';
     }
 
     // Map click handler for bbox drawing
@@ -2524,13 +2562,10 @@
       if (!drawingBbox) return;
 
       if (!drawCorner1) {
-        // First click — store corner
         drawCorner1 = e.lngLat;
         drawBtn.textContent = 'Click opposite corner...';
-        // Show a marker at first corner
         showBboxPreview(drawCorner1, drawCorner1);
       } else {
-        // Second click — complete the bbox
         var c1 = drawCorner1;
         var c2 = e.lngLat;
         var west = Math.min(c1.lng, c2.lng);
@@ -2540,15 +2575,21 @@
 
         setBbox(west, south, east, north);
 
-        // Reset drawing state
+        // End drawing, switch to "Clear selection" mode
         drawingBbox = false;
         drawCorner1 = null;
-        drawBtn.classList.remove('active');
-        drawBtn.textContent = 'Draw on map';
         map.getCanvas().style.cursor = '';
+        setDrawBtnToClear();
 
-        // Fit map to drawn bbox — rectangle stays until download starts
+        // Fit map, flash the display green, then fade the rectangle
         map.fitBounds([[west, south], [east, north]], { padding: 40 });
+        bboxDisplay.style.borderColor = 'var(--success)';
+        bboxDisplay.style.background = 'rgba(166,227,161,0.15)';
+        setTimeout(function () {
+          bboxDisplay.style.borderColor = '';
+          bboxDisplay.style.background = '';
+          removeBboxPreview();
+        }, 1000);
       }
     });
 
