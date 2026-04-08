@@ -229,13 +229,16 @@ async def run(args):
                 all_tiles.append((z, x, y))
     log.info("Total tiles to fetch: %d (zoom %d-%d)", len(all_tiles), z_min, z_max)
 
-    # Filter already-done via checkpoint
+    # Load all existing checkpoints into a set for O(1) lookup
     async with aiosqlite.connect(str(output)) as db:
         await db.execute("PRAGMA journal_mode=WAL")
-        remaining = []
-        for z, x, y in all_tiles:
-            if not await tile_already_done(db, z, x, y):
-                remaining.append((z, x, y))
+        done_set = set()
+        async with db.execute("SELECT zoom_level, tile_column, tile_row FROM _checkpoint") as cur:
+            async for row in cur:
+                done_set.add((row[0], row[1], row[2]))
+    log.info("Loaded %d checkpoints into memory", len(done_set))
+
+    remaining = [t for t in all_tiles if t not in done_set]
     log.info("Remaining after checkpoint resume: %d", len(remaining))
     if not remaining:
         log.info("All tiles already downloaded")
