@@ -1274,23 +1274,34 @@
     gpsSource = source;
 
     if (source === 'device') {
-      // Stop server GPS WebSocket
-      if (gpsWs) { gpsWs.close(); gpsWs = null; }
-
-      // Start browser geolocation
-      if (!navigator.geolocation) {
-        alert('Browser geolocation is not available. This may require HTTPS.');
-        // Revert radio
+      // Check secure context first — Geolocation API requires HTTPS
+      if (!window.isSecureContext) {
+        alert('Device GPS requires a secure connection (HTTPS). ' +
+              'This server is running over HTTP. To use your device\'s GPS, ' +
+              'enable HTTPS in the Geographica server configuration (TLS mode 2 or 3).');
         document.querySelector('input[name="gpssource"][value="server"]').checked = true;
         gpsSource = 'server';
-        connectGPS();
         return;
       }
 
+      if (!navigator.geolocation) {
+        alert('This browser does not support the Geolocation API.');
+        document.querySelector('input[name="gpssource"][value="server"]').checked = true;
+        gpsSource = 'server';
+        return;
+      }
+
+      // Stop server GPS WebSocket
+      if (gpsWs) { gpsWs.close(); gpsWs = null; }
+
+      // Request permission with a one-shot position first
       navigator.geolocation.getCurrentPosition(
-        function () { /* permission granted */ },
+        function () { /* permission granted, watchPosition below will work */ },
         function (err) {
-          alert('Location access denied: ' + err.message);
+          var msg = err.code === 1 ? 'Location permission denied by user.'
+                  : err.code === 2 ? 'Location unavailable on this device.'
+                  : 'Location request timed out.';
+          alert(msg);
           document.querySelector('input[name="gpssource"][value="server"]').checked = true;
           gpsSource = 'server';
           connectGPS();
