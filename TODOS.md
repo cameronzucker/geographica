@@ -1,5 +1,15 @@
 # TODOS
 
+## High Priority
+
+### TLS implementation for device GPS and Cloudflare Tunnel
+- **What:** Implement TLS modes 2 and 3 from the design doc. Generate self-signed CA at install time, configure NGINX with the three-mode toggle (HTTP only / HTTPS published-key / HTTPS standard). Required for browser Geolocation API on mobile devices and for Cloudflare Tunnel deployment.
+- **Why:** Device GPS toggle currently fails on HTTP connections with "Only secure origins are allowed." Cloudflare Tunnel for remote testing/demos will also need HTTPS. The three-mode NGINX config is designed but not yet implemented or tested.
+- **Pros:** Unlocks device GPS for mobile users, enables Cloudflare Tunnel for demos, enables secure access for non-amateur deployments.
+- **Cons:** Adds cert generation to setup process, NGINX config complexity, mobile users need to install self-signed CA on their devices for mode 2.
+- **Context:** GPS source toggle added but blocked on HTTP. Design doc has full spec at "TLS / HTTPS Configuration" section. NGINX config templates ready but untested.
+- **Depends on:** Nothing — can be implemented immediately.
+
 ## Deferred from Phase 1
 
 ### NGINX selective compression optimization
