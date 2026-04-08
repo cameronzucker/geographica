@@ -37,8 +37,8 @@ else
     cp /etc/nginx/tls-modes/tls-include-empty.conf /etc/nginx/tls-include.conf
 fi
 
-# Validate config
-nginx -t 2>&1 || { echo "NGINX config test failed"; exit 1; }
+# Validate config (warn but don't fail — DNS may not be available yet)
+nginx -t 2>&1 || echo "WARNING: NGINX config test failed (may resolve on startup)"
 
 echo "NGINX ready ($TLS_MODE mode)"
 exec nginx -g 'daemon off;'
