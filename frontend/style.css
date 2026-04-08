@@ -799,6 +799,23 @@ h4 {
   margin-top: 12px;
 }
 
+.bbox-display {
+  font-size: 11px;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  color: #b0b8cc;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  margin-bottom: 6px;
+}
+
+#pipeline-draw-bbox.active {
+  background: var(--accent);
+  color: #1e1e2e;
+  border-color: var(--accent);
+}
+
 .panel-note {
   font-size: 10px;
   color: #585e70;

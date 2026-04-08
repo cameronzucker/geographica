@@ -2482,16 +2482,137 @@
     useViewBtn.addEventListener('click', function () {
       if (!map) return;
       var bounds = map.getBounds();
-      var w = bounds.getWest().toFixed(1);
-      var s = bounds.getSouth().toFixed(1);
-      var e = bounds.getEast().toFixed(1);
-      var n = bounds.getNorth().toFixed(1);
-      bboxInput.value = w + ',' + s + ',' + e + ',' + n;
-      updatePipelineEstimate();
+      setBbox(bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth());
     });
 
+    // --- Draw on map button ---
+    var drawBtn = document.getElementById('pipeline-draw-bbox');
+    var bboxDisplay = document.getElementById('pipeline-bbox-display');
+    var drawingBbox = false;
+    var drawCorner1 = null;
+
+    if (drawBtn) {
+      drawBtn.addEventListener('click', function () {
+        if (drawingBbox) {
+          // Cancel drawing
+          drawingBbox = false;
+          drawCorner1 = null;
+          drawBtn.classList.remove('active');
+          drawBtn.textContent = 'Draw on map';
+          map.getCanvas().style.cursor = '';
+          removeBboxPreview();
+          return;
+        }
+
+        drawingBbox = true;
+        drawCorner1 = null;
+        drawBtn.classList.add('active');
+        drawBtn.textContent = 'Click first corner...';
+        map.getCanvas().style.cursor = 'crosshair';
+
+        // Close sidebar so user can see the map
+        var sidebar = document.getElementById('sidebar');
+        var overlay = document.getElementById('sidebar-overlay');
+        if (sidebar.classList.contains('open')) {
+          setSidebarOpen(false);
+        }
+      });
+    }
+
+    // Map click handler for bbox drawing
+    map.on('click', function (e) {
+      if (!drawingBbox) return;
+
+      if (!drawCorner1) {
+        // First click — store corner
+        drawCorner1 = e.lngLat;
+        drawBtn.textContent = 'Click opposite corner...';
+        // Show a marker at first corner
+        showBboxPreview(drawCorner1, drawCorner1);
+      } else {
+        // Second click — complete the bbox
+        var c1 = drawCorner1;
+        var c2 = e.lngLat;
+        var west = Math.min(c1.lng, c2.lng);
+        var south = Math.min(c1.lat, c2.lat);
+        var east = Math.max(c1.lng, c2.lng);
+        var north = Math.max(c1.lat, c2.lat);
+
+        setBbox(west, south, east, north);
+
+        // Reset drawing state
+        drawingBbox = false;
+        drawCorner1 = null;
+        drawBtn.classList.remove('active');
+        drawBtn.textContent = 'Draw on map';
+        map.getCanvas().style.cursor = '';
+
+        // Fit map to drawn bbox
+        map.fitBounds([[west, south], [east, north]], { padding: 40 });
+      }
+    });
+
+    // Live preview rectangle while drawing
+    map.on('mousemove', function (e) {
+      if (!drawingBbox || !drawCorner1) return;
+      showBboxPreview(drawCorner1, e.lngLat);
+    });
+
+    function setBbox(west, south, east, north) {
+      var w = west.toFixed(2);
+      var s = south.toFixed(2);
+      var e = east.toFixed(2);
+      var n = north.toFixed(2);
+      bboxInput.value = w + ',' + s + ',' + e + ',' + n;
+      if (bboxDisplay) {
+        bboxDisplay.textContent = w + ', ' + s + ' \u2192 ' + e + ', ' + n;
+      }
+      updatePipelineEstimate();
+      showBboxRect(west, south, east, north);
+    }
+
+    function showBboxPreview(c1, c2) {
+      var west = Math.min(c1.lng, c2.lng);
+      var south = Math.min(c1.lat, c2.lat);
+      var east = Math.max(c1.lng, c2.lng);
+      var north = Math.max(c1.lat, c2.lat);
+      showBboxRect(west, south, east, north);
+    }
+
+    function showBboxRect(west, south, east, north) {
+      var geojson = {
+        type: 'Feature',
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[[west,south],[east,south],[east,north],[west,north],[west,south]]]
+        }
+      };
+      if (!map.getSource('bbox-preview')) {
+        map.addSource('bbox-preview', { type: 'geojson', data: geojson });
+        map.addLayer({
+          id: 'bbox-preview-fill',
+          type: 'fill',
+          source: 'bbox-preview',
+          paint: { 'fill-color': '#4285f4', 'fill-opacity': 0.1 }
+        });
+        map.addLayer({
+          id: 'bbox-preview-line',
+          type: 'line',
+          source: 'bbox-preview',
+          paint: { 'line-color': '#4285f4', 'line-width': 2, 'line-dasharray': [3, 2] }
+        });
+      } else {
+        map.getSource('bbox-preview').setData(geojson);
+      }
+    }
+
+    function removeBboxPreview() {
+      if (map.getSource('bbox-preview')) {
+        map.getSource('bbox-preview').setData({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [[]] } });
+      }
+    }
+
     // --- Estimate recalculation ---
-    bboxInput.addEventListener('input', updatePipelineEstimate);
     zoomSelect.addEventListener('change', updatePipelineEstimate);
     updatePipelineEstimate(); // initial
 
