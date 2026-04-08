@@ -536,25 +536,17 @@
     var input   = document.getElementById('search-input');
     var results = document.getElementById('search-results');
 
-    input.addEventListener('input', function () {
-      clearTimeout(searchTimer);
-      var query = input.value.trim();
-      if (query.length < 2) {
-        hideSearchResults();
-        return;
-      }
-      searchTimer = setTimeout(function () {
-        performSearch(query);
-      }, SEARCH_DEBOUNCE_MS);
-    });
-
+    // Search only on Enter key — not live-as-you-type (database-intensive)
     input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') {
-        clearTimeout(searchTimer);
         var query = input.value.trim();
         if (query.length >= 2) {
           performSearch(query);
         }
+      }
+      // Escape clears results
+      if (e.key === 'Escape') {
+        hideSearchResults();
       }
     });
 
