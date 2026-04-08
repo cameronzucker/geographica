@@ -503,17 +503,29 @@
     var sidebar       = document.getElementById('sidebar');
     var overlay       = document.getElementById('sidebar-overlay');
 
+    var searchContainer = document.getElementById('search-container');
+
+    function setSidebarOpen(open) {
+      if (open) {
+        sidebar.classList.add('open');
+        overlay.classList.add('open');
+        if (searchContainer) searchContainer.classList.add('sidebar-open');
+      } else {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('open');
+        if (searchContainer) searchContainer.classList.remove('sidebar-open');
+      }
+    }
+
     if (sidebarToggle) {
       sidebarToggle.addEventListener('click', function () {
-        sidebar.classList.toggle('open');
-        overlay.classList.toggle('open');
+        setSidebarOpen(!sidebar.classList.contains('open'));
       });
     }
 
     if (overlay) {
       overlay.addEventListener('click', function () {
-        sidebar.classList.remove('open');
-        overlay.classList.remove('open');
+        setSidebarOpen(false);
       });
     }
 
