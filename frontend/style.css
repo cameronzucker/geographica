@@ -569,6 +569,7 @@ html, body {
   display: flex;
   top: 12px;
   left: 12px;
+  z-index: 25;  /* Above sidebar overlay (19) and nav overlay (15) */
 }
 
 /* ----- Status bar (bottom of map) ----- */
@@ -1016,7 +1017,7 @@ html, body {
   top: 0;
   left: 0;
   right: 0;
-  z-index: 15;
+  z-index: 22;  /* Above sidebar overlay (19) and sidebar (20) */
   background: rgba(20, 20, 30, 0.92);
   backdrop-filter: blur(8px);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
