@@ -16,7 +16,7 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 2. **Read CLAUDE.md** in the repo root — it has the project structure, commands, hardware specs, and skill routing rules.
 
-3. **Read TODOS.md** in the repo root — it has the deferred feature backlog with full context on each item.
+3. **Read TODOS.md** in the repo root — it has the full feature backlog with completed items, priorities, and context.
 
 4. **Data lives OUTSIDE the repo** at `/srv/geographica/data/` (symlinked from `data/`). Never create large files inside the git repo tree. See `feedback_data_outside_repo.md` in memory.
 
@@ -24,57 +24,83 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## Current system state
 
-### Running services (Docker Compose on port 8093)
-- **TileServer GL** (:8090) — vector basemap + elevation + aerial imagery tiles
+### Running services (Docker Compose)
+- **TileServer GL** (:8090) — vector basemap + elevation (z0-14 complete) + aerial imagery (z0-16 complete)
 - **Valhalla** (:8094) — routing engine, 11 Western US states
 - **Nominatim** (:8092) — geocoding, 11 Western US states imported
-- **GPS** (:8095) — FastAPI WebSocket, reads Pi's GPS hat via gpsd
-- **Search** (:8096) — unified search (Nominatim + 304K GNIS POI features)
-- **NGINX/Frontend** (:8093) — main app + config panel on localhost:8097
+- **GPS** (:8095) — FastAPI WebSocket, reads Pi's GPS hat via gpsd (0.36% CPU after busy-wait fix)
+- **Search** (:8096) — spatial search (intent parser, corridor, proximity) + admin API + pipeline orchestration
+- **NGINX/Frontend** (:8093 HTTP, :443 HTTPS) — main app + config panel on localhost:8097
 
-### Background downloads
-- **Elevation z13-14**: ~62% (911K/1.47M tiles), still downloading at ~34 tiles/sec
-- **Imagery z0-16**: Complete (2.59M tiles including 964K z16)
-
-Check status: `curl -s http://localhost:8096/admin/status | python3 -m json.tool`
+### Data downloads — all complete
+- **Elevation z0-14**: 1,474,959 tiles — complete
+- **Imagery z0-16**: 2,588,818 tiles — complete
+- **POI index**: 304,094 GNIS features — complete
 
 ### TLS
 - **Tailscale HTTPS active**: `https://pandora.twin-bramble.ts.net` (Let's Encrypt, valid until 2026-07-07)
 - Systemd timer for daily cert renewal: `systemctl status geographica-tls-renew.timer`
 - Dual-mode: HTTP on :8093 (LAN/AREDN) + HTTPS on :443 (Tailscale)
+- Three TLS modes in `entrypoint.sh`: `http` (default), `https` (self-signed), `tailscale` (Let's Encrypt)
 
 ### Key files
 - `docker-compose.yml` — 7 services (6 + pipeline with profiles)
-- `nginx/nginx.conf` — main app + config panel server blocks
-- `nginx/entrypoint.sh` — TLS mode selection (HTTP or HTTPS)
-- `services/search/main.py` — unified search + admin API + pipeline orchestration
-- `services/gps/main.py` — GPS WebSocket with accuracy
-- `frontend/app.js` — main frontend (~2600 lines)
+- `nginx/nginx.conf` — main app + config panel server blocks, sub_filter for TileJSON
+- `nginx/entrypoint.sh` — TLS mode selection (http/https/tailscale)
+- `services/search/main.py` — Nominatim/POI query, admin API, pipeline orchestration
+- `services/search/spatial.py` — intent parser, synonym table (25 entries), corridor math, `POST /search/spatial`
+- `services/gps/main.py` — GPS WebSocket with accuracy, 50ms poll sleep
+- `frontend/app.js` — main frontend (~2800 lines), spatial search, numbered pins, GPS source switching
 - `frontend/navigation.js` — turn-by-turn engine (~790 lines)
 - `frontend/nav-ui.js` — navigation UI bridge (~860 lines)
 - `frontend/config/index.html` — standalone config panel
 - `scripts/acquire_imagery.py` — imagery download (3 modes: direct/tnmaccess/m2m)
 - `scripts/download_elevation.py` — elevation tile download
 - `scripts/build_poi_index.py` — GNIS POI indexer
-- `scripts/generate_tls.sh` — TLS cert generation
+- `scripts/provision_tailscale_tls.sh` — Tailscale cert provisioning
+
+### Tests
+65 tests across 6 files in `tests/`:
+- `test_intent_parser.py` (27) — intent detection, category extraction, fallback chain
+- `test_corridor.py` (19) — haversine, Douglas-Peucker, segment distance, corridor filter
+- `test_spatial_endpoint.py` (7) — POST /search/spatial validation and response shape
+- `test_mbtiles_metadata.py` (6) — UNIQUE constraint, minzoom/maxzoom/bounds
+- `test_pipeline_orchestrator.py` (3) — command building for imagery vs elevation
+- `test_elevation_state.py` (3) — state file merge pattern
+
+Run all: `python3 -m pytest tests/ -v`
+
+### Design & plan documents
+- `docs/superpowers/specs/2026-04-08-tailscale-tls-design.md`
+- `docs/superpowers/specs/2026-04-08-natural-language-spatial-search-design.md`
+- `docs/superpowers/plans/2026-04-08-natural-language-spatial-search.md`
+
+### Bug hunt reports
+15 reports in `dev/bug-hunts/` covering: imagery pipeline, Tailscale TLS, GPS source switching (v1 + v2), corridor query quality.
 
 ## What to work on next
 
+See `TODOS.md` for the full backlog with context. Summary:
+
 ### High priority
-1. **Phase 2b: Whisper STT on Hailo 10H NPU** — audio→text feeds into `POST /search/spatial`. The text parser (Phase 2a) is complete and tested.
-2. **Expanded POI sources** — Nominatim has sparse coverage for rural areas (no gas stations along I-10 between Buckeye and Blythe). Overture Maps or direct OSM amenity extraction would dramatically improve results.
-3. **M2M API download access** — ERS approval was submitted. Once approved, test the `--mode m2m` pipeline end-to-end.
-4. **Verify elevation download completed** — check if z13-14 finished. Once done, restart TileServer.
+1. **Phase 2b: Whisper STT on Hailo 10H NPU** — audio→text feeds into `POST /search/spatial`. The text parser (Phase 2a) is complete and tested. Hailo 10H is installed but not yet used.
+2. **Expanded POI sources** — most impactful improvement for spatial search quality. Rural I-10 between Buckeye and Blythe has a 240-mile gap with no results. Candidates: OSM amenity extraction from existing PBF, Overture Maps.
+3. **M2M API download access** — ERS approval submitted, pending. Test `--mode m2m` once approved.
 
 ### Medium priority
-4. **Phase 2: Voice AI** — Whisper on Hailo 10H NPU for spatial queries. Design doc has the full spec. The turn-by-turn navigation engine already supports voice via Web Speech API; Phase 2 adds Hailo-based offline STT.
-5. **TODOS backlog** — see TODOS.md for deferred items with full context.
+4. **NGINX selective compression** — PBF tiles uncompressed over mesh due to sub_filter blanket
+5. **Setup CLI tool** — single `geographica-setup` command
+6. **GPS track recording** — record and export as GPX/KML
+7. **Valhalla costing toggles** — verify UI checkboxes are wired up
+8. **Light/dark mode toggle** — runtime basemap style switching
 
-### Known issues to be aware of
-- TileServer config uses `/srv/data/` paths for imagery/elevation (writable mount for WAL compatibility)
+## Known issues to be aware of
+- TileServer config uses `/srv/data/` paths for imagery/elevation (writable mount for WAL)
 - sub_filter in NGINX MUST use `$scheme://$http_host` — relative URLs break MapLibre
 - Config panel is localhost-only (127.0.0.1:8097) — access via SSH tunnel or Pi's local browser
-- The `depends_on: condition: service_healthy` on the search service blocks startup if Nominatim healthcheck hasn't passed — use `docker start geographica-search` to force start
+- `depends_on: condition: service_healthy` on search blocks startup if Nominatim hasn't passed healthcheck — use `docker start geographica-search` to force start
+- Nominatim free-text search for commercial POIs is sparse in rural areas — the spatial search uses brand-name queries and OSM type filtering as mitigations, but expanded POI sources is the real fix
+- `app.js` is ~2800 lines — approaching the threshold where extraction to separate modules should be considered for the next major frontend feature
 
 ## Cameron's preferences (from memory)
 - Prioritizes correctness and completeness over speed
@@ -84,3 +110,4 @@ Check status: `curl -s http://localhost:8096/admin/status | python3 -m json.tool
 - Git push via VS Code UI only (terminal push fails)
 - No unnecessary migration of existing deployments — they're reference only
 - Prefers robust adversarial review (multiple rounds, cross-model) before implementing major features
+- Prefers full brainstorm → adversarial review → implementation plan → TDD execution workflow
