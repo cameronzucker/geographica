@@ -12,32 +12,71 @@
 
 ---
 
+## Execution Recommendation
+
+**Recommended: Option 2 — parallel session with `/executing-plans` in a worktree.**
+
+Reasoning:
+- **Context consumption:** This session has consumed significant context across multiple brainstorming rounds, 3 bug hunts (imagery, TLS, GPS x2), and 5 adversarial review rounds. A fresh session starts with full context budget.
+- **Plan self-containment:** The plan is fully self-contained — every task includes exact file paths, complete code blocks, test code, and expected outputs. A fresh subagent with only CLAUDE.md and this plan file has everything it needs.
+- **Task sequentiality:** Tasks 1→2→3 are strictly sequential (each builds on the previous file). Tasks 4→5 are also sequential (both modify app.js). No parallelism opportunity — subagent-driven would dispatch serially anyway.
+- **Risk profile:** The corridor math (Task 2) and the frontend pin rewrite (Task 5) are the riskiest tasks. Both benefit from focused single-session attention with the review loop, not parallel dispatch.
+
+---
+
 ## File Structure
 
 ### New files
-- `services/search/spatial.py` — intent parser, synonym table, corridor math, spatial endpoint logic (~300 lines)
-- `tests/test_intent_parser.py` — tests for intent detection and category extraction
-- `tests/test_corridor.py` — tests for Douglas-Peucker, point-to-segment distance, corridor filtering
-- `tests/test_spatial_endpoint.py` — integration tests for POST /search/spatial
+| File | Responsibility |
+|------|---------------|
+| `services/search/spatial.py` | Intent parser, synonym table, corridor math, spatial endpoint logic (~300 lines) |
+| `tests/test_intent_parser.py` | Tests for intent detection and category extraction |
+| `tests/test_corridor.py` | Tests for Douglas-Peucker, point-to-segment distance, corridor filtering |
+| `tests/test_spatial_endpoint.py` | Integration tests for POST /search/spatial |
 
 ### Modified files
-- `services/search/main.py` — import and mount the spatial router, add POI lat/lon index on startup
-- `frontend/app.js` — switch to POST, add `lastRouteCoords`, numbered pins, distance badges, remove old `searchMarker`
+| File | Change |
+|------|--------|
+| `services/search/main.py` | Import and mount the spatial router, add POI lat/lon index on startup |
+| `frontend/app.js` | Switch to POST, add `lastRouteCoords`, numbered pins, distance badges, remove old `searchMarker` |
+| `frontend/style.css` | CSS for search result badges, distance labels, active highlight |
+
+### Cross-task file dependencies
+- `services/search/spatial.py` is created in Task 1, extended in Task 2, extended again in Task 3. Tasks 1-3 MUST run sequentially.
+- `services/search/main.py` is modified ONLY in Task 3. No conflict with Tasks 1-2.
+- `frontend/app.js` is modified in Task 4 and Task 5. Tasks 4-5 MUST run sequentially.
+- `frontend/style.css` is modified ONLY in Task 5.
+- Backend tasks (1-3) and frontend tasks (4-5) are independent and COULD run in parallel, but the E2E verification (Task 6) requires both.
+
+### Pitfalls files
+No `docs/pitfalls/testing-pitfalls.md` or `docs/pitfalls/implementation-pitfalls.md` exist in this project. Skip those review steps — but apply general pitfall awareness: avoid mocking the thing you're testing, test error paths not just happy paths, assert on correct behavior (not just absence of errors).
 
 ---
 
 ## Task 1: Intent Parser + Synonym Table
 
-**Files:**
-- Create: `services/search/spatial.py`
-- Create: `tests/test_intent_parser.py`
+**Dependencies:** None (first task)
+**Creates:** `services/search/spatial.py`, `tests/test_intent_parser.py`
+**Does NOT modify:** any existing file
 
-This task builds the core parsing logic in isolation — no database, no HTTP, no corridor math yet.
+> BEFORE starting work:
+> 1. Read the spec at `docs/superpowers/specs/2026-04-08-natural-language-spatial-search-design.md` — sections "Intent Parser" and "Synonym table"
+> 2. No `dev/testing-pitfalls.md` exists yet — apply general TDD discipline
+> Follow TDD: write failing test → implement fix → verify green.
+
+**Behavior change:** Currently no `spatial.py` exists. After this task, `parse_intent(query, has_position, has_route)` returns a structured dict with intent classification, category extraction, fallback chain, and search text.
+
+**Do NOT:**
+- Add any FastAPI routes (that's Task 3)
+- Add any corridor math (that's Task 2)
+- Import from `main.py` (this module must be independently testable)
+- Add any "improvements" beyond what the spec defines (no LLM, no fuzzy matching beyond plural normalization)
 
 - [ ] **Step 1: Write failing tests for intent detection**
 
+Create `tests/test_intent_parser.py`:
+
 ```python
-# tests/test_intent_parser.py
 """Tests for the natural language intent parser and category extraction."""
 import sys
 from pathlib import Path
@@ -46,99 +85,158 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "search"))
 from spatial import parse_intent
 
 
-class TestIntentDetection:
-    def test_plain_query(self):
+class TestPlainIntent:
+    def test_place_name(self):
         result = parse_intent("Phoenix", has_position=True, has_route=False)
         assert result["intent"] == "plain"
         assert result["category"] is None
 
-    def test_nearest_gas_station(self):
+    def test_unknown_text(self):
+        result = parse_intent("asdfghjkl", has_position=False, has_route=False)
+        assert result["intent"] == "plain"
+
+
+class TestProximityIntent:
+    def test_nearest(self):
         result = parse_intent("nearest gas station", has_position=True, has_route=False)
         assert result["intent"] == "proximity"
         assert result["category"] == "gas station"
         assert result["search_text"] == "gas station"
+
+    def test_closest(self):
+        result = parse_intent("closest hospital", has_position=True, has_route=False)
+        assert result["intent"] == "proximity"
+        assert result["category"] == "hospital"
 
     def test_near_me(self):
         result = parse_intent("hospitals near me", has_position=True, has_route=False)
         assert result["intent"] == "proximity"
         assert result["category"] == "hospital"
 
+    def test_near_here(self):
+        result = parse_intent("gas near here", has_position=True, has_route=False)
+        assert result["intent"] == "proximity"
+        assert result["category"] == "gas station"
+
+    def test_nearby(self):
+        result = parse_intent("nearby restaurants", has_position=True, has_route=False)
+        assert result["intent"] == "proximity"
+        assert result["category"] == "restaurant"
+
+    def test_within_miles(self):
+        result = parse_intent("gas stations within 10 miles", has_position=True, has_route=False)
+        assert result["intent"] == "proximity"
+        assert result["category"] == "gas station"
+        assert result["radius_m"] is not None
+        assert abs(result["radius_m"] - 16093) < 100  # 10 miles
+
+    def test_within_km(self):
+        result = parse_intent("hospitals within 5 km", has_position=True, has_route=False)
+        assert result["intent"] == "proximity"
+        assert result["radius_m"] is not None
+        assert abs(result["radius_m"] - 5000) < 100
+
+
+class TestCorridorIntent:
     def test_along_my_route(self):
         result = parse_intent("gas stations along my route", has_position=True, has_route=True)
         assert result["intent"] == "route_corridor"
         assert result["category"] == "gas station"
+
+    def test_along_route(self):
+        result = parse_intent("restaurants along route", has_position=True, has_route=True)
+        assert result["intent"] == "route_corridor"
+        assert result["category"] == "restaurant"
+
+    def test_on_my_route(self):
+        result = parse_intent("hotels on my route", has_position=True, has_route=True)
+        assert result["intent"] == "route_corridor"
+        assert result["category"] == "hotel"
 
     def test_every_n_miles(self):
         result = parse_intent("gas stations every 50 miles along my route", has_position=True, has_route=True)
         assert result["intent"] == "route_corridor"
         assert result["category"] == "gas station"
         assert result["interval_m"] is not None
+        assert abs(result["interval_m"] - 80467) < 100  # 50 miles
 
-    def test_within_radius(self):
-        result = parse_intent("gas stations within 10 miles", has_position=True, has_route=False)
-        assert result["intent"] == "proximity"
-        assert result["category"] == "gas station"
-        assert result["radius_m"] is not None
-        # 10 miles ~ 16093 meters
-        assert abs(result["radius_m"] - 16093) < 100
 
-    def test_corridor_fallback_to_proximity(self):
-        """along my route without route data falls back to proximity."""
+class TestFallbackChain:
+    def test_corridor_falls_back_to_proximity_without_route(self):
         result = parse_intent("gas stations along my route", has_position=True, has_route=False)
         assert result["intent"] == "proximity"
         assert result["original_intent"] == "route_corridor"
         assert result["fallback_reason"] == "no_route"
 
-    def test_proximity_fallback_to_plain(self):
-        """nearest X without position falls back to plain."""
+    def test_corridor_falls_back_to_plain_without_anything(self):
+        result = parse_intent("gas stations along my route", has_position=False, has_route=False)
+        assert result["intent"] == "plain"
+        assert result["original_intent"] == "route_corridor"
+        assert result["fallback_reason"] == "no_position"
+
+    def test_proximity_falls_back_to_plain_without_position(self):
         result = parse_intent("nearest hospital", has_position=False, has_route=False)
         assert result["intent"] == "plain"
         assert result["original_intent"] == "proximity"
         assert result["fallback_reason"] == "no_position"
 
-    def test_route_66_near_me(self):
-        """'Route 66' should not trigger corridor intent."""
-        result = parse_intent("Route 66 near me", has_position=True, has_route=True)
-        assert result["intent"] == "proximity"
-        # Category should be the raw text "route 66", not matched in synonym table
-        assert result["category"] is None
-        assert "route 66" in result["search_text"].lower()
 
-    def test_filibertos_near_me(self):
-        """Unrecognized business name with spatial intent."""
+class TestCategoryExtraction:
+    def test_filler_words_stripped(self):
+        result = parse_intent("find the nearest gas station", has_position=True, has_route=False)
+        assert result["intent"] == "proximity"
+        assert result["category"] == "gas station"
+
+    def test_plural_normalization(self):
+        result = parse_intent("nearest hospitals", has_position=True, has_route=False)
+        assert result["category"] == "hospital"
+
+    def test_plural_gas_stations(self):
+        result = parse_intent("nearest gas stations", has_position=True, has_route=False)
+        assert result["category"] == "gas station"
+
+    def test_unrecognized_business_name(self):
         result = parse_intent("Filibertos near me", has_position=True, has_route=False)
         assert result["intent"] == "proximity"
         assert result["category"] is None
         assert "filibertos" in result["search_text"].lower()
 
+    def test_route_66_not_confused_with_corridor(self):
+        """'Route 66' should NOT trigger corridor intent."""
+        result = parse_intent("Route 66 near me", has_position=True, has_route=True)
+        assert result["intent"] == "proximity"
+        assert "route 66" in result["search_text"].lower()
+
+
+class TestImplicitProximity:
     def test_bare_category_with_position(self):
-        """Bare category word auto-promotes to proximity when position available."""
         result = parse_intent("gas", has_position=True, has_route=False)
         assert result["intent"] == "proximity"
         assert result["category"] == "gas station"
 
     def test_bare_category_without_position(self):
-        """Bare category word without position stays plain."""
         result = parse_intent("gas", has_position=False, has_route=False)
         assert result["intent"] == "plain"
 
-    def test_plural_normalization(self):
-        """Plurals should match singular synonym table entries."""
-        result = parse_intent("nearest hospitals", has_position=True, has_route=False)
-        assert result["intent"] == "proximity"
-        assert result["category"] == "hospital"
-
-    def test_filler_words_stripped(self):
-        """'find the nearest gas station' should extract 'gas station'."""
-        result = parse_intent("find the nearest gas station", has_position=True, has_route=False)
-        assert result["intent"] == "proximity"
-        assert result["category"] == "gas station"
-
-    def test_summit_gnis_category(self):
-        """AREDN/emergency category should be recognized."""
-        result = parse_intent("nearest summit", has_position=True, has_route=False)
+    def test_bare_summit(self):
+        result = parse_intent("summit", has_position=True, has_route=False)
         assert result["intent"] == "proximity"
         assert result["category"] == "summit"
+        assert result["gnis_class"] == "Summit"
+
+
+class TestGNISClasses:
+    def test_hospital_has_gnis_class(self):
+        result = parse_intent("nearest hospital", has_position=True, has_route=False)
+        assert result["gnis_class"] == "Hospital"
+
+    def test_gas_station_has_no_gnis_class(self):
+        result = parse_intent("nearest gas station", has_position=True, has_route=False)
+        assert result["gnis_class"] is None
+
+    def test_dam_has_gnis_class(self):
+        result = parse_intent("nearest dam", has_position=True, has_route=False)
+        assert result["gnis_class"] == "Dam"
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -146,276 +244,34 @@ class TestIntentDetection:
 Run: `python3 -m pytest tests/test_intent_parser.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'spatial'`
 
-- [ ] **Step 3: Implement the intent parser and synonym table**
+- [ ] **Step 3: Implement the intent parser**
 
+Create `services/search/spatial.py` with the complete intent parser, synonym table, filler word stripping, and plural normalization. The full implementation is in the spec section "Intent Parser" — implement exactly as specified there. Key elements:
+
+- `FILLER_WORDS` set: `find`, `the`, `a`, `an`, `me`, `some`, `show`, `search`, `look`, `for`, `where`, `is`, `are`, `get`, `list`
+- `SYNONYM_TABLE` list of dicts with `synonyms` (set), `gnis_class` (str|None), `fallback_text` (str) — all 25 entries from the spec
+- `_SYNONYM_LOOKUP` flat dict mapping each normalized synonym → table entry
+- Regex patterns: `RE_ALONG_ROUTE`, `RE_ON_ROUTE`, `RE_EVERY_N`, `RE_NEAREST`, `RE_CLOSEST`, `RE_NEAR_ME`, `RE_NEAR_HERE`, `RE_NEARBY`, `RE_WITHIN`
+- `_strip_filler(text)` → removes filler words
+- `_lookup_category(text)` → token-based matching with plural normalization (exact → strip trailing 's' → token-level)
+- `_parse_unit_to_meters(value, unit)` → miles/km to meters
+- `parse_intent(query, has_position, has_route)` → returns dict with: `intent`, `original_intent`, `fallback_reason`, `category`, `gnis_class`, `search_text`, `radius_m`, `interval_m`
+
+Also include these constants that will be used by later tasks:
 ```python
-# services/search/spatial.py
-"""Natural language spatial search — intent parser, synonym table, corridor math.
-
-This module provides the core logic for POST /search/spatial.
-"""
-import math
-import re
-from typing import Optional
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 MILES_TO_METERS = 1609.34
 KM_TO_METERS = 1000.0
 DEFAULT_PROXIMITY_RADIUS_M = 50_000  # 50 km
 CORRIDOR_WIDTH_M = 2_000  # 2 km
 EARTH_RADIUS_M = 6_371_000
-
-FILLER_WORDS = {
-    "find", "the", "a", "an", "me", "some", "show", "search",
-    "look", "for", "where", "is", "are", "get", "list",
-}
-
-# ---------------------------------------------------------------------------
-# Synonym table
-# ---------------------------------------------------------------------------
-# Each entry: { synonyms: set, gnis_class: str|None, fallback_text: str }
-SYNONYM_TABLE = [
-    {"synonyms": {"gas station", "fuel", "gas"}, "gnis_class": None, "fallback_text": "gas station"},
-    {"synonyms": {"restaurant", "food", "eat", "dining"}, "gnis_class": None, "fallback_text": "restaurant"},
-    {"synonyms": {"hotel", "motel", "lodging"}, "gnis_class": None, "fallback_text": "hotel"},
-    {"synonyms": {"hospital", "er", "emergency room"}, "gnis_class": "Hospital", "fallback_text": "hospital"},
-    {"synonyms": {"campground", "camping", "campsite"}, "gnis_class": None, "fallback_text": "campground"},
-    {"synonyms": {"rest area", "rest stop"}, "gnis_class": None, "fallback_text": "rest area"},
-    {"synonyms": {"pharmacy", "drugstore"}, "gnis_class": None, "fallback_text": "pharmacy"},
-    {"synonyms": {"grocery", "supermarket"}, "gnis_class": None, "fallback_text": "grocery"},
-    {"synonyms": {"water", "drinking water"}, "gnis_class": "Spring", "fallback_text": "water"},
-    {"synonyms": {"trailhead", "trail"}, "gnis_class": "Trail", "fallback_text": "trailhead"},
-    {"synonyms": {"park"}, "gnis_class": "Park", "fallback_text": "park"},
-    {"synonyms": {"school"}, "gnis_class": "School", "fallback_text": "school"},
-    {"synonyms": {"church"}, "gnis_class": "Church", "fallback_text": "church"},
-    {"synonyms": {"airport"}, "gnis_class": "Airport", "fallback_text": "airport"},
-    {"synonyms": {"fire station"}, "gnis_class": None, "fallback_text": "fire station"},
-    {"synonyms": {"police", "police station"}, "gnis_class": None, "fallback_text": "police station"},
-    {"synonyms": {"summit", "peak", "hilltop", "mountain"}, "gnis_class": "Summit", "fallback_text": "summit"},
-    {"synonyms": {"tower", "radio tower", "repeater", "comm site"}, "gnis_class": "Tower", "fallback_text": "tower"},
-    {"synonyms": {"shelter", "evacuation center", "evac"}, "gnis_class": None, "fallback_text": "shelter"},
-    {"synonyms": {"helipad", "landing zone", "lz"}, "gnis_class": None, "fallback_text": "helipad"},
-    {"synonyms": {"dam"}, "gnis_class": "Dam", "fallback_text": "dam"},
-    {"synonyms": {"mine", "quarry"}, "gnis_class": "Mine", "fallback_text": "mine"},
-    {"synonyms": {"spring", "hot spring"}, "gnis_class": "Spring", "fallback_text": "spring"},
-    {"synonyms": {"bridge"}, "gnis_class": "Bridge", "fallback_text": "bridge"},
-    {"synonyms": {"ranger station", "forest service"}, "gnis_class": "Locale", "fallback_text": "ranger station"},
-]
-
-# Build a flat lookup: normalized synonym text -> table entry
-_SYNONYM_LOOKUP: dict[str, dict] = {}
-for _entry in SYNONYM_TABLE:
-    for _syn in _entry["synonyms"]:
-        _SYNONYM_LOOKUP[_syn.lower()] = _entry
-
-# ---------------------------------------------------------------------------
-# Regex patterns
-# ---------------------------------------------------------------------------
-# Route corridor patterns (checked first)
-RE_ALONG_ROUTE = re.compile(r'\balong\s+(my\s+)?route\b', re.IGNORECASE)
-RE_ON_ROUTE = re.compile(r'\bon\s+(my\s+)?route\b', re.IGNORECASE)
-RE_EVERY_N = re.compile(r'\bevery\s+(\d+)\s+(miles?|km|kilometers?)\b', re.IGNORECASE)
-
-# Proximity patterns
-RE_NEAREST = re.compile(r'\bnearest\s+', re.IGNORECASE)
-RE_CLOSEST = re.compile(r'\bclosest\s+', re.IGNORECASE)
-RE_NEAR_ME = re.compile(r'\bnear\s+me\b', re.IGNORECASE)
-RE_NEAR_HERE = re.compile(r'\bnear\s+here\b', re.IGNORECASE)
-RE_NEARBY = re.compile(r'\bnearby\s+', re.IGNORECASE)
-RE_WITHIN = re.compile(r'\bwithin\s+(\d+)\s+(miles?|km|kilometers?|mi)\b', re.IGNORECASE)
-
-
-# ---------------------------------------------------------------------------
-# Parser
-# ---------------------------------------------------------------------------
-def _strip_filler(text: str) -> str:
-    """Remove common filler words from extracted category text."""
-    tokens = text.split()
-    return " ".join(t for t in tokens if t.lower() not in FILLER_WORDS)
-
-
-def _lookup_category(text: str) -> tuple[Optional[dict], str]:
-    """Look up category in synonym table. Returns (entry, search_text).
-
-    Token-based matching with plural normalization:
-    1. Try exact match on full text
-    2. Try with trailing 's' stripped
-    3. Try each token individually
-    """
-    normalized = text.strip().lower()
-    if not normalized:
-        return None, text
-
-    # Exact match
-    if normalized in _SYNONYM_LOOKUP:
-        entry = _SYNONYM_LOOKUP[normalized]
-        return entry, entry["fallback_text"]
-
-    # Plural normalization (strip trailing 's')
-    if normalized.endswith("s") and normalized[:-1] in _SYNONYM_LOOKUP:
-        entry = _SYNONYM_LOOKUP[normalized[:-1]]
-        return entry, entry["fallback_text"]
-
-    # Multi-word: try the full phrase minus trailing 's'
-    # e.g., "gas stations" -> "gas station"
-    if normalized.endswith("s"):
-        singular = normalized[:-1]
-        if singular in _SYNONYM_LOOKUP:
-            entry = _SYNONYM_LOOKUP[singular]
-            return entry, entry["fallback_text"]
-
-    # Token-level match: check if any single token matches
-    tokens = normalized.split()
-    for token in tokens:
-        if token in _SYNONYM_LOOKUP:
-            entry = _SYNONYM_LOOKUP[token]
-            return entry, entry["fallback_text"]
-        if token.endswith("s") and token[:-1] in _SYNONYM_LOOKUP:
-            entry = _SYNONYM_LOOKUP[token[:-1]]
-            return entry, entry["fallback_text"]
-
-    # No match — return raw text as search text
-    return None, text.strip()
-
-
-def _parse_unit_to_meters(value: int, unit: str) -> float:
-    """Convert a distance value + unit string to meters."""
-    unit = unit.lower().rstrip("s")  # "miles" -> "mile"
-    if unit in ("mile", "mi"):
-        return value * MILES_TO_METERS
-    return value * KM_TO_METERS
-
-
-def parse_intent(
-    query: str,
-    has_position: bool = False,
-    has_route: bool = False,
-) -> dict:
-    """Parse a natural language query into a structured intent.
-
-    Returns dict with keys:
-      intent: 'plain' | 'proximity' | 'route_corridor'
-      original_intent: same as intent before fallback
-      fallback_reason: 'no_position' | 'no_route' | None
-      category: str or None (synonym table match)
-      gnis_class: str or None
-      search_text: str (raw text for Nominatim/FTS5)
-      radius_m: float or None (for proximity with explicit radius)
-      interval_m: float or None (for corridor with "every N miles")
-    """
-    text = query.strip()
-    intent = "plain"
-    original_intent = "plain"
-    fallback_reason = None
-    radius_m = None
-    interval_m = None
-    spatial_keywords_removed = text
-
-    # --- Rule 1: Route corridor ---
-    corridor_match = RE_ALONG_ROUTE.search(text) or RE_ON_ROUTE.search(text)
-    every_match = RE_EVERY_N.search(text)
-
-    if corridor_match or every_match:
-        original_intent = "route_corridor"
-        # Remove spatial keywords to extract category
-        spatial_keywords_removed = text
-        if corridor_match:
-            spatial_keywords_removed = (
-                spatial_keywords_removed[:corridor_match.start()]
-                + spatial_keywords_removed[corridor_match.end():]
-            )
-        if every_match:
-            interval_m = _parse_unit_to_meters(
-                int(every_match.group(1)), every_match.group(2)
-            )
-            spatial_keywords_removed = (
-                spatial_keywords_removed[:every_match.start()]
-                + spatial_keywords_removed[every_match.end():]
-            )
-
-        if has_route:
-            intent = "route_corridor"
-        elif has_position:
-            intent = "proximity"
-            fallback_reason = "no_route"
-        else:
-            intent = "plain"
-            fallback_reason = "no_position"
-
-    # --- Rule 2: Proximity ---
-    elif RE_NEAREST.search(text):
-        original_intent = "proximity"
-        spatial_keywords_removed = RE_NEAREST.sub("", text)
-        intent = "proximity" if has_position else "plain"
-        if not has_position:
-            fallback_reason = "no_position"
-
-    elif RE_CLOSEST.search(text):
-        original_intent = "proximity"
-        spatial_keywords_removed = RE_CLOSEST.sub("", text)
-        intent = "proximity" if has_position else "plain"
-        if not has_position:
-            fallback_reason = "no_position"
-
-    elif RE_NEAR_ME.search(text):
-        original_intent = "proximity"
-        spatial_keywords_removed = RE_NEAR_ME.sub("", text)
-        intent = "proximity" if has_position else "plain"
-        if not has_position:
-            fallback_reason = "no_position"
-
-    elif RE_NEAR_HERE.search(text):
-        original_intent = "proximity"
-        spatial_keywords_removed = RE_NEAR_HERE.sub("", text)
-        intent = "proximity" if has_position else "plain"
-        if not has_position:
-            fallback_reason = "no_position"
-
-    elif RE_NEARBY.search(text):
-        original_intent = "proximity"
-        spatial_keywords_removed = RE_NEARBY.sub("", text)
-        intent = "proximity" if has_position else "plain"
-        if not has_position:
-            fallback_reason = "no_position"
-
-    elif RE_WITHIN.search(text):
-        original_intent = "proximity"
-        m = RE_WITHIN.search(text)
-        radius_m = _parse_unit_to_meters(int(m.group(1)), m.group(2))
-        spatial_keywords_removed = RE_WITHIN.sub("", text)
-        intent = "proximity" if has_position else "plain"
-        if not has_position:
-            fallback_reason = "no_position"
-
-    # Strip filler words from extracted category text
-    category_text = _strip_filler(spatial_keywords_removed).strip()
-
-    # Look up category in synonym table
-    entry, search_text = _lookup_category(category_text)
-
-    # --- Rule 3: Implicit proximity for bare category words ---
-    if intent == "plain" and fallback_reason is None and has_position and entry is not None:
-        intent = "proximity"
-        original_intent = "proximity"
-
-    return {
-        "intent": intent,
-        "original_intent": original_intent,
-        "fallback_reason": fallback_reason,
-        "category": entry["fallback_text"] if entry else None,
-        "gnis_class": entry["gnis_class"] if entry else None,
-        "search_text": search_text,
-        "radius_m": radius_m,
-        "interval_m": interval_m,
-    }
 ```
+
+**Do NOT** add `haversine_m`, `douglas_peucker`, `corridor_filter`, any FastAPI imports, or any endpoint code.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m pytest tests/test_intent_parser.py -v`
-Expected: All 16 tests PASS
+Expected: All 28 tests PASS
 
 - [ ] **Step 5: Commit**
 
@@ -424,19 +280,39 @@ git add services/search/spatial.py tests/test_intent_parser.py
 git commit -m "feat: intent parser with synonym table and category extraction"
 ```
 
+> BEFORE marking this task complete:
+> 1. Verify test coverage: are error paths tested (fallback chain)? Edge cases (plurals, fillers, Route 66)? ✓
+> 2. Run `python3 -m pytest tests/test_intent_parser.py -v` and confirm all green
+> 3. Verify `parse_intent` return dict has ALL keys defined in the spec response schema
+
 ---
 
 ## Task 2: Corridor Math Utilities
 
-**Files:**
-- Modify: `services/search/spatial.py` (add corridor functions)
-- Create: `tests/test_corridor.py`
+**Dependencies:** Task 1 must be complete (`spatial.py` must exist with constants)
+**Modifies:** `services/search/spatial.py` (appends new functions)
+**Creates:** `tests/test_corridor.py`
+**Does NOT modify:** `main.py`, `app.js`, any existing file other than `spatial.py`
+
+> BEFORE starting work:
+> 1. Read the spec section "Corridor Search Algorithm" — especially the per-segment bbox pre-check optimization (required for <500ms performance on Pi 5)
+> 2. Read `services/search/spatial.py` as it exists after Task 1 — understand the constants defined there
+> Follow TDD: write failing test → implement → verify green.
+
+**Behavior change:** After this task, `spatial.py` gains five new functions: `haversine_m()`, `douglas_peucker()`, `point_to_segment_distance()`, `corridor_filter()`, `distance_along_polyline()`.
+
+**Do NOT:**
+- Modify `parse_intent()` or the synonym table
+- Add any FastAPI routes
+- Use numpy or any dependency not already in `requirements.txt`
+- Remove the per-segment bbox pre-check optimization (it's required — pure haversine loops are 10x too slow on Pi 5)
 
 - [ ] **Step 1: Write failing tests for corridor math**
 
+Create `tests/test_corridor.py`:
+
 ```python
-# tests/test_corridor.py
-"""Tests for corridor search math: Douglas-Peucker, point-to-segment, corridor filter."""
+"""Tests for corridor search math: haversine, Douglas-Peucker, segment distance, corridor filter."""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "search"))
@@ -451,18 +327,32 @@ from spatial import (
 
 
 class TestHaversine:
-    def test_same_point(self):
+    def test_same_point_is_zero(self):
         assert haversine_m(33.45, -112.07, 33.45, -112.07) == 0.0
 
-    def test_known_distance(self):
-        # Phoenix to Tucson: ~180 km
+    def test_phoenix_to_tucson(self):
         d = haversine_m(33.45, -112.07, 32.22, -110.97)
-        assert 170_000 < d < 190_000
+        assert 170_000 < d < 190_000  # ~180 km
+
+    def test_symmetry(self):
+        d1 = haversine_m(33.45, -112.07, 34.05, -111.09)
+        d2 = haversine_m(34.05, -111.09, 33.45, -112.07)
+        assert abs(d1 - d2) < 0.01
 
 
 class TestDouglasPeucker:
-    def test_straight_line_simplified(self):
-        # 5 colinear points should reduce to 2
+    def test_empty(self):
+        assert douglas_peucker([], tolerance_m=100) == []
+
+    def test_single_point(self):
+        assert douglas_peucker([[-112.0, 33.0]], tolerance_m=100) == [[-112.0, 33.0]]
+
+    def test_two_points(self):
+        pts = [[-112.0, 33.0], [-111.0, 33.0]]
+        assert douglas_peucker(pts, tolerance_m=100) == pts
+
+    def test_colinear_points_simplified(self):
+        # 5 nearly colinear points on same latitude should reduce to 2
         pts = [[-112.0, 33.0], [-111.5, 33.0], [-111.0, 33.0],
                [-110.5, 33.0], [-110.0, 33.0]]
         result = douglas_peucker(pts, tolerance_m=100)
@@ -475,30 +365,38 @@ class TestDouglasPeucker:
         pts = [[-112.0, 33.0], [-111.5, 34.0], [-111.0, 33.0],
                [-110.5, 34.0], [-110.0, 33.0]]
         result = douglas_peucker(pts, tolerance_m=100)
-        assert len(result) == 5  # All preserved due to large deviations
-
-    def test_empty_and_short(self):
-        assert douglas_peucker([], tolerance_m=100) == []
-        assert douglas_peucker([[-112.0, 33.0]], tolerance_m=100) == [[-112.0, 33.0]]
-        pts = [[-112.0, 33.0], [-111.0, 33.0]]
-        assert douglas_peucker(pts, tolerance_m=100) == pts
+        assert len(result) == 5  # All preserved
 
 
 class TestPointToSegment:
-    def test_point_on_segment(self):
-        # Midpoint of a segment should be distance ~0
+    def test_point_near_midpoint(self):
         d = point_to_segment_distance(
-            33.0, -111.5,  # point (midpoint-ish)
+            33.0, -111.5,  # point near midpoint of segment
             [-112.0, 33.0], [-111.0, 33.0]  # segment [lng, lat]
         )
-        assert d < 100  # within 100m of the line
+        assert d < 500  # within 500m of the line
 
-    def test_point_far_from_segment(self):
+    def test_point_far_away(self):
         d = point_to_segment_distance(
-            35.0, -111.5,  # point 2 degrees north
+            35.0, -111.5,  # 2 degrees north
             [-112.0, 33.0], [-111.0, 33.0]
         )
         assert d > 200_000  # > 200 km
+
+    def test_point_at_endpoint(self):
+        d = point_to_segment_distance(
+            33.0, -112.0,  # exactly at segment start
+            [-112.0, 33.0], [-111.0, 33.0]
+        )
+        assert d < 100  # within 100m (rounding)
+
+    def test_bbox_precheck_skips_distant_points(self):
+        """Points far from segment should return inf quickly via bbox pre-check."""
+        d = point_to_segment_distance(
+            40.0, -80.0,  # very far (different region entirely)
+            [-112.0, 33.0], [-111.0, 33.0]
+        )
+        assert d == float("inf")
 
 
 class TestCorridorFilter:
@@ -515,18 +413,41 @@ class TestCorridorFilter:
         assert "Just off route" in names
         assert "Far away" not in names
 
-    def test_distance_along_route(self):
+    def test_sorted_by_distance_along_route(self):
         route = [[-112.0, 33.0], [-111.0, 33.0], [-110.0, 33.0]]
         candidates = [
-            {"lat": 33.0, "lon": -111.0, "name": "Midpoint"},
-            {"lat": 33.0, "lon": -110.5, "name": "Three-quarter"},
+            {"lat": 33.0, "lon": -110.5, "name": "Later"},
+            {"lat": 33.0, "lon": -111.5, "name": "Earlier"},
         ]
         results = corridor_filter(route, candidates, corridor_width_m=5000)
-        # Results should be sorted by distance_along_route_m
         assert len(results) == 2
-        assert results[0]["name"] == "Midpoint"
-        assert results[1]["name"] == "Three-quarter"
+        assert results[0]["name"] == "Earlier"
+        assert results[1]["name"] == "Later"
         assert results[0]["distance_along_route_m"] < results[1]["distance_along_route_m"]
+
+    def test_empty_inputs(self):
+        assert corridor_filter([], [], corridor_width_m=2000) == []
+        assert corridor_filter([[-112.0, 33.0]], [{"lat": 33.0, "lon": -112.0}], corridor_width_m=2000) == []
+
+    def test_has_distance_along_route_field(self):
+        route = [[-112.0, 33.0], [-111.0, 33.0]]
+        candidates = [{"lat": 33.0, "lon": -111.5, "name": "Test"}]
+        results = corridor_filter(route, candidates, corridor_width_m=5000)
+        assert len(results) == 1
+        assert "distance_along_route_m" in results[0]
+        assert isinstance(results[0]["distance_along_route_m"], float)
+
+
+class TestDistanceAlongPolyline:
+    def test_single_segment(self):
+        total = distance_along_polyline([[-112.0, 33.0], [-111.0, 33.0]])
+        assert 80_000 < total < 100_000  # ~90 km at this latitude
+
+    def test_empty(self):
+        assert distance_along_polyline([]) == 0.0
+
+    def test_single_point(self):
+        assert distance_along_polyline([[-112.0, 33.0]]) == 0.0
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -534,233 +455,30 @@ class TestCorridorFilter:
 Run: `python3 -m pytest tests/test_corridor.py -v`
 Expected: FAIL with `ImportError: cannot import name 'haversine_m' from 'spatial'`
 
-- [ ] **Step 3: Implement corridor math in spatial.py**
+- [ ] **Step 3: Implement corridor math**
 
-Add the following functions to `services/search/spatial.py`:
+Append the following functions to `services/search/spatial.py` (after the existing `parse_intent` function):
 
-```python
-# ---------------------------------------------------------------------------
-# Haversine (duplicated from main.py for module independence)
-# ---------------------------------------------------------------------------
-def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Distance in metres between two lat/lon points."""
-    rlat1, rlon1, rlat2, rlon2 = (math.radians(v) for v in (lat1, lon1, lat2, lon2))
-    dlat = rlat2 - rlat1
-    dlon = rlon2 - rlon1
-    a = math.sin(dlat / 2) ** 2 + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlon / 2) ** 2
-    return 2 * EARTH_RADIUS_M * math.asin(math.sqrt(a))
+1. `haversine_m(lat1, lon1, lat2, lon2)` — standard haversine formula, returns meters. Duplicated from `main.py` for module independence.
+2. `_point_line_distance_m(plng, plat, a_lng, a_lat, b_lng, b_lat)` — cross-track distance for Douglas-Peucker.
+3. `douglas_peucker(points, tolerance_m=50.0)` — recursive simplification of `[lng, lat]` polyline.
+4. `point_to_segment_distance(p_lat, p_lng, seg_a, seg_b)` — minimum distance from point to `[lng, lat]` segment. **MUST include the bbox pre-check**: if point lat/lng is outside `min/max of segment ± 0.02 degrees`, return `float("inf")` immediately. This is the critical performance optimization.
+5. `corridor_filter(route, candidates, corridor_width_m, interval_m=None)` — simplify route, pre-compute cumulative lengths, filter candidates, sort by distance-along-route, apply optional interval filter.
+6. `distance_along_polyline(polyline)` — sum of segment lengths in meters.
 
-
-# ---------------------------------------------------------------------------
-# Douglas-Peucker polyline simplification
-# ---------------------------------------------------------------------------
-def _point_line_distance_m(
-    plng: float, plat: float,
-    a_lng: float, a_lat: float,
-    b_lng: float, b_lat: float,
-) -> float:
-    """Approximate perpendicular distance from point to line segment AB in meters.
-
-    Uses cross-track distance formula for short segments.
-    """
-    d_ap = haversine_m(plat, plng, a_lat, a_lng)
-    d_ab = haversine_m(a_lat, a_lng, b_lat, b_lng)
-    if d_ab < 1.0:
-        return d_ap
-    # Bearing from A to P and A to B
-    bear_ap = math.atan2(
-        math.sin(math.radians(plng - a_lng)) * math.cos(math.radians(plat)),
-        math.cos(math.radians(a_lat)) * math.sin(math.radians(plat))
-        - math.sin(math.radians(a_lat)) * math.cos(math.radians(plat))
-        * math.cos(math.radians(plng - a_lng))
-    )
-    bear_ab = math.atan2(
-        math.sin(math.radians(b_lng - a_lng)) * math.cos(math.radians(b_lat)),
-        math.cos(math.radians(a_lat)) * math.sin(math.radians(b_lat))
-        - math.sin(math.radians(a_lat)) * math.cos(math.radians(b_lat))
-        * math.cos(math.radians(b_lng - a_lng))
-    )
-    cross_track = abs(math.asin(
-        math.sin(d_ap / EARTH_RADIUS_M) * math.sin(bear_ap - bear_ab)
-    )) * EARTH_RADIUS_M
-    return cross_track
-
-
-def douglas_peucker(points: list[list[float]], tolerance_m: float = 50.0) -> list[list[float]]:
-    """Simplify a [lng, lat] polyline using Douglas-Peucker algorithm."""
-    if len(points) <= 2:
-        return list(points)
-
-    # Find point with max distance from the line between first and last
-    max_dist = 0.0
-    max_idx = 0
-    a_lng, a_lat = points[0]
-    b_lng, b_lat = points[-1]
-
-    for i in range(1, len(points) - 1):
-        d = _point_line_distance_m(points[i][0], points[i][1], a_lng, a_lat, b_lng, b_lat)
-        if d > max_dist:
-            max_dist = d
-            max_idx = i
-
-    if max_dist > tolerance_m:
-        left = douglas_peucker(points[:max_idx + 1], tolerance_m)
-        right = douglas_peucker(points[max_idx:], tolerance_m)
-        return left[:-1] + right
-    else:
-        return [points[0], points[-1]]
-
-
-# ---------------------------------------------------------------------------
-# Point-to-segment distance with bbox pre-check
-# ---------------------------------------------------------------------------
-def point_to_segment_distance(
-    p_lat: float, p_lng: float,
-    seg_a: list[float], seg_b: list[float],
-) -> float:
-    """Minimum distance in meters from point to line segment [seg_a, seg_b].
-
-    seg_a, seg_b are [lng, lat]. Uses projection onto the segment
-    with clamping to endpoints.
-    """
-    a_lng, a_lat = seg_a
-    b_lng, b_lat = seg_b
-
-    # Bbox pre-check: if point is clearly far from segment, skip expensive math
-    lat_min = min(a_lat, b_lat) - 0.02  # ~2.2 km margin
-    lat_max = max(a_lat, b_lat) + 0.02
-    lng_min = min(a_lng, b_lng) - 0.025
-    lng_max = max(a_lng, b_lng) + 0.025
-    if p_lat < lat_min or p_lat > lat_max or p_lng < lng_min or p_lng > lng_max:
-        return float("inf")
-
-    d_a = haversine_m(p_lat, p_lng, a_lat, a_lng)
-    d_b = haversine_m(p_lat, p_lng, b_lat, b_lng)
-    d_ab = haversine_m(a_lat, a_lng, b_lat, b_lng)
-
-    if d_ab < 1.0:
-        return d_a
-
-    # Project point onto segment using normalized dot product approximation
-    # This uses a flat-earth approximation for the projection (acceptable at segment scale)
-    dx = b_lng - a_lng
-    dy = b_lat - a_lat
-    t = ((p_lng - a_lng) * dx + (p_lat - a_lat) * dy) / (dx * dx + dy * dy)
-    t = max(0.0, min(1.0, t))
-
-    proj_lng = a_lng + t * dx
-    proj_lat = a_lat + t * dy
-
-    return haversine_m(p_lat, p_lng, proj_lat, proj_lng)
-
-
-# ---------------------------------------------------------------------------
-# Corridor filter
-# ---------------------------------------------------------------------------
-def corridor_filter(
-    route: list[list[float]],
-    candidates: list[dict],
-    corridor_width_m: float = CORRIDOR_WIDTH_M,
-    interval_m: Optional[float] = None,
-) -> list[dict]:
-    """Filter candidates to those within corridor_width_m of the route.
-
-    Route is [[lng, lat], ...]. Candidates are dicts with 'lat' and 'lon' keys.
-    Returns candidates with 'distance_along_route_m' added, sorted by that value.
-    """
-    if len(route) < 2 or not candidates:
-        return []
-
-    # Simplify route for faster checks
-    simplified = douglas_peucker(route, tolerance_m=50.0)
-
-    # Pre-compute cumulative segment lengths for distance-along-route
-    cum_lengths = [0.0]
-    for i in range(1, len(simplified)):
-        seg_len = haversine_m(
-            simplified[i - 1][1], simplified[i - 1][0],
-            simplified[i][1], simplified[i][0],
-        )
-        cum_lengths.append(cum_lengths[-1] + seg_len)
-
-    results = []
-    for cand in candidates:
-        p_lat = float(cand["lat"])
-        p_lng = float(cand["lon"])
-
-        min_dist = float("inf")
-        best_seg_idx = 0
-        best_t = 0.0
-
-        for i in range(len(simplified) - 1):
-            seg_a = simplified[i]
-            seg_b = simplified[i + 1]
-
-            d = point_to_segment_distance(p_lat, p_lng, seg_a, seg_b)
-            if d < min_dist:
-                min_dist = d
-                best_seg_idx = i
-                # Compute t for distance-along-route
-                dx = seg_b[0] - seg_a[0]
-                dy = seg_b[1] - seg_a[1]
-                denom = dx * dx + dy * dy
-                if denom > 0:
-                    best_t = max(0.0, min(1.0,
-                        ((p_lng - seg_a[0]) * dx + (p_lat - seg_a[1]) * dy) / denom
-                    ))
-                else:
-                    best_t = 0.0
-
-        if min_dist <= corridor_width_m:
-            seg_len = haversine_m(
-                simplified[best_seg_idx][1], simplified[best_seg_idx][0],
-                simplified[best_seg_idx + 1][1], simplified[best_seg_idx + 1][0],
-            )
-            dist_along = cum_lengths[best_seg_idx] + best_t * seg_len
-
-            result = dict(cand)
-            result["distance_along_route_m"] = round(dist_along, 1)
-            results.append(result)
-
-    # Sort by distance along route
-    results.sort(key=lambda r: r["distance_along_route_m"])
-
-    # Interval filter: keep closest result per interval
-    if interval_m and interval_m > 0 and results:
-        total_route_length = cum_lengths[-1]
-        filtered = []
-        marker = 0.0
-        while marker <= total_route_length:
-            best = None
-            best_diff = float("inf")
-            for r in results:
-                diff = abs(r["distance_along_route_m"] - marker)
-                if diff < best_diff:
-                    best_diff = diff
-                    best = r
-            if best and best not in filtered:
-                filtered.append(best)
-            marker += interval_m
-        results = filtered
-
-    return results
-
-
-def distance_along_polyline(polyline: list[list[float]]) -> float:
-    """Total length of a [lng, lat] polyline in meters."""
-    total = 0.0
-    for i in range(1, len(polyline)):
-        total += haversine_m(
-            polyline[i - 1][1], polyline[i - 1][0],
-            polyline[i][1], polyline[i][0],
-        )
-    return total
-```
+See the spec "Corridor Search Algorithm" section for the exact algorithm. The `corridor_filter` function:
+- Calls `douglas_peucker` on the route
+- Pre-computes cumulative segment lengths
+- For each candidate, finds the nearest segment (using `point_to_segment_distance`)
+- Keeps candidates within `corridor_width_m`
+- Computes `distance_along_route_m` for each
+- Sorts by `distance_along_route_m`
+- Applies interval filter if `interval_m` is set
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `python3 -m pytest tests/test_corridor.py -v`
-Expected: All tests PASS
+Run: `python3 -m pytest tests/test_corridor.py tests/test_intent_parser.py -v`
+Expected: ALL tests pass (both task 1 and task 2 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -769,51 +487,76 @@ git add services/search/spatial.py tests/test_corridor.py
 git commit -m "feat: corridor math — Douglas-Peucker, segment distance, corridor filter"
 ```
 
+> BEFORE marking this task complete:
+> 1. Verify the bbox pre-check in `point_to_segment_distance` returns `float("inf")` for distant points (test `test_bbox_precheck_skips_distant_points` covers this)
+> 2. Verify `corridor_filter` returns results with `distance_along_route_m` field
+> 3. Run ALL tests: `python3 -m pytest tests/ -v` and confirm green
+
+---
+
+> **Review loop after Tasks 1-2 (backend logic group):**
+> You MUST carefully review the batch of work from multiple perspectives and revise/refine as appropriate. Repeat this review loop (minimum 3 rounds; if you still find substantive issues in round 3, keep going) until confident there are no issues. Specifically check:
+> - Does `parse_intent` return dict match the response schema in the spec?
+> - Does `corridor_filter` add `distance_along_route_m` to each result?
+> - Are all 25 synonym table entries from the spec present?
+> - Is the bbox pre-check in `point_to_segment_distance` working (test it)?
+> - Do Task 1 tests still pass after Task 2 additions to `spatial.py`?
+
 ---
 
 ## Task 3: POST /search/spatial Endpoint
 
-**Files:**
-- Modify: `services/search/main.py` — add POI lat/lon index, import spatial router
-- Modify: `services/search/spatial.py` — add the FastAPI endpoint that wires together intent parsing, Nominatim/POI queries, and corridor filtering
-- Create: `tests/test_spatial_endpoint.py`
+**Dependencies:** Tasks 1 and 2 must be complete (`spatial.py` must have `parse_intent` and `corridor_filter`)
+**Modifies:** `services/search/spatial.py` (appends endpoint), `services/search/main.py` (mounts router, adds index)
+**Creates:** `tests/test_spatial_endpoint.py`
 
-- [ ] **Step 1: Write failing tests for the endpoint**
+> BEFORE starting work:
+> 1. Read the spec section "API" — especially the request/response schemas and validation bounds
+> 2. Read `services/search/main.py` — understand `_query_nominatim`, `_query_poi`, `_deduplicate`, the `State` class, and the `lifespan` function
+> 3. Read `services/search/spatial.py` as it exists after Tasks 1-2
+> Follow TDD: write failing test → implement → verify green.
+
+**Behavior change:** A new `POST /search/spatial` endpoint becomes available. It accepts `{query, position, route}`, runs the intent parser, queries Nominatim + POI, applies spatial filtering, and returns results with `distance_m`, `distance_along_route_m`, `intent`, `original_intent`, `fallback_reason`, and `category` fields. The existing `GET /search` endpoint is unchanged.
+
+**Do NOT:**
+- Modify the existing `GET /search` endpoint or its response shape
+- Change the `_query_nominatim` or `_query_poi` function signatures
+- Add any frontend code
+
+**Key architectural context:** The search service's `_query_nominatim` and `_query_poi` are module-level async functions in `main.py`. The spatial endpoint in `spatial.py` needs to call them. Use a FastAPI `APIRouter` in `spatial.py` and mount it in `main.py`. The endpoint calls the query functions via an import from `main`.
+
+- [ ] **Step 1: Write failing tests**
+
+Create `tests/test_spatial_endpoint.py`:
 
 ```python
-# tests/test_spatial_endpoint.py
 """Integration tests for POST /search/spatial."""
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "search"))
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from fastapi.testclient import TestClient
 
 
-class TestSpatialEndpoint:
+class TestSpatialEndpointValidation:
+    """Test request validation without needing a running Nominatim/POI database."""
+
     @pytest.fixture(autouse=True)
     def setup(self):
-        """Import app after patching dependencies."""
-        # Patch aiosqlite and httpx before importing the app
-        with patch("main.aiosqlite") as mock_sqlite, \
-             patch("main.httpx") as mock_httpx:
-            mock_sqlite.connect = AsyncMock()
-            from main import app
-            self.client = TestClient(app)
+        from main import app
+        from fastapi.testclient import TestClient
+        self.client = TestClient(app)
 
-    def test_plain_search(self):
-        resp = self.client.post("/spatial", json={
-            "query": "Phoenix",
-        })
+    def test_plain_search_returns_intent(self):
+        resp = self.client.post("/spatial", json={"query": "Phoenix"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["intent"] == "plain"
         assert data["original_intent"] == "plain"
         assert data["fallback_reason"] is None
+        assert "results" in data
 
-    def test_proximity_search(self):
+    def test_proximity_with_position(self):
         resp = self.client.post("/spatial", json={
             "query": "nearest gas station",
             "position": {"lat": 33.45, "lon": -112.07},
@@ -823,7 +566,7 @@ class TestSpatialEndpoint:
         assert data["intent"] == "proximity"
         assert data["category"] == "gas station"
 
-    def test_proximity_fallback_no_position(self):
+    def test_proximity_fallback_without_position(self):
         resp = self.client.post("/spatial", json={
             "query": "nearest gas station",
         })
@@ -833,36 +576,49 @@ class TestSpatialEndpoint:
         assert data["original_intent"] == "proximity"
         assert data["fallback_reason"] == "no_position"
 
-    def test_query_too_long(self):
+    def test_query_too_long_rejected(self):
+        resp = self.client.post("/spatial", json={"query": "x" * 501})
+        assert resp.status_code == 422
+
+    def test_empty_query_rejected(self):
+        resp = self.client.post("/spatial", json={"query": ""})
+        assert resp.status_code == 422
+
+    def test_invalid_position_rejected(self):
         resp = self.client.post("/spatial", json={
-            "query": "x" * 501,
+            "query": "test",
+            "position": {"lat": 999, "lon": -112.0},
         })
         assert resp.status_code == 422
 
-    def test_route_too_many_points(self):
+    def test_results_have_distance_fields(self):
         resp = self.client.post("/spatial", json={
-            "query": "gas along my route",
-            "route": [[-112.0, 33.0]] * 10001,
+            "query": "Phoenix",
+            "position": {"lat": 33.45, "lon": -112.07},
         })
-        assert resp.status_code == 422
+        data = resp.json()
+        # Results may be empty (no Nominatim/POI in test), but shape is correct
+        assert "results" in data
+        assert isinstance(data["results"], list)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python3 -m pytest tests/test_spatial_endpoint.py -v`
-Expected: FAIL (no `/spatial` endpoint exists)
+Expected: FAIL (no `/spatial` endpoint)
 
-- [ ] **Step 3: Add the spatial endpoint to spatial.py and wire it into main.py**
+- [ ] **Step 3: Add the FastAPI endpoint to spatial.py**
 
-Add to `services/search/spatial.py` (at the end of the file):
+Append to `services/search/spatial.py`:
 
 ```python
 # ---------------------------------------------------------------------------
 # FastAPI endpoint
 # ---------------------------------------------------------------------------
+import asyncio
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional as Opt
 
 router = APIRouter()
 
@@ -874,18 +630,14 @@ class PositionBody(BaseModel):
 
 class SpatialSearchBody(BaseModel):
     query: str = Field(min_length=1, max_length=500)
-    position: Optional[PositionBody] = None
-    route: Optional[list[list[float]]] = Field(None, max_length=10000)
+    position: Opt[PositionBody] = None
+    route: Opt[list[list[float]]] = Field(None, max_length=10000)
 
 
-async def _spatial_search(
-    body: SpatialSearchBody,
-    query_nominatim,
-    query_poi,
-    deduplicate,
-) -> dict:
-    """Core spatial search logic. Accepts injected query functions for testability."""
-    import asyncio
+@router.post("/spatial")
+async def spatial_search(body: SpatialSearchBody):
+    """Natural language spatial search endpoint."""
+    from main import _query_nominatim, _query_poi, _deduplicate
 
     parsed = parse_intent(
         body.query,
@@ -905,25 +657,32 @@ async def _spatial_search(
         bbox = f"{min(lngs)-margin},{min(lats)-margin},{max(lngs)+margin},{max(lats)+margin}"
     elif intent == "proximity" and body.position:
         radius_m = parsed["radius_m"] or DEFAULT_PROXIMITY_RADIUS_M
-        # Convert radius to rough degree margin
         margin = radius_m / 111_000  # ~111 km per degree
         bbox = (
             f"{body.position.lon - margin},{body.position.lat - margin},"
             f"{body.position.lon + margin},{body.position.lat + margin}"
         )
 
-    # Query both sources
-    limit = 20  # fetch more than we show, filter down
-    nom_task = asyncio.create_task(query_nominatim(search_text, limit, bbox))
-    poi_task = asyncio.create_task(query_poi(search_text, limit, bbox,
-                                             gnis_class=parsed.get("gnis_class")))
-    nom_results, poi_results = await asyncio.gather(nom_task, poi_task, return_exceptions=True)
+    # Query both sources in parallel
+    limit = 20
+    nom_results, poi_results = await asyncio.gather(
+        _query_nominatim(search_text, limit, bbox),
+        _query_poi(search_text, limit, bbox),
+        return_exceptions=True,
+    )
     if isinstance(nom_results, BaseException):
         nom_results = []
     if isinstance(poi_results, BaseException):
         poi_results = []
 
-    merged = deduplicate(nom_results, poi_results)
+    # Boost GNIS class matches when a class is specified
+    gnis_class = parsed.get("gnis_class")
+    if gnis_class and poi_results:
+        class_matches = [r for r in poi_results if (r.get("class") or "").lower() == gnis_class.lower()]
+        others = [r for r in poi_results if (r.get("class") or "").lower() != gnis_class.lower()]
+        poi_results = class_matches + others
+
+    merged = _deduplicate(nom_results, poi_results)
 
     # Add distance_m if position available
     if body.position:
@@ -947,16 +706,17 @@ async def _spatial_search(
             interval_m=parsed.get("interval_m"),
         )
     elif intent == "proximity":
-        # Sort by distance, apply radius
         merged = [r for r in merged if r.get("distance_m") is not None]
         merged.sort(key=lambda r: r["distance_m"])
         radius = parsed["radius_m"] or DEFAULT_PROXIMITY_RADIUS_M
         merged = [r for r in merged if r["distance_m"] <= radius]
 
-    # Add null distance_along_route_m for non-corridor results
+    # Ensure all results have both distance fields
     for r in merged:
         if "distance_along_route_m" not in r:
             r["distance_along_route_m"] = None
+        if "distance_m" not in r:
+            r["distance_m"] = None
 
     return {
         "results": merged[:10],
@@ -967,75 +727,88 @@ async def _spatial_search(
     }
 ```
 
-Add to `services/search/main.py` — at the top with other imports:
+- [ ] **Step 4: Mount the router in main.py**
+
+In `services/search/main.py`, add after the `app = FastAPI(...)` line:
 
 ```python
 from spatial import router as spatial_router
-```
-
-After the `app = FastAPI(...)` line:
-
-```python
 app.include_router(spatial_router, prefix="")
 ```
 
-In the `lifespan` function, after opening the POI database, add the lat/lon index:
+In the `lifespan` function, after `await _open_poi_db()`, add:
 
 ```python
-        # Ensure lat/lon index for bbox queries
+        # Ensure spatial index for bbox queries (corridor/proximity search)
         if state.poi_db:
             await state.poi_db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_poi_latlon ON poi_features (lat, lon)"
             )
 ```
 
-Add the route handler in `spatial.py`:
-
-```python
-@router.post("/spatial")
-async def spatial_search(body: SpatialSearchBody):
-    """Natural language spatial search endpoint."""
-    from main import _query_nominatim, _query_poi, _deduplicate, state
-
-    # Wrap _query_poi to support optional gnis_class filter
-    async def query_poi_with_class(q, limit, bbox, gnis_class=None):
-        results = await _query_poi(q, limit, bbox)
-        if gnis_class and results:
-            # Boost GNIS class matches to top
-            class_matches = [r for r in results if r.get("class", "").lower() == gnis_class.lower()]
-            others = [r for r in results if r.get("class", "").lower() != gnis_class.lower()]
-            return class_matches + others
-        return results
-
-    return await _spatial_search(
-        body, _query_nominatim, query_poi_with_class, _deduplicate
-    )
-```
-
-- [ ] **Step 4: Run all tests**
+- [ ] **Step 5: Run all tests**
 
 Run: `python3 -m pytest tests/ -v`
-Expected: All tests PASS (intent parser + corridor + endpoint)
+Expected: ALL tests pass (intent parser + corridor + endpoint + earlier tests)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add services/search/spatial.py services/search/main.py tests/test_spatial_endpoint.py
 git commit -m "feat: POST /search/spatial endpoint with intent parsing and corridor search"
 ```
 
+> BEFORE marking this task complete:
+> 1. Verify the endpoint returns all required response fields: `results`, `intent`, `original_intent`, `fallback_reason`, `category`
+> 2. Verify each result has `distance_m` and `distance_along_route_m` fields (even if null)
+> 3. Verify the POI lat/lon index creation is in the lifespan function
+> 4. Run `python3 -m pytest tests/ -v` and confirm ALL tests green
+
+---
+
+> **Review loop after Task 3 (backend complete):**
+> You MUST carefully review all backend code from multiple perspectives. Minimum 3 rounds. Check:
+> - Does the circular import between `spatial.py` and `main.py` work? (spatial imports from main inside the endpoint function, main imports router from spatial at module level)
+> - Does the Pydantic validation correctly reject query > 500 chars and lat > 90?
+> - Is the `route` field validated for max 10000 points?
+> - Does the endpoint gracefully handle Nominatim being unavailable? (the `return_exceptions=True` + isinstance check)
+> - Are the three test files consistent with each other?
+
 ---
 
 ## Task 4: Frontend — POST Switch + Route Coords State
 
-**Files:**
-- Modify: `frontend/app.js`
+**Dependencies:** Task 3 must be complete (endpoint must exist). But this task can be developed in parallel if desired — it only touches `frontend/app.js`.
+**Modifies:** `frontend/app.js`
+**Does NOT modify:** any backend file
 
-This task switches the frontend to POST /search/spatial and stores decoded route coordinates for search context. No UI changes yet — just the data plumbing.
+> BEFORE starting work:
+> 1. Read `frontend/app.js` — find these specific locations:
+>    - `var lastRouteTrip = null;` (~line 44) — route state variable
+>    - `function performSearch(query)` (~line 594) — current GET search
+>    - `function renderRoute(trip)` (~line 1062) — where route geometry is decoded
+>    - `function clearRoute()` — search for `lastRouteTrip = null`
+>    - `var gpsLastPos = null;` (~line 52) — GPS position variable
+>    - `var gpsStale = true;` (~line 51) — GPS stale flag
+> 2. Read the spec section "Frontend Changes — Search input"
+> Follow TDD: there are no unit tests for frontend JS in this project. Verify with `node -c` syntax check and manual testing.
+
+**Behavior change:**
+- `performSearch()` changes from `GET /search/search?q=...` to `POST /search/spatial` with `{query, position, route}`
+- New `lastRouteCoords` state variable stores decoded route polyline
+- `renderSearchResults()` signature changes from `(results)` to `(results, metadata)` (metadata unused until Task 5)
+- Graceful degradation: if POST returns 404/405, falls back to old GET endpoint
+
+**Do NOT:**
+- Add numbered pins (that's Task 5)
+- Add distance badges (that's Task 5)
+- Change `renderSearchResults()` rendering logic (that's Task 5)
+- Remove `searchMarker` (that's Task 5)
+- Modify any backend file
 
 - [ ] **Step 1: Add `lastRouteCoords` state variable**
 
-At `frontend/app.js` near line 43 (where `lastRouteTrip` is declared), add:
+Near line 44 of `frontend/app.js`, after `var lastRouteTrip = null;`, add:
 
 ```javascript
   var lastRouteCoords = null;  // decoded [lng, lat] pairs for spatial search context
@@ -1043,35 +816,30 @@ At `frontend/app.js` near line 43 (where `lastRouteTrip` is declared), add:
 
 - [ ] **Step 2: Populate `lastRouteCoords` in `renderRoute()`**
 
-In `renderRoute()` (around line 1062), after the loop that decodes polylines and builds `allCoords`, add:
+In `renderRoute()`, find the loop that decodes polylines (search for `decodePolyline(leg.shape)` around line 1068). After the loop builds `allCoords`, add:
 
 ```javascript
-      // Store decoded coords for spatial search context
       lastRouteCoords = allCoords.slice();
 ```
 
 - [ ] **Step 3: Clear `lastRouteCoords` in `clearRoute()`**
 
-In `clearRoute()` (find it by searching for `lastRouteTrip = null`), add alongside it:
+Find `clearRoute()` (search for `lastRouteTrip = null`). Add next to it:
 
 ```javascript
       lastRouteCoords = null;
 ```
 
-- [ ] **Step 4: Switch `performSearch()` to POST /search/spatial**
+- [ ] **Step 4: Rewrite `performSearch()` to POST**
 
-Replace the existing `performSearch()` function:
+Replace the entire `performSearch()` function (~line 594):
 
 ```javascript
   function performSearch(query) {
     var body = { query: query };
-
-    // Enrich with GPS position if available
     if (gpsLastPos && !gpsStale) {
       body.position = { lat: gpsLastPos[1], lon: gpsLastPos[0] };
     }
-
-    // Enrich with route geometry if available
     if (lastRouteCoords && lastRouteCoords.length >= 2) {
       body.route = lastRouteCoords;
     }
@@ -1083,10 +851,11 @@ Replace the existing `performSearch()` function:
     })
       .then(function (res) {
         if (res.status === 404 || res.status === 405) {
-          // Fallback to old endpoint if backend hasn't been updated
           return fetch('/search/search?q=' + encodeURIComponent(query) + '&limit=10')
             .then(function (r) { return r.json(); })
-            .then(function (d) { return { results: d.results || d, intent: 'plain', original_intent: 'plain', fallback_reason: null, category: null }; });
+            .then(function (d) {
+              return { results: d.results || d, intent: 'plain', original_intent: 'plain', fallback_reason: null, category: null };
+            });
         }
         return res.json();
       })
@@ -1099,17 +868,11 @@ Replace the existing `performSearch()` function:
   }
 ```
 
-- [ ] **Step 5: Update `renderSearchResults` signature to accept metadata**
+- [ ] **Step 5: Update `renderSearchResults` signature**
 
-Change the function signature from `renderSearchResults(results)` to `renderSearchResults(results, metadata)` and pass `metadata` through. For now the metadata is unused — the next task adds UI for it.
+Change the function signature from `function renderSearchResults(results)` to `function renderSearchResults(results, metadata)`. Do NOT change the body — Task 5 handles that. The `metadata` parameter is simply ignored for now.
 
-```javascript
-  function renderSearchResults(results, metadata) {
-    // ... existing code unchanged for now ...
-  }
-```
-
-- [ ] **Step 6: Verify syntax and test manually**
+- [ ] **Step 6: Verify syntax and page load**
 
 ```bash
 node -c frontend/app.js
@@ -1127,16 +890,42 @@ git commit -m "feat: switch search to POST /search/spatial with GPS and route co
 
 ---
 
-## Task 5: Frontend — Numbered Pins for All Search Results
+## Task 5: Frontend — Numbered Pins, Distance Badges, Remove Old Marker
 
-**Files:**
-- Modify: `frontend/app.js`
+**Dependencies:** Task 4 must be complete (`performSearch` must POST, `renderSearchResults` must accept `metadata`)
+**Modifies:** `frontend/app.js`, `frontend/style.css`
+**Does NOT modify:** any backend file
 
-This task adds numbered map pins for ALL search results (plain and spatial), replacing the old single-marker approach.
+> BEFORE starting work:
+> 1. Read `frontend/app.js` — find these specific locations:
+>    - `function addPlaceholderSources()` (~line 89) — where MapLibre sources/layers are registered for style-swap survival
+>    - `function renderSearchResults(results, metadata)` — the function you'll rewrite
+>    - `function selectSearchResult(item)` — the old single-marker function you'll replace
+>    - `function hideSearchResults()` — you'll add pin cleanup here
+>    - `function initSearch()` — you'll add pin click handlers here
+>    - `var searchMarker = null;` (~line 35) — the old marker variable you'll remove
+>    - `var searchPopup = null;` (~line 36) — keep this (popups still needed)
+>    - The KML imported-feature layer click handlers (~line 279) — use the same `mouseenter`/`mouseleave` cursor pattern
+> 2. Read the spec sections "Map result pins" and "Result rendering"
+> No automated tests for frontend — verify with `node -c` and manual testing.
 
-- [ ] **Step 1: Register `search-results` source and layer in `addPlaceholderSources()`**
+**Behavior change:**
+- ALL search results get numbered amber pins on the map (not just spatial)
+- Spatial results show distance badges ("2.3 mi" or "in 47 mi")
+- Intent subtitle shown for spatial queries ("Nearest gas stations")
+- Click list item → fly to pin with padding. Click pin → highlight list item.
+- Old `searchMarker` DOM marker approach replaced entirely
+- `search-results` source/layer registered in `addPlaceholderSources()` for style-swap survival
 
-In `addPlaceholderSources()` (around line 89), add at the END of the function (after all other layer registrations):
+**Do NOT:**
+- Modify any backend file
+- Add search typeahead or live-as-you-type behavior
+- Add "route to this result" functionality
+- Change the `geocodeForRoute()` function (it still uses GET /search)
+
+- [ ] **Step 1: Register search-results source and layers in `addPlaceholderSources()`**
+
+At the END of `addPlaceholderSources()` (after all other layer registrations), add:
 
 ```javascript
     // --- Search result pins (numbered markers for all searches) ---
@@ -1170,32 +959,26 @@ In `addPlaceholderSources()` (around line 89), add at the END of the function (a
           'text-allow-overlap': true,
           'text-ignore-placement': true,
         },
-        paint: {
-          'text-color': '#ffffff',
-        }
+        paint: { 'text-color': '#ffffff' }
       });
     }
 ```
 
 - [ ] **Step 2: Add pin click handler and cursor change in `initSearch()`**
 
-In `initSearch()`, after the existing event listeners:
+In `initSearch()`, after the existing event listeners, add:
 
 ```javascript
-    // Search pin click handler
     map.on('click', 'search-result-circles', function (e) {
       if (!e.features || !e.features.length) return;
-      var idx = e.features[0].properties.index - 1;
-      var items = document.querySelectorAll('#search-results li');
+      var idx = parseInt(e.features[0].properties.index, 10) - 1;
+      var items = document.querySelectorAll('#search-results li:not(.search-intent-subtitle)');
       if (items[idx]) {
         items[idx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        // Highlight briefly
         items[idx].classList.add('search-result-active');
         setTimeout(function () { items[idx].classList.remove('search-result-active'); }, 2000);
       }
     });
-
-    // Pointer cursor on pin hover
     map.on('mouseenter', 'search-result-circles', function () {
       map.getCanvas().style.cursor = 'pointer';
     });
@@ -1220,40 +1003,32 @@ In `initSearch()`, after the existing event listeners:
       return {
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [lng, lat] },
-        properties: {
-          index: String(i + 1),
-          name: item.name || item.display_name || 'Result',
-          display_name: item.display_name || item.name || '',
-        }
+        properties: { index: String(i + 1), name: item.name || '' }
       };
     }).filter(Boolean);
-
     var src = map.getSource('search-results');
     if (src) src.setData({ type: 'FeatureCollection', features: features });
   }
 ```
 
-- [ ] **Step 4: Rewrite `renderSearchResults()` with numbered badges and distance**
+- [ ] **Step 4: Rewrite `renderSearchResults()` with badges and distance**
+
+Replace the entire `renderSearchResults()` function body:
 
 ```javascript
   function renderSearchResults(results, metadata) {
     var list = document.getElementById('search-results');
     while (list.firstChild) list.removeChild(list.firstChild);
-
-    // Clear previous pins
     clearSearchPins();
 
     if (!results || results.length === 0) {
       var emptyLi = document.createElement('li');
-      // Show contextual message for spatial queries with no results
       if (metadata && metadata.original_intent !== 'plain' && metadata.fallback_reason) {
-        if (metadata.fallback_reason === 'no_position') {
-          emptyLi.textContent = 'Enable GPS for proximity search';
-        } else if (metadata.fallback_reason === 'no_route') {
-          emptyLi.textContent = 'Set a route for corridor search';
-        } else {
-          emptyLi.textContent = 'No results found';
-        }
+        emptyLi.textContent = metadata.fallback_reason === 'no_position'
+          ? 'Enable GPS for proximity search'
+          : metadata.fallback_reason === 'no_route'
+            ? 'Set a route for corridor search'
+            : 'No results found';
       } else if (metadata && metadata.intent !== 'plain') {
         emptyLi.textContent = 'No ' + (metadata.category || 'results') + ' found nearby';
       } else {
@@ -1264,79 +1039,66 @@ In `initSearch()`, after the existing event listeners:
       return;
     }
 
-    // Intent subtitle
     if (metadata && metadata.intent !== 'plain' && metadata.category) {
       var subtitleLi = document.createElement('li');
       subtitleLi.className = 'search-intent-subtitle';
-      if (metadata.intent === 'route_corridor') {
-        subtitleLi.textContent = (metadata.category.charAt(0).toUpperCase() + metadata.category.slice(1)) + ' along route';
-      } else {
-        subtitleLi.textContent = 'Nearest ' + metadata.category;
-      }
+      subtitleLi.textContent = metadata.intent === 'route_corridor'
+        ? metadata.category.charAt(0).toUpperCase() + metadata.category.slice(1) + ' along route'
+        : 'Nearest ' + metadata.category;
       list.appendChild(subtitleLi);
     }
 
     results.forEach(function (item, idx) {
       var li = document.createElement('li');
-
-      // Numbered badge
       var badge = document.createElement('span');
       badge.className = 'search-result-badge';
       badge.textContent = String(idx + 1);
       li.appendChild(badge);
 
-      // Name
       var nameSpan = document.createElement('span');
       nameSpan.className = 'search-result-name';
       nameSpan.textContent = item.name || item.display_name || 'Unknown';
       li.appendChild(nameSpan);
 
-      // Distance badge (spatial results only)
       if (item.distance_along_route_m != null) {
-        var distSpan = document.createElement('span');
-        distSpan.className = 'search-result-distance';
-        distSpan.textContent = 'in ' + formatDistance(item.distance_along_route_m);
-        li.appendChild(distSpan);
+        var dSpan = document.createElement('span');
+        dSpan.className = 'search-result-distance';
+        dSpan.textContent = 'in ' + formatDistance(item.distance_along_route_m);
+        li.appendChild(dSpan);
       } else if (item.distance_m != null) {
-        var distSpan2 = document.createElement('span');
-        distSpan2.className = 'search-result-distance';
-        distSpan2.textContent = formatDistance(item.distance_m);
-        li.appendChild(distSpan2);
+        var dSpan2 = document.createElement('span');
+        dSpan2.className = 'search-result-distance';
+        dSpan2.textContent = formatDistance(item.distance_m);
+        li.appendChild(dSpan2);
       }
 
-      li.addEventListener('click', function () {
-        selectSearchResult(item, idx);
-      });
+      li.addEventListener('click', function () { selectSearchResult(item); });
       list.appendChild(li);
     });
 
-    // Drop numbered pins on map
     updateSearchPins(results);
-
     list.classList.add('visible');
   }
 ```
 
-- [ ] **Step 5: Replace `selectSearchResult()` — remove old marker, use pin fly-to**
+- [ ] **Step 5: Replace `selectSearchResult()` — remove old marker, use popup only**
 
 ```javascript
-  function selectSearchResult(item, idx) {
+  function selectSearchResult(item) {
     var lng = parseFloat(item.lon || item.longitude || item.lng);
     var lat = parseFloat(item.lat || item.latitude);
     if (isNaN(lng) || isNaN(lat)) return;
 
-    // Fly to pin with padding to avoid sidebar occlusion
     map.flyTo({
       center: [lng, lat],
       zoom: Math.max(map.getZoom(), 14),
       padding: { bottom: 200, left: 0, right: 0, top: 0 }
     });
 
-    // Open a popup at the pin location
     if (searchPopup) searchPopup.remove();
     var popupContent = document.createElement('div');
     var h4 = document.createElement('h4');
-    h4.textContent = (item.name || item.display_name || 'Result');
+    h4.textContent = item.name || item.display_name || 'Result';
     popupContent.appendChild(h4);
     if (item.display_name && item.display_name !== item.name) {
       var p = document.createElement('p');
@@ -1345,7 +1107,6 @@ In `initSearch()`, after the existing event listeners:
       p.style.color = '#666';
       popupContent.appendChild(p);
     }
-
     searchPopup = new maplibregl.Popup({ offset: 25, closeOnClick: true })
       .setLngLat([lng, lat])
       .setDOMContent(popupContent)
@@ -1363,13 +1124,13 @@ In `initSearch()`, after the existing event listeners:
   }
 ```
 
-- [ ] **Step 7: Remove old `searchMarker` variable and its usage**
+- [ ] **Step 7: Remove old `searchMarker`**
 
-Remove the `var searchMarker = null;` declaration (around line 35) and all references to it. The numbered pins and popup replace this. Also remove the old `if (searchMarker) searchMarker.remove();` lines.
+Remove `var searchMarker = null;` (around line 35). Remove any remaining references to `searchMarker` (search the file for `searchMarker`). The numbered pins + popup replace it entirely.
 
-- [ ] **Step 8: Add CSS for search result badges and distance**
+- [ ] **Step 8: Add CSS**
 
-In `frontend/style.css`, add:
+Append to `frontend/style.css`:
 
 ```css
 .search-result-badge {
@@ -1386,21 +1147,18 @@ In `frontend/style.css`, add:
   margin-right: 8px;
   flex-shrink: 0;
 }
-
 .search-result-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 .search-result-distance {
   color: #888;
   font-size: 12px;
   margin-left: 8px;
   white-space: nowrap;
 }
-
 .search-intent-subtitle {
   font-size: 11px;
   color: #888;
@@ -1409,37 +1167,54 @@ In `frontend/style.css`, add:
   border-bottom: 1px solid #eee;
   pointer-events: none;
 }
-
 .search-result-active {
   background: #fff3cd !important;
   transition: background 0.3s;
 }
-
 #search-results li {
   display: flex;
   align-items: center;
 }
 ```
 
-- [ ] **Step 9: Verify syntax, test manually, commit**
+- [ ] **Step 9: Verify syntax and commit**
 
 ```bash
 node -c frontend/app.js
 curl -s -o /dev/null -w "%{http_code}" https://pandora.twin-bramble.ts.net/
 ```
 
-Expected: Syntax OK, HTTP 200. Search results should show numbered badges.
+Expected: Syntax OK, HTTP 200
 
 ```bash
 git add frontend/app.js frontend/style.css
 git commit -m "feat: numbered search pins for all results with distance badges"
 ```
 
+> BEFORE marking this task complete:
+> 1. Verify `searchMarker` variable and all references are removed
+> 2. Verify `search-results` source is registered in `addPlaceholderSources()`
+> 3. Verify `clearSearchPins()` is called in both `renderSearchResults()` and `hideSearchResults()`
+> 4. Run `node -c frontend/app.js` to confirm no syntax errors
+
+---
+
+> **Review loop after Tasks 4-5 (frontend complete):**
+> You MUST carefully review all frontend changes. Minimum 3 rounds. Check:
+> - Is `lastRouteCoords` populated in `renderRoute()` and cleared in `clearRoute()`?
+> - Does `performSearch()` gracefully degrade on 404/405?
+> - Is `searchMarker` completely removed (no dangling references)?
+> - Does `addPlaceholderSources()` register `search-results` source and both layers?
+> - Does `hideSearchResults()` call `clearSearchPins()`?
+> - Does the CSS `.search-result-badge` background match the MapLibre circle paint `#e6920a`?
+> - Is `formatDistance()` called (exists at ~line 2252)?
+
 ---
 
 ## Task 6: End-to-End Verification
 
-**Files:** None (testing only)
+**Dependencies:** ALL previous tasks must be complete
+**Modifies:** Nothing (or minor fixes discovered during testing)
 
 - [ ] **Step 1: Run all Python tests**
 
@@ -1447,45 +1222,67 @@ git commit -m "feat: numbered search pins for all results with distance badges"
 python3 -m pytest tests/ -v
 ```
 
-Expected: All tests pass (intent parser + corridor + endpoint + earlier pipeline tests)
+Expected: ALL tests pass
 
-- [ ] **Step 2: Test plain search (no regression)**
+- [ ] **Step 2: Restart the search service to pick up changes**
 
-Open `https://pandora.twin-bramble.ts.net`, type "Phoenix" in search, press Enter. Verify:
-- Results appear in dropdown with numbered badges
-- Numbered amber pins appear on map
-- Clicking a result flies to the pin
+```bash
+docker compose build search && docker compose up -d search
+```
+
+Wait for healthy: `docker compose ps | grep search`
+
+- [ ] **Step 3: Test plain search (no regression)**
+
+Open `https://pandora.twin-bramble.ts.net`. Type "Phoenix" in search, press Enter.
+
+Verify:
+- Results appear with numbered badges (1, 2, 3...)
+- Amber numbered pins appear on map
+- Clicking a result flies to pin
 - Clicking outside dismisses results and clears pins
 
-- [ ] **Step 3: Test proximity search**
+- [ ] **Step 4: Test proximity search**
 
-With GPS enabled (server or device), type "nearest gas station" and press Enter. Verify:
+With GPS enabled, type "nearest gas station", press Enter.
+
+Verify:
 - Intent subtitle shows "Nearest gas station"
-- Results have distance badges ("2.3 mi" or "3.7 km")
-- Results are sorted by distance (closest first)
+- Results have distance badges ("2.3 mi")
+- Results sorted by distance (closest first)
 - Pins on map match result numbers
 
-- [ ] **Step 4: Test corridor search**
+- [ ] **Step 5: Test corridor search**
 
-Set a route (e.g., Phoenix to Flagstaff). Type "gas stations along my route" and press Enter. Verify:
+Set a route (Phoenix to Flagstaff). Type "gas stations along my route", press Enter.
+
+Verify:
 - Intent subtitle shows "Gas stations along route"
-- Results have "in X mi" distance-along-route badges
-- Results are sorted by distance along route
-- Only results near the route corridor appear
+- Results have "in X mi" distance badges
+- Results sorted by distance along route
+- Only results near the route appear
 
-- [ ] **Step 5: Test fallback behavior**
+- [ ] **Step 6: Test fallback behavior**
 
-Without GPS, type "nearest hospital". Verify:
-- Results appear (plain search fallback)
-- No distance badges (no position available)
+Without GPS, type "nearest hospital". Verify plain search results (no crash, no distance badges).
 
-Without a route, type "gas stations along my route". Verify:
-- Falls back to proximity search (if GPS available) or plain search (if not)
-- Hint message shown if applicable
+Without a route, type "gas stations along my route". Verify fallback to proximity or plain.
 
-- [ ] **Step 6: Commit any fixes from testing**
+- [ ] **Step 7: Test bare category with GPS**
+
+Type just "gas" with GPS enabled. Verify proximity results appear (implicit promotion).
+
+- [ ] **Step 8: Commit any fixes**
 
 ```bash
 git add -A
 git commit -m "fix: end-to-end testing adjustments for spatial search"
 ```
+
+> **Final review loop:**
+> Review the complete feature from the user's perspective. Minimum 3 rounds:
+> - Does plain search still work exactly as before (minus the old single marker)?
+> - Do the numbered pins survive a style swap (Positron ↔ Dark Matter)?
+> - Does clearing the search (Escape, click outside) remove all pins?
+> - On mobile viewport, does `flyTo` padding prevent the pin from landing behind the sidebar?
+> - Does the `GET /search` endpoint still work for `geocodeForRoute`?
