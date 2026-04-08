@@ -48,6 +48,7 @@
   var gpsAccuracyMarker = null; // accuracy circle DOM element inside marker
 
   var useImperial = true;      // true = imperial (ft/mi), false = metric (m/km)
+  var coordFormat = 'dd';      // 'dd' | 'dms' | 'maidenhead' | 'mgrs'
 
   // =====================================================================
   //  1. MAP INITIALIZATION
@@ -380,6 +381,15 @@
         applyTerrain();
       });
     }
+
+    // Coordinate format toggle
+    var coordRadios = document.querySelectorAll('input[name="coordfmt"]');
+    coordRadios.forEach(function (radio) {
+      radio.addEventListener('change', function () {
+        coordFormat = this.value;
+        updateCameraStatus();
+      });
+    });
 
     // Unit system toggle (imperial / metric)
     var unitRadios = document.querySelectorAll('input[name="units"]');
@@ -1273,12 +1283,11 @@
     }
 
     var altStr = formatAltitude(altMeters);
-    var latStr = formatCoord(center.lat, 'NS');
-    var lonStr = formatCoord(center.lng, 'EW');
+    var posStr = formatPosition(center.lat, center.lng);
 
     var el = document.getElementById('status-camera-value');
     if (el) {
-      el.textContent = latStr + '  ' + lonStr + '  alt ' + altStr;
+      el.textContent = posStr + '  alt ' + altStr;
     }
   }
 
@@ -1295,20 +1304,187 @@
       return;
     }
 
-    var latStr = formatCoord(lat, 'NS');
-    var lonStr = formatCoord(lng, 'EW');
+    var posStr = formatPosition(lat, lng);
     var altStr = alt ? formatAltitude(alt) : '—';
     var accStr = accuracy ? '±' + formatDistance(accuracy) : '';
     var fixStr = fix === 2 ? '2D' : '3D';
 
-    el.textContent = latStr + '  ' + lonStr + '  ' + altStr + '  ' + accStr + '  ' + fixStr;
+    el.textContent = posStr + '  ' + altStr + '  ' + accStr + '  ' + fixStr;
   }
 
-  /** Format latitude or longitude as degrees with direction (e.g., "33.6506° N") */
-  function formatCoord(value, dirs) {
+  /**
+   * Format a lat/lon pair according to the selected coordinate format.
+   * Returns a single string for both coordinates.
+   */
+  function formatPosition(lat, lon) {
+    switch (coordFormat) {
+      case 'dms':   return formatDMS(lat, 'NS') + '  ' + formatDMS(lon, 'EW');
+      case 'maidenhead': return latLonToMaidenhead(lat, lon, 8);
+      case 'mgrs':  return latLonToMGRS(lat, lon);
+      default:      return formatDD(lat, 'NS') + '  ' + formatDD(lon, 'EW');
+    }
+  }
+
+  /** Decimal degrees: "33.65061° N" */
+  function formatDD(value, dirs) {
     var abs = Math.abs(value);
     var dir = value >= 0 ? dirs[0] : dirs[1];
     return abs.toFixed(5) + '° ' + dir;
+  }
+
+  /** Degrees/minutes/seconds: "33° 39′ 02.2″ N" */
+  function formatDMS(value, dirs) {
+    var abs = Math.abs(value);
+    var dir = value >= 0 ? dirs[0] : dirs[1];
+    var d = Math.floor(abs);
+    var mf = (abs - d) * 60;
+    var m = Math.floor(mf);
+    var s = (mf - m) * 60;
+    return d + '° ' + pad2(m) + '′ ' + s.toFixed(1) + '″ ' + dir;
+  }
+
+  function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+
+  /**
+   * Convert lat/lon to Maidenhead grid locator.
+   * @param {number} lat - Latitude (-90 to 90)
+   * @param {number} lon - Longitude (-180 to 180)
+   * @param {number} precision - 4, 6, 8, or 10 characters (default 6)
+   * @returns {string} e.g., "DM33wv73"
+   */
+  function latLonToMaidenhead(lat, lon, precision) {
+    precision = precision || 6;
+    var A = 'A'.charCodeAt(0);
+    var a = 'a'.charCodeAt(0);
+
+    // Normalize to positive range
+    var Lon = lon + 180;
+    var Lat = lat + 90;
+
+    var grid = '';
+
+    // Field (18 divisions, uppercase)
+    grid += String.fromCharCode(A + Math.floor(Lon / 20));
+    grid += String.fromCharCode(A + Math.floor(Lat / 10));
+    Lon = Lon % 20;
+    Lat = Lat % 10;
+
+    // Square (10 divisions, digits)
+    grid += Math.floor(Lon / 2);
+    grid += Math.floor(Lat / 1);
+    Lon = Lon % 2;
+    Lat = Lat % 1;
+
+    if (precision >= 6) {
+      // Subsquare (24 divisions, lowercase)
+      grid += String.fromCharCode(a + Math.floor(Lon / (2 / 24)));
+      grid += String.fromCharCode(a + Math.floor(Lat / (1 / 24)));
+      Lon = Lon % (2 / 24);
+      Lat = Lat % (1 / 24);
+    }
+
+    if (precision >= 8) {
+      // Extended square (10 divisions, digits)
+      grid += Math.floor(Lon / (2 / 240));
+      grid += Math.floor(Lat / (1 / 240));
+    }
+
+    return grid;
+  }
+
+  /**
+   * Convert lat/lon to MGRS string.
+   * Implements UTM projection + MGRS grid letter lookup.
+   * Valid for latitudes between 80°S and 84°N.
+   */
+  function latLonToMGRS(lat, lon) {
+    if (lat < -80 || lat > 84) {
+      return 'Outside MGRS coverage';
+    }
+
+    // UTM zone number
+    var zoneNum = Math.floor((lon + 180) / 6) + 1;
+
+    // Special zones for Norway/Svalbard
+    if (lat >= 56 && lat < 64 && lon >= 3 && lon < 12) zoneNum = 32;
+    if (lat >= 72 && lat < 84) {
+      if (lon >= 0  && lon <  9) zoneNum = 31;
+      else if (lon >= 9  && lon < 21) zoneNum = 33;
+      else if (lon >= 21 && lon < 33) zoneNum = 35;
+      else if (lon >= 33 && lon < 42) zoneNum = 37;
+    }
+
+    // UTM latitude band letter
+    var bandLetters = 'CDEFGHJKLMNPQRSTUVWX';
+    var bandIdx = Math.floor((lat + 80) / 8);
+    if (bandIdx >= bandLetters.length) bandIdx = bandLetters.length - 1;
+    var bandLetter = bandLetters[bandIdx];
+
+    // UTM projection constants
+    var a = 6378137;             // WGS84 semi-major axis
+    var f = 1 / 298.257223563;   // WGS84 flattening
+    var k0 = 0.9996;             // UTM scale factor
+    var e = Math.sqrt(2 * f - f * f);
+    var e2 = e * e;
+    var ep2 = e2 / (1 - e2);
+
+    var lonOrigin = (zoneNum - 1) * 6 - 180 + 3; // central meridian
+    var lonRad = lon * Math.PI / 180;
+    var latRad = lat * Math.PI / 180;
+    var dLon = (lon - lonOrigin) * Math.PI / 180;
+
+    var N = a / Math.sqrt(1 - e2 * Math.sin(latRad) * Math.sin(latRad));
+    var T = Math.tan(latRad) * Math.tan(latRad);
+    var C = ep2 * Math.cos(latRad) * Math.cos(latRad);
+    var A2 = Math.cos(latRad) * dLon;
+
+    // Meridional arc
+    var M = a * (
+      (1 - e2/4 - 3*e2*e2/64 - 5*e2*e2*e2/256) * latRad
+      - (3*e2/8 + 3*e2*e2/32 + 45*e2*e2*e2/1024) * Math.sin(2*latRad)
+      + (15*e2*e2/256 + 45*e2*e2*e2/1024) * Math.sin(4*latRad)
+      - (35*e2*e2*e2/3072) * Math.sin(6*latRad)
+    );
+
+    var easting = k0 * N * (
+      A2 + (1-T+C)*A2*A2*A2/6
+      + (5-18*T+T*T+72*C-58*ep2)*A2*A2*A2*A2*A2/120
+    ) + 500000;
+
+    var northing = k0 * (
+      M + N * Math.tan(latRad) * (
+        A2*A2/2 + (5-T+9*C+4*C*C)*A2*A2*A2*A2/24
+        + (61-58*T+T*T+600*C-330*ep2)*A2*A2*A2*A2*A2*A2/720
+      )
+    );
+
+    if (lat < 0) northing += 10000000; // southern hemisphere offset
+
+    // 100km grid square letters
+    var setNum = ((zoneNum - 1) % 6);
+    var e100k = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    var eIdx = Math.floor(easting / 100000) - 1;
+    // Column letters cycle through 8 per set, offset by set number
+    var colOffset = setNum * 8;
+    var e100kLetter = e100k[(colOffset + eIdx) % 24];
+
+    // Row letters: cycle every 2,000,000m (20 letters), odd/even zones offset
+    var n100k = 'ABCDEFGHJKLMNPQRSTUV';
+    var rowOffset = (setNum % 2 === 0) ? 0 : 5;
+    var nIdx = Math.floor(northing % 2000000 / 100000);
+    var n100kLetter = n100k[(rowOffset + nIdx) % 20];
+
+    // Format: "12S WC 12345 67890"
+    var eStr = pad5(Math.floor(easting % 100000));
+    var nStr = pad5(Math.floor(northing % 100000));
+
+    return zoneNum + bandLetter + ' ' + e100kLetter + n100kLetter + ' ' + eStr + ' ' + nStr;
+  }
+
+  function pad5(n) {
+    var s = '' + n;
+    while (s.length < 5) s = '0' + s;
+    return s;
   }
 
   // ── Unit conversion helpers ──────────────────────────────────────────
