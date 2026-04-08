@@ -40,6 +40,8 @@
   var routeEndCoords   = null;
   var routeStartMarker = null;
   var routeEndMarker   = null;
+  var routeWaypoints   = [];   // [{coords: [lng,lat], name: str, marker: Marker}]
+  var lastRouteTrip    = null;  // stored for export
 
   var importedFiles = {};       // { fileId: { name, geojson, visible, folders: { name: visible }, features: { id: visible } } }
   var importCounter = 0;        // unique ID counter for imported files
@@ -671,6 +673,8 @@
     var endInput    = document.getElementById('route-end');
     var getRouteBtn = document.getElementById('get-route-btn');
     var clearBtn    = document.getElementById('clear-route-btn');
+    var exportBtn   = document.getElementById('export-route-btn');
+    var addWpBtn    = document.getElementById('add-waypoint-btn');
 
     // Geocode start/end on Enter
     startInput.addEventListener('keydown', function (e) {
@@ -680,16 +684,228 @@
       if (e.key === 'Enter') geocodeForRoute(endInput.value, 'end');
     });
 
+    // GPS fill buttons
+    document.querySelectorAll('.gps-fill-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (!gpsLastPos || gpsStale) {
+          alert('No GPS fix available');
+          return;
+        }
+        var target = this.dataset.target;
+        var lng = gpsLastPos[0];
+        var lat = gpsLastPos[1];
+        var label = formatDD(lat, 'NS') + ', ' + formatDD(lng, 'EW');
+        if (target === 'start') {
+          routeStartCoords = [lng, lat];
+          placeRouteMarker('start', [lng, lat]);
+          document.getElementById('route-start').value = 'GPS: ' + label;
+        } else if (target === 'end') {
+          routeEndCoords = [lng, lat];
+          placeRouteMarker('end', [lng, lat]);
+          document.getElementById('route-end').value = 'GPS: ' + label;
+        }
+      });
+    });
+
+    // Add waypoint button
+    if (addWpBtn) {
+      addWpBtn.addEventListener('click', function () {
+        addWaypointRow();
+      });
+    }
+
     getRouteBtn.addEventListener('click', requestRoute);
     clearBtn.addEventListener('click', clearRoute);
+
+    // Export / print directions
+    if (exportBtn) {
+      exportBtn.addEventListener('click', exportDirections);
+    }
+
+    // Map click: reverse geocode and offer to add as route point
+    map.on('click', function (e) {
+      // Don't fire if clicking on an existing feature layer
+      var features = map.queryRenderedFeatures(e.point, {
+        layers: ['imported-points', 'imported-lines', 'imported-polygons', 'imported-polygon-outlines']
+      });
+      if (features.length > 0) return;
+
+      var lngLat = e.lngLat;
+      reverseGeocodeAndShowPopup(lngLat.lng, lngLat.lat);
+    });
+  }
+
+  // ── Waypoint management ──────────────────────────────────────────────
+
+  function addWaypointRow(name, coords) {
+    var container = document.getElementById('route-waypoints');
+    var idx = routeWaypoints.length;
+
+    var wpData = { coords: coords || null, name: name || '', marker: null };
+    routeWaypoints.push(wpData);
+
+    var row = document.createElement('div');
+    row.className = 'waypoint-row';
+    row.dataset.wpIndex = idx;
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Stop ' + (idx + 1) + '...';
+    input.value = name || '';
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        geocodeForRoute(input.value, 'waypoint', idx);
+      }
+    });
+
+    var gpsBtn = document.createElement('button');
+    gpsBtn.className = 'gps-fill-btn';
+    gpsBtn.textContent = 'GPS';
+    gpsBtn.title = 'Use GPS position';
+    gpsBtn.addEventListener('click', function () {
+      if (!gpsLastPos || gpsStale) { alert('No GPS fix'); return; }
+      wpData.coords = [gpsLastPos[0], gpsLastPos[1]];
+      var label = formatDD(gpsLastPos[1], 'NS') + ', ' + formatDD(gpsLastPos[0], 'EW');
+      input.value = 'GPS: ' + label;
+      wpData.name = input.value;
+      placeWaypointMarker(idx);
+    });
+
+    var removeBtn = document.createElement('button');
+    removeBtn.className = 'waypoint-remove';
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', function () {
+      removeWaypoint(idx);
+    });
+
+    row.appendChild(input);
+    row.appendChild(gpsBtn);
+    row.appendChild(removeBtn);
+    container.appendChild(row);
+
+    if (coords) {
+      placeWaypointMarker(idx);
+    }
+  }
+
+  function removeWaypoint(idx) {
+    if (routeWaypoints[idx] && routeWaypoints[idx].marker) {
+      routeWaypoints[idx].marker.remove();
+    }
+    routeWaypoints.splice(idx, 1);
+    rebuildWaypointUI();
+  }
+
+  function rebuildWaypointUI() {
+    var container = document.getElementById('route-waypoints');
+    while (container.firstChild) container.removeChild(container.firstChild);
+    var saved = routeWaypoints.slice();
+    routeWaypoints = [];
+    saved.forEach(function (wp) {
+      addWaypointRow(wp.name, wp.coords);
+    });
+  }
+
+  function placeWaypointMarker(idx) {
+    var wp = routeWaypoints[idx];
+    if (!wp || !wp.coords) return;
+    if (wp.marker) wp.marker.remove();
+    wp.marker = new maplibregl.Marker({ color: '#f9e2af' })
+      .setLngLat(wp.coords).addTo(map);
+  }
+
+  // ── Map click → reverse geocode popup ────────────────────────────────
+
+  function reverseGeocodeAndShowPopup(lng, lat) {
+    var url = '/nominatim/reverse?lat=' + lat + '&lon=' + lng + '&format=jsonv2';
+    fetch(url)
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        var name = data.display_name || (lat.toFixed(5) + ', ' + lng.toFixed(5));
+        showMapClickPopup(lng, lat, name, data);
+      })
+      .catch(function () {
+        showMapClickPopup(lng, lat, lat.toFixed(5) + ', ' + lng.toFixed(5), null);
+      });
+  }
+
+  function showMapClickPopup(lng, lat, name, geocodeData) {
+    var content = document.createElement('div');
+
+    var title = document.createElement('h4');
+    title.textContent = name.length > 60 ? name.substring(0, 60) + '...' : name;
+    title.style.marginBottom = '8px';
+    content.appendChild(title);
+
+    // Coordinates in all formats
+    var coordDiv = document.createElement('div');
+    coordDiv.style.fontSize = '11px';
+    coordDiv.style.fontFamily = 'monospace';
+    coordDiv.style.marginBottom = '8px';
+    coordDiv.style.color = '#666';
+    coordDiv.innerHTML =
+      formatDD(lat, 'NS') + ' ' + formatDD(lng, 'EW') + '<br>' +
+      formatDMS(lat, 'NS') + ' ' + formatDMS(lng, 'EW') + '<br>' +
+      'Grid: ' + latLonToMaidenhead(lat, lng, 8) + '<br>' +
+      'MGRS: ' + latLonToMGRS(lat, lng);
+    content.appendChild(coordDiv);
+
+    // Action buttons
+    var actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.gap = '4px';
+    actions.style.flexWrap = 'wrap';
+
+    function makeBtn(label, fn) {
+      var b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = 'font-size:11px;padding:3px 8px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;color:#333;';
+      b.addEventListener('click', fn);
+      return b;
+    }
+
+    actions.appendChild(makeBtn('Route from here', function () {
+      routeStartCoords = [lng, lat];
+      placeRouteMarker('start', [lng, lat]);
+      document.getElementById('route-start').value = name.substring(0, 50);
+      popup.remove();
+    }));
+
+    actions.appendChild(makeBtn('Route to here', function () {
+      routeEndCoords = [lng, lat];
+      placeRouteMarker('end', [lng, lat]);
+      document.getElementById('route-end').value = name.substring(0, 50);
+      popup.remove();
+    }));
+
+    actions.appendChild(makeBtn('Add as stop', function () {
+      addWaypointRow(name.substring(0, 50), [lng, lat]);
+      popup.remove();
+    }));
+
+    actions.appendChild(makeBtn('Copy coords', function () {
+      var text = lat.toFixed(6) + ', ' + lng.toFixed(6);
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text);
+        b.textContent = 'Copied!';
+      }
+    }));
+
+    content.appendChild(actions);
+
+    var popup = new maplibregl.Popup({ maxWidth: '340px' })
+      .setLngLat([lng, lat])
+      .setDOMContent(content)
+      .addTo(map);
   }
 
   /**
    * Geocode a text query and store coordinates for routing.
    * @param {string} query - search text
-   * @param {'start'|'end'} which - which endpoint
+   * @param {'start'|'end'|'waypoint'} which - which endpoint
+   * @param {number} [wpIdx] - waypoint index (when which === 'waypoint')
    */
-  function geocodeForRoute(query, which) {
+  function geocodeForRoute(query, which, wpIdx) {
     if (!query.trim()) return;
     var url = '/search/search?q=' + encodeURIComponent(query) + '&limit=1';
     fetch(url)
@@ -704,15 +920,24 @@
         var lng  = parseFloat(item.lon || item.longitude || item.lng);
         var lat  = parseFloat(item.lat || item.latitude);
         if (isNaN(lng) || isNaN(lat)) return;
+        var displayName = item.name || item.display_name || query;
 
         if (which === 'start') {
           routeStartCoords = [lng, lat];
           placeRouteMarker('start', [lng, lat]);
-          document.getElementById('route-start').value = item.name || item.display_name || query;
-        } else {
+          document.getElementById('route-start').value = displayName;
+        } else if (which === 'end') {
           routeEndCoords = [lng, lat];
           placeRouteMarker('end', [lng, lat]);
-          document.getElementById('route-end').value = item.name || item.display_name || query;
+          document.getElementById('route-end').value = displayName;
+        } else if (which === 'waypoint' && wpIdx !== undefined) {
+          routeWaypoints[wpIdx].coords = [lng, lat];
+          routeWaypoints[wpIdx].name = displayName;
+          placeWaypointMarker(wpIdx);
+          var rows = document.querySelectorAll('.waypoint-row');
+          if (rows[wpIdx]) {
+            rows[wpIdx].querySelector('input').value = displayName;
+          }
         }
       })
       .catch(function (err) {
@@ -760,11 +985,19 @@
       if (avoidFerries) costingOptions.pedestrian.use_ferry = 0;
     }
 
+    // Build locations: start + waypoints + end
+    var locations = [
+      { lat: routeStartCoords[1], lon: routeStartCoords[0] }
+    ];
+    routeWaypoints.forEach(function (wp) {
+      if (wp.coords) {
+        locations.push({ lat: wp.coords[1], lon: wp.coords[0], type: 'through' });
+      }
+    });
+    locations.push({ lat: routeEndCoords[1], lon: routeEndCoords[0] });
+
     var body = {
-      locations: [
-        { lat: routeStartCoords[1], lon: routeStartCoords[0] },
-        { lat: routeEndCoords[1],   lon: routeEndCoords[0] }
-      ],
+      locations: locations,
       costing: costing,
       costing_options: costingOptions,
       directions_options: { units: useImperial ? 'miles' : 'kilometers' }
@@ -785,7 +1018,9 @@
         btn.textContent = 'Get Route';
 
         if (data.trip) {
+          lastRouteTrip = data.trip;
           renderRoute(data.trip);
+          document.getElementById('export-route-btn').classList.remove('hidden');
         } else if (data.error) {
           alert('Routing error: ' + (data.error || 'Unknown error'));
         } else {
@@ -876,31 +1111,96 @@
   }
 
   function clearRoute() {
-    // Clear route line
     var source = map.getSource('route');
     if (source) source.setData(emptyGeoJSON());
 
-    // Remove markers
     if (routeStartMarker) { routeStartMarker.remove(); routeStartMarker = null; }
     if (routeEndMarker)   { routeEndMarker.remove();   routeEndMarker   = null; }
-
+    routeWaypoints.forEach(function (wp) { if (wp.marker) wp.marker.remove(); });
+    routeWaypoints = [];
     routeStartCoords = null;
     routeEndCoords   = null;
+    lastRouteTrip    = null;
 
-    // Clear inputs
     document.getElementById('route-start').value = '';
     document.getElementById('route-end').value   = '';
+    var wpContainer = document.getElementById('route-waypoints');
+    while (wpContainer.firstChild) wpContainer.removeChild(wpContainer.firstChild);
 
-    // Hide summary and directions
     var summaryEl = document.getElementById('route-summary');
     summaryEl.classList.add('hidden');
-    while (summaryEl.firstChild) {
-      summaryEl.removeChild(summaryEl.firstChild);
-    }
+    while (summaryEl.firstChild) summaryEl.removeChild(summaryEl.firstChild);
     var dirList = document.getElementById('route-directions');
-    while (dirList.firstChild) {
-      dirList.removeChild(dirList.firstChild);
-    }
+    while (dirList.firstChild) dirList.removeChild(dirList.firstChild);
+    document.getElementById('export-route-btn').classList.add('hidden');
+  }
+
+  // ── Export / print directions ────────────────────────────────────────
+
+  function exportDirections() {
+    if (!lastRouteTrip) return;
+
+    var summary = lastRouteTrip.summary || {};
+    var dist = summary.length || 0;
+    var distStr = useImperial ? dist.toFixed(1) + ' mi' : dist.toFixed(1) + ' km';
+    var timeSec = summary.time || 0;
+    var hours = Math.floor(timeSec / 3600);
+    var minutes = Math.round((timeSec % 3600) / 60);
+    var timeStr = hours > 0 ? hours + 'h ' + minutes + 'min' : minutes + ' min';
+
+    var startName = document.getElementById('route-start').value || 'Start';
+    var endName = document.getElementById('route-end').value || 'End';
+
+    var allManeuvers = [];
+    lastRouteTrip.legs.forEach(function (leg) {
+      if (leg.maneuvers) allManeuvers = allManeuvers.concat(leg.maneuvers);
+    });
+
+    var unit = useImperial ? ' mi' : ' km';
+
+    // Build printable page using DOM methods
+    var printWin = window.open('', '_blank');
+    var doc = printWin.document;
+    doc.title = 'Geographica Directions';
+
+    var style = doc.createElement('style');
+    style.textContent =
+      'body{font-family:Arial,sans-serif;max-width:700px;margin:20px auto;color:#333}' +
+      'h1{font-size:18px;margin-bottom:4px}' +
+      '.summary{font-size:14px;color:#666;margin-bottom:16px}' +
+      'ol{padding-left:20px}' +
+      'li{padding:6px 0;border-bottom:1px solid #eee;font-size:13px;line-height:1.5}' +
+      '.meta{font-size:11px;color:#999;margin-top:16px}' +
+      '@media print{body{margin:0}}';
+    doc.head.appendChild(style);
+
+    var h1 = doc.createElement('h1');
+    h1.textContent = 'Directions: ' + startName + ' \u2192 ' + endName;
+    doc.body.appendChild(h1);
+
+    var summaryDiv = doc.createElement('div');
+    summaryDiv.className = 'summary';
+    summaryDiv.textContent = distStr + ' \u00B7 ' + timeStr;
+    doc.body.appendChild(summaryDiv);
+
+    var ol = doc.createElement('ol');
+    allManeuvers.forEach(function (m) {
+      var li = doc.createElement('li');
+      var instr = m.instruction || m.verbal_pre_transition_instruction || '';
+      if (m.length) instr += ' (' + m.length.toFixed(1) + unit + ')';
+      li.textContent = instr;
+      ol.appendChild(li);
+    });
+    doc.body.appendChild(ol);
+
+    var meta = doc.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = 'Generated by Geographica \u00B7 ' + new Date().toLocaleString();
+    doc.body.appendChild(meta);
+
+    doc.close();
+    printWin.focus();
+    printWin.print();
   }
 
   /**

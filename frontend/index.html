@@ -102,12 +102,23 @@
       <h3>Route</h3>
       <div class="route-field">
         <label for="route-start">Start</label>
-        <input type="text" id="route-start" placeholder="Search start location...">
+        <div class="route-input-row">
+          <input type="text" id="route-start" placeholder="Search start location...">
+          <button class="gps-fill-btn" data-target="start" title="Use GPS position">GPS</button>
+        </div>
       </div>
+
+      <div id="route-waypoints"></div>
+
       <div class="route-field">
         <label for="route-end">End</label>
-        <input type="text" id="route-end" placeholder="Search end location...">
+        <div class="route-input-row">
+          <input type="text" id="route-end" placeholder="Search end location...">
+          <button class="gps-fill-btn" data-target="end" title="Use GPS position">GPS</button>
+        </div>
       </div>
+
+      <button id="add-waypoint-btn" class="secondary-btn">+ Add Stop</button>
 
       <div class="route-field">
         <label for="costing-model">Mode</label>
@@ -125,7 +136,10 @@
       </div>
 
       <button id="get-route-btn">Get Route</button>
-      <button id="clear-route-btn" class="secondary-btn">Clear Route</button>
+      <div class="route-btn-row">
+        <button id="clear-route-btn" class="secondary-btn">Clear</button>
+        <button id="export-route-btn" class="secondary-btn hidden">Print / Export</button>
+      </div>
 
       <div id="route-summary" class="hidden"></div>
       <ol id="route-directions"></ol>

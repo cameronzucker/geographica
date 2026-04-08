@@ -199,7 +199,8 @@ html, body {
 }
 
 .panel.active {
-  display: block;
+  display: flex;
+  flex-direction: column;
 }
 
 .panel h3 {
@@ -284,6 +285,87 @@ html, body {
   border-color: var(--accent);
 }
 
+/* Route input with GPS button */
+.route-input-row {
+  display: flex;
+  gap: 4px;
+}
+
+.route-input-row input {
+  flex: 1;
+}
+
+.gps-fill-btn {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  color: var(--gps-blue);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gps-fill-btn:hover {
+  border-color: var(--gps-blue);
+  background: rgba(66, 133, 244, 0.1);
+}
+
+/* Waypoint stops */
+.waypoint-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+
+.waypoint-row input {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  color: var(--input-text);
+  font-size: 12px;
+  outline: none;
+}
+
+.waypoint-remove {
+  background: none;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  color: #888;
+  font-size: 14px;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.waypoint-remove:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+#add-waypoint-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  margin-bottom: 10px;
+}
+
+.route-btn-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.route-btn-row button {
+  flex: 1;
+}
+
 .route-options {
   margin-bottom: 12px;
 }
@@ -342,8 +424,9 @@ html, body {
   list-style: decimal;
   padding-left: 20px;
   font-size: 13px;
-  max-height: 300px;
+  flex: 1;
   overflow-y: auto;
+  min-height: 0;
 }
 
 #route-directions li {
