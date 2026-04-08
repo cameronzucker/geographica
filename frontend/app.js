@@ -91,9 +91,9 @@
     if (!map.getSource('imagery')) {
       map.addSource('imagery', {
         type: 'raster',
-        tiles: ['/tiles/data/imagery/{z}/{x}/{y}.png'],
+        tiles: ['/tiles/data/imagery/{z}/{x}/{y}.jpeg'],
         tileSize: 256,
-        maxzoom: 18
+        maxzoom: 14
       });
     }
     if (!map.getLayer('imagery-layer')) {
@@ -106,13 +106,24 @@
       });
     }
 
-    // --- Elevation (used for both hillshade overlay and 3D terrain) ---
-    if (!map.getSource('elevation')) {
-      map.addSource('elevation', {
+    // --- Elevation: two separate sources to avoid MapLibre warning ---
+    // One source for hillshade overlay, one for 3D terrain deformation.
+    // Same tile URL but MapLibre needs separate sources for these use cases.
+    if (!map.getSource('elevation-hillshade')) {
+      map.addSource('elevation-hillshade', {
         type: 'raster-dem',
         tiles: ['/tiles/data/elevation/{z}/{x}/{y}.png'],
         tileSize: 256,
-        maxzoom: 12,
+        maxzoom: 14,
+        encoding: 'terrarium'
+      });
+    }
+    if (!map.getSource('elevation-terrain')) {
+      map.addSource('elevation-terrain', {
+        type: 'raster-dem',
+        tiles: ['/tiles/data/elevation/{z}/{x}/{y}.png'],
+        tileSize: 256,
+        maxzoom: 14,
         encoding: 'terrarium'
       });
     }
@@ -120,7 +131,7 @@
       map.addLayer({
         id: 'hillshade-layer',
         type: 'hillshade',
-        source: 'elevation',
+        source: 'elevation-hillshade',
         layout: { visibility: 'none' },
         paint: {
           'hillshade-shadow-color': '#333',
@@ -413,7 +424,7 @@
     function applyTerrain() {
       if (!terrainCheckbox || !terrainCheckbox.checked) return;
       var val = parseFloat(terrainSlider.value) / 10;
-      map.setTerrain({ source: 'elevation', exaggeration: val });
+      map.setTerrain({ source: 'elevation-terrain', exaggeration: val });
     }
 
     if (terrainCheckbox) {
@@ -481,7 +492,7 @@
     if (terrainCb && terrainCb.checked) {
       var exSlider = document.getElementById('terrain-exaggeration');
       var ex = exSlider ? parseFloat(exSlider.value) / 10 : 1.5;
-      map.setTerrain({ source: 'elevation', exaggeration: ex });
+      map.setTerrain({ source: 'elevation-terrain', exaggeration: ex });
     }
   }
 
