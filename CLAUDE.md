@@ -22,6 +22,12 @@ python scripts/build_poi_index.py --bbox "-124.8,31.3,-102.0,49.0" --states "AZ,
 python scripts/download_elevation.py --bbox "-124.8,31.3,-102.0,49.0" --zoom 0-12 --output tileserver/elevation.mbtiles
 python scripts/acquire_imagery.py --mode tnmaccess --bbox "-124.8,31.3,-102.0,49.0" --output /srv/geographica/data/imagery.mbtiles
 
+# OSM POI extraction (run once, requires osmium)
+python3 scripts/build_osm_pois.py \
+  --pbf /srv/geographica/data/valhalla/western-us.osm.pbf \
+  --output /srv/geographica/data/poi.sqlite \
+  --bbox "-124.8,31.3,-102.0,49.0"
+
 # Stack management
 docker compose build         # build GPS and search service images
 docker compose up -d         # start all services
