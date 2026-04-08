@@ -140,6 +140,8 @@
         <button id="clear-route-btn" class="secondary-btn">Clear</button>
         <button id="export-route-btn" class="secondary-btn hidden">Print / Export</button>
       </div>
+      <button id="start-nav-btn" class="hidden">Start Navigation</button>
+      <button id="stop-nav-btn" class="hidden">Stop Navigation</button>
 
       <div id="route-summary" class="hidden"></div>
       <ol id="route-directions"></ol>
@@ -222,10 +224,44 @@
     </div>
   </div>
 
+  <!-- ===== Navigation overlay ===== -->
+  <div id="nav-overlay" class="hidden">
+    <div id="nav-instruction">
+      <div id="nav-icon"></div>
+      <div id="nav-instruction-text">
+        <div id="nav-instruction-main"></div>
+        <div id="nav-instruction-distance"></div>
+        <div id="nav-instruction-after"></div>
+      </div>
+    </div>
+    <div id="nav-status-bar">
+      <span id="nav-remaining-dist"></span>
+      <span id="nav-eta"></span>
+      <span id="nav-remaining-time"></span>
+      <span id="nav-speed"></span>
+    </div>
+    <div id="nav-banner" class="hidden"></div>
+  </div>
+
+  <!-- ===== Re-center on route button ===== -->
+  <button id="nav-recenter-btn" class="map-btn hidden" title="Re-center on route">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"></circle>
+      <circle cx="12" cy="12" r="3"></circle>
+      <line x1="12" y1="2" x2="12" y2="6"></line>
+      <line x1="12" y1="18" x2="12" y2="22"></line>
+      <line x1="2" y1="12" x2="6" y2="12"></line>
+      <line x1="18" y1="12" x2="22" y2="12"></line>
+    </svg>
+  </button>
+
   <!-- ===== Map container ===== -->
   <div id="map"></div>
 
   <!-- App script -->
   <script src="app.js"></script>
+  <script src="navigation.js"></script>
+  <script src="nav-ui.js"></script>
 </body>
 </html>

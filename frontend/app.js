@@ -53,6 +53,7 @@
   var gpsAccuracyMarker = null; // accuracy circle DOM element inside marker
 
   var useImperial = true;      // true = imperial (ft/mi), false = metric (m/km)
+  window._geographicaUseImperial = true;
   var coordFormat = 'dd';      // 'dd' | 'dms' | 'maidenhead' | 'mgrs'
 
   // =====================================================================
@@ -67,6 +68,7 @@
       zoom: DEFAULT_ZOOM,
       attributionControl: false
     });
+    window._geographicaMap = map;
 
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
     var scaleUnit = useImperial ? 'imperial' : 'metric';
@@ -446,6 +448,7 @@
     unitRadios.forEach(function (radio) {
       radio.addEventListener('change', function () {
         useImperial = (this.value === 'imperial');
+        window._geographicaUseImperial = useImperial;
 
         // Update the MapLibre scale bar
         if (map._scaleControl) {
@@ -1019,6 +1022,7 @@
 
         if (data.trip) {
           lastRouteTrip = data.trip;
+          window._geographicaLastTrip = data.trip;
           renderRoute(data.trip);
           document.getElementById('export-route-btn').classList.remove('hidden');
         } else if (data.error) {
@@ -1305,6 +1309,7 @@
     var lat = parseFloat(data.lat || data.latitude);
 
     if (isNaN(lng) || isNaN(lat)) return;
+    window._geographicaGPSData = data;
 
     var stale    = !!data.stale;
     var heading  = data.heading || data.bearing || 0;
