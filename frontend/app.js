@@ -515,12 +515,13 @@
         sidebar.classList.add('open');
         overlay.classList.add('open');
         if (searchContainer) searchContainer.classList.add('sidebar-open');
-        // Offset map center so camera operations account for sidebar
+        if (sidebarToggle) sidebarToggle.classList.add('hidden');
         map.setPadding({ left: 320, top: 0, right: 0, bottom: 0 });
       } else {
         sidebar.classList.remove('open');
         overlay.classList.remove('open');
         if (searchContainer) searchContainer.classList.remove('sidebar-open');
+        if (sidebarToggle) sidebarToggle.classList.remove('hidden');
         map.setPadding({ left: 0, top: 0, right: 0, bottom: 0 });
       }
     }
@@ -1254,8 +1255,80 @@
   //  6. GPS POSITION (WebSocket)
   // =====================================================================
 
+  var gpsSource = 'server';          // 'server' (Pi GPS hat) or 'device' (browser)
+  var deviceWatchId = null;           // browser geolocation watchPosition ID
+
   function initGPS() {
     connectGPS();
+
+    // GPS source toggle
+    var sourceRadios = document.querySelectorAll('input[name="gpssource"]');
+    sourceRadios.forEach(function (radio) {
+      radio.addEventListener('change', function () {
+        switchGPSSource(this.value);
+      });
+    });
+  }
+
+  function switchGPSSource(source) {
+    gpsSource = source;
+
+    if (source === 'device') {
+      // Stop server GPS WebSocket
+      if (gpsWs) { gpsWs.close(); gpsWs = null; }
+
+      // Start browser geolocation
+      if (!navigator.geolocation) {
+        alert('Browser geolocation is not available. This may require HTTPS.');
+        // Revert radio
+        document.querySelector('input[name="gpssource"][value="server"]').checked = true;
+        gpsSource = 'server';
+        connectGPS();
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        function () { /* permission granted */ },
+        function (err) {
+          alert('Location access denied: ' + err.message);
+          document.querySelector('input[name="gpssource"][value="server"]').checked = true;
+          gpsSource = 'server';
+          connectGPS();
+          return;
+        }
+      );
+
+      deviceWatchId = navigator.geolocation.watchPosition(
+        function (pos) {
+          var data = {
+            lat: pos.coords.latitude,
+            lon: pos.coords.longitude,
+            alt: pos.coords.altitude || 0,
+            speed: pos.coords.speed || 0,
+            heading: pos.coords.heading || 0,
+            accuracy: pos.coords.accuracy || null,
+            fix: 3,
+            stale: false
+          };
+          updateGPSPosition(data);
+        },
+        function (err) {
+          console.warn('Device GPS error:', err);
+          setGPSStale(true);
+        },
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 5000 }
+      );
+
+      document.getElementById('gps-badge').classList.remove('hidden');
+    } else {
+      // Stop browser geolocation
+      if (deviceWatchId !== null) {
+        navigator.geolocation.clearWatch(deviceWatchId);
+        deviceWatchId = null;
+      }
+      // Restart server GPS
+      connectGPS();
+    }
   }
 
   function connectGPS() {

@@ -95,6 +95,15 @@
       <label class="radio-label">
         <input type="radio" name="coordfmt" value="mgrs"> MGRS
       </label>
+
+      <h3>GPS Source</h3>
+      <label class="radio-label">
+        <input type="radio" name="gpssource" value="server" checked> Server (Pi GPS hat)
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="gpssource" value="device"> This device
+      </label>
+      <p id="gps-source-note" class="panel-note">Server GPS uses the Pi's hardware receiver. Device GPS uses this browser's location (requires HTTPS on some browsers).</p>
     </div>
 
     <!-- Routing panel -->
