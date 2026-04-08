@@ -2250,6 +2250,7 @@
     if (adminTab) {
       adminTab.addEventListener('click', function () {
         fetchAdminStatus();
+        updatePipelineEstimate();
         clearInterval(adminTimer);
         adminTimer = setInterval(fetchAdminStatus, ADMIN_REFRESH_MS);
       });
