@@ -134,6 +134,7 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 class State:
     poi_db: Optional[aiosqlite.Connection] = None
     poi_db_loaded: bool = False
+    osm_pois_loaded: bool = False
     http_client: Optional[httpx.AsyncClient] = None
 
 
@@ -141,25 +142,34 @@ state = State()
 
 
 async def _open_poi_db() -> None:
-    """Try to open the POI SQLite database.  Fail silently if it doesn't exist."""
+    """Open the POI SQLite database. Check each table independently."""
     try:
+        if not Path(POI_DB_PATH).exists():
+            return
         conn = await aiosqlite.connect(POI_DB_PATH, uri=False)
         conn.row_factory = aiosqlite.Row
-        # Quick sanity check that the expected tables exist.
+        state.poi_db = conn
+
+        # Check GNIS table (independent)
         async with conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='poi_fts'"
         ) as cur:
-            row = await cur.fetchone()
-            if row is None:
-                await conn.close()
-                state.poi_db = None
-                state.poi_db_loaded = False
-                return
-        state.poi_db = conn
-        state.poi_db_loaded = True
+            state.poi_db_loaded = (await cur.fetchone()) is not None
+
+        # Check OSM POI table (independent)
+        async with conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='osm_pois'"
+        ) as cur:
+            state.osm_pois_loaded = (await cur.fetchone()) is not None
+
+        if state.osm_pois_loaded:
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_osm_pois_latlon ON osm_pois (lat, lon)"
+            )
     except Exception:
         state.poi_db = None
         state.poi_db_loaded = False
+        state.osm_pois_loaded = False
 
 
 @asynccontextmanager
@@ -167,7 +177,7 @@ async def lifespan(_app: FastAPI):
     state.http_client = httpx.AsyncClient(timeout=httpx.Timeout(5.0))
     await _open_poi_db()
     # Ensure spatial index for bbox queries (corridor/proximity search)
-    if state.poi_db:
+    if state.poi_db and state.poi_db_loaded:
         await state.poi_db.execute(
             "CREATE INDEX IF NOT EXISTS idx_poi_latlon ON poi_features (lat, lon)"
         )
@@ -300,19 +310,97 @@ async def _query_poi(
 
 
 # ---------------------------------------------------------------------------
+# OSM POI FTS5 query
+# ---------------------------------------------------------------------------
+async def _query_osm_pois(
+    q: str,
+    limit: int,
+    bbox: Optional[str],
+) -> list[dict]:
+    """Query the OSM POI FTS5 index and return normalised results."""
+    if not state.osm_pois_loaded or state.poi_db is None:
+        return []
+
+    # Token-based matching (OR), not phrase matching.
+    # "Shell fuel" becomes: "Shell" OR "fuel"
+    # This matches across columns: "Shell" in name, "fuel" in osm_value
+    tokens = q.split()
+    safe_tokens = [t.replace('"', '""') for t in tokens if len(t) > 1]
+    if not safe_tokens:
+        return []
+    fts_query = " OR ".join(f'"{t}"' for t in safe_tokens)
+
+    sql = """
+        SELECT o.name, o.osm_key, o.osm_value, o.operator, o.lat, o.lon
+        FROM osm_fts AS fts
+        JOIN osm_pois AS o ON o.rowid = fts.rowid
+        WHERE osm_fts MATCH ?
+    """
+    params: list = [fts_query]
+
+    if bbox:
+        parts = bbox.split(",")
+        if len(parts) == 4:
+            try:
+                lon_min, lat_min, lon_max, lat_max = (float(p) for p in parts)
+                sql += " AND o.lon BETWEEN ? AND ? AND o.lat BETWEEN ? AND ?"
+                params.extend([lon_min, lon_max, lat_min, lat_max])
+            except ValueError:
+                pass
+
+    sql += " LIMIT ?"
+    params.append(limit)
+
+    try:
+        async with state.poi_db.execute(sql, params) as cur:
+            rows = await cur.fetchall()
+    except Exception:
+        return []
+
+    results: list[dict] = []
+    for row in rows:
+        name = row[0] or ""
+        osm_key = row[1] or ""
+        osm_value = row[2] or ""
+        operator = row[3]
+        lat = row[4]
+        lon = row[5]
+        results.append(
+            {
+                "name": name,
+                "type": "osm_poi",
+                "osm_key": osm_key,
+                "osm_value": osm_value,
+                "operator": operator,
+                "lat": float(lat),
+                "lon": float(lon),
+                "display_name": f"{name} ({osm_value})" if osm_value else name,
+            }
+        )
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Deduplication
 # ---------------------------------------------------------------------------
 def _deduplicate(
     nominatim_results: list[dict],
     poi_results: list[dict],
+    osm_poi_results: list[dict] | None = None,
 ) -> list[dict]:
-    """Merge results, dropping POI entries within 100 m of any Nominatim result."""
+    """Merge results, dropping lower-priority entries within 100m.
+
+    Priority order: Nominatim > GNIS > OSM POI.
+    Third argument defaults to None for backward compatibility.
+    """
     merged = list(nominatim_results)
+
+    # Add GNIS results, dedup against Nominatim
     for poi in poi_results:
         dominated = False
-        for nom in nominatim_results:
+        for existing in merged:
             try:
-                dist = haversine_m(poi["lat"], poi["lon"], nom["lat"], nom["lon"])
+                dist = haversine_m(poi["lat"], poi["lon"], existing["lat"], existing["lon"])
                 if dist <= 100:
                     dominated = True
                     break
@@ -320,6 +408,23 @@ def _deduplicate(
                 continue
         if not dominated:
             merged.append(poi)
+
+    # Add OSM POI results, dedup against Nominatim + GNIS
+    if osm_poi_results:
+        for osm_poi in osm_poi_results:
+            dominated = False
+            for existing in merged:
+                try:
+                    dist = haversine_m(osm_poi["lat"], osm_poi["lon"],
+                                       existing["lat"], existing["lon"])
+                    if dist <= 100:
+                        dominated = True
+                        break
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if not dominated:
+                merged.append(osm_poi)
+
     return merged
 
 
@@ -337,18 +442,21 @@ async def search(
 ):
     nominatim_task = asyncio.create_task(_query_nominatim(q, limit, bbox))
     poi_task = asyncio.create_task(_query_poi(q, limit, bbox))
+    osm_task = asyncio.create_task(_query_osm_pois(q, limit, bbox))
 
-    nominatim_results, poi_results = await asyncio.gather(
-        nominatim_task, poi_task, return_exceptions=True
+    nominatim_results, poi_results, osm_results = await asyncio.gather(
+        nominatim_task, poi_task, osm_task, return_exceptions=True
     )
 
-    # If either leg raised, treat as empty.
+    # If any leg raised, treat as empty.
     if isinstance(nominatim_results, BaseException):
         nominatim_results = []
     if isinstance(poi_results, BaseException):
         poi_results = []
+    if isinstance(osm_results, BaseException):
+        osm_results = []
 
-    merged = _deduplicate(nominatim_results, poi_results)
+    merged = _deduplicate(nominatim_results, poi_results, osm_results)
     return {"results": merged[:limit]}
 
 
@@ -365,6 +473,7 @@ async def health():
         "status": "ok",
         "nominatim_available": nominatim_available,
         "poi_db_loaded": state.poi_db_loaded,
+        "osm_pois_loaded": state.osm_pois_loaded,
     }
 
 
