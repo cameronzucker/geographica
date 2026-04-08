@@ -32,7 +32,6 @@
 
   var map;                     // MapLibre GL map instance
   var currentStyle = 'positron';
-  var searchMarker = null;     // marker for search results
   var searchPopup  = null;     // popup for search results
   var searchTimer  = null;     // debounce timer
 
@@ -269,6 +268,41 @@
           'line-width': ['coalesce', ['get', 'stroke-width'], 2],
           'line-opacity': ['coalesce', ['get', 'stroke-opacity'], 1]
         }
+      });
+    }
+
+    // --- Search result pins (numbered markers for all searches) ---
+    if (!map.getSource('search-results')) {
+      map.addSource('search-results', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] }
+      });
+    }
+    if (!map.getLayer('search-result-circles')) {
+      map.addLayer({
+        id: 'search-result-circles',
+        type: 'circle',
+        source: 'search-results',
+        paint: {
+          'circle-radius': 14,
+          'circle-color': '#e6920a',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2
+        }
+      });
+    }
+    if (!map.getLayer('search-result-labels')) {
+      map.addLayer({
+        id: 'search-result-labels',
+        type: 'symbol',
+        source: 'search-results',
+        layout: {
+          'text-field': ['get', 'index'],
+          'text-size': 12,
+          'text-allow-overlap': true,
+          'text-ignore-placement': true,
+        },
+        paint: { 'text-color': '#ffffff' }
       });
     }
 
@@ -590,6 +624,44 @@
         hideSearchResults();
       }
     });
+
+    // Search pin click handler — highlight corresponding list item
+    map.on('click', 'search-result-circles', function (e) {
+      if (!e.features || !e.features.length) return;
+      var idx = parseInt(e.features[0].properties.index, 10) - 1;
+      var items = document.querySelectorAll('#search-results li:not(.search-intent-subtitle)');
+      if (items[idx]) {
+        items[idx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        items[idx].classList.add('search-result-active');
+        setTimeout(function () { items[idx].classList.remove('search-result-active'); }, 2000);
+      }
+    });
+    map.on('mouseenter', 'search-result-circles', function () {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', 'search-result-circles', function () {
+      map.getCanvas().style.cursor = '';
+    });
+  }
+
+  function clearSearchPins() {
+    var src = map.getSource('search-results');
+    if (src) src.setData({ type: 'FeatureCollection', features: [] });
+  }
+
+  function updateSearchPins(results) {
+    var features = results.map(function (item, i) {
+      var lng = parseFloat(item.lon || item.lng || item.longitude);
+      var lat = parseFloat(item.lat || item.latitude);
+      if (isNaN(lng) || isNaN(lat)) return null;
+      return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [lng, lat] },
+        properties: { index: String(i + 1), name: item.name || '' }
+      };
+    }).filter(Boolean);
+    var src = map.getSource('search-results');
+    if (src) src.setData({ type: 'FeatureCollection', features: features });
   }
 
   function performSearch(query) {
@@ -627,82 +699,109 @@
 
   function renderSearchResults(results, metadata) {
     var list = document.getElementById('search-results');
-    // Clear previous results using safe DOM removal
-    while (list.firstChild) {
-      list.removeChild(list.firstChild);
-    }
+    while (list.firstChild) list.removeChild(list.firstChild);
+    clearSearchPins();
 
     if (!results || results.length === 0) {
       var emptyLi = document.createElement('li');
-      emptyLi.textContent = 'No results found';
+      if (metadata && metadata.original_intent !== 'plain' && metadata.fallback_reason) {
+        emptyLi.textContent = metadata.fallback_reason === 'no_position'
+          ? 'Enable GPS for proximity search'
+          : metadata.fallback_reason === 'no_route'
+            ? 'Set a route for corridor search'
+            : 'No results found';
+      } else if (metadata && metadata.intent !== 'plain') {
+        emptyLi.textContent = 'No ' + (metadata.category || 'results') + ' found nearby';
+      } else {
+        emptyLi.textContent = 'No results found';
+      }
       list.appendChild(emptyLi);
       list.classList.add('visible');
       return;
     }
 
-    results.forEach(function (item) {
-      var li = document.createElement('li');
-      var name = item.name || item.display_name || 'Unknown';
-      var type = item.type || item.category || '';
+    // Intent subtitle for spatial queries
+    if (metadata && metadata.intent !== 'plain' && metadata.category) {
+      var subtitleLi = document.createElement('li');
+      subtitleLi.className = 'search-intent-subtitle';
+      subtitleLi.textContent = metadata.intent === 'route_corridor'
+        ? metadata.category.charAt(0).toUpperCase() + metadata.category.slice(1) + ' along route'
+        : 'Nearest ' + metadata.category;
+      list.appendChild(subtitleLi);
+    }
 
-      // Build content safely using DOM methods (no innerHTML)
-      li.appendChild(document.createTextNode(name));
-      if (type) {
-        var typeSpan = document.createElement('span');
-        typeSpan.className = 'result-type';
-        typeSpan.textContent = type;
-        li.appendChild(typeSpan);
+    results.forEach(function (item, idx) {
+      var li = document.createElement('li');
+
+      // Numbered badge
+      var badge = document.createElement('span');
+      badge.className = 'search-result-badge';
+      badge.textContent = String(idx + 1);
+      li.appendChild(badge);
+
+      // Name
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'search-result-name';
+      nameSpan.textContent = item.name || item.display_name || 'Unknown';
+      li.appendChild(nameSpan);
+
+      // Distance badge (spatial results only)
+      if (item.distance_along_route_m != null) {
+        var dSpan = document.createElement('span');
+        dSpan.className = 'search-result-distance';
+        dSpan.textContent = 'in ' + formatDistance(item.distance_along_route_m);
+        li.appendChild(dSpan);
+      } else if (item.distance_m != null) {
+        var dSpan2 = document.createElement('span');
+        dSpan2.className = 'search-result-distance';
+        dSpan2.textContent = formatDistance(item.distance_m);
+        li.appendChild(dSpan2);
       }
 
-      li.addEventListener('click', function () {
-        selectSearchResult(item);
-      });
+      li.addEventListener('click', function () { selectSearchResult(item); });
       list.appendChild(li);
     });
 
+    // Drop numbered pins on map
+    updateSearchPins(results);
     list.classList.add('visible');
   }
 
   function selectSearchResult(item) {
-    hideSearchResults();
-
     var lng = parseFloat(item.lon || item.longitude || item.lng);
     var lat = parseFloat(item.lat || item.latitude);
     if (isNaN(lng) || isNaN(lat)) return;
 
-    map.flyTo({ center: [lng, lat], zoom: 14 });
+    // Fly to pin with padding to avoid sidebar occlusion
+    map.flyTo({
+      center: [lng, lat],
+      zoom: Math.max(map.getZoom(), 14),
+      padding: { bottom: 200, left: 0, right: 0, top: 0 }
+    });
 
-    // Remove previous marker/popup
-    if (searchMarker) searchMarker.remove();
+    // Open popup at the pin location
     if (searchPopup) searchPopup.remove();
-
-    var name = item.name || item.display_name || 'Result';
-    var type = item.type || item.category || '';
-
-    // Build popup content using safe DOM methods
     var popupContent = document.createElement('div');
     var h4 = document.createElement('h4');
-    h4.textContent = name;
+    h4.textContent = item.name || item.display_name || 'Result';
     popupContent.appendChild(h4);
-    if (type) {
+    if (item.display_name && item.display_name !== item.name) {
       var p = document.createElement('p');
-      p.textContent = type;
+      p.textContent = item.display_name;
+      p.style.fontSize = '12px';
+      p.style.color = '#666';
       popupContent.appendChild(p);
     }
-
     searchPopup = new maplibregl.Popup({ offset: 25, closeOnClick: true })
-      .setDOMContent(popupContent);
-
-    searchMarker = new maplibregl.Marker({ color: '#f38ba8' })
       .setLngLat([lng, lat])
-      .setPopup(searchPopup)
+      .setDOMContent(popupContent)
       .addTo(map);
-
-    searchPopup.addTo(map);
   }
 
   function hideSearchResults() {
     document.getElementById('search-results').classList.remove('visible');
+    clearSearchPins();
+    if (searchPopup) { searchPopup.remove(); searchPopup = null; }
   }
 
   // =====================================================================

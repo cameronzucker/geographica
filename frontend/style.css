@@ -1397,3 +1397,47 @@ h4 {
 
   /* Compact but keep both readouts — detail overlay has the full info */
 }
+
+/* ----- Search result pins and badges ----- */
+.search-result-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e6920a;
+  color: #fff;
+  font-size: 11px;
+  font-weight: bold;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+.search-result-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-result-distance {
+  color: #888;
+  font-size: 12px;
+  margin-left: 8px;
+  white-space: nowrap;
+}
+.search-intent-subtitle {
+  font-size: 11px;
+  color: #888;
+  font-style: italic;
+  padding: 4px 12px;
+  border-bottom: 1px solid #eee;
+  pointer-events: none;
+}
+.search-result-active {
+  background: #fff3cd !important;
+  transition: background 0.3s;
+}
+#search-results li {
+  display: flex;
+  align-items: center;
+}
