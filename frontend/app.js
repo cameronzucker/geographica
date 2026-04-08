@@ -545,7 +545,6 @@
 
     if (overlay) {
       overlay.addEventListener('click', function () {
-        // Don't close sidebar while bbox drawing is active
         if (window._bboxDrawingActive) return;
         setSidebarOpen(false);
       });
@@ -2514,6 +2513,8 @@
           resetDrawBtn();
           map.getCanvas().style.cursor = '';
           removeBboxPreview();
+          var so = document.getElementById('sidebar-overlay');
+          if (so) so.style.pointerEvents = '';
           return;
         }
 
@@ -2530,13 +2531,16 @@
           return;
         }
 
-        // Start drawing — keep sidebar open so user sees the admin panel
+        // Start drawing — keep sidebar open, let clicks through to map
         drawingBbox = true;
         window._bboxDrawingActive = true;
         drawCorner1 = null;
         drawBtn.classList.add('active');
         drawBtn.textContent = 'Click first corner...';
         map.getCanvas().style.cursor = 'crosshair';
+        // Disable overlay so map clicks aren't blocked
+        var sidebarOverlay = document.getElementById('sidebar-overlay');
+        if (sidebarOverlay) sidebarOverlay.style.pointerEvents = 'none';
       });
     }
 
@@ -2580,6 +2584,8 @@
         drawCorner1 = null;
         map.getCanvas().style.cursor = '';
         setDrawBtnToClear();
+        var so2 = document.getElementById('sidebar-overlay');
+        if (so2) so2.style.pointerEvents = '';
 
         // Fit map, flash the display green, then fade the rectangle
         map.fitBounds([[west, south], [east, north]], { padding: 40 });
