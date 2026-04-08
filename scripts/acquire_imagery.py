@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Download USGS orthoimagery and convert to MBTiles.
 
-Two modes:
+Three modes:
   tnmaccess  - Query TNMAccess API for NAIP/Topo GeoTIFFs, then convert via GDAL.
   direct     - Scrape tiles from the USGS cached tile service into MBTiles.
+  m2m        - Query USGS M2M API for NAIP scenes, download GeoTIFFs, convert via GDAL.
 
 Usage examples:
   python acquire_imagery.py --mode tnmaccess --bbox "-124.6,31.2,-103.0,42.2" --output data/imagery.mbtiles
   python acquire_imagery.py --mode direct --bbox "-124.6,31.2,-103.0,42.2" --zoom 0-14 --output data/imagery.mbtiles
+  python acquire_imagery.py --mode m2m --bbox "-124.8,31.3,-102.0,49.0" --m2m-username user --m2m-token token --output data/imagery_m2m.mbtiles
 """
 
 import argparse
@@ -42,6 +44,7 @@ log = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 TNM_API = "https://tnmaccess.nationalmap.gov/api/v1/products"
+M2M_API = "https://m2m.cr.usgs.gov/api/api/json/stable/"
 DEFAULT_BBOX = "-124.8,31.3,-102.0,49.0"
 DEFAULT_DATASET = "USDA National Agriculture Imagery Program (NAIP)"
 USGS_TILE_URL = (
@@ -377,6 +380,259 @@ async def run_direct(args):
     log.info("MBTiles written to %s", output)
 
 
+# ===================================================================
+# MODE 3 – USGS M2M API
+# ===================================================================
+
+M2M_POLL_INTERVAL = 10  # seconds between download-retrieve polls
+M2M_POLL_MAX_ATTEMPTS = 360  # ~1 hour max wait
+
+
+async def m2m_request(session: aiohttp.ClientSession, endpoint: str,
+                      payload: dict, api_key: str | None = None) -> dict:
+    """POST to M2M API endpoint and return the parsed response."""
+    url = M2M_API + endpoint
+    headers = {}
+    if api_key:
+        headers["X-Auth-Token"] = api_key
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with session.post(
+                url, json=payload, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as resp:
+                body = await resp.json()
+                if resp.status == 429:
+                    wait = RETRY_BACKOFF * (2 ** attempt)
+                    log.warning("M2M rate limited – retrying in %ss", wait)
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status != 200:
+                    error_msg = body.get("errorMessage", resp.status)
+                    raise RuntimeError(f"M2M {endpoint} failed: {error_msg}")
+                error_code = body.get("errorCode")
+                if error_code:
+                    raise RuntimeError(
+                        f"M2M {endpoint} error {error_code}: {body.get('errorMessage')}"
+                    )
+                return body
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            wait = RETRY_BACKOFF * (2 ** attempt)
+            log.warning("%s for M2M %s – retrying in %ss", exc, endpoint, wait)
+            await asyncio.sleep(wait)
+    raise RuntimeError(f"All retries exhausted for M2M {endpoint}")
+
+
+async def m2m_login(session: aiohttp.ClientSession,
+                    username: str, token: str) -> str:
+    """Authenticate with M2M login-token endpoint and return the API key."""
+    log.info("Logging in to USGS M2M as %s", username)
+    resp = await m2m_request(session, "login-token", {
+        "username": username,
+        "token": token,
+    })
+    api_key = resp.get("data")
+    if not api_key:
+        raise RuntimeError("M2M login-token returned no API key")
+    log.info("M2M login successful")
+    return api_key
+
+
+async def m2m_logout(session: aiohttp.ClientSession, api_key: str):
+    """Logout from M2M API."""
+    try:
+        await m2m_request(session, "logout", {}, api_key=api_key)
+        log.info("M2M logout successful")
+    except Exception as exc:
+        log.warning("M2M logout failed (non-fatal): %s", exc)
+
+
+async def m2m_find_naip_dataset(session: aiohttp.ClientSession,
+                                api_key: str) -> str:
+    """Find the exact NAIP dataset alias via dataset-search."""
+    log.info("Searching for NAIP dataset alias")
+    resp = await m2m_request(session, "dataset-search", {
+        "datasetName": "naip",
+    }, api_key=api_key)
+    datasets = resp.get("data", [])
+    if not datasets:
+        raise RuntimeError("No NAIP datasets found via M2M dataset-search")
+    # Pick the first matching dataset
+    alias = datasets[0].get("datasetAlias", "")
+    log.info("Using NAIP dataset alias: %s", alias)
+    return alias
+
+
+async def m2m_scene_search(session: aiohttp.ClientSession, api_key: str,
+                           dataset_alias: str,
+                           bbox: tuple[float, float, float, float],
+                           ) -> list[dict]:
+    """Search for NAIP scenes covering the bbox, with pagination."""
+    west, south, east, north = bbox
+    scenes = []
+    starting_number = 1
+    max_results = 100
+
+    while True:
+        log.info("Scene search starting at %d (found %d so far)",
+                 starting_number, len(scenes))
+        payload = {
+            "datasetName": dataset_alias,
+            "maxResults": max_results,
+            "startingNumber": starting_number,
+            "sceneFilter": {
+                "spatialFilter": {
+                    "filterType": "mbr",
+                    "lowerLeft": {"latitude": south, "longitude": west},
+                    "upperRight": {"latitude": north, "longitude": east},
+                },
+                "acquisitionFilter": {
+                    "start": "2020-01-01",
+                    "end": "2025-12-31",
+                },
+            },
+        }
+        resp = await m2m_request(session, "scene-search", payload,
+                                 api_key=api_key)
+        data = resp.get("data", {})
+        results = data.get("results", [])
+        if not results:
+            break
+        scenes.extend(results)
+        total_hits = data.get("totalHits", 0)
+        if len(scenes) >= total_hits or len(results) < max_results:
+            break
+        starting_number += max_results
+
+    log.info("Found %d NAIP scenes", len(scenes))
+    return scenes
+
+
+async def m2m_get_download_urls(session: aiohttp.ClientSession, api_key: str,
+                                dataset_alias: str,
+                                scenes: list[dict]) -> list[str]:
+    """Get download URLs for scenes via download-options and download-request."""
+    entity_ids = [s["entityId"] for s in scenes]
+
+    # Get download options (batch in groups of 100)
+    downloads_to_request = []
+    for i in range(0, len(entity_ids), 100):
+        batch = entity_ids[i:i + 100]
+        log.info("Fetching download options for %d scenes", len(batch))
+        resp = await m2m_request(session, "download-options", {
+            "datasetName": dataset_alias,
+            "entityIds": batch,
+        }, api_key=api_key)
+        options = resp.get("data", [])
+        for opt in options:
+            if not opt.get("available"):
+                continue
+            # Prefer GeoTIFF products
+            product_name = (opt.get("productName", "") or "").lower()
+            if "geotiff" in product_name or "tif" in product_name:
+                downloads_to_request.append({
+                    "entityId": opt["entityId"],
+                    "productId": opt["productId"],
+                })
+
+    if not downloads_to_request:
+        log.warning("No downloadable GeoTIFF products found")
+        return []
+
+    log.info("Requesting %d downloads", len(downloads_to_request))
+
+    # Request downloads (batch in groups of 100)
+    labels = []
+    for i in range(0, len(downloads_to_request), 100):
+        batch = downloads_to_request[i:i + 100]
+        label = f"geographica_m2m_{int(time.time())}_{i}"
+        resp = await m2m_request(session, "download-request", {
+            "downloads": batch,
+            "label": label,
+            "downloadApplication": "m2m",
+        }, api_key=api_key)
+        labels.append(label)
+
+    # Poll download-retrieve until all URLs are available
+    urls = []
+    for label in labels:
+        log.info("Polling download-retrieve for label: %s", label)
+        for attempt in range(M2M_POLL_MAX_ATTEMPTS):
+            resp = await m2m_request(session, "download-retrieve", {
+                "label": label,
+            }, api_key=api_key)
+            data = resp.get("data", {})
+            available = data.get("available", [])
+            requested = data.get("requested", [])
+
+            for item in available:
+                url = item.get("url")
+                if url:
+                    urls.append(url)
+
+            if not requested:
+                # All downloads for this label are ready
+                break
+
+            log.info("  %d available, %d still queued – waiting %ds",
+                     len(available), len(requested), M2M_POLL_INTERVAL)
+            await asyncio.sleep(M2M_POLL_INTERVAL)
+        else:
+            log.warning("Timed out waiting for downloads (label: %s). "
+                        "Got %d URLs so far.", label, len(urls))
+
+    log.info("Total download URLs: %d", len(urls))
+    return urls
+
+
+async def run_m2m(args):
+    """Run the M2M imagery acquisition pipeline."""
+    username = args.m2m_username
+    token = args.m2m_token
+    if not username or not token:
+        log.error("M2M mode requires --m2m-username and --m2m-token "
+                  "(or USGS_M2M_USERNAME / USGS_M2M_TOKEN env vars)")
+        sys.exit(1)
+
+    bbox = parse_bbox(args.bbox)
+    staging = Path(args.staging)
+    staging.mkdir(parents=True, exist_ok=True)
+    checkpoint = staging / "m2m_checkpoint.json"
+
+    os.environ.setdefault("GDAL_CACHEMAX", "1024")
+
+    async with aiohttp.ClientSession() as session:
+        api_key = await m2m_login(session, username, token)
+        try:
+            # Find NAIP dataset alias
+            dataset_alias = await m2m_find_naip_dataset(session, api_key)
+
+            # Search for scenes
+            scenes = await m2m_scene_search(session, api_key, dataset_alias, bbox)
+            if not scenes:
+                log.warning("No NAIP scenes found for bbox %s", args.bbox)
+                return
+
+            # Get download URLs
+            urls = await m2m_get_download_urls(
+                session, api_key, dataset_alias, scenes
+            )
+            if not urls:
+                log.warning("No downloadable URLs obtained")
+                return
+        finally:
+            await m2m_logout(session, api_key)
+
+    # Download GeoTIFFs (reuse existing helper)
+    tif_paths = await download_geotiffs(
+        urls, staging, checkpoint, concurrency=args.concurrency
+    )
+
+    # Convert to MBTiles
+    output = Path(args.output)
+    convert_geotiffs_to_mbtiles(tif_paths, output)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -386,7 +642,7 @@ def main():
         description="Download USGS orthoimagery and convert to MBTiles"
     )
     parser.add_argument(
-        "--mode", choices=["tnmaccess", "direct"], default="tnmaccess",
+        "--mode", choices=["tnmaccess", "direct", "m2m"], default="tnmaccess",
         help="Download mode (default: tnmaccess)",
     )
     parser.add_argument(
@@ -413,11 +669,23 @@ def main():
         "--concurrency", type=int, default=80,
         help="Max simultaneous downloads (default: %(default)s)",
     )
+    parser.add_argument(
+        "--m2m-username",
+        default=os.environ.get("USGS_M2M_USERNAME"),
+        help="USGS M2M username (default: USGS_M2M_USERNAME env var)",
+    )
+    parser.add_argument(
+        "--m2m-token",
+        default=os.environ.get("USGS_M2M_TOKEN"),
+        help="USGS M2M API token (default: USGS_M2M_TOKEN env var)",
+    )
 
     args = parser.parse_args()
 
     if args.mode == "tnmaccess":
         asyncio.run(run_tnmaccess(args))
+    elif args.mode == "m2m":
+        asyncio.run(run_m2m(args))
     else:
         asyncio.run(run_direct(args))
 
