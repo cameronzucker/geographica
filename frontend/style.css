@@ -492,6 +492,8 @@ html, body {
   color: #b0b8cc;
   gap: 0;
   pointer-events: none;
+  max-height: 24px;
+  overflow: hidden;
 }
 
 .status-section {
@@ -640,19 +642,45 @@ html, body {
 
   #gps-badge {
     left: 12px;
+    bottom: 34px;
   }
 
   #center-gps-btn {
     left: 12px;
+    bottom: 70px;
   }
 
+  /* Single-line compact status bar on mobile */
   #status-bar {
     left: 0;
-    font-size: 10px;
+    font-size: 9px;
+    max-height: 22px;
+    padding: 3px 8px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .status-section {
-    padding: 0 6px;
+    padding: 0 4px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .status-label {
+    font-size: 8px;
+  }
+
+  .status-divider {
+    height: 10px;
+    flex-shrink: 0;
+  }
+
+  /* Push MapLibre controls above status bar */
+  .maplibregl-ctrl-bottom-right {
+    bottom: 26px !important;
   }
 }
 
@@ -665,5 +693,14 @@ html, body {
     top: 8px;
     left: 52px;
     width: calc(100vw - 64px);
+  }
+
+  /* On very small screens, show only camera readout, hide GPS from status bar */
+  #status-gps {
+    display: none;
+  }
+
+  .status-divider {
+    display: none;
   }
 }
