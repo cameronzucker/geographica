@@ -12,7 +12,7 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## Critical context — read before making any changes
 
-1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs, user preferences, and project decisions. Read the handoff at `handoff_20260408.md` for the most recent session context.
+1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs, user preferences, and project decisions. Read the handoff at `handoff_20260408b.md` for the most recent session context.
 
 2. **Read CLAUDE.md** in the repo root — it has the project structure, commands, hardware specs, and skill routing rules.
 
@@ -32,11 +32,16 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 - **Search** (:8096) — unified search (Nominatim + 304K GNIS POI features)
 - **NGINX/Frontend** (:8093) — main app + config panel on localhost:8097
 
-### Background downloads (may still be running or completed)
-- **Elevation z13-14**: was at 880K/1.47M tiles, restarted at session end
-- **Imagery z0-15**: was at ~1.5M/5.9M tiles in pipeline container
+### Background downloads
+- **Elevation z13-14**: ~62% (911K/1.47M tiles), still downloading at ~34 tiles/sec
+- **Imagery z0-16**: Complete (2.59M tiles including 964K z16)
 
 Check status: `curl -s http://localhost:8096/admin/status | python3 -m json.tool`
+
+### TLS
+- **Tailscale HTTPS active**: `https://pandora.twin-bramble.ts.net` (Let's Encrypt, valid until 2026-07-07)
+- Systemd timer for daily cert renewal: `systemctl status geographica-tls-renew.timer`
+- Dual-mode: HTTP on :8093 (LAN/AREDN) + HTTPS on :443 (Tailscale)
 
 ### Key files
 - `docker-compose.yml` — 7 services (6 + pipeline with profiles)
@@ -56,9 +61,9 @@ Check status: `curl -s http://localhost:8096/admin/status | python3 -m json.tool
 ## What to work on next
 
 ### High priority
-1. **Cloudflare Tunnel setup** — register geographica.mohaverad.io, configure cloudflared, test HTTPS end-to-end. The TLS infrastructure is built but untested with real deployment.
-2. **M2M API download access** — ERS approval was submitted. Once approved, test the `--mode m2m` pipeline end-to-end. Credentials are stored at `/srv/geographica/data/.credentials.json`.
-3. **Verify downloads completed** — check if elevation z13-14 and imagery z0-15 finished. If so, restart TileServer to pick up new tiles.
+1. **M2M API download access** — ERS approval was submitted. Once approved, test the `--mode m2m` pipeline end-to-end. Credentials are stored at `/srv/geographica/data/.credentials.json`.
+2. **Verify elevation download completed** — check if z13-14 finished (~62% last check). Once done, restart TileServer to pick up new tiles.
+3. **Test GPS source switching on remote device** — the async race condition fix needs field verification on a phone/tablet over Tailscale HTTPS.
 
 ### Medium priority
 4. **Phase 2: Voice AI** — Whisper on Hailo 10H NPU for spatial queries. Design doc has the full spec. The turn-by-turn navigation engine already supports voice via Web Speech API; Phase 2 adds Hailo-based offline STT.
