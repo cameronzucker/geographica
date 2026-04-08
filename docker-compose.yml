@@ -121,7 +121,7 @@ services:
       NOMINATIM_URL: "http://nominatim:8080"
       POI_DB_PATH: "/data/poi.sqlite"
     volumes:
-      - ./data:/data:ro
+      - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       nominatim:

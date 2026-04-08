@@ -135,6 +135,8 @@ async def init_mbtiles(db_path: Path):
     """Create the MBTiles SQLite schema with checkpoint table."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(str(db_path)) as db:
+        # WAL mode allows concurrent readers while writing
+        await db.execute("PRAGMA journal_mode=WAL")
         await db.execute(
             "CREATE TABLE IF NOT EXISTS metadata (name TEXT, value TEXT)"
         )
@@ -198,6 +200,7 @@ async def run(args):
 
     # Filter already-done via checkpoint
     async with aiosqlite.connect(str(output)) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
         remaining = []
         for z, x, y in all_tiles:
             if not await tile_already_done(db, z, x, y):
@@ -236,6 +239,7 @@ async def run(args):
         pbar.update(1)
 
     async with aiosqlite.connect(str(output)) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
         async with aiohttp.ClientSession() as session:
             batch_size = 500
             for i in range(0, len(remaining), batch_size):

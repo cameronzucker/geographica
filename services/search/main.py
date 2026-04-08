@@ -369,21 +369,13 @@ async def admin_status():
     data_dir = pathlib.Path("/data")
 
     def _read_mbtiles_status(path, name):
-        """Read tile count from an MBTiles file, tolerating writer locks.
+        """Read tile count from an MBTiles file.
 
-        Strategy: try SQLite query first (accurate tile count). If the
-        database is locked by a writer, fall back to file size estimate
-        and report as 'downloading' based on the presence of a journal file.
+        With WAL mode enabled on the writers, readers never block.
         """
         import sqlite3
-
-        # Check if a write is in progress (journal/wal file exists)
-        journal = pathlib.Path(str(path) + "-journal")
-        wal = pathlib.Path(str(path) + "-wal")
-        is_writing = journal.exists() or wal.exists()
-
         try:
-            conn = sqlite3.connect(str(path), timeout=2)
+            conn = sqlite3.connect(str(path), timeout=5)
             tile_count = conn.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
             has_checkpoint = conn.execute(
                 "SELECT COUNT(*) FROM sqlite_master WHERE name='_checkpoint'"
@@ -392,19 +384,10 @@ async def admin_status():
             return {
                 "name": name,
                 "tiles": tile_count,
-                "status": "downloading" if (has_checkpoint or is_writing) else "complete",
+                "status": "downloading" if has_checkpoint else "complete",
             }
-        except sqlite3.OperationalError:
-            # Database locked — estimate from file size
-            try:
-                size_mb = path.stat().st_size / (1024 * 1024)
-                return {
-                    "name": name,
-                    "size_mb": round(size_mb, 1),
-                    "status": "downloading" if is_writing else "processing",
-                }
-            except Exception:
-                return {"name": name, "status": "busy"}
+        except Exception:
+            return {"name": name, "status": "error"}
 
     # Elevation MBTiles
     elev_path = data_dir / "elevation.mbtiles"

@@ -173,6 +173,7 @@ async def build_database(args):
 
     # Create database schema
     async with aiosqlite.connect(str(output)) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS poi_features (
                 id INTEGER PRIMARY KEY,

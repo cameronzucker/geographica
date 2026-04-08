@@ -1952,10 +1952,6 @@
           detail.textContent = count.toLocaleString() + (task.tiles ? ' tiles' : ' features');
           row.appendChild(detail);
         }
-      } else if (task.size_mb) {
-        // Fallback when SQLite is locked: show file size
-        detail.textContent = task.size_mb + ' MB (database busy, estimate)';
-        row.appendChild(detail);
       }
 
       container.appendChild(row);
