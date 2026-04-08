@@ -474,15 +474,38 @@ async def admin_status():
         except Exception:
             return {"name": name, "status": "error"}
 
-    # Elevation MBTiles
+    # Elevation MBTiles — enrich with state file if available
     elev_path = data_dir / "elevation.mbtiles"
     if elev_path.exists():
-        data_tasks.append(_read_mbtiles_status(elev_path, "Elevation tiles"))
+        task = _read_mbtiles_status(elev_path, "Elevation tiles")
+        elev_state = data_dir / ".elevation-state.json"
+        if elev_state.exists():
+            try:
+                es = json.loads(elev_state.read_text())
+                task["tiles_total"] = es.get("tiles_total")
+                task["rate"] = es.get("rate_per_sec")
+                if es.get("status") in ("completed", "cancelled"):
+                    task["status"] = es["status"]
+            except Exception:
+                pass
+        data_tasks.append(task)
 
-    # Imagery MBTiles
+    # Imagery MBTiles — enrich with state file if available
     imagery_path = data_dir / "imagery.mbtiles"
     if imagery_path.exists():
-        data_tasks.append(_read_mbtiles_status(imagery_path, "Imagery tiles"))
+        task = _read_mbtiles_status(imagery_path, "Imagery tiles")
+        img_state = data_dir / ".pipeline-state.json"
+        if img_state.exists():
+            try:
+                ps = json.loads(img_state.read_text())
+                if ps.get("type") == "imagery":
+                    task["tiles_total"] = ps.get("tiles_total") or ps.get("estimated_tiles")
+                    task["rate"] = ps.get("rate_per_sec")
+                    if ps.get("status") in ("completed", "cancelled"):
+                        task["status"] = ps["status"]
+            except Exception:
+                pass
+        data_tasks.append(task)
 
     # POI database
     poi_path = data_dir / "poi.sqlite"

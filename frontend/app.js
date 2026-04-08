@@ -2355,8 +2355,25 @@
       detail.className = 'admin-data-detail';
 
       if (count > 0) {
-        detail.textContent = count.toLocaleString() + (task.tiles ? ' tiles' : ' features');
-        row.appendChild(detail);
+        var total = task.tiles_total;
+        var rate = task.rate;
+        if (total && task.status === 'downloading') {
+          var pct = (count / total * 100).toFixed(1);
+          var rateStr = rate ? ' \u00B7 ' + Math.round(rate) + ' tiles/sec' : '';
+          detail.textContent = count.toLocaleString() + ' / ' + total.toLocaleString() + ' (' + pct + '%)' + rateStr;
+
+          var bar = document.createElement('div');
+          bar.className = 'admin-progress-bar';
+          var fill = document.createElement('div');
+          fill.className = 'admin-progress-fill';
+          fill.style.width = pct + '%';
+          bar.appendChild(fill);
+          row.appendChild(detail);
+          row.appendChild(bar);
+        } else {
+          detail.textContent = count.toLocaleString() + (task.tiles ? ' tiles' : ' features');
+          row.appendChild(detail);
+        }
       }
 
       container.appendChild(row);
