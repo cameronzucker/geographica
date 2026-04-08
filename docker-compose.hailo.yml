@@ -1,0 +1,8 @@
+# Hailo NPU device passthrough for STT service.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.hailo.yml up -d
+services:
+  stt:
+    devices:
+      - "/dev/hailo0:/dev/hailo0"
+    environment:
+      STT_BACKEND: "npu"

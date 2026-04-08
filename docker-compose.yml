@@ -139,6 +139,29 @@ services:
       timeout: 3s
       retries: 3
 
+  stt:
+    build:
+      context: ./services/stt
+    container_name: geographica-stt
+    restart: unless-stopped
+    ports:
+      - "8098:8000"
+    environment:
+      STT_BACKEND: "${STT_BACKEND:-cpu}"
+      MODEL_PATH: "/data/models"
+    volumes:
+      - ./data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
   frontend:
     image: nginx:alpine
     container_name: geographica-frontend
@@ -149,6 +172,7 @@ services:
       - valhalla
       - gps
       - search
+      - stt
     ports:
       - "8093:80"
       - "${TLS_PORT:-443}:443"
