@@ -8,17 +8,22 @@ after initial data acquisition.
 Built for [AREDN](https://www.arednmesh.org/) mesh networks, but works on any
 isolated LAN or standalone device.
 
-## What you get
+## Features
 
-- **Vector basemaps** with two themes (Positron light, Dark Matter dark)
+- **Vector basemaps** with two themes (Positron light, Dark Matter dark) and house number labels
 - **Aerial imagery** overlay (USGS NAIP orthophotos)
-- **3D terrain** with hillshade and adjustable exaggeration
+- **3D terrain** with hillshade and adjustable exaggeration slider
+- **Free-look camera** for 3D terrain exploration (pitch/bearing control)
 - **Turn-by-turn routing** for car, bicycle, and pedestrian
 - **Geocoding** — search for addresses, cities, landmarks
-- **POI search** — GNIS gazetteer with full-text search
-- **Live GPS** — hardware GPS streaming over WebSocket
-- **KML/KMZ import** — drag-and-drop file overlay
+- **POI search** — GNIS gazetteer with full-text search (data sourced from S3: `prd-tnm.s3.amazonaws.com`)
+- **Live GPS** — hardware GPS streaming over WebSocket with accuracy circle display
+- **KML/KMZ import** — drag-and-drop file overlay with layer management panel
+- **Coordinate display** — Maidenhead grid locator and MGRS in addition to lat/lon
+- **Imperial and metric units** — switchable distance/elevation units
 - **ATAK integration** — serves as a WMS map source for TAK clients
+- **TLS support** — three configurable modes: HTTP only, HTTPS with published key (for AREDN), HTTPS standard
+- **No build step** — vanilla JS + MapLibre GL JS frontend, no bundler required
 
 ## Hardware requirements
 
@@ -192,7 +197,7 @@ source .venv/bin/activate
 pip install -r scripts/requirements.txt
 
 python scripts/download_elevation.py \
-  --bbox "-124.6,31.2,-103.0,42.2" \
+  --bbox "-124.8,31.3,-102.0,49.0" \
   --zoom 0-12 \
   --output tileserver/elevation.mbtiles
 ```
@@ -205,13 +210,14 @@ the same command.
 
 ```bash
 python scripts/build_poi_index.py \
-  --bbox "-124.6,31.2,-103.0,42.2" \
+  --bbox "-124.8,31.3,-102.0,49.0" \
   --states "AZ,CA,CO,ID,MT,NV,NM,OR,UT,WA,WY" \
   --output /srv/geographica/data/poi.sqlite
 ```
 
-Downloads GNIS gazetteer data from USGS (free, no API key). Produces a small
-SQLite FTS5 database.
+Downloads GNIS gazetteer data from USGS via S3
+(`prd-tnm.s3.amazonaws.com/StagedProducts/GeographicNames/DomesticNames/`).
+Free, no API key required. Produces a small SQLite FTS5 database.
 
 ### 8. Set up TileServer GL styles and fonts
 
@@ -282,6 +288,28 @@ sudo systemctl start gpsd
 gpsmon
 ```
 
+**Important:** gpsd must listen on TCP `0.0.0.0:2947` for the Docker GPS service
+to connect. By default, gpsd only listens on localhost. Create a systemd socket
+override:
+
+```bash
+sudo systemctl edit gpsd.socket
+```
+
+Add the following content:
+
+```ini
+[Socket]
+ListenStream=
+ListenStream=0.0.0.0:2947
+```
+
+Then restart the socket:
+
+```bash
+sudo systemctl restart gpsd.socket gpsd
+```
+
 The GPS service connects to gpsd on the host via `host.docker.internal:2947`.
 If you don't have GPS hardware, the service starts cleanly and reports no-fix
 status — it won't block the rest of the stack.
@@ -311,9 +339,11 @@ docker compose logs -f nominatim    # watch geocoding import (rank 30 is the fin
 docker compose ps                   # check health status
 ```
 
-> **Memory limits:** The stack has per-container memory limits (13.5 GB total
-> ceiling) to prevent system-wide OOM on 16 GB hardware. If a container exceeds
-> its limit, Docker restarts just that container — the system stays up.
+> **Memory limits:** The stack has per-container memory limits to prevent
+> system-wide OOM on 16 GB hardware: Nominatim 8 GB, Valhalla 4 GB,
+> TileServer 1 GB, Search 256 MB, GPS 128 MB, Frontend 128 MB (~13.5 GB total
+> ceiling). If a container exceeds its limit, Docker restarts just that
+> container — the system stays up.
 
 ### 12. Verify the deployment
 
@@ -403,6 +433,11 @@ Check with `docker inspect <container> --format='{{.State.OOMKilled}}'`. The
 per-container memory limits prevent system-wide OOM — only the offending
 container restarts. If a service consistently OOMs, increase its limit in the
 `deploy.resources.limits` section of `docker-compose.yml`.
+
+**GPS service can't connect to gpsd**
+gpsd defaults to listening on localhost only. Docker containers can't reach
+localhost on the host. Apply the systemd socket override in step 10 so gpsd
+listens on `0.0.0.0:2947`.
 
 **GPS shows "Expecting value" errors**
 Intermittent JSON parse errors from gpsd. Harmless — the service reconnects

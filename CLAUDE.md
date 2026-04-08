@@ -11,16 +11,16 @@ Offline-first GIS platform for AREDN mesh networks, running on Raspberry Pi 5.
 - `frontend/` — Vanilla JS + MapLibre GL JS single-page app
 - `nginx/` — Reverse proxy config with sub_filter URL rewriting
 - `tileserver/` — TileServer GL config and styles
-- `data/` — (gitignored) MBTiles, PBF, SQLite databases
+- `data/` — Symlink to /srv/geographica/data/ (gitignored) MBTiles, PBF, SQLite databases
 
 ## Commands
 
 ```bash
 # Data pipeline (run once during setup, requires internet)
 pip install -r scripts/requirements.txt
-python scripts/build_poi_index.py --bbox "-124.6,31.2,-103.0,42.2" --output data/poi.sqlite
-python scripts/download_elevation.py --bbox "-124.6,31.2,-103.0,42.2" --zoom 0-12 --output data/elevation.mbtiles
-python scripts/acquire_imagery.py --mode tnmaccess --bbox "-124.6,31.2,-103.0,42.2" --output data/imagery.mbtiles
+python scripts/build_poi_index.py --bbox "-124.8,31.3,-102.0,49.0" --states "AZ,CA,CO,ID,MT,NV,NM,OR,UT,WA,WY" --output /srv/geographica/data/poi.sqlite
+python scripts/download_elevation.py --bbox "-124.8,31.3,-102.0,49.0" --zoom 0-12 --output tileserver/elevation.mbtiles
+python scripts/acquire_imagery.py --mode tnmaccess --bbox "-124.8,31.3,-102.0,49.0" --output /srv/geographica/data/imagery.mbtiles
 
 # Stack management
 docker compose build         # build GPS and search service images
