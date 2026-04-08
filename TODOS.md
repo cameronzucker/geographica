@@ -23,10 +23,7 @@
 - **Deploy:** `python3 scripts/build_osm_pois.py --pbf /srv/geographica/data/valhalla/western-us.osm.pbf --output /srv/geographica/data/poi.sqlite --bbox "-124.8,31.3,-102.0,49.0" && docker compose restart search`
 
 ### M2M API end-to-end test
-- **What:** Test the `--mode m2m` imagery pipeline with live USGS API. Fix code gaps (SIGTERM handling, progress reporting) discovered during adversarial review.
-- **Why:** M2M API provides access to higher-resolution NAIP imagery than the direct tile scraping mode.
-- **Status:** ERS approval received. Implementation plan ready at `docs/plans/2026-04-08-m2m-api-test-plan.md`. Credentials via env vars only.
-- **Depends on:** Interactive session with live credentials.
+- **Validated 2026-04-08.** Full pipeline tested against live USGS M2M API with Tucson bbox. 8 scenes found, 4 GeoTIFFs downloaded (1.07 GB), 52,760 tiles at z15-z19 (3 zoom levels beyond direct mode). Three code fixes: product name filter update (USGS renamed products), field mapping fix (`id` not `productId`), removed invalid `downloadApplication` parameter. See `dev/m2m-test-results.md`.
 
 ### Whisper NPU backend — revisit at hailo-10-all 5.3.0
 - **What:** Swap Whisper STT from CPU (faster-whisper) to NPU (HailoRT) for faster inference on the Hailo 10H.
