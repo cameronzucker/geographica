@@ -1819,7 +1819,147 @@
   }
 
   // =====================================================================
-  //  9. POSITION DETAIL OVERLAY
+  //  9. ADMIN TASK MONITOR
+  // =====================================================================
+
+  var adminTimer = null;
+  var ADMIN_REFRESH_MS = 10000;
+
+  // Known total tile counts for progress bars (from data pipeline config)
+  var KNOWN_TOTALS = {
+    'Elevation tiles': 1474959,
+    'Imagery tiles': 1474959,
+  };
+
+  function initAdmin() {
+    // Start polling when admin tab is visible
+    var adminTab = document.querySelector('[data-panel="admin-panel"]');
+    if (adminTab) {
+      adminTab.addEventListener('click', function () {
+        fetchAdminStatus();
+        clearInterval(adminTimer);
+        adminTimer = setInterval(fetchAdminStatus, ADMIN_REFRESH_MS);
+      });
+    }
+
+    // Stop polling when switching away from admin tab
+    var otherTabs = document.querySelectorAll('.tab-btn:not([data-panel="admin-panel"])');
+    otherTabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        clearInterval(adminTimer);
+        adminTimer = null;
+      });
+    });
+  }
+
+  function fetchAdminStatus() {
+    fetch('/admin/status')
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        renderAdminServices(data.services || []);
+        renderAdminDataTasks(data.data_tasks || []);
+      })
+      .catch(function (err) {
+        var el = document.getElementById('admin-services');
+        if (el) el.textContent = 'Failed to load status';
+      });
+  }
+
+  function renderAdminServices(services) {
+    var container = document.getElementById('admin-services');
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    services.forEach(function (svc) {
+      var row = document.createElement('div');
+      row.className = 'admin-service-row';
+
+      var name = document.createElement('span');
+      name.className = 'admin-service-name';
+      name.textContent = svc.name;
+      row.appendChild(name);
+
+      var badge = document.createElement('span');
+      var healthLabel = svc.health === 'healthy' ? 'healthy'
+                      : svc.health === 'starting' ? 'starting'
+                      : svc.status === 'running' ? 'running'
+                      : 'exited';
+      badge.className = 'admin-service-badge ' + healthLabel;
+      badge.textContent = healthLabel;
+      row.appendChild(badge);
+
+      container.appendChild(row);
+
+      // Show progress info if available
+      if (svc.progress && svc.progress.phase) {
+        var prog = document.createElement('div');
+        prog.className = 'admin-service-progress';
+        var text = svc.progress.phase;
+        if (svc.progress.eta) text += ' — ETA: ' + svc.progress.eta;
+        prog.textContent = text;
+        container.appendChild(prog);
+      }
+    });
+  }
+
+  function renderAdminDataTasks(tasks) {
+    var container = document.getElementById('admin-data-tasks');
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    if (tasks.length === 0) {
+      container.textContent = 'No data files found';
+      return;
+    }
+
+    tasks.forEach(function (task) {
+      var row = document.createElement('div');
+      row.className = 'admin-data-row';
+
+      var header = document.createElement('div');
+      header.className = 'admin-data-header';
+
+      var name = document.createElement('span');
+      name.className = 'admin-data-name';
+      name.textContent = task.name;
+      header.appendChild(name);
+
+      var status = document.createElement('span');
+      status.className = 'admin-data-status ' + task.status;
+      status.textContent = task.status;
+      header.appendChild(status);
+
+      row.appendChild(header);
+
+      // Detail line (tile count or feature count)
+      var count = task.tiles || task.features || 0;
+      if (count > 0) {
+        var detail = document.createElement('div');
+        detail.className = 'admin-data-detail';
+        var total = KNOWN_TOTALS[task.name];
+        if (total && task.status === 'downloading') {
+          var pct = (count / total * 100).toFixed(1);
+          detail.textContent = count.toLocaleString() + ' / ' + total.toLocaleString() + ' tiles (' + pct + '%)';
+
+          // Progress bar
+          var bar = document.createElement('div');
+          bar.className = 'admin-progress-bar';
+          var fill = document.createElement('div');
+          fill.className = 'admin-progress-fill';
+          fill.style.width = pct + '%';
+          bar.appendChild(fill);
+          row.appendChild(detail);
+          row.appendChild(bar);
+        } else {
+          detail.textContent = count.toLocaleString() + (task.tiles ? ' tiles' : ' features');
+          row.appendChild(detail);
+        }
+      }
+
+      container.appendChild(row);
+    });
+  }
+
+  // =====================================================================
+  //  10. POSITION DETAIL OVERLAY
   // =====================================================================
 
   function initPositionDetail() {
@@ -2021,6 +2161,7 @@
     initRouting();
     initImport();
     initGPS();
+    initAdmin();
     // These need the map to be initialized first
     map.on('load', function () {
       initFreeLookCamera();

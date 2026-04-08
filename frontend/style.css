@@ -523,6 +523,99 @@ html, body {
   background: #3a3f50;
 }
 
+/* ----- Admin panel ----- */
+.admin-service-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--sidebar-border);
+  font-size: 12px;
+}
+
+.admin-service-name {
+  font-weight: 600;
+  color: var(--sidebar-heading);
+  flex: 1;
+}
+
+.admin-service-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.admin-service-badge.running { background: rgba(166, 227, 161, 0.2); color: #a6e3a1; }
+.admin-service-badge.healthy { background: rgba(166, 227, 161, 0.3); color: #a6e3a1; }
+.admin-service-badge.starting { background: rgba(249, 226, 175, 0.2); color: #f9e2af; }
+.admin-service-badge.unhealthy { background: rgba(249, 226, 175, 0.2); color: #f9e2af; }
+.admin-service-badge.exited { background: rgba(243, 139, 168, 0.2); color: #f38ba8; }
+
+.admin-service-progress {
+  font-size: 10px;
+  color: #7a8299;
+  margin-top: 2px;
+}
+
+.admin-data-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--sidebar-border);
+}
+
+.admin-data-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+
+.admin-data-name {
+  font-weight: 600;
+  color: var(--sidebar-heading);
+}
+
+.admin-data-status {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.admin-data-status.complete { background: rgba(166, 227, 161, 0.2); color: #a6e3a1; }
+.admin-data-status.downloading { background: rgba(137, 180, 250, 0.2); color: #89b4fa; }
+.admin-data-status.locked { background: rgba(249, 226, 175, 0.2); color: #f9e2af; }
+
+.admin-data-detail {
+  font-size: 11px;
+  color: #7a8299;
+  margin-top: 4px;
+}
+
+.admin-progress-bar {
+  height: 4px;
+  background: var(--sidebar-border);
+  border-radius: 2px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.admin-progress-fill {
+  height: 100%;
+  background: #89b4fa;
+  border-radius: 2px;
+  transition: width 1s ease;
+}
+
+.admin-refresh-note {
+  text-align: center;
+  font-size: 10px;
+  color: #585e70;
+  margin-top: 12px;
+}
+
 /* ----- Import layer management ----- */
 #import-layers {
   margin-top: 8px;

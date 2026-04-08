@@ -40,6 +40,7 @@
       <button class="tab-btn active" data-panel="layers-panel">Layers</button>
       <button class="tab-btn" data-panel="route-panel">Route</button>
       <button class="tab-btn" data-panel="import-panel">Import</button>
+      <button class="tab-btn" data-panel="admin-panel">Admin</button>
     </div>
 
     <!-- Layers panel -->
@@ -143,6 +144,15 @@
       </div>
       <div id="import-status" class="hidden"></div>
       <div id="import-layers"></div>
+    </div>
+
+    <!-- Admin panel -->
+    <div id="admin-panel" class="panel">
+      <h3>System Status</h3>
+      <div id="admin-services"></div>
+      <h3>Data Pipeline</h3>
+      <div id="admin-data-tasks"></div>
+      <p class="admin-refresh-note">Auto-refreshes every 10s</p>
     </div>
   </div>
 

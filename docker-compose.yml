@@ -122,6 +122,7 @@ services:
       POI_DB_PATH: "/data/poi.sqlite"
     volumes:
       - ./data:/data:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       nominatim:
         condition: service_healthy
