@@ -332,24 +332,42 @@ async def run_tnmaccess(args):
 # MODE 2 – Direct tile scraping
 # ===================================================================
 
-async def init_mbtiles(db_path: Path, name: str = "usgs_imagery"):
+async def init_mbtiles(db_path: Path, name: str = "usgs_imagery",
+                       bbox: str = "", zoom: str = ""):
     """Create the MBTiles SQLite schema."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(str(db_path)) as db:
         await db.execute("PRAGMA journal_mode=WAL")
+        # Fix for existing databases: deduplicate metadata rows from
+        # prior runs that lacked the UNIQUE constraint.
         await db.execute(
             "CREATE TABLE IF NOT EXISTS metadata (name TEXT, value TEXT)"
+        )
+        await db.execute(
+            "DELETE FROM metadata WHERE rowid NOT IN "
+            "(SELECT MIN(rowid) FROM metadata GROUP BY name)"
+        )
+        # Recreate with UNIQUE constraint (MBTiles spec)
+        await db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_metadata_name ON metadata (name)"
         )
         await db.execute(
             "CREATE TABLE IF NOT EXISTS tiles "
             "(zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, tile_data BLOB, "
             "PRIMARY KEY (zoom_level, tile_column, tile_row))"
         )
-        for k, v in [
+        metadata = [
             ("name", name),
             ("format", "jpeg"),
             ("type", "baselayer"),
-        ]:
+        ]
+        if bbox:
+            metadata.append(("bounds", bbox))
+        if zoom:
+            parts = zoom.split("-") if "-" in zoom else [zoom, zoom]
+            metadata.append(("minzoom", parts[0]))
+            metadata.append(("maxzoom", parts[1]))
+        for k, v in metadata:
             await db.execute(
                 "INSERT OR REPLACE INTO metadata (name, value) VALUES (?, ?)",
                 (k, v),
@@ -375,7 +393,7 @@ async def run_direct(args):
     bbox = parse_bbox(args.bbox)
     z_min, z_max = parse_zoom(args.zoom)
     output = Path(args.output)
-    await init_mbtiles(output)
+    await init_mbtiles(output, bbox=args.bbox, zoom=args.zoom)
     # No artificial rate limit — USGS handles 100+ concurrent connections fine.
     # Tested at 123 tiles/sec with 100 concurrent, zero 429s.
     sem = asyncio.Semaphore(args.concurrency)
@@ -642,6 +660,7 @@ async def m2m_get_download_urls(session: aiohttp.ClientSession, api_key: str,
 
     # Poll download-retrieve until all URLs are available
     urls = []
+    seen_urls: set[str] = set()
     for label in labels:
         log.info("Polling download-retrieve for label: %s", label)
         for attempt in range(M2M_POLL_MAX_ATTEMPTS):
@@ -654,8 +673,9 @@ async def m2m_get_download_urls(session: aiohttp.ClientSession, api_key: str,
 
             for item in available:
                 url = item.get("url")
-                if url:
+                if url and url not in seen_urls:
                     urls.append(url)
+                    seen_urls.add(url)
 
             if not requested:
                 # All downloads for this label are ready

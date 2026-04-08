@@ -705,16 +705,18 @@ async def pipeline_start(body: PipelineStartBody):
                 except Exception as e:
                     raise HTTPException(status_code=500, detail=f"Failed to rename existing file: {e}")
 
-            # Build command
+            # Build command — imagery and elevation scripts have different args
             script = _script_for_type(body.type)
             command = [
                 "python3", script,
-                "--mode", body.mode,
                 f"--bbox={body.bbox}",
                 f"--zoom={body.zoom}",
                 "--concurrency", str(body.concurrency),
                 "--output", f"/data/{mbtiles_path.name}",
             ]
+            # Only imagery script accepts --mode (direct/tnmaccess/m2m)
+            if body.type == "imagery":
+                command[2:2] = ["--mode", body.mode]
 
             # Build environment
             env = {

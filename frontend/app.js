@@ -93,7 +93,7 @@
         type: 'raster',
         tiles: ['/tiles/data/imagery/{z}/{x}/{y}.jpeg'],
         tileSize: 256,
-        maxzoom: 14
+        maxzoom: 18
       });
     }
     if (!map.getLayer('imagery-layer')) {
@@ -1269,6 +1269,7 @@
 
   var gpsSource = 'server';          // 'server' (Pi GPS hat) or 'device' (browser)
   var deviceWatchId = null;           // browser geolocation watchPosition ID
+  var gpsReconnectTimer = null;       // stored so we can cancel pending reconnects
 
   function initGPS() {
     connectGPS();
@@ -1284,6 +1285,19 @@
 
   function switchGPSSource(source) {
     gpsSource = source;
+
+    // Cancel any pending reconnect timer regardless of direction
+    if (gpsReconnectTimer !== null) {
+      clearTimeout(gpsReconnectTimer);
+      gpsReconnectTimer = null;
+    }
+
+    // Always clear any existing device watch on every switch —
+    // catches in-flight watches before they can leak
+    if (deviceWatchId !== null) {
+      navigator.geolocation.clearWatch(deviceWatchId);
+      deviceWatchId = null;
+    }
 
     if (source === 'device') {
       // Check secure context first — Geolocation API requires HTTPS
@@ -1304,57 +1318,78 @@
       }
 
       // Stop server GPS WebSocket
-      if (gpsWs) { gpsWs.close(); gpsWs = null; }
+      if (gpsWs) {
+        gpsWs.onclose = null;
+        gpsWs.close();
+        gpsWs = null;
+      }
 
-      // Request permission with a one-shot position first
+      // Request permission, then start watching on success
       navigator.geolocation.getCurrentPosition(
-        function () { /* permission granted, watchPosition below will work */ },
+        function () {
+          // Stale callback — user already switched away
+          if (gpsSource !== 'device') return;
+          // Permission granted — start continuous watch
+          deviceWatchId = navigator.geolocation.watchPosition(
+            function (pos) {
+              // Stale callback — user switched to server
+              if (gpsSource !== 'device') return;
+              var data = {
+                lat: pos.coords.latitude,
+                lon: pos.coords.longitude,
+                alt: pos.coords.altitude || 0,
+                speed: pos.coords.speed || 0,
+                heading: pos.coords.heading || 0,
+                accuracy: pos.coords.accuracy || null,
+                fix: 3,
+                stale: false
+              };
+              updateGPSPosition(data);
+            },
+            function (err) {
+              // Stale callback — user switched to server
+              if (gpsSource !== 'device') return;
+              console.warn('Device GPS error:', err);
+              setGPSStale(true);
+            },
+            { enableHighAccuracy: true, maximumAge: 2000, timeout: 5000 }
+          );
+        },
         function (err) {
+          // Stale callback — user already switched away
+          if (gpsSource !== 'device') return;
           var msg = err.code === 1 ? 'Location permission denied by user.'
                   : err.code === 2 ? 'Location unavailable on this device.'
                   : 'Location request timed out.';
           alert(msg);
+          if (deviceWatchId !== null) {
+            navigator.geolocation.clearWatch(deviceWatchId);
+            deviceWatchId = null;
+          }
           document.querySelector('input[name="gpssource"][value="server"]').checked = true;
           gpsSource = 'server';
           connectGPS();
-          return;
         }
-      );
-
-      deviceWatchId = navigator.geolocation.watchPosition(
-        function (pos) {
-          var data = {
-            lat: pos.coords.latitude,
-            lon: pos.coords.longitude,
-            alt: pos.coords.altitude || 0,
-            speed: pos.coords.speed || 0,
-            heading: pos.coords.heading || 0,
-            accuracy: pos.coords.accuracy || null,
-            fix: 3,
-            stale: false
-          };
-          updateGPSPosition(data);
-        },
-        function (err) {
-          console.warn('Device GPS error:', err);
-          setGPSStale(true);
-        },
-        { enableHighAccuracy: true, maximumAge: 2000, timeout: 5000 }
       );
 
       document.getElementById('gps-badge').classList.remove('hidden');
     } else {
-      // Stop browser geolocation
-      if (deviceWatchId !== null) {
-        navigator.geolocation.clearWatch(deviceWatchId);
-        deviceWatchId = null;
-      }
-      // Restart server GPS
+      // Restart server GPS (device watch already cleared above)
       connectGPS();
     }
   }
 
   function connectGPS() {
+    // Only connect when in server mode
+    if (gpsSource !== 'server') return;
+
+    // Close existing WebSocket before opening new one
+    if (gpsWs) {
+      gpsWs.onclose = null;  // prevent triggering reconnect
+      gpsWs.close();
+      gpsWs = null;
+    }
+
     var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var wsUrl = protocol + '//' + location.host + '/gps/ws';
 
@@ -1372,6 +1407,8 @@
     };
 
     gpsWs.onmessage = function (event) {
+      // Only process server GPS data when in server mode
+      if (gpsSource !== 'server') return;
       try {
         var data = JSON.parse(event.data);
         updateGPSPosition(data);
@@ -1382,18 +1419,27 @@
 
     gpsWs.onclose = function () {
       console.log('GPS WebSocket closed');
-      setGPSStale(true);
-      scheduleGPSReconnect();
+      // Only reconnect and mark stale if we're still in server mode
+      if (gpsSource === 'server') {
+        setGPSStale(true);
+        scheduleGPSReconnect();
+      }
     };
 
     gpsWs.onerror = function () {
       console.warn('GPS WebSocket error');
-      setGPSStale(true);
+      if (gpsSource === 'server') {
+        setGPSStale(true);
+      }
     };
   }
 
   function scheduleGPSReconnect() {
-    setTimeout(function () {
+    if (gpsReconnectTimer !== null) {
+      clearTimeout(gpsReconnectTimer);
+    }
+    gpsReconnectTimer = setTimeout(function () {
+      gpsReconnectTimer = null;
       console.log('GPS: attempting reconnect...');
       connectGPS();
     }, GPS_RECONNECT_MS);

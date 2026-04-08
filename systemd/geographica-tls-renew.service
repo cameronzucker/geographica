@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew Tailscale TLS certificate for Geographica
+After=tailscaled.service
+Requires=tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/administrator/Code/geographica/scripts/provision_tailscale_tls.sh
+StandardOutput=journal
+StandardError=journal

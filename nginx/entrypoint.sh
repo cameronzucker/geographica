@@ -30,9 +30,25 @@ SANEOF
             echo "ERROR: openssl not found. Install certificates manually or use HTTP mode."
             echo "Falling back to HTTP mode."
             TLS_MODE="http"
+            cp /etc/nginx/tls-modes/tls-include-empty.conf /etc/nginx/tls-include.conf
         fi
     fi
-    cp /etc/nginx/tls-modes/tls-include.conf /etc/nginx/tls-include.conf
+    # Only copy TLS config if we didn't fall back to HTTP above
+    if [ "$TLS_MODE" = "https" ]; then
+        cp /etc/nginx/tls-modes/tls-include.conf /etc/nginx/tls-include.conf
+    fi
+elif [ "$TLS_MODE" = "tailscale" ]; then
+    if [ ! -f /etc/nginx/tls/server.crt ]; then
+        echo "ERROR: TLS_MODE=tailscale but no certificates found."
+        echo "Run: sudo ./scripts/provision_tailscale_tls.sh"
+        echo "Then set TLS_CERT_DIR=/srv/geographica/tls/tailscale in .env"
+        echo "Falling back to HTTP mode."
+        TLS_MODE="http"
+        cp /etc/nginx/tls-modes/tls-include-empty.conf /etc/nginx/tls-include.conf
+    else
+        echo "Tailscale TLS certificates found."
+        cp /etc/nginx/tls-modes/tls-include.conf /etc/nginx/tls-include.conf
+    fi
 else
     cp /etc/nginx/tls-modes/tls-include-empty.conf /etc/nginx/tls-include.conf
 fi

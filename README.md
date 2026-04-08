@@ -27,7 +27,7 @@ isolated LAN or standalone device.
 - **Pipeline management** — start/cancel imagery downloads from the browser
 - **Print/export directions** (Mapquest-style printable page)
 - **ATAK integration** — serves as a WMS map source for TAK clients
-- **TLS support** — two modes: HTTP or HTTPS (TLS 1.3)
+- **TLS support** — three modes: HTTP, HTTPS (self-signed), or Tailscale (Let's Encrypt)
 - **No build step** — vanilla JS + MapLibre GL JS frontend, no bundler required
 
 ## Hardware requirements
@@ -399,6 +399,38 @@ To access the config panel remotely, use an SSH tunnel:
 ssh -L 8097:localhost:8097 user@pi-ip
 # Then open http://localhost:8097/config/ in your local browser
 ```
+
+## HTTPS via Tailscale
+
+If Tailscale is installed on the Pi, you can get trusted HTTPS with a real
+Let's Encrypt certificate — no self-signed CA distribution needed. This enables
+browser Geolocation API (device GPS) and secure remote access.
+
+The Pi serves both protocols simultaneously:
+- **HTTP on :8093** — for LAN and AREDN mesh clients (unchanged)
+- **HTTPS on :443** — for Tailscale clients via `https://<hostname>.ts.net`
+
+### Setup
+
+```bash
+# 1. Provision the certificate (requires root)
+sudo ./scripts/provision_tailscale_tls.sh
+
+# 2. Configure the environment
+echo 'TLS_MODE=tailscale' >> .env
+echo 'TLS_CERT_DIR=/srv/geographica/tls/tailscale' >> .env
+
+# 3. Restart the frontend
+docker compose restart frontend
+
+# 4. Enable automatic certificate renewal
+sudo cp systemd/geographica-tls-renew.service /etc/systemd/system/
+sudo cp systemd/geographica-tls-renew.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now geographica-tls-renew.timer
+```
+
+Visit `https://<your-tailscale-hostname>` — green padlock, GPS works.
 
 ## Customizing coverage area
 

@@ -57,12 +57,23 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 
 
 def write_pipeline_state(output_path, state: dict):
-    """Atomically write pipeline state JSON for the admin monitor."""
+    """Atomically merge pipeline state JSON for the admin monitor.
+
+    Merges new fields into existing state to preserve API metadata
+    (bbox, zoom, type, estimated_tiles) written by the search service.
+    """
     from pathlib import Path
     state_path = Path(output_path).parent / ".elevation-state.json"
     tmp_path = state_path.with_suffix(".json.tmp")
     try:
-        tmp_path.write_text(json.dumps(state))
+        existing = {}
+        if state_path.exists():
+            try:
+                existing = json.loads(state_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass
+        existing.update(state)
+        tmp_path.write_text(json.dumps(existing))
         with open(tmp_path) as f:
             os.fsync(f.fileno())
         os.replace(str(tmp_path), str(state_path))
@@ -162,14 +173,24 @@ class TokenBucket:
 # MBTiles management
 # ---------------------------------------------------------------------------
 
-async def init_mbtiles(db_path: Path):
+async def init_mbtiles(db_path: Path, bbox: str = "", zoom: str = ""):
     """Create the MBTiles SQLite schema with checkpoint table."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(str(db_path)) as db:
         # WAL mode allows concurrent readers while writing
         await db.execute("PRAGMA journal_mode=WAL")
+        # Fix for existing databases: deduplicate metadata rows from
+        # prior runs that lacked the UNIQUE constraint.
         await db.execute(
             "CREATE TABLE IF NOT EXISTS metadata (name TEXT, value TEXT)"
+        )
+        await db.execute(
+            "DELETE FROM metadata WHERE rowid NOT IN "
+            "(SELECT MIN(rowid) FROM metadata GROUP BY name)"
+        )
+        # Recreate with UNIQUE constraint (MBTiles spec)
+        await db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_metadata_name ON metadata (name)"
         )
         await db.execute(
             "CREATE TABLE IF NOT EXISTS tiles "
@@ -177,12 +198,19 @@ async def init_mbtiles(db_path: Path):
             "tile_data BLOB, "
             "PRIMARY KEY (zoom_level, tile_column, tile_row))"
         )
-        for k, v in [
+        metadata = [
             ("name", "elevation_terrarium"),
             ("format", "png"),
             ("type", "overlay"),
             ("description", "Terrain-RGB elevation tiles (Terrarium encoding)"),
-        ]:
+        ]
+        if bbox:
+            metadata.append(("bounds", bbox))
+        if zoom:
+            parts = zoom.split("-") if "-" in zoom else [zoom, zoom]
+            metadata.append(("minzoom", parts[0]))
+            metadata.append(("maxzoom", parts[1]))
+        for k, v in metadata:
             await db.execute(
                 "INSERT OR REPLACE INTO metadata (name, value) VALUES (?, ?)",
                 (k, v),
@@ -215,7 +243,7 @@ async def run(args):
     z_min, z_max = parse_zoom(args.zoom)
     output = Path(args.output)
 
-    await init_mbtiles(output)
+    await init_mbtiles(output, bbox=args.bbox, zoom=args.zoom)
 
     bucket = TokenBucket(burst=50, sustained=20.0)
     sem = asyncio.Semaphore(args.concurrency)
