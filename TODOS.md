@@ -16,8 +16,7 @@
 ## High Priority
 
 ### Phase 2b: Whisper STT — CPU backend
-- **Completed 2026-04-08.** CPU backend (faster-whisper base.en INT8) implemented. STT Docker service, push-to-hold mic button, AudioWorklet capture, NGINX proxy. See `docs/superpowers/specs/2026-04-08-whisper-stt-design.md`.
-- **Deploy:** `docker compose build stt && docker compose up -d`
+- **Completed and deployed 2026-04-08.** CPU backend (faster-whisper base.en INT8). STT Docker service, push-to-hold mic button, AudioWorklet capture, NGINX proxy with resilient resolver pattern (frontend stays up if STT is down). See `docs/superpowers/specs/2026-04-08-whisper-stt-design.md`.
 
 ### Expanded POI data sources
 - **Completed 2026-04-08.** OSM amenity + public land extraction from existing PBF. Separate `osm_pois` table with brand-only POI support, BLM/USFS/NPS search, compound index for corridor queries. See `docs/superpowers/specs/2026-04-08-expanded-poi-sources-design.md`.

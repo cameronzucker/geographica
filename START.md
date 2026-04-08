@@ -30,12 +30,12 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 - **Nominatim** (:8092) — geocoding, 11 Western US states imported
 - **GPS** (:8095) — FastAPI WebSocket, reads Pi's GPS hat via gpsd (0.36% CPU after busy-wait fix)
 - **Search** (:8096) — spatial search (intent parser, corridor, proximity) + admin API + pipeline orchestration
-- **STT** (:8098) — **NEW, needs `docker compose build stt` to deploy** — Whisper base.en CPU backend, push-to-hold mic button
+- **STT** (:8098) — Whisper base.en CPU backend, push-to-hold mic button. NGINX uses resilient resolver pattern (frontend stays up if STT is down)
 - **NGINX/Frontend** (:8093 HTTP, :443 HTTPS) — main app + config panel on localhost:8097
 
-### New features (implemented 2026-04-08, not yet deployed)
-- **Voice search (STT)** — push-to-hold mic button, AudioWorklet capture, Whisper base.en INT8 transcription → spatial search pipeline. Deploy: `docker compose build stt && docker compose up -d`
-- **OSM POI search** — commercial amenities + public land boundaries extracted from OSM PBF. Deploy: `python3 scripts/build_osm_pois.py --pbf /srv/geographica/data/valhalla/western-us.osm.pbf --output /srv/geographica/data/poi.sqlite --bbox "-124.8,31.3,-102.0,49.0" && docker compose restart search`
+### Recently deployed (2026-04-08)
+- **Voice search (STT)** — deployed and working. Push-to-hold mic button, AudioWorklet capture, Whisper base.en INT8 transcription → spatial search pipeline. NGINX /stt/ proxy uses resolver pattern for resilience.
+- **OSM POI search** — code complete, **not yet deployed**. Deploy: `python3 scripts/build_osm_pois.py --pbf /srv/geographica/data/valhalla/western-us.osm.pbf --output /srv/geographica/data/poi.sqlite --bbox "-124.8,31.3,-102.0,49.0" && docker compose restart search`
 - **NPU investigation complete** — Whisper-Base.hef (5.3.0) loads metadata on 5.1.1 but fails `configure()` with HAILO_NOT_IMPLEMENTED. Ship CPU, revisit at 5.3.0. See `dev/npu-investigation-results.md`.
 
 ### Data downloads — all complete

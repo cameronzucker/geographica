@@ -382,6 +382,9 @@ curl -s -X POST http://localhost:8094/route \
 
 # Unified search
 curl -s "http://localhost:8096/search?q=Grand+Canyon" | python3 -m json.tool | head -20
+
+# Speech-to-text
+curl -s http://localhost:8093/stt/health | python3 -m json.tool
 ```
 
 Open a browser to **http://&lt;your-pi-ip&gt;:8093** to use the map.
@@ -528,6 +531,11 @@ points are within the coverage area.
 The imagery or elevation MBTiles is in WAL mode from an active download.
 TileServer reads from `/srv/data/` which must be mounted read-write in
 `docker-compose.yml`.
+
+**STT returns 405 or HTML instead of JSON**
+The NGINX config is stale. Docker file bind mounts track inodes — git operations
+that replace `nginx/nginx.conf` leave the container serving the old version.
+Fix: `docker compose up -d --force-recreate frontend`.
 
 **System crashed / OOM during first run**
 If you see a hard crash (kernel OOM killer), the per-container memory limits in
