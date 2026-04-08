@@ -16,6 +16,7 @@ isolated LAN or standalone device.
 - **Free-look camera** for 3D terrain exploration (pitch/bearing control)
 - **Turn-by-turn navigation** with voice guidance, off-route detection, and dead reckoning
 - **Multi-stop waypoint routing** with map click point selection for car, bicycle, and pedestrian
+- **Natural language spatial search** — "nearest gas station", "hospitals near me", "gas stations along my route", "fuel every 50 miles" with distance-ranked results and numbered map pins
 - **Geocoding** — search for addresses, cities, landmarks
 - **POI search** — GNIS gazetteer with full-text search (data sourced from S3: `prd-tnm.s3.amazonaws.com`)
 - **Live GPS** — hardware GPS streaming over WebSocket with accuracy circle display
@@ -60,7 +61,7 @@ isolated LAN or standalone device.
 Browser ──> NGINX (:8093) ──┬──> TileServer GL (:8090)   vector/raster/elevation tiles
                             ├──> Valhalla (:8094)         routing engine
                             ├──> Nominatim (:8092)        geocoding (PostgreSQL)
-                            ├──> Search (:8096)           unified search + admin API
+                            ├──> Search (:8096)           spatial search + admin API
                             └──> GPS (:8095)              WebSocket GPS relay
 
 Config ──> NGINX (:8097) ──────> Search (:8096)           pipeline mgmt (localhost only)
@@ -524,7 +525,9 @@ geographica/
 │   └── nginx.conf              # Reverse proxy with URL rewriting
 ├── frontend/
 │   ├── index.html              # Single-page app entry point
-│   ├── app.js                  # MapLibre GL JS application (~1100 lines)
+│   ├── app.js                  # MapLibre GL JS application (~2800 lines)
+│   ├── navigation.js           # Turn-by-turn navigation engine
+│   ├── nav-ui.js               # Navigation UI bridge
 │   ├── style.css               # UI styles
 │   └── vendor/                 # Vendored JS/CSS (gitignored, see step 9)
 ├── tileserver/
@@ -541,15 +544,21 @@ geographica/
 │   │   ├── Dockerfile
 │   │   ├── main.py
 │   │   └── requirements.txt
-│   └── search/                 # FastAPI unified search service
+│   └── search/                 # FastAPI spatial search + admin service
 │       ├── Dockerfile
-│       ├── main.py
+│       ├── main.py             # Nominatim/POI query, admin API, pipeline orchestration
+│       ├── spatial.py          # Intent parser, synonym table, corridor math, spatial endpoint
 │       └── requirements.txt
 ├── scripts/
 │   ├── requirements.txt        # Python deps for data pipeline
 │   ├── download_elevation.py   # Terrain-RGB tile downloader
 │   ├── build_poi_index.py      # GNIS POI indexer (FTS5)
-│   └── acquire_imagery.py      # USGS imagery downloader
+│   ├── acquire_imagery.py      # USGS imagery downloader
+│   ├── provision_tailscale_tls.sh  # Tailscale TLS cert provisioning
+│   └── generate_tls.sh         # Self-signed TLS cert generation
+├── systemd/
+│   ├── geographica-tls-renew.service  # Cert renewal oneshot
+│   └── geographica-tls-renew.timer    # Daily renewal timer
 └── data -> /srv/geographica/data/
     ├── pbf/                    # OSM state extracts + merged PBF
     ├── nominatim/region.osm.pbf
