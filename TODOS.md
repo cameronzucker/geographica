@@ -1,84 +1,100 @@
 # TODOS
 
+## Completed
+
+### TLS implementation for device GPS
+- **Completed 2026-04-08** via Tailscale TLS integration. `TLS_MODE=tailscale` with Let's Encrypt certs. Device GPS works over HTTPS. See `docs/superpowers/specs/2026-04-08-tailscale-tls-design.md`.
+
+### Natural language spatial search (Phase 2a)
+- **Completed 2026-04-08.** Intent parser, corridor search, numbered map pins, distance badges. See `docs/superpowers/specs/2026-04-08-natural-language-spatial-search-design.md`.
+
+### Elevation tile download
+- **Completed 2026-04-08.** 1,474,959 tiles z0-z14, covering 11 Western US states.
+
+---
+
 ## High Priority
 
-### TLS implementation for device GPS and Cloudflare Tunnel
-- **What:** Implement TLS modes 2 and 3 from the design doc. Generate self-signed CA at install time, configure NGINX with the three-mode toggle (HTTP only / HTTPS published-key / HTTPS standard). Required for browser Geolocation API on mobile devices and for Cloudflare Tunnel deployment.
-- **Why:** Device GPS toggle currently fails on HTTP connections with "Only secure origins are allowed." Cloudflare Tunnel for remote testing/demos will also need HTTPS. The three-mode NGINX config is designed but not yet implemented or tested.
-- **Pros:** Unlocks device GPS for mobile users, enables Cloudflare Tunnel for demos, enables secure access for non-amateur deployments.
-- **Cons:** Adds cert generation to setup process, NGINX config complexity, mobile users need to install self-signed CA on their devices for mode 2.
-- **Context:** GPS source toggle added but blocked on HTTP. Design doc has full spec at "TLS / HTTPS Configuration" section. NGINX config templates ready but untested.
-- **Depends on:** Nothing — can be implemented immediately.
+### Phase 2b: Whisper STT on Hailo 10H NPU
+- **What:** Offline speech-to-text using Whisper on the Hailo 10H NPU. User presses a mic button, audio is captured via Web Audio API, sent to a local Whisper endpoint, transcribed text is fed into `POST /search/spatial`.
+- **Why:** The design doc's "what excites the builder most" feature. The spatial search pipeline (Phase 2a) is built and ready to receive transcribed text.
+- **Pros:** Hands-free spatial queries while driving/navigating. Full offline capability.
+- **Cons:** Hailo SDK integration complexity. Whisper model selection (tiny vs base vs small) affects accuracy vs latency tradeoff. Audio capture on mobile browsers requires HTTPS (already solved).
+- **Context:** Design doc Phase 2 section. Hailo 10H NPU is physically installed on the Pi but not yet used. Phase 2a's `POST /search/spatial` is the backend interface — Phase 2b only adds audio→text.
+- **Depends on:** Phase 2a (done), Hailo SDK setup.
 
-## Deferred from Phase 1
+### Expanded POI data sources
+- **What:** Supplement Nominatim + GNIS with additional open POI datasets. Current spatial search returns sparse results for commercial categories (gas, food, hotels) in rural areas because Nominatim only has what's in OSM, and GNIS only has geographic features.
+- **Why:** "gas stations along my route" between Phoenix and LA has a 240-mile gap (mile 22 to mile 264) with no results. There are gas stations there — they're just not in our search index.
+- **Candidates:** (1) Extract named POIs from our existing OSM PBF using `osmium tags-filter` for `amenity=fuel`, `amenity=restaurant`, etc. (2) Overture Maps Places dataset (Meta/Microsoft, open, strong business coverage). (3) Who's On First gazetteer.
+- **Pros:** Dramatically improves spatial search quality, especially for corridor queries.
+- **Cons:** More data = larger POI database, longer indexing. Deduplication against Nominatim.
+- **Context:** Identified during spatial search testing. The unified search service already handles Nominatim + POI merge with haversine dedup.
+- **Depends on:** Nothing — can be implemented immediately. Most impactful improvement for spatial search quality.
+
+### M2M API end-to-end test
+- **What:** Test the `--mode m2m` imagery pipeline once ERS download access approval comes through. Credentials stored at `/srv/geographica/data/.credentials.json`.
+- **Why:** M2M API provides access to higher-resolution NAIP imagery than the direct tile scraping mode.
+- **Status:** ERS approval submitted, pending.
+- **Depends on:** USGS ERS approval.
+
+---
+
+## Medium Priority
 
 ### NGINX selective compression optimization
 - **What:** Apply `sub_filter` URL rewriting only to style JSON/TileJSON endpoints, let tile data pass through with gzip compression intact.
 - **Why:** On bandwidth-constrained AREDN mesh, PBF vector tiles compress ~60-70%. Currently all TileServer GL responses are uncompressed due to blanket `Accept-Encoding ""` header required by sub_filter.
 - **Pros:** Significant bandwidth reduction for vector tile serving over mesh.
-- **Cons:** More complex NGINX config with multiple location blocks for the same upstream. URL rewriting across multiple location blocks is fragile and hard to debug.
-- **Context:** Decision made during eng review to defer. Core platform stability takes priority over bandwidth optimization. Revisit after Phase 1 is stable and field-tested.
-- **Depends on:** Phase 1 complete, NGINX config stable.
-
-### Search debounce/abort pattern
-- **What:** Add 300ms client-side debounce and AbortController to cancel in-flight search requests on new keystrokes.
-- **Why:** Rapid typing could queue up Nominatim PostgreSQL queries on the Pi. Reference stack showed instant results with single user, but untested under load.
-- **Pros:** Prevents query pile-up if multiple users or rapid interaction.
-- **Cons:** Minimal code (~10 lines), but adds complexity to search flow.
-- **Context:** Deferred because real-world testing on Pi 5 showed instant Nominatim responses. Add a diagnostic: if p95 search latency exceeds 500ms under rapid sequential queries, implement debounce.
-- **Depends on:** Frontend search implementation complete.
-
-### Data freshness / update workflow
-- **What:** Define a workflow for updating stale map data (OSM extracts, imagery, Nominatim, Valhalla routing graph).
-- **Why:** Offline maps decay. OSM data changes, roads get built, imagery gets updated. Without an update path, operators will stop trusting the data.
-- **Pros:** Keeps the platform trustworthy over time.
-- **Cons:** Re-running the full data pipeline is time-consuming (days for imagery, hours for Nominatim import).
-- **Context:** Codex outside voice raised this (point #27). For v1, "re-run the pipeline" is acceptable. A future version could support incremental OSM updates via Osmium and differential Nominatim updates.
-- **Depends on:** Phase 0 data pipeline proven.
-
-### Admin task monitor in UI
-- **What:** A panel in the frontend (or a dedicated /admin page) that shows the status of long-running backend tasks: Nominatim import progress, Valhalla graph build, tile downloads, POI indexing. Display progress percentage, ETA, and current phase where available.
-- **Why:** First-run setup involves multiple multi-hour imports running simultaneously. Right now the only way to check progress is SSH + `docker logs`. An operator deploying Geographica on a mesh should be able to check import status from any browser on the network without terminal access.
-- **Pros:** Dramatically improves the first-run experience. Also useful for data refresh workflows (re-importing after an OSM update). Could surface service health at a glance — which containers are up, which are still initializing.
-- **Cons:** Requires a lightweight status API that polls container logs or healthcheck endpoints. Nominatim and Valhalla don't expose structured progress — would need log parsing or periodic healthcheck probing.
-- **Context:** Identified during Phase 0 deployment while waiting ~8 hours for Nominatim to import 11 Western US states. The operator experience of "is it done yet?" with no visibility is poor.
-- **Depends on:** Phase 1 frontend complete. Could be a simple addition to the search/POI FastAPI service (add a /admin/status endpoint that checks healthchecks and parses recent Docker logs via the Docker socket).
-
-### Offline KML icon set for common Google Earth markers
-- **What:** Bundle the standard Google Earth/Maps icon set (pushpins, shapes, paddles) locally so KML IconStyle references to `maps.google.com/mapfiles/kml/` URLs render correctly when offline.
-- **Why:** Most KML/KMZ files reference Google-hosted icons via URLs like `http://maps.google.com/mapfiles/kml/pushpin/ylw-pushpin.png`. On an offline AREDN deployment these URLs are unreachable, so marker icons fail to load. Currently, broken icon URLs are hidden gracefully (onerror handler), but the intended visual distinction between marker types is lost.
-- **Pros:** KML imports look correct without internet access. The Google Earth icon set is small (~200 icons, ~2 MB total) and freely redistributable.
-- **Cons:** Requires downloading and bundling the icon set, plus URL rewriting logic in the import pipeline to map `maps.google.com/mapfiles/kml/...` paths to local equivalents.
-- **Context:** Identified when importing Ham Radio Deployment Sites.kmz which uses pushpin, caution, and triangle icons. Could also render icons as SVG symbols on the MapLibre canvas for better scaling.
-- **Depends on:** KML import feature complete (done).
-
-### Expanded POI data sources for better search coverage
-- **What:** Supplement Nominatim + GNIS with additional open POI datasets to improve search coverage for businesses, offices, and private landmarks that OSM doesn't map well. Three candidates: (1) Extract named POIs directly from the OSM PBF we already have using `osmium tags-filter` — catches anything with `name=*` that Nominatim ranks low or skips. (2) Ingest Who's On First gazetteer data (open, includes venues). (3) Ingest Overture Maps Places dataset (Meta/Microsoft, open, strong business coverage).
-- **Why:** Nominatim only finds what's mapped in OSM. Public landmarks (stadiums, parks) are well-covered, but private businesses and offices have major gaps — e.g., "Laserfiche, Long Beach, CA" returns zero results even on the live global Nominatim instance. This is a common complaint from users who expect Google Maps-level coverage.
-- **Pros:** Dramatically improves search hit rate for real-world place lookups. All data sources are open and can be processed offline into the existing SQLite FTS5 index.
-- **Cons:** More data = larger POI database, longer indexing. Overture Maps Places dataset is ~1 GB for the US. Deduplication against Nominatim results becomes more important as the POI database grows.
-- **Context:** Identified during testing when "Laserfiche, Long Beach, CA" returned nothing but "Chase Field, Phoenix, AZ" worked (mapped in OSM as leisure=stadium). The unified search service already handles Nominatim + POI merge with haversine dedup, so adding more POI sources is architecturally straightforward.
-- **Depends on:** POI indexer pipeline (scripts/build_poi_index.py). Consider also adding user-contributed custom waypoints/bookmarks that persist locally and are searchable — most practical path for niche locations on an AREDN mesh.
-
-### KML import popup rendering improvements
-- **What:** Improve how KML feature popups display imported data. Current issues: (1) Some KML description content doesn't render correctly. (2) Need to investigate edge cases with HTML content in descriptions, embedded images, and data tables from various KML authoring tools (Google Earth, ArcGIS, QGIS).
-- **Why:** KML files from different sources use description fields inconsistently — some embed HTML tables, some use CDATA, some reference external images. The current popup renderer handles basic cases but needs testing against a wider variety of real-world KML files.
-- **Pros:** Better fidelity when importing KML data that users have invested time creating.
-- **Cons:** KML description content is essentially arbitrary HTML — full rendering requires careful sanitization to avoid XSS while preserving intentional formatting.
-- **Context:** Identified during testing with Ham Radio Deployment Sites.kmz. Deferred pending more reference KML files to test against.
-- **Depends on:** KML import feature complete (done).
+- **Cons:** More complex NGINX config with multiple location blocks.
+- **Depends on:** NGINX config stable (it is now).
 
 ### Setup CLI tool
-- **What:** A `geographica-setup` command that detects the network environment (mesh vs internet), generates TLS certs if needed, writes the `.env` file, and restarts the frontend container. One command, one question, done.
-- **Why:** Current setup requires editing .env, running generate_tls.sh, and restarting containers separately. Field operators should have a single entry point.
-- **Pros:** Dramatically simplifies first-run and mode-switching.
-- **Cons:** Another script to maintain.
-- **Context:** Recommended by Round 5 architectural review. Deferred to a future robust setup application.
-- **Depends on:** TLS implementation complete.
+- **What:** A `geographica-setup` command that detects the network environment, generates TLS certs if needed, writes `.env`, and restarts the frontend container.
+- **Why:** Current setup requires editing .env, running provision scripts, and restarting containers separately.
+- **Depends on:** TLS implementation (done).
+
+### GPS track recording
+- **What:** Record GPS tracks and export as GPX/KML. Design doc specifies this as a Phase 1 feature.
+- **Why:** Users on field deployments need track logs for after-action reports.
+- **Depends on:** GPS service (done), frontend (done).
+
+### Valhalla costing toggles
+- **What:** Expose avoid highways/tolls/ferries toggles in the routing panel UI.
+- **Why:** The routing code already supports these options (app.js:993-1005) but the UI has the checkboxes — need to verify they're wired up and working.
+- **Depends on:** Nothing.
+
+### Light/dark mode toggle
+- **What:** Runtime toggle between Positron (light) and Dark Matter (dark) basemap styles.
+- **Why:** Both styles exist in TileServer but there's no UI toggle. Design doc specifies this.
+- **Depends on:** Nothing.
+
+---
+
+## Low Priority / Deferred
+
+### Search debounce/abort pattern
+- **What:** 300ms debounce + AbortController for search input.
+- **Why:** Rapid typing could queue queries. Deferred because Pi 5 Nominatim is fast.
+- **Depends on:** Frontend search (done).
+
+### Data freshness / update workflow
+- **What:** Workflow for updating stale map data.
+- **Why:** Offline maps decay. For v1, "re-run the pipeline" is acceptable.
+
+### Admin task monitor enhancements
+- **What:** Surface Nominatim/Valhalla import progress in the UI.
+- **Why:** Improves first-run experience. `/admin/status` exists but could show more.
+
+### Offline KML icon set
+- **What:** Bundle ~200 Google Earth icons (~2 MB) for offline KML rendering.
+- **Why:** KML imports with Google-hosted icons fail offline.
+- **Depends on:** KML import (done).
+
+### KML popup rendering improvements
+- **What:** Handle edge cases with HTML/CDATA descriptions from various authoring tools.
+- **Depends on:** KML import (done).
 
 ### AREDN TLS 1.2 published-key mode
-- **What:** TLS 1.2 with non-PFS ciphers and published server private key for Part 97 compliance.
-- **Why:** Allows HTTPS on amateur radio mesh while satisfying 47 CFR 97.113(a)(4) by making the encryption key publicly available. Provides browser secure context (for device GPS) without confidentiality.
-- **Status:** Designed and reviewed through 5 rounds of adversarial review. Deferred as the regulatory landscape is ambiguous and the implementation complexity is high for questionable benefit.
-- **Context:** HTTP works fine for AREDN. Full TLS 1.3 covers internet/Cloudflare use. The published-key mode sits in an uncomfortable middle ground.
-- **Depends on:** FCC clarification on TLS over amateur radio, or community consensus.
+- **What:** TLS 1.2 with non-PFS ciphers and published private key for Part 97 compliance.
+- **Status:** Deferred — regulatory landscape is ambiguous. HTTP works fine for AREDN.
