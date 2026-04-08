@@ -96,7 +96,11 @@ def _blocking_read_gpsd() -> None:
     _gps_connected = True
     logger.info("Connected to gpsd")
 
+    import time
     for new_data in gps_socket:
+        if not new_data:
+            time.sleep(0.05)  # 50ms idle sleep prevents 100% CPU busy-wait
+            continue
         if new_data:
             data_stream.unpack(new_data)
 
