@@ -34,17 +34,14 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-GNIS_BASE_URL = "https://geonames.usgs.gov/docs/stategaz/"
-DEFAULT_BBOX = "-124.6,31.2,-103.0,42.2"
-DEFAULT_STATES = ["AZ", "CA", "NV", "NM", "UT"]
+GNIS_BASE_URL = "https://prd-tnm.s3.amazonaws.com/StagedProducts/GeographicNames/DomesticNames/"
+DEFAULT_BBOX = "-124.8,31.3,-102.0,49.0"
+DEFAULT_STATES = ["AZ", "CA", "CO", "ID", "MT", "NV", "NM", "OR", "UT", "WA", "WY"]
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2
 
-# Map of state abbreviation to GNIS file name.
-# GNIS uses the full FIPS-style names; the pattern is typically
-# <ST>_Features_<datestamp>.zip  but the undated "text" variant is
-# more stable: <ST>_Features.zip
-STATE_FILE_TEMPLATE = "{state}_Features.zip"
+# TNM S3 file naming pattern: DomesticNames_{ST}_Text.zip
+STATE_FILE_TEMPLATE = "DomesticNames_{state}_Text.zip"
 
 
 # ---------------------------------------------------------------------------
@@ -97,13 +94,23 @@ def parse_gnis_text(raw: str, bbox: tuple[float, float, float, float]):
     if not lines:
         return
     # The first line is the header
-    header = [h.strip().lower() for h in lines[0].split("|")]
-    # Build index map for the columns we care about
+    # Strip BOM if present
+    header = [h.strip().lower().lstrip('\ufeff') for h in lines[0].split("|")]
+    # Build index map — handle both old (state_alpha) and new (state_name) formats
     col = {}
-    for name in ("feature_name", "feature_class", "state_alpha",
-                 "county_name", "prim_lat_dec", "prim_long_dec"):
-        if name in header:
-            col[name] = header.index(name)
+    required = {
+        "feature_name": ["feature_name"],
+        "feature_class": ["feature_class"],
+        "state": ["state_alpha", "state_name"],
+        "county": ["county_name"],
+        "lat": ["prim_lat_dec"],
+        "lon": ["prim_long_dec"],
+    }
+    for key, candidates in required.items():
+        for name in candidates:
+            if name in header:
+                col[key] = header.index(name)
+                break
     if len(col) < 6:
         log.warning("Missing expected columns; found: %s", header)
         return
@@ -113,8 +120,8 @@ def parse_gnis_text(raw: str, bbox: tuple[float, float, float, float]):
         if len(parts) <= max(col.values()):
             continue
         try:
-            lat = float(parts[col["prim_lat_dec"]])
-            lon = float(parts[col["prim_long_dec"]])
+            lat = float(parts[col["lat"]])
+            lon = float(parts[col["lon"]])
         except (ValueError, IndexError):
             continue
         if not in_bbox(lat, lon, bbox):
@@ -122,8 +129,8 @@ def parse_gnis_text(raw: str, bbox: tuple[float, float, float, float]):
         yield {
             "name": parts[col["feature_name"]].strip(),
             "class": parts[col["feature_class"]].strip(),
-            "state": parts[col["state_alpha"]].strip(),
-            "county": parts[col["county_name"]].strip(),
+            "state": parts[col["state"]].strip(),
+            "county": parts[col["county"]].strip(),
             "lat": lat,
             "lon": lon,
         }

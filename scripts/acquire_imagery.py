@@ -42,8 +42,8 @@ log = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 TNM_API = "https://tnmaccess.nationalmap.gov/api/v1/products"
-DEFAULT_BBOX = "-124.6,31.2,-103.0,42.2"
-DEFAULT_DATASET = "National Agriculture Imagery Program (NAIP)"
+DEFAULT_BBOX = "-124.8,31.3,-102.0,49.0"
+DEFAULT_DATASET = "USDA National Agriculture Imagery Program (NAIP)"
 USGS_TILE_URL = (
     "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/"
     "MapServer/tile/{z}/{y}/{x}"
