@@ -91,6 +91,22 @@ SYNONYM_TABLE = [
      "nominatim_query": ["bridge"], "osm_types": {("man_made", "bridge")}},
     {"synonyms": {"ranger station", "forest service"}, "gnis_class": "Locale", "fallback_text": "ranger station",
      "nominatim_query": ["ranger station"], "osm_types": None},
+    # Public land (OSM POI primary -- requires osm_operator disambiguation)
+    {"synonyms": {"blm", "blm land", "bureau of land management"},
+     "gnis_class": None, "fallback_text": "BLM land",
+     "nominatim_query": ["BLM"],
+     "osm_types": {("boundary", "protected_area")},
+     "osm_operator": "BLM"},
+    {"synonyms": {"national forest", "usfs"},
+     "gnis_class": None, "fallback_text": "national forest",
+     "nominatim_query": ["national forest"],
+     "osm_types": {("boundary", "protected_area")},
+     "osm_operator": "USFS"},
+    {"synonyms": {"national park", "nps"},
+     "gnis_class": "Park", "fallback_text": "national park",
+     "nominatim_query": ["national park"],
+     "osm_types": {("boundary", "national_park"), ("boundary", "protected_area")},
+     "osm_operator": "NPS"},
 ]
 
 # Build flat lookup: normalized synonym text -> table entry
@@ -299,6 +315,7 @@ def parse_intent(
         "search_text": search_text,
         "nominatim_queries": entry.get("nominatim_query", [search_text]) if entry else [search_text],
         "osm_types": entry.get("osm_types") if entry else None,
+        "osm_operator": entry.get("osm_operator") if entry else None,
         "radius_m": radius_m,
         "interval_m": interval_m,
     }
@@ -536,7 +553,7 @@ class SpatialSearchBody(BaseModel):
 async def spatial_search(body: SpatialSearchBody):
     """Natural language spatial search endpoint."""
     # Deferred import to avoid circular dependency (main imports router from this file)
-    from main import _query_nominatim, _query_poi, _deduplicate
+    from main import _query_nominatim, _query_poi, _query_osm_pois, _deduplicate, state
 
     parsed = parse_intent(
         body.query,
@@ -594,12 +611,73 @@ async def spatial_search(body: SpatialSearchBody):
             nom_tasks.append(_query_nominatim(q, limit, seg_bbox))
     poi_task = _query_poi(search_text, limit, bbox)
 
-    all_results = await asyncio.gather(*nom_tasks, poi_task, return_exceptions=True)
+    # Direct OSM POI query by category (bypasses FTS for precision)
+    osm_poi_task = None
+    osm_types = parsed.get("osm_types")
+    osm_operator = parsed.get("osm_operator")
+
+    if state.osm_pois_loaded and state.poi_db is not None and osm_types and bbox:
+        async def _query_osm_pois_direct() -> list[dict]:
+            """Query osm_pois table directly by osm_key/osm_value + bbox."""
+            results = []
+            parts = bbox.split(",")
+            if len(parts) != 4:
+                return results
+            try:
+                lon_min, lat_min, lon_max, lat_max = (float(p) for p in parts)
+            except ValueError:
+                return results
+
+            for osm_key, osm_value in osm_types:
+                sql = """
+                    SELECT name, osm_key, osm_value, operator, lat, lon
+                    FROM osm_pois
+                    WHERE osm_key = ? AND osm_value = ?
+                    AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
+                """
+                params: list = [osm_key, osm_value, lat_min, lat_max, lon_min, lon_max]
+
+                if osm_operator:
+                    sql += " AND operator = ?"
+                    params.append(osm_operator)
+
+                sql += " LIMIT ?"
+                params.append(limit)
+
+                try:
+                    async with state.poi_db.execute(sql, params) as cur:
+                        rows = await cur.fetchall()
+                    for row in rows:
+                        results.append({
+                            "name": row[0] or "",
+                            "type": "osm_poi",
+                            "osm_key": row[1] or "",
+                            "osm_value": row[2] or "",
+                            "operator": row[3],
+                            "lat": float(row[4]),
+                            "lon": float(row[5]),
+                            "display_name": f"{row[0]} ({row[2]})" if row[2] else row[0] or "",
+                        })
+                except Exception:
+                    continue
+            return results
+
+        osm_poi_task = _query_osm_pois_direct()
+
+    if osm_poi_task:
+        all_results = await asyncio.gather(*nom_tasks, poi_task, osm_poi_task, return_exceptions=True)
+        osm_poi_results = all_results[-1] if not isinstance(all_results[-1], BaseException) else []
+        poi_results = all_results[-2] if not isinstance(all_results[-2], BaseException) else []
+    else:
+        all_results = await asyncio.gather(*nom_tasks, poi_task, return_exceptions=True)
+        osm_poi_results = []
+        poi_results = all_results[-1] if not isinstance(all_results[-1], BaseException) else []
 
     # Merge all Nominatim results (deduplicate by lat/lon proximity)
     nom_results = []
     seen_coords: set[tuple[float, float]] = set()
-    for result in all_results[:-1]:  # all except last (POI)
+    nom_end_idx = len(all_results) - (2 if osm_poi_task else 1)
+    for result in all_results[:nom_end_idx]:
         if isinstance(result, BaseException):
             continue
         for r in result:
@@ -608,8 +686,6 @@ async def spatial_search(body: SpatialSearchBody):
                 seen_coords.add(key)
                 nom_results.append(r)
 
-    poi_results = all_results[-1] if not isinstance(all_results[-1], BaseException) else []
-
     # Boost GNIS class matches when a class is specified
     gnis_class = parsed.get("gnis_class")
     if gnis_class and poi_results:
@@ -617,7 +693,7 @@ async def spatial_search(body: SpatialSearchBody):
         others = [r for r in poi_results if (r.get("class") or "").lower() != gnis_class.lower()]
         poi_results = class_matches + others
 
-    merged = _deduplicate(nom_results, poi_results)
+    merged = _deduplicate(nom_results, poi_results, osm_poi_results if osm_poi_results else None)
 
     # Post-filter by OSM type when a known category was matched.
     # This removes false positives like "Gas Pipeline Road" from gas station searches.
@@ -630,7 +706,10 @@ async def spatial_search(body: SpatialSearchBody):
             if (osm_cat, osm_typ) in osm_types:
                 filtered.append(r)
             elif r.get("type") == "poi":
-                # POI database results don't have osm_category — keep them
+                # POI database results don't have osm_category -- keep them
+                filtered.append(r)
+            elif r.get("type") == "osm_poi":
+                # OSM POI results already filtered by osm_key/osm_value -- keep them
                 filtered.append(r)
         # If filtering removed everything, fall back to unfiltered
         # (better to show noisy results than nothing)
