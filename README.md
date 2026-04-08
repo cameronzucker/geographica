@@ -17,6 +17,8 @@ isolated LAN or standalone device.
 - **Turn-by-turn navigation** with voice guidance, off-route detection, and dead reckoning
 - **Multi-stop waypoint routing** with map click point selection for car, bicycle, and pedestrian
 - **Natural language spatial search** — "nearest gas station", "hospitals near me", "gas stations along my route", "fuel every 50 miles" with distance-ranked results and numbered map pins
+- **Voice search (STT)** — push-to-hold mic button for hands-free spatial queries via Whisper (base.en, CPU). Say "gas stations near me" and get results. Requires HTTPS.
+- **OSM POI search** — commercial amenities (fuel, food, lodging, pharmacy, grocery) and public land boundaries (BLM, USFS, NPS) extracted from OSM data. Fills the rural coverage gap where GNIS-only data returned no commercial results.
 - **Geocoding** — search for addresses, cities, landmarks
 - **POI search** — GNIS gazetteer with full-text search (data sourced from S3: `prd-tnm.s3.amazonaws.com`)
 - **Live GPS** — hardware GPS streaming over WebSocket with accuracy circle display
@@ -38,6 +40,7 @@ isolated LAN or standalone device.
 | Board | Raspberry Pi 5, 8 GB | Raspberry Pi 5, 16 GB |
 | Storage | 256 GB SSD (single-state coverage) | 1 TB SSD (multi-state coverage) |
 | GPS | — | Waveshare LC29H GPS HAT or similar gpsd-compatible receiver |
+| NPU | — | Hailo 10H (for future NPU-accelerated STT) |
 
 **Tested on:** Pi 5 16 GB, Debian Trixie (bookworm also works), Intel D3-S4610
 896 GB SATA SSD.
@@ -52,8 +55,10 @@ isolated LAN or standalone device.
 | OSM extracts (merged PBF) | ~3.1 GB |
 | Valhalla routing graph | ~4.3 GB |
 | Nominatim geocoding DB | ~30-40 GB |
-| POI index | ~32 MB |
+| POI index | ~80 MB |
 | **Total** | **~150+ GB** |
+
+POI index includes GNIS geographic features + OSM commercial amenities + public land boundaries.
 
 ## Architecture
 
@@ -62,6 +67,7 @@ Browser ──> NGINX (:8093) ──┬──> TileServer GL (:8090)   vector/ra
                             ├──> Valhalla (:8094)         routing engine
                             ├──> Nominatim (:8092)        geocoding (PostgreSQL)
                             ├──> Search (:8096)           spatial search + admin API
+                            ├──> STT (:8098)              speech-to-text (Whisper)
                             └──> GPS (:8095)              WebSocket GPS relay
 
 Config ──> NGINX (:8097) ──────> Search (:8096)           pipeline mgmt (localhost only)
@@ -69,7 +75,7 @@ Config ──> NGINX (:8097) ──────> Search (:8096)           pipeli
 Pipeline container (on-demand) ──> acquire_imagery.py     imagery/elevation downloads
 ```
 
-Six Docker Compose services with per-container memory limits to prevent OOM on
+Seven Docker Compose services with per-container memory limits to prevent OOM on
 constrained hardware. NGINX reverse-proxies all services behind a single port
 with URL rewriting for TileServer GL style/TileJSON endpoints.
 
@@ -220,6 +226,19 @@ Downloads GNIS gazetteer data from USGS via S3
 (`prd-tnm.s3.amazonaws.com/StagedProducts/GeographicNames/DomesticNames/`).
 Free, no API key required. Produces a small SQLite FTS5 database.
 
+### 7b. Extract OSM amenities and public land
+
+```bash
+python scripts/build_osm_pois.py \
+  --pbf /srv/geographica/data/valhalla/western-us.osm.pbf \
+  --output /srv/geographica/data/poi.sqlite \
+  --bbox "-124.8,31.3,-102.0,49.0"
+```
+
+Extracts named amenities (fuel, food, lodging, etc.) and public land boundaries
+(BLM, USFS, NPS) from the OSM PBF into the same SQLite database. Requires
+`osmium` and `shapely` (`pip install shapely`). Takes ~10 minutes.
+
 ### 8. Set up TileServer GL styles and fonts
 
 **Fonts** (PBF glyph ranges for map label rendering):
@@ -316,8 +335,8 @@ status — it won't block the rest of the stack.
 ### 11. Launch the stack
 
 ```bash
-docker compose build    # build the gps and search service images
-docker compose up -d    # start all 6 services
+docker compose build    # build gps, search, and stt service images
+docker compose up -d    # start all 7 services
 ```
 
 **First-run processing times** (Pi 5, 16 GB, Western US 11 states):
@@ -340,9 +359,9 @@ docker compose ps                   # check health status
 
 > **Memory limits:** The stack has per-container memory limits to prevent
 > system-wide OOM on 16 GB hardware: Nominatim 8 GB, Valhalla 4 GB,
-> TileServer 1 GB, Search 256 MB, GPS 128 MB, Frontend 128 MB (~13.5 GB total
-> ceiling). If a container exceeds its limit, Docker restarts just that
-> container — the system stays up.
+> STT 1.5 GB, TileServer 1 GB, Search 256 MB, GPS 128 MB, Frontend 128 MB
+> (~15 GB total ceiling). If a container exceeds its limit, Docker restarts
+> just that container — the system stays up.
 
 ### 12. Verify the deployment
 
@@ -378,7 +397,7 @@ docker compose ps          # health check
 docker compose logs -f     # tail all logs
 docker compose restart X   # restart one service
 
-# Rebuild after code changes to gps or search
+# Rebuild after code changes to gps, search, or stt
 docker compose build && docker compose up -d
 ```
 
@@ -464,6 +483,7 @@ To cover a different region, adjust these values consistently:
 | 8094 | Valhalla | Routing engine |
 | 8095 | GPS | WebSocket GPS relay |
 | 8096 | Search | Unified search API |
+| 8098 | STT | Speech-to-text (Whisper) |
 | — | Pipeline (on-demand) | Imagery/elevation download container |
 
 All services are proxied through NGINX on port 8093. The config panel on port
@@ -519,7 +539,7 @@ heaviest consumer — check its limit first.
 
 ```
 geographica/
-├── docker-compose.yml          # 6-service stack with memory limits
+├── docker-compose.yml          # 7-service stack with memory limits
 ├── .env.example                # Environment variable template
 ├── nginx/
 │   └── nginx.conf              # Reverse proxy with URL rewriting
@@ -528,6 +548,8 @@ geographica/
 │   ├── app.js                  # MapLibre GL JS application (~2800 lines)
 │   ├── navigation.js           # Turn-by-turn navigation engine
 │   ├── nav-ui.js               # Navigation UI bridge
+│   ├── stt.js                  # Voice search module (mic button, audio capture)
+│   ├── stt-worklet.js          # AudioWorklet processor
 │   ├── style.css               # UI styles
 │   └── vendor/                 # Vendored JS/CSS (gitignored, see step 9)
 ├── tileserver/
@@ -544,6 +566,11 @@ geographica/
 │   │   ├── Dockerfile
 │   │   ├── main.py
 │   │   └── requirements.txt
+│   ├── stt/                    # FastAPI speech-to-text service (Whisper)
+│   │   ├── Dockerfile
+│   │   ├── main.py
+│   │   ├── backends/           # CPU (faster-whisper) + NPU (HailoRT) backends
+│   │   └── requirements.txt
 │   └── search/                 # FastAPI spatial search + admin service
 │       ├── Dockerfile
 │       ├── main.py             # Nominatim/POI query, admin API, pipeline orchestration
@@ -553,6 +580,7 @@ geographica/
 │   ├── requirements.txt        # Python deps for data pipeline
 │   ├── download_elevation.py   # Terrain-RGB tile downloader
 │   ├── build_poi_index.py      # GNIS POI indexer (FTS5)
+│   ├── build_osm_pois.py       # OSM amenity + public land extractor
 │   ├── acquire_imagery.py      # USGS imagery downloader
 │   ├── provision_tailscale_tls.sh  # Tailscale TLS cert provisioning
 │   └── generate_tls.sh         # Self-signed TLS cert generation

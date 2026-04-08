@@ -15,28 +15,26 @@
 
 ## High Priority
 
-### Phase 2b: Whisper STT on Hailo 10H NPU
-- **What:** Offline speech-to-text using Whisper on the Hailo 10H NPU. User presses a mic button, audio is captured via Web Audio API, sent to a local Whisper endpoint, transcribed text is fed into `POST /search/spatial`.
-- **Why:** The design doc's "what excites the builder most" feature. The spatial search pipeline (Phase 2a) is built and ready to receive transcribed text.
-- **Pros:** Hands-free spatial queries while driving/navigating. Full offline capability.
-- **Cons:** Hailo SDK integration complexity. Whisper model selection (tiny vs base vs small) affects accuracy vs latency tradeoff. Audio capture on mobile browsers requires HTTPS (already solved).
-- **Context:** Design doc Phase 2 section. Hailo 10H NPU is physically installed on the Pi but not yet used. Phase 2a's `POST /search/spatial` is the backend interface — Phase 2b only adds audio→text.
-- **Depends on:** Phase 2a (done), Hailo SDK setup.
+### Phase 2b: Whisper STT — CPU backend
+- **Completed 2026-04-08.** CPU backend (faster-whisper base.en INT8) implemented. STT Docker service, push-to-hold mic button, AudioWorklet capture, NGINX proxy. See `docs/superpowers/specs/2026-04-08-whisper-stt-design.md`.
+- **Deploy:** `docker compose build stt && docker compose up -d`
 
 ### Expanded POI data sources
-- **What:** Supplement Nominatim + GNIS with additional open POI datasets. Current spatial search returns sparse results for commercial categories (gas, food, hotels) in rural areas because Nominatim only has what's in OSM, and GNIS only has geographic features.
-- **Why:** "gas stations along my route" between Phoenix and LA has a 240-mile gap (mile 22 to mile 264) with no results. There are gas stations there — they're just not in our search index.
-- **Candidates:** (1) Extract named POIs from our existing OSM PBF using `osmium tags-filter` for `amenity=fuel`, `amenity=restaurant`, etc. (2) Overture Maps Places dataset (Meta/Microsoft, open, strong business coverage). (3) Who's On First gazetteer.
-- **Pros:** Dramatically improves spatial search quality, especially for corridor queries.
-- **Cons:** More data = larger POI database, longer indexing. Deduplication against Nominatim.
-- **Context:** Identified during spatial search testing. The unified search service already handles Nominatim + POI merge with haversine dedup.
-- **Depends on:** Nothing — can be implemented immediately. Most impactful improvement for spatial search quality.
+- **Completed 2026-04-08.** OSM amenity + public land extraction from existing PBF. Separate `osm_pois` table with brand-only POI support, BLM/USFS/NPS search, compound index for corridor queries. See `docs/superpowers/specs/2026-04-08-expanded-poi-sources-design.md`.
+- **Deploy:** `python3 scripts/build_osm_pois.py --pbf /srv/geographica/data/valhalla/western-us.osm.pbf --output /srv/geographica/data/poi.sqlite --bbox "-124.8,31.3,-102.0,49.0" && docker compose restart search`
 
 ### M2M API end-to-end test
-- **What:** Test the `--mode m2m` imagery pipeline once ERS download access approval comes through. Credentials stored at `/srv/geographica/data/.credentials.json`.
+- **What:** Test the `--mode m2m` imagery pipeline with live USGS API. Fix code gaps (SIGTERM handling, progress reporting) discovered during adversarial review.
 - **Why:** M2M API provides access to higher-resolution NAIP imagery than the direct tile scraping mode.
-- **Status:** ERS approval submitted, pending.
-- **Depends on:** USGS ERS approval.
+- **Status:** ERS approval received. Implementation plan ready at `docs/plans/2026-04-08-m2m-api-test-plan.md`. Credentials via env vars only.
+- **Depends on:** Interactive session with live credentials.
+
+### Whisper NPU backend — revisit at hailo-10-all 5.3.0
+- **What:** Swap Whisper STT from CPU (faster-whisper) to NPU (HailoRT) for faster inference on the Hailo 10H.
+- **Why:** NPU should be significantly faster than CPU for Whisper inference. CPU backend works but takes ~3s per utterance.
+- **Status:** Investigated 2026-04-08. Whisper-Base.hef (131MB, compiled for 5.3.0) loads on 5.1.1 firmware (metadata readable) but `VDevice.configure()` fails with `HAILO_NOT_IMPLEMENTED`. The 5.3.0 model uses operations unavailable in 5.1.1 runtime. See `dev/npu-investigation-results.md`.
+- **Action:** When `hailo-10-all` reaches 5.3.0 for Pi 5, re-run `configure()` test. The `npu.py` skeleton and architecture docs are ready. Single-pass decoder design (64 tokens, vocab split across 4 outputs) is documented.
+- **Depends on:** Hailo Pi 5 package update to 5.3.0+.
 
 ---
 

@@ -805,9 +805,9 @@ docker compose build pipeline
 **Expected output:** Successful build ending with image tagged `geographica-pipeline`.
 
 ```bash
-docker compose run --rm pipeline gdalinfo --version
-docker compose run --rm pipeline gdalbuildvrt --version
-docker compose run --rm pipeline gdal_translate --version
+docker compose run --rm --entrypoint "" pipeline gdalinfo --version
+docker compose run --rm --entrypoint "" pipeline gdalbuildvrt --version
+docker compose run --rm --entrypoint "" pipeline gdal_translate --version
 ```
 
 **Expected output (each):** Version string like `GDAL 3.x.x, released ...`
@@ -1205,7 +1205,7 @@ ls -la /srv/geographica/data/m2m_staging/*.tif
 **Expected output:** One or more `.tif` files, each 200MB-1GB.
 
 ```bash
-docker compose run --rm pipeline gdalinfo /data/m2m_staging/*.tif | head -30
+docker compose run --rm --entrypoint "" pipeline gdalinfo /data/m2m_staging/*.tif | head -30
 ```
 
 **Expected output:** GeoTIFF metadata including CRS (should be EPSG:26912 or similar UTM zone for Arizona), band count (4 for NAIP RGBI), pixel size.
