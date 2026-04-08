@@ -2254,6 +2254,8 @@
         adminTimer = null;
       });
     });
+
+    initImageryPanel();
   }
 
   function fetchAdminStatus() {
@@ -2267,6 +2269,9 @@
         var el = document.getElementById('admin-services');
         if (el) el.textContent = 'Failed to load status';
       });
+
+    // Also poll pipeline status for imagery panel
+    fetchPipelineStatus();
   }
 
   function renderAdminServices(services) {
@@ -2360,6 +2365,318 @@
 
       container.appendChild(row);
     });
+  }
+
+  // =====================================================================
+  //  9b. IMAGERY ACQUISITION PANEL
+  // =====================================================================
+
+  function getAdminToken() {
+    var token = sessionStorage.getItem('admin-token');
+    if (!token) {
+      token = prompt('Enter admin password:');
+      if (token) sessionStorage.setItem('admin-token', token);
+    }
+    return token;
+  }
+
+  function adminFetch(url, options) {
+    var token = getAdminToken();
+    if (!token) return Promise.reject('No admin token');
+    options = options || {};
+    options.headers = options.headers || {};
+    options.headers['Authorization'] = 'Bearer ' + token;
+    return fetch(url, options).then(function (res) {
+      if (res.status === 401 || res.status === 403) {
+        sessionStorage.removeItem('admin-token');
+        alert('Invalid admin password. Please try again.');
+        return Promise.reject('Auth failed');
+      }
+      return res;
+    });
+  }
+
+  /**
+   * Calculate total tile count for a bbox across zoom range 0..maxZoom
+   * using the same 2^z grid math as the backend pipeline.
+   */
+  function estimateTileCount(bbox, zoomRange) {
+    var parts = bbox.split(',').map(Number);
+    if (parts.length !== 4 || parts.some(isNaN)) return 0;
+    var west = parts[0], south = parts[1], east = parts[2], north = parts[3];
+
+    var zoomParts = zoomRange.split('-').map(Number);
+    var minZ = zoomParts[0] || 0;
+    var maxZ = zoomParts[1] || zoomParts[0] || 14;
+
+    var total = 0;
+    for (var z = minZ; z <= maxZ; z++) {
+      var n = Math.pow(2, z);
+      var xMin = Math.floor(((west + 180) / 360) * n);
+      var xMax = Math.floor(((east + 180) / 360) * n);
+      var yMin = Math.floor((1 - Math.log(Math.tan(north * Math.PI / 180) + 1 / Math.cos(north * Math.PI / 180)) / Math.PI) / 2 * n);
+      var yMax = Math.floor((1 - Math.log(Math.tan(south * Math.PI / 180) + 1 / Math.cos(south * Math.PI / 180)) / Math.PI) / 2 * n);
+      total += (xMax - xMin + 1) * (yMax - yMin + 1);
+    }
+    return total;
+  }
+
+  function formatTileEstimate(count) {
+    var sizeBytes = count * 15 * 1024; // 15 KB average
+    var sizeGB = sizeBytes / (1024 * 1024 * 1024);
+    var rate = 680; // tiles/sec typical
+    var seconds = count / rate;
+    var minutes = Math.round(seconds / 60);
+
+    var countStr = count >= 1000000
+      ? (count / 1000000).toFixed(2) + 'M'
+      : count >= 1000
+        ? (count / 1000).toFixed(0) + 'K'
+        : count.toString();
+
+    var timeStr = minutes >= 60
+      ? Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'min'
+      : minutes + ' min';
+
+    return '~' + countStr + ' tiles, estimated ' + sizeGB.toFixed(1) + ' GB, ~' + timeStr + ' at ' + rate + ' tiles/sec';
+  }
+
+  function updatePipelineEstimate() {
+    var el = document.getElementById('pipeline-estimate');
+    if (!el) return;
+    var bbox = document.getElementById('pipeline-bbox').value.trim();
+    var zoom = document.getElementById('pipeline-zoom').value;
+    var count = estimateTileCount(bbox, zoom);
+    if (count > 0) {
+      el.textContent = formatTileEstimate(count);
+    } else {
+      el.textContent = 'Enter a valid bounding box (west,south,east,north)';
+    }
+  }
+
+  function initImageryPanel() {
+    var sourceSelect = document.getElementById('pipeline-source');
+    var m2mSection = document.getElementById('m2m-credentials');
+    var bboxInput = document.getElementById('pipeline-bbox');
+    var zoomSelect = document.getElementById('pipeline-zoom');
+    var useViewBtn = document.getElementById('pipeline-use-view');
+    var startBtn = document.getElementById('pipeline-start-btn');
+    var cancelBtn = document.getElementById('pipeline-cancel-btn');
+    var m2mSaveBtn = document.getElementById('m2m-save-btn');
+    var m2mDeleteBtn = document.getElementById('m2m-delete-btn');
+
+    if (!sourceSelect) return; // guard if elements not in DOM
+
+    // --- Source toggle: show/hide M2M credentials ---
+    sourceSelect.addEventListener('change', function () {
+      if (sourceSelect.value === 'm2m') {
+        m2mSection.classList.remove('hidden');
+        checkM2MStatus();
+      } else {
+        m2mSection.classList.add('hidden');
+      }
+    });
+
+    // --- Use map view button ---
+    useViewBtn.addEventListener('click', function () {
+      if (!map) return;
+      var bounds = map.getBounds();
+      var w = bounds.getWest().toFixed(1);
+      var s = bounds.getSouth().toFixed(1);
+      var e = bounds.getEast().toFixed(1);
+      var n = bounds.getNorth().toFixed(1);
+      bboxInput.value = w + ',' + s + ',' + e + ',' + n;
+      updatePipelineEstimate();
+    });
+
+    // --- Estimate recalculation ---
+    bboxInput.addEventListener('input', updatePipelineEstimate);
+    zoomSelect.addEventListener('change', updatePipelineEstimate);
+    updatePipelineEstimate(); // initial
+
+    // --- Start download ---
+    startBtn.addEventListener('click', function () {
+      var bbox = bboxInput.value.trim();
+      var zoom = zoomSelect.value;
+      var count = estimateTileCount(bbox, zoom);
+      var sizeGB = (count * 15 * 1024 / (1024 * 1024 * 1024)).toFixed(1);
+      var countStr = count >= 1000000 ? (count / 1000000).toFixed(2) + 'M' : count.toLocaleString();
+
+      var updateMode = document.getElementById('pipeline-update').checked;
+      var preserveNote = updateMode ? 'Existing imagery will be preserved.' : 'WARNING: This will replace existing imagery.';
+
+      if (!confirm('This will download ~' + countStr + ' tiles (~' + sizeGB + ' GB). ' + preserveNote + ' Continue?')) {
+        return;
+      }
+
+      var body = {
+        type: 'imagery',
+        mode: sourceSelect.value,
+        bbox: bbox,
+        zoom: zoom,
+        concurrency: parseInt(document.getElementById('pipeline-concurrency').value, 10),
+        update: updateMode
+      };
+
+      startBtn.disabled = true;
+      adminFetch('/admin/pipeline/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(function (res) {
+        return res.json();
+      }).then(function (data) {
+        startBtn.disabled = false;
+        if (data.error) {
+          alert('Failed to start pipeline: ' + data.error);
+        }
+        fetchPipelineStatus();
+      }).catch(function (err) {
+        startBtn.disabled = false;
+        if (err !== 'No admin token' && err !== 'Auth failed') {
+          alert('Failed to start pipeline: ' + err);
+        }
+      });
+    });
+
+    // --- Cancel download ---
+    cancelBtn.addEventListener('click', function () {
+      if (!confirm('Cancel the running download?')) return;
+      adminFetch('/admin/pipeline/cancel', { method: 'POST' })
+        .then(function () { fetchPipelineStatus(); })
+        .catch(function () {});
+    });
+
+    // --- M2M credential management ---
+    m2mSaveBtn.addEventListener('click', function () {
+      var username = document.getElementById('m2m-username').value.trim();
+      var token = document.getElementById('m2m-token').value.trim();
+      if (!username || !token) {
+        alert('Please enter both username and API token.');
+        return;
+      }
+      adminFetch('/admin/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ m2m_username: username, m2m_token: token })
+      }).then(function (res) { return res.json(); })
+        .then(function () {
+          document.getElementById('m2m-status').textContent = 'Credentials saved.';
+          checkM2MStatus();
+        })
+        .catch(function () {});
+    });
+
+    m2mDeleteBtn.addEventListener('click', function () {
+      if (!confirm('Delete stored M2M credentials?')) return;
+      adminFetch('/admin/credentials', { method: 'DELETE' })
+        .then(function () {
+          document.getElementById('m2m-status').textContent = 'Credentials deleted.';
+          m2mDeleteBtn.classList.add('hidden');
+        })
+        .catch(function () {});
+    });
+  }
+
+  function checkM2MStatus() {
+    fetch('/admin/credentials/status')
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        var statusEl = document.getElementById('m2m-status');
+        var deleteBtn = document.getElementById('m2m-delete-btn');
+        if (data.m2m_configured) {
+          statusEl.textContent = 'M2M credentials are configured.';
+          deleteBtn.classList.remove('hidden');
+        } else {
+          statusEl.textContent = 'No M2M credentials stored.';
+          deleteBtn.classList.add('hidden');
+        }
+      })
+      .catch(function () {});
+  }
+
+  function fetchPipelineStatus() {
+    fetch('/admin/pipeline/status')
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        renderPipelineStatus(data);
+      })
+      .catch(function () {});
+  }
+
+  function renderPipelineStatus(data) {
+    var progressDiv = document.getElementById('pipeline-progress');
+    var progressFill = document.getElementById('pipeline-progress-fill');
+    var progressDetail = document.getElementById('pipeline-progress-detail');
+    var startBtn = document.getElementById('pipeline-start-btn');
+    var cancelBtn = document.getElementById('pipeline-cancel-btn');
+
+    if (!progressDiv) return;
+
+    var status = data.status || 'idle';
+    var isRunning = status === 'running';
+
+    // Show/hide controls based on state
+    if (isRunning) {
+      cancelBtn.classList.remove('hidden');
+      startBtn.disabled = true;
+      startBtn.textContent = 'Running...';
+    } else {
+      cancelBtn.classList.add('hidden');
+      startBtn.disabled = false;
+      if (status === 'interrupted') {
+        startBtn.textContent = 'Resume Download';
+      } else {
+        startBtn.textContent = 'Start Download';
+      }
+    }
+
+    // Progress bar
+    if (isRunning || status === 'completed' || status === 'interrupted') {
+      progressDiv.classList.remove('hidden');
+      var total = data.tiles_total || data.estimated_tiles || 1;
+      var done = data.tiles_done || 0;
+      var pct = Math.min(100, (done / total) * 100).toFixed(1);
+      progressFill.style.width = pct + '%';
+
+      var detail = done.toLocaleString() + ' / ' + total.toLocaleString() + ' tiles (' + pct + '%)';
+      if (data.rate_per_sec && isRunning) {
+        detail += ' — ' + data.rate_per_sec.toFixed(0) + ' tiles/sec';
+        var remaining = total - done;
+        var etaSec = remaining / data.rate_per_sec;
+        var etaMin = Math.round(etaSec / 60);
+        if (etaMin >= 60) {
+          detail += ' — ETA ' + Math.floor(etaMin / 60) + 'h ' + (etaMin % 60) + 'm';
+        } else {
+          detail += ' — ETA ' + etaMin + ' min';
+        }
+      }
+      if (data.disk_free_gb !== undefined && data.disk_free_gb !== null) {
+        detail += ' — ' + data.disk_free_gb.toFixed(0) + ' GB free';
+      }
+      if (status === 'completed') {
+        detail = 'Completed: ' + done.toLocaleString() + ' tiles';
+        progressFill.style.width = '100%';
+      }
+      if (status === 'interrupted') {
+        detail = 'Interrupted: ' + done.toLocaleString() + ' / ' + total.toLocaleString() + ' tiles — use Resume to continue';
+      }
+      if (status === 'failed' && data.error) {
+        detail = 'Failed: ' + data.error;
+      }
+      if (status === 'cancelled') {
+        detail = 'Cancelled at ' + done.toLocaleString() + ' tiles';
+      }
+      progressDetail.textContent = detail;
+    } else if (status === 'failed' || status === 'cancelled') {
+      progressDiv.classList.remove('hidden');
+      progressFill.style.width = '0%';
+      progressDetail.textContent = status === 'failed'
+        ? 'Failed: ' + (data.error || 'unknown error')
+        : 'Cancelled at ' + (data.tiles_done || 0).toLocaleString() + ' tiles';
+    } else {
+      progressDiv.classList.add('hidden');
+    }
   }
 
   // =====================================================================

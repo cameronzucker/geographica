@@ -710,6 +710,88 @@ html, body {
   transition: width 1s ease;
 }
 
+.admin-field {
+  margin-bottom: 8px;
+}
+
+.admin-field label {
+  display: block;
+  font-size: 11px;
+  color: #7a8299;
+  margin-bottom: 3px;
+}
+
+.admin-field input,
+.admin-field select {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  color: var(--input-text);
+  font-size: 12px;
+}
+
+.admin-input-row {
+  display: flex;
+  gap: 4px;
+}
+
+.admin-input-row input { flex: 1; }
+
+.admin-btn-row {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.secondary-btn.small {
+  font-size: 10px;
+  padding: 4px 8px;
+}
+
+.secondary-btn.danger:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(243, 139, 168, 0.15);
+}
+
+#pipeline-start-btn {
+  flex: 1;
+  padding: 8px;
+  background: var(--success);
+  color: #1e1e2e;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#pipeline-start-btn:hover {
+  background: #8cd898;
+}
+
+#pipeline-start-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#pipeline-cancel-btn {
+  flex-shrink: 0;
+}
+
+#m2m-status {
+  font-size: 11px;
+  margin-top: 4px;
+  color: #7a8299;
+}
+
+h4 {
+  font-size: 13px;
+  color: var(--sidebar-heading);
+  margin: 12px 0 6px;
+}
+
 .admin-refresh-note {
   text-align: center;
   font-size: 10px;

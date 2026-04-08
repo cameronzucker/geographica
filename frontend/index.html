@@ -177,6 +177,90 @@
       <div id="admin-services"></div>
       <h3>Data Pipeline</h3>
       <div id="admin-data-tasks"></div>
+
+      <h3>Imagery Acquisition</h3>
+      <div id="admin-imagery">
+        <!-- Source selector -->
+        <div class="admin-field">
+          <label>Source</label>
+          <select id="pipeline-source">
+            <option value="direct">USGS Direct (no auth needed)</option>
+            <option value="m2m">USGS M2M API (higher quality, requires credentials)</option>
+          </select>
+        </div>
+
+        <!-- Coverage -->
+        <div class="admin-field">
+          <label>Coverage (bbox)</label>
+          <div class="admin-input-row">
+            <input type="text" id="pipeline-bbox" value="-124.8,31.3,-102.0,49.0" placeholder="west,south,east,north">
+            <button id="pipeline-use-view" class="secondary-btn small">Use map view</button>
+          </div>
+        </div>
+
+        <!-- Zoom -->
+        <div class="admin-field">
+          <label>Zoom range</label>
+          <select id="pipeline-zoom">
+            <option value="0-8">Basic coverage (0-8)</option>
+            <option value="0-10">Quick preview (0-10)</option>
+            <option value="0-12">Standard (0-12)</option>
+            <option value="0-14" selected>Full detail (0-14)</option>
+          </select>
+        </div>
+
+        <!-- Concurrency -->
+        <div class="admin-field">
+          <label>Download speed</label>
+          <select id="pipeline-concurrency">
+            <option value="10">Conservative (10 connections)</option>
+            <option value="20" selected>Normal (20 connections)</option>
+            <option value="50">Fast (50 connections)</option>
+            <option value="80">Maximum (80 connections)</option>
+          </select>
+        </div>
+
+        <!-- Update toggle -->
+        <label class="checkbox-label">
+          <input type="checkbox" id="pipeline-update" checked> Resume/extend existing data
+        </label>
+
+        <!-- Estimate display -->
+        <div id="pipeline-estimate" class="admin-data-detail"></div>
+
+        <!-- Action buttons -->
+        <div class="admin-btn-row">
+          <button id="pipeline-start-btn">Start Download</button>
+          <button id="pipeline-cancel-btn" class="secondary-btn hidden">Cancel</button>
+        </div>
+
+        <!-- Progress -->
+        <div id="pipeline-progress" class="hidden">
+          <div class="admin-progress-bar">
+            <div id="pipeline-progress-fill" class="admin-progress-fill"></div>
+          </div>
+          <div id="pipeline-progress-detail" class="admin-data-detail"></div>
+        </div>
+
+        <!-- M2M Credentials (shown when m2m source selected) -->
+        <div id="m2m-credentials" class="hidden">
+          <h4>M2M API Credentials</h4>
+          <div class="admin-field">
+            <label>Username</label>
+            <input type="text" id="m2m-username" placeholder="USGS ERS username">
+          </div>
+          <div class="admin-field">
+            <label>API Token</label>
+            <input type="password" id="m2m-token" placeholder="M2M application token">
+          </div>
+          <div class="admin-btn-row">
+            <button id="m2m-save-btn" class="secondary-btn">Save Credentials</button>
+            <button id="m2m-delete-btn" class="secondary-btn danger hidden">Delete</button>
+          </div>
+          <div id="m2m-status"></div>
+        </div>
+      </div>
+
       <p class="admin-refresh-note">Auto-refreshes every 10s</p>
     </div>
   </div>
