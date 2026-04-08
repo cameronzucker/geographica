@@ -515,10 +515,13 @@
         sidebar.classList.add('open');
         overlay.classList.add('open');
         if (searchContainer) searchContainer.classList.add('sidebar-open');
+        // Offset map center so camera operations account for sidebar
+        map.setPadding({ left: 320, top: 0, right: 0, bottom: 0 });
       } else {
         sidebar.classList.remove('open');
         overlay.classList.remove('open');
         if (searchContainer) searchContainer.classList.remove('sidebar-open');
+        map.setPadding({ left: 0, top: 0, right: 0, bottom: 0 });
       }
     }
 
