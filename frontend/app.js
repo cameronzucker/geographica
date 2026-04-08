@@ -47,6 +47,8 @@
   var gpsLastPos = null;       // last known [lng, lat] for center-on-GPS
   var gpsAccuracyMarker = null; // accuracy circle DOM element inside marker
 
+  var useImperial = true;      // true = imperial (ft/mi), false = metric (m/km)
+
   // =====================================================================
   //  1. MAP INITIALIZATION
   // =====================================================================
@@ -61,7 +63,9 @@
     });
 
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
-    map.addControl(new maplibregl.ScaleControl({ unit: 'imperial' }), 'bottom-right');
+    var scaleUnit = useImperial ? 'imperial' : 'metric';
+    map._scaleControl = new maplibregl.ScaleControl({ unit: scaleUnit });
+    map.addControl(map._scaleControl, 'bottom-right');
 
     map.on('load', function () {
       // Add empty sources for optional overlay layers (imagery, hillshade, route, imports).
@@ -376,6 +380,25 @@
         applyTerrain();
       });
     }
+
+    // Unit system toggle (imperial / metric)
+    var unitRadios = document.querySelectorAll('input[name="units"]');
+    unitRadios.forEach(function (radio) {
+      radio.addEventListener('change', function () {
+        useImperial = (this.value === 'imperial');
+
+        // Update the MapLibre scale bar
+        if (map._scaleControl) {
+          map.removeControl(map._scaleControl);
+        }
+        var scaleUnit = useImperial ? 'imperial' : 'metric';
+        map._scaleControl = new maplibregl.ScaleControl({ unit: scaleUnit });
+        map.addControl(map._scaleControl, 'bottom-right');
+
+        // Refresh status bar readouts immediately
+        updateCameraStatus();
+      });
+    });
   }
 
   /** Set layer visibility safely */
@@ -682,7 +705,7 @@
       ],
       costing: costing,
       costing_options: costingOptions,
-      directions_options: { units: 'miles' }
+      directions_options: { units: useImperial ? 'miles' : 'kilometers' }
     };
 
     var btn = document.getElementById('get-route-btn');
@@ -755,11 +778,12 @@
 
     // Show route summary
     var summary = trip.summary || {};
-    var distMiles = (summary.length || 0).toFixed(1);
-    var timeSec   = summary.time || 0;
-    var hours     = Math.floor(timeSec / 3600);
-    var minutes   = Math.round((timeSec % 3600) / 60);
-    var timeStr   = hours > 0 ? hours + 'h ' + minutes + 'min' : minutes + ' min';
+    var dist    = (summary.length || 0);
+    var distStr = useImperial ? dist.toFixed(1) + ' mi' : dist.toFixed(1) + ' km';
+    var timeSec = summary.time || 0;
+    var hours   = Math.floor(timeSec / 3600);
+    var minutes = Math.round((timeSec % 3600) / 60);
+    var timeStr = hours > 0 ? hours + 'h ' + minutes + 'min' : minutes + ' min';
 
     var summaryEl = document.getElementById('route-summary');
     // Build summary using safe DOM methods
@@ -767,7 +791,7 @@
       summaryEl.removeChild(summaryEl.firstChild);
     }
     var strong = document.createElement('strong');
-    strong.textContent = distMiles + ' mi';
+    strong.textContent = distStr;
     summaryEl.appendChild(strong);
     summaryEl.appendChild(document.createTextNode(' \u00B7 ' + timeStr));
     summaryEl.classList.remove('hidden');
@@ -781,7 +805,8 @@
       var li = document.createElement('li');
       var instruction = m.instruction || m.verbal_pre_transition_instruction || '';
       if (m.length) {
-        instruction += ' (' + m.length.toFixed(1) + ' mi)';
+        var unit = useImperial ? ' mi' : ' km';
+        instruction += ' (' + m.length.toFixed(1) + unit + ')';
       }
       li.textContent = instruction;
       dirList.appendChild(li);
@@ -956,7 +981,7 @@
     if (stale) {
       markerEl.title = 'GPS signal lost';
     } else {
-      var accText = accuracy ? ' ±' + accuracy.toFixed(0) + 'm' : '';
+      var accText = accuracy ? ' ±' + formatDistance(accuracy) : '';
       markerEl.title = 'GPS: ' + lat.toFixed(5) + ', ' + lng.toFixed(5) + accText;
     }
 
@@ -1273,7 +1298,7 @@
     var latStr = formatCoord(lat, 'NS');
     var lonStr = formatCoord(lng, 'EW');
     var altStr = alt ? formatAltitude(alt) : '—';
-    var accStr = accuracy ? '±' + accuracy.toFixed(0) + 'm' : '';
+    var accStr = accuracy ? '±' + formatDistance(accuracy) : '';
     var fixStr = fix === 2 ? '2D' : '3D';
 
     el.textContent = latStr + '  ' + lonStr + '  ' + altStr + '  ' + accStr + '  ' + fixStr;
@@ -1286,16 +1311,66 @@
     return abs.toFixed(5) + '° ' + dir;
   }
 
-  /** Format altitude with appropriate units */
+  // ── Unit conversion helpers ──────────────────────────────────────────
+
+  var M_PER_FT = 0.3048;
+  var M_PER_MI = 1609.344;
+  var KPH_PER_MPS = 3.6;
+  var MPH_PER_MPS = 2.23694;
+
+  /** Format an altitude/elevation value in meters with appropriate units */
   function formatAltitude(meters) {
-    if (meters >= 1000000) {
-      return (meters / 1000).toFixed(0) + ' km';
-    } else if (meters >= 10000) {
-      return (meters / 1000).toFixed(1) + ' km';
-    } else if (meters >= 1000) {
-      return (meters / 1000).toFixed(2) + ' km';
+    if (useImperial) {
+      var ft = meters / M_PER_FT;
+      if (ft >= 5280 * 100) {        // >= 100 mi
+        return (ft / 5280).toFixed(0) + ' mi';
+      } else if (ft >= 5280) {       // >= 1 mi
+        return (ft / 5280).toFixed(1) + ' mi';
+      } else {
+        return ft.toFixed(0) + ' ft';
+      }
+    } else {
+      if (meters >= 1000000) {
+        return (meters / 1000).toFixed(0) + ' km';
+      } else if (meters >= 10000) {
+        return (meters / 1000).toFixed(1) + ' km';
+      } else if (meters >= 1000) {
+        return (meters / 1000).toFixed(2) + ' km';
+      } else {
+        return meters.toFixed(0) + ' m';
+      }
+    }
+  }
+
+  /** Format a short distance (accuracy, small spans) in meters */
+  function formatDistance(meters) {
+    if (useImperial) {
+      var ft = meters / M_PER_FT;
+      return ft.toFixed(0) + ' ft';
     } else {
       return meters.toFixed(0) + ' m';
+    }
+  }
+
+  /** Format a route-scale distance in meters */
+  function formatRouteDistance(meters) {
+    if (useImperial) {
+      var mi = meters / M_PER_MI;
+      return mi.toFixed(1) + ' mi';
+    } else {
+      if (meters >= 1000) {
+        return (meters / 1000).toFixed(1) + ' km';
+      }
+      return meters.toFixed(0) + ' m';
+    }
+  }
+
+  /** Format speed from m/s */
+  function formatSpeed(mps) {
+    if (useImperial) {
+      return (mps * MPH_PER_MPS).toFixed(0) + ' mph';
+    } else {
+      return (mps * KPH_PER_MPS).toFixed(0) + ' km/h';
     }
   }
 
