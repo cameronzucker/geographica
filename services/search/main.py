@@ -222,6 +222,8 @@ async def _query_nominatim(
                     "name": item.get("name") or item.get("display_name", ""),
                     "type": "address",
                     "class": item.get("category", item.get("class", "")),
+                    "osm_category": item.get("category", ""),
+                    "osm_type": item.get("type", ""),
                     "lat": float(item["lat"]),
                     "lon": float(item["lon"]),
                     "display_name": item.get("display_name", ""),

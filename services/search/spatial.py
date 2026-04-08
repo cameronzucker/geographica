@@ -29,34 +29,68 @@ FILLER_WORDS = {
 # ---------------------------------------------------------------------------
 SYNONYM_TABLE = [
     # Road trip / commercial (Nominatim primary)
-    # nominatim_query: the term(s) that Nominatim's special phrase system recognizes
-    # fallback_text: user-facing display label
-    {"synonyms": {"gas station", "fuel", "gas"}, "gnis_class": None, "fallback_text": "gas station", "nominatim_query": ["fuel station", "gas"]},
-    {"synonyms": {"restaurant", "food", "eat", "dining"}, "gnis_class": None, "fallback_text": "restaurant", "nominatim_query": ["restaurant"]},
-    {"synonyms": {"hotel", "motel", "lodging"}, "gnis_class": None, "fallback_text": "hotel", "nominatim_query": ["hotel", "motel"]},
-    {"synonyms": {"hospital", "er", "emergency room"}, "gnis_class": "Hospital", "fallback_text": "hospital", "nominatim_query": ["hospital"]},
-    {"synonyms": {"campground", "camping", "campsite"}, "gnis_class": None, "fallback_text": "campground", "nominatim_query": ["camp site", "campground"]},
-    {"synonyms": {"rest area", "rest stop"}, "gnis_class": None, "fallback_text": "rest area", "nominatim_query": ["rest area"]},
-    {"synonyms": {"pharmacy", "drugstore"}, "gnis_class": None, "fallback_text": "pharmacy", "nominatim_query": ["pharmacy"]},
-    {"synonyms": {"grocery", "supermarket"}, "gnis_class": None, "fallback_text": "grocery", "nominatim_query": ["supermarket", "grocery"]},
-    # Geographic / emergency ops (GNIS supplementary)
-    {"synonyms": {"water", "drinking water"}, "gnis_class": "Spring", "fallback_text": "water", "nominatim_query": ["drinking water"]},
-    {"synonyms": {"trailhead", "trail"}, "gnis_class": "Trail", "fallback_text": "trailhead", "nominatim_query": ["trailhead"]},
-    {"synonyms": {"park"}, "gnis_class": "Park", "fallback_text": "park", "nominatim_query": ["park"]},
-    {"synonyms": {"school"}, "gnis_class": "School", "fallback_text": "school", "nominatim_query": ["school"]},
-    {"synonyms": {"church"}, "gnis_class": "Church", "fallback_text": "church", "nominatim_query": ["church"]},
-    {"synonyms": {"airport"}, "gnis_class": "Airport", "fallback_text": "airport", "nominatim_query": ["airport"]},
-    {"synonyms": {"fire station"}, "gnis_class": None, "fallback_text": "fire station", "nominatim_query": ["fire station"]},
-    {"synonyms": {"police", "police station"}, "gnis_class": None, "fallback_text": "police station", "nominatim_query": ["police"]},
-    {"synonyms": {"summit", "peak", "hilltop", "mountain"}, "gnis_class": "Summit", "fallback_text": "summit", "nominatim_query": ["peak", "summit"]},
-    {"synonyms": {"tower", "radio tower", "repeater", "comm site"}, "gnis_class": "Tower", "fallback_text": "tower", "nominatim_query": ["tower"]},
-    {"synonyms": {"shelter", "evacuation center", "evac"}, "gnis_class": None, "fallback_text": "shelter", "nominatim_query": ["shelter"]},
-    {"synonyms": {"helipad", "landing zone", "lz"}, "gnis_class": None, "fallback_text": "helipad", "nominatim_query": ["helipad"]},
-    {"synonyms": {"dam"}, "gnis_class": "Dam", "fallback_text": "dam", "nominatim_query": ["dam"]},
-    {"synonyms": {"mine", "quarry"}, "gnis_class": "Mine", "fallback_text": "mine", "nominatim_query": ["mine"]},
-    {"synonyms": {"spring", "hot spring"}, "gnis_class": "Spring", "fallback_text": "spring", "nominatim_query": ["spring"]},
-    {"synonyms": {"bridge"}, "gnis_class": "Bridge", "fallback_text": "bridge", "nominatim_query": ["bridge"]},
-    {"synonyms": {"ranger station", "forest service"}, "gnis_class": "Locale", "fallback_text": "ranger station", "nominatim_query": ["ranger station"]},
+    # nominatim_query: search terms that Nominatim recognizes
+    # osm_types: accepted Nominatim category/type pairs for post-filtering false positives
+    #   None means no filtering (accept all results)
+    {"synonyms": {"gas station", "fuel", "gas"}, "gnis_class": None, "fallback_text": "gas station",
+     "nominatim_query": ["fuel station", "gas"],
+     "osm_types": {("amenity", "fuel"), ("shop", "gas"), ("shop", "convenience")}},
+    {"synonyms": {"restaurant", "food", "eat", "dining"}, "gnis_class": None, "fallback_text": "restaurant",
+     "nominatim_query": ["restaurant"],
+     "osm_types": {("amenity", "restaurant"), ("amenity", "fast_food"), ("amenity", "cafe")}},
+    {"synonyms": {"hotel", "motel", "lodging"}, "gnis_class": None, "fallback_text": "hotel",
+     "nominatim_query": ["hotel", "motel"],
+     "osm_types": {("tourism", "hotel"), ("tourism", "motel"), ("building", "hotel")}},
+    {"synonyms": {"hospital", "er", "emergency room"}, "gnis_class": "Hospital", "fallback_text": "hospital",
+     "nominatim_query": ["hospital"],
+     "osm_types": {("amenity", "hospital"), ("building", "hospital")}},
+    {"synonyms": {"campground", "camping", "campsite"}, "gnis_class": None, "fallback_text": "campground",
+     "nominatim_query": ["camp site", "campground"],
+     "osm_types": {("tourism", "camp_site"), ("tourism", "caravan_site"), ("leisure", "park")}},
+    {"synonyms": {"rest area", "rest stop"}, "gnis_class": None, "fallback_text": "rest area",
+     "nominatim_query": ["rest area"],
+     "osm_types": {("highway", "rest_area"), ("highway", "services")}},
+    {"synonyms": {"pharmacy", "drugstore"}, "gnis_class": None, "fallback_text": "pharmacy",
+     "nominatim_query": ["pharmacy"],
+     "osm_types": {("amenity", "pharmacy"), ("shop", "chemist")}},
+    {"synonyms": {"grocery", "supermarket"}, "gnis_class": None, "fallback_text": "grocery",
+     "nominatim_query": ["supermarket", "grocery"],
+     "osm_types": {("shop", "supermarket"), ("shop", "convenience"), ("shop", "grocery")}},
+    # Geographic / emergency ops (GNIS supplementary — osm_types=None, no filtering)
+    {"synonyms": {"water", "drinking water"}, "gnis_class": "Spring", "fallback_text": "water",
+     "nominatim_query": ["drinking water"], "osm_types": {("amenity", "drinking_water")}},
+    {"synonyms": {"trailhead", "trail"}, "gnis_class": "Trail", "fallback_text": "trailhead",
+     "nominatim_query": ["trailhead"], "osm_types": None},
+    {"synonyms": {"park"}, "gnis_class": "Park", "fallback_text": "park",
+     "nominatim_query": ["park"], "osm_types": {("leisure", "park"), ("boundary", "national_park")}},
+    {"synonyms": {"school"}, "gnis_class": "School", "fallback_text": "school",
+     "nominatim_query": ["school"], "osm_types": {("amenity", "school"), ("building", "school")}},
+    {"synonyms": {"church"}, "gnis_class": "Church", "fallback_text": "church",
+     "nominatim_query": ["church"], "osm_types": {("amenity", "place_of_worship"), ("building", "church")}},
+    {"synonyms": {"airport"}, "gnis_class": "Airport", "fallback_text": "airport",
+     "nominatim_query": ["airport"], "osm_types": {("aeroway", "aerodrome")}},
+    {"synonyms": {"fire station"}, "gnis_class": None, "fallback_text": "fire station",
+     "nominatim_query": ["fire station"], "osm_types": {("amenity", "fire_station")}},
+    {"synonyms": {"police", "police station"}, "gnis_class": None, "fallback_text": "police station",
+     "nominatim_query": ["police"], "osm_types": {("amenity", "police")}},
+    {"synonyms": {"summit", "peak", "hilltop", "mountain"}, "gnis_class": "Summit", "fallback_text": "summit",
+     "nominatim_query": ["peak", "summit"], "osm_types": {("natural", "peak"), ("natural", "volcano")}},
+    {"synonyms": {"tower", "radio tower", "repeater", "comm site"}, "gnis_class": "Tower", "fallback_text": "tower",
+     "nominatim_query": ["tower"], "osm_types": {("man_made", "tower"), ("man_made", "mast")}},
+    {"synonyms": {"shelter", "evacuation center", "evac"}, "gnis_class": None, "fallback_text": "shelter",
+     "nominatim_query": ["shelter"], "osm_types": None},
+    {"synonyms": {"helipad", "landing zone", "lz"}, "gnis_class": None, "fallback_text": "helipad",
+     "nominatim_query": ["helipad"], "osm_types": {("aeroway", "helipad")}},
+    {"synonyms": {"dam"}, "gnis_class": "Dam", "fallback_text": "dam",
+     "nominatim_query": ["dam"], "osm_types": {("waterway", "dam")}},
+    {"synonyms": {"mine", "quarry"}, "gnis_class": "Mine", "fallback_text": "mine",
+     "nominatim_query": ["mine"], "osm_types": {("landuse", "quarry")}},
+    {"synonyms": {"spring", "hot spring"}, "gnis_class": "Spring", "fallback_text": "spring",
+     "nominatim_query": ["spring"], "osm_types": {("natural", "spring")}},
+    {"synonyms": {"bridge"}, "gnis_class": "Bridge", "fallback_text": "bridge",
+     "nominatim_query": ["bridge"], "osm_types": {("man_made", "bridge")}},
+    {"synonyms": {"ranger station", "forest service"}, "gnis_class": "Locale", "fallback_text": "ranger station",
+     "nominatim_query": ["ranger station"], "osm_types": None},
 ]
 
 # Build flat lookup: normalized synonym text -> table entry
@@ -264,6 +298,7 @@ def parse_intent(
         "gnis_class": entry["gnis_class"] if entry else None,
         "search_text": search_text,
         "nominatim_queries": entry.get("nominatim_query", [search_text]) if entry else [search_text],
+        "osm_types": entry.get("osm_types") if entry else None,
         "radius_m": radius_m,
         "interval_m": interval_m,
     }
@@ -563,6 +598,24 @@ async def spatial_search(body: SpatialSearchBody):
         poi_results = class_matches + others
 
     merged = _deduplicate(nom_results, poi_results)
+
+    # Post-filter by OSM type when a known category was matched.
+    # This removes false positives like "Gas Pipeline Road" from gas station searches.
+    osm_types = parsed.get("osm_types")
+    if osm_types and merged:
+        filtered = []
+        for r in merged:
+            osm_cat = r.get("osm_category", "")
+            osm_typ = r.get("osm_type", "")
+            if (osm_cat, osm_typ) in osm_types:
+                filtered.append(r)
+            elif r.get("type") == "poi":
+                # POI database results don't have osm_category — keep them
+                filtered.append(r)
+        # If filtering removed everything, fall back to unfiltered
+        # (better to show noisy results than nothing)
+        if filtered:
+            merged = filtered
 
     # Add distance_m if position available
     if body.position:
