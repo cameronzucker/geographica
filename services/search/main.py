@@ -101,8 +101,8 @@ def _parse_zoom(zoom_str: str) -> tuple[int, int]:
     if len(parts) != 2:
         raise ValueError("zoom must be in format 'min-max'")
     zoom_min, zoom_max = int(parts[0]), int(parts[1])
-    if zoom_min < 0 or zoom_max > 15 or zoom_min > zoom_max:
-        raise ValueError("zoom values must be 0-15 with min <= max")
+    if zoom_min < 0 or zoom_max > 18 or zoom_min > zoom_max:
+        raise ValueError("zoom values must be 0-18 with min <= max")
     return zoom_min, zoom_max
 
 

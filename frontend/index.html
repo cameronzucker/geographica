@@ -202,10 +202,11 @@
         <div class="admin-field">
           <label>Zoom range</label>
           <select id="pipeline-zoom">
-            <option value="0-8">Basic coverage (0-8)</option>
-            <option value="0-10">Quick preview (0-10)</option>
+            <option value="0-8">Basic (0-8) — fast, low detail</option>
+            <option value="0-10">Preview (0-10)</option>
             <option value="0-12">Standard (0-12)</option>
-            <option value="0-14" selected>Full detail (0-14)</option>
+            <option value="0-14" selected>High detail (0-14)</option>
+            <option value="0-16">Maximum detail (0-16) — very large</option>
           </select>
         </div>
 
@@ -226,7 +227,10 @@
         </label>
 
         <!-- Estimate display -->
-        <div id="pipeline-estimate" class="admin-data-detail"></div>
+        <div class="admin-field">
+          <label>Estimated download</label>
+          <div id="pipeline-estimate" class="admin-data-detail">Calculating...</div>
+        </div>
 
         <!-- Action buttons -->
         <div class="admin-btn-row">

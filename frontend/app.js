@@ -2374,15 +2374,21 @@
   function getAdminToken() {
     var token = sessionStorage.getItem('admin-token');
     if (!token) {
-      token = prompt('Enter admin password:');
-      if (token) sessionStorage.setItem('admin-token', token);
+      token = prompt(
+        'Enter the admin token for this Geographica instance.\n\n' +
+        'This is the ADMIN_TOKEN value set in the server configuration.\n' +
+        'If no admin token was configured, enter anything (or leave blank).'
+      );
+      if (token === null) return null; // user cancelled
+      // Even empty string is valid (backend skips auth when ADMIN_TOKEN is empty)
+      sessionStorage.setItem('admin-token', token || 'none');
     }
-    return token;
+    return token || 'none';
   }
 
   function adminFetch(url, options) {
     var token = getAdminToken();
-    if (!token) return Promise.reject('No admin token');
+    if (token === null) return Promise.reject('No admin token');
     options = options || {};
     options.headers = options.headers || {};
     options.headers['Authorization'] = 'Bearer ' + token;
@@ -2518,7 +2524,11 @@
         update: updateMode
       };
 
+      var origText = startBtn.textContent;
       startBtn.disabled = true;
+      startBtn.textContent = 'Starting...';
+      startBtn.style.opacity = '0.6';
+
       adminFetch('/admin/pipeline/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2526,13 +2536,20 @@
       }).then(function (res) {
         return res.json();
       }).then(function (data) {
-        startBtn.disabled = false;
         if (data.error) {
+          startBtn.disabled = false;
+          startBtn.textContent = origText;
+          startBtn.style.opacity = '';
           alert('Failed to start pipeline: ' + data.error);
+        } else {
+          startBtn.textContent = 'Downloading...';
+          // fetchPipelineStatus will update the UI from here
         }
         fetchPipelineStatus();
       }).catch(function (err) {
         startBtn.disabled = false;
+        startBtn.textContent = origText;
+        startBtn.style.opacity = '';
         if (err !== 'No admin token' && err !== 'Auth failed') {
           alert('Failed to start pipeline: ' + err);
         }
@@ -2617,17 +2634,25 @@
     var isRunning = status === 'running';
 
     // Show/hide controls based on state
-    if (isRunning) {
+    if (isRunning || status === 'cancelling') {
       cancelBtn.classList.remove('hidden');
       startBtn.disabled = true;
-      startBtn.textContent = 'Running...';
+      startBtn.textContent = status === 'cancelling' ? 'Cancelling...' : 'Downloading...';
+      startBtn.style.opacity = '0.6';
+      startBtn.style.background = '';
     } else {
       cancelBtn.classList.add('hidden');
       startBtn.disabled = false;
+      startBtn.style.opacity = '';
       if (status === 'interrupted') {
         startBtn.textContent = 'Resume Download';
+        startBtn.style.background = 'var(--warning)';
+      } else if (status === 'completed') {
+        startBtn.textContent = 'Start New Download';
+        startBtn.style.background = '';
       } else {
         startBtn.textContent = 'Start Download';
+        startBtn.style.background = '';
       }
     }
 
