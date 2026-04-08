@@ -2240,11 +2240,9 @@
   var adminTimer = null;
   var ADMIN_REFRESH_MS = 10000;
 
-  // Known total tile counts for progress bars (from data pipeline config)
-  var KNOWN_TOTALS = {
-    'Elevation tiles': 1474959,
-    'Imagery tiles': 1474959,
-  };
+  // No hardcoded totals — the pipeline status section shows accurate
+  // progress from the state file. The data tasks section just shows
+  // tile counts and status.
 
   function initAdmin() {
     // Start polling when admin tab is visible
@@ -2355,23 +2353,8 @@
       detail.className = 'admin-data-detail';
 
       if (count > 0) {
-        var total = KNOWN_TOTALS[task.name];
-        if (total && task.status === 'downloading') {
-          var pct = (count / total * 100).toFixed(1);
-          detail.textContent = count.toLocaleString() + ' / ' + total.toLocaleString() + ' tiles (' + pct + '%)';
-
-          var bar = document.createElement('div');
-          bar.className = 'admin-progress-bar';
-          var fill = document.createElement('div');
-          fill.className = 'admin-progress-fill';
-          fill.style.width = pct + '%';
-          bar.appendChild(fill);
-          row.appendChild(detail);
-          row.appendChild(bar);
-        } else {
-          detail.textContent = count.toLocaleString() + (task.tiles ? ' tiles' : ' features');
-          row.appendChild(detail);
-        }
+        detail.textContent = count.toLocaleString() + (task.tiles ? ' tiles' : ' features');
+        row.appendChild(detail);
       }
 
       container.appendChild(row);
