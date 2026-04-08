@@ -658,7 +658,7 @@ async def m2m_get_download_urls(session: aiohttp.ClientSession, api_key: str,
             if existing is None or priority < existing["_priority"]:
                 entity_products[eid] = {
                     "entityId": eid,
-                    "productId": opt["productId"],
+                    "productId": opt.get("id") or opt.get("productId", ""),
                     "_productName": opt.get("productName", ""),
                     "_priority": priority,
                 }
@@ -683,7 +683,6 @@ async def m2m_get_download_urls(session: aiohttp.ClientSession, api_key: str,
         resp = await m2m_request(session, "download-request", {
             "downloads": batch,
             "label": label,
-            "downloadApplication": "m2m",
         }, api_key=api_key)
         labels.append(label)
 
