@@ -896,6 +896,10 @@ def _state_file_for_type(pipeline_type: str) -> Path:
         return DATA_DIR / ".elevation-state.json"
     if pipeline_type == "osm_poi":
         return DATA_DIR / ".osm-poi-state.json"
+    if pipeline_type == "sentinel":
+        return DATA_DIR / ".sentinel-state.json"
+    if pipeline_type == "naip":
+        return DATA_DIR / ".naip-state.json"
     return DATA_DIR / ".pipeline-state.json"
 
 
@@ -903,6 +907,10 @@ def _mbtiles_path_for_type(pipeline_type: str) -> Path:
     """Return the mbtiles output path for a given pipeline type."""
     if pipeline_type == "elevation":
         return DATA_DIR / "elevation.mbtiles"
+    if pipeline_type == "sentinel":
+        return DATA_DIR / "imagery_sentinel.mbtiles"
+    if pipeline_type == "naip":
+        return DATA_DIR / "imagery_naip.mbtiles"
     return DATA_DIR / "imagery.mbtiles"
 
 
@@ -910,6 +918,10 @@ def _script_for_type(pipeline_type: str) -> str:
     """Return the script path for a given pipeline type."""
     if pipeline_type == "elevation":
         return "/scripts/download_elevation.py"
+    if pipeline_type == "sentinel":
+        return "/scripts/acquire_sentinel.py"
+    if pipeline_type == "naip":
+        return "/scripts/acquire_naip.py"
     return "/scripts/acquire_imagery.py"
 
 
@@ -938,14 +950,35 @@ def _get_disk_free_gb() -> float:
 async def pipeline_start(body: PipelineStartBody):
     """Start an imagery, elevation, or OSM POI pipeline."""
     # Validate type
-    if body.type not in ("imagery", "elevation", "osm_poi"):
-        raise HTTPException(status_code=422, detail="type must be 'imagery', 'elevation', or 'osm_poi'")
+    if body.type not in ("imagery", "elevation", "osm_poi", "sentinel", "naip"):
+        raise HTTPException(status_code=422, detail="type must be 'imagery', 'elevation', 'osm_poi', 'sentinel', or 'naip'")
 
     # For imagery/elevation, validate required fields
     bbox = None
     zoom_min = zoom_max = tile_count = 0
     estimated_size_gb = 0.0
     is_m2m = body.type == "imagery" and body.mode == "m2m"
+    is_sentinel = body.type == "sentinel"
+    is_naip = body.type == "naip"
+
+    # Sentinel validation: requires bbox and Copernicus credentials
+    if is_sentinel:
+        if not body.bbox:
+            raise HTTPException(status_code=422, detail="bbox is required for sentinel")
+        if not CREDENTIALS_PATH.exists():
+            raise HTTPException(status_code=422, detail="Copernicus credentials not configured. POST to /admin/credentials first.")
+        try:
+            creds = json.loads(CREDENTIALS_PATH.read_text())
+            if "copernicus_username" not in creds or "copernicus_password" not in creds:
+                raise HTTPException(status_code=422, detail="credentials.json missing copernicus_username or copernicus_password")
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read credentials: {e}")
+
+    # NAIP validation: requires bbox only
+    if is_naip:
+        if not body.bbox:
+            raise HTTPException(status_code=422, detail="bbox is required for naip")
+
     if body.type in ("imagery", "elevation"):
         if not body.mode or body.mode not in ("direct", "m2m"):
             raise HTTPException(status_code=422, detail="mode must be 'direct' or 'm2m'")
@@ -1046,6 +1079,21 @@ async def pipeline_start(body: PipelineStartBody):
                         "--staging", "/data/m2m_staging",
                         "--concurrency", str(body.concurrency),
                     ]
+                elif is_sentinel:
+                    command = [
+                        "python3", "/scripts/acquire_sentinel.py",
+                        f"--bbox={body.bbox}",
+                        "--output", f"/data/{mbtiles_path.name}",
+                        "--staging", "/data/sentinel_staging",
+                    ]
+                elif is_naip:
+                    command = [
+                        "python3", "/scripts/acquire_naip.py",
+                        f"--bbox={body.bbox}",
+                        "--output", f"/data/{mbtiles_path.name}",
+                        "--staging", "/data/naip_staging",
+                        "--counties-db", "/data/counties.sqlite",
+                    ]
                 else:
                     # Build command -- imagery and elevation scripts have different args
                     script = _script_for_type(body.type)
@@ -1069,6 +1117,13 @@ async def pipeline_start(body: PipelineStartBody):
                     creds = json.loads(CREDENTIALS_PATH.read_text())
                     env["USGS_M2M_USERNAME"] = creds["m2m_username"]
                     env["USGS_M2M_TOKEN"] = creds["m2m_token"]
+                except (json.JSONDecodeError, KeyError) as e:
+                    raise HTTPException(status_code=500, detail=f"Failed to read credentials: {e}")
+            if is_sentinel:
+                try:
+                    creds = json.loads(CREDENTIALS_PATH.read_text())
+                    env["COPERNICUS_USERNAME"] = creds["copernicus_username"]
+                    env["COPERNICUS_PASSWORD"] = creds["copernicus_password"]
                 except (json.JSONDecodeError, KeyError) as e:
                     raise HTTPException(status_code=500, detail=f"Failed to read credentials: {e}")
 
@@ -1250,6 +1305,8 @@ async def pipeline_cancel():
             _state_file_for_type("imagery"),
             _state_file_for_type("elevation"),
             _state_file_for_type("osm_poi"),
+            _state_file_for_type("sentinel"),
+            _state_file_for_type("naip"),
         ]:
             if state_file.exists():
                 try:
@@ -1275,3 +1332,49 @@ async def pipeline_cancel():
             client.close()
 
     return {"status": "cancelling"}
+
+
+@app.get("/admin/pipeline/naip/counties", dependencies=[Depends(require_config_source)])
+async def naip_county_lookup(bbox: str = Query(..., description="west,south,east,north")):
+    """Return counties intersecting the given bbox for NAIP pipeline planning."""
+    # Parse bbox
+    try:
+        parts = [float(x.strip()) for x in bbox.split(",")]
+        if len(parts) != 4:
+            raise ValueError("bbox must have exactly 4 values")
+        west, south, east, north = parts
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid bbox: {e}")
+
+    # Import counties helper from scripts
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
+    from build_county_index import counties_for_bbox, estimate_download_gb
+
+    counties_db = DATA_DIR / "counties.sqlite"
+    if not counties_db.exists():
+        raise HTTPException(status_code=422, detail="counties.sqlite not found in data directory. Run build_county_index.py first.")
+
+    try:
+        rows = counties_for_bbox(str(counties_db), west, south, east, north)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"County lookup failed: {e}")
+
+    if len(rows) > 1000:
+        raise HTTPException(status_code=422, detail=f"Too many counties ({len(rows)}); refine your bbox to cover at most 1000 counties")
+
+    total_area = sum(area for _, _, _, area in rows)
+    states = sorted({state for _, _, state, _ in rows})
+    estimated_gb = estimate_download_gb(total_area)
+
+    counties = [
+        {"fips": fips, "name": name, "state": state, "area_sq_km": area}
+        for fips, name, state, area in rows
+    ]
+
+    return {
+        "counties": counties,
+        "total_counties": len(counties),
+        "states": states,
+        "estimated_gb": round(estimated_gb, 2),
+    }
