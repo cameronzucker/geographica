@@ -429,8 +429,9 @@
           content.appendChild(title);
         }
 
-        // Show KML icon as an image if available, reachable, and URL-safe
-        if (props.icon && typeof props.icon === 'string' && isUrlSafe(props.icon)) {
+        // Show KML icon in popup only for fallback features (icon displays on map otherwise)
+        var hasMapIcon = props._iconId && props._iconId !== 'kmz-icon-default';
+        if (!hasMapIcon && props.icon && typeof props.icon === 'string' && isUrlSafe(props.icon)) {
           var iconImg = document.createElement('img');
           iconImg.src = props.icon;
           iconImg.style.maxWidth = '32px';
@@ -2256,6 +2257,15 @@
       removeBtn.textContent = 'Remove';
       removeBtn.className = 'danger';
       removeBtn.addEventListener('click', function () {
+        // Decrement icon ref counts and clean up unreferenced icons
+        if (window._kmzImport && window._kmzImport.decrementIconRef) {
+          entry.geojson.features.forEach(function (f) {
+            var iconId = f.properties && f.properties._iconId;
+            if (iconId && iconId !== 'kmz-icon-default') {
+              window._kmzImport.decrementIconRef(iconId, map);
+            }
+          });
+        }
         delete importedFiles[fileId];
         updateImportedMapData();
         buildImportLayerUI();
@@ -2322,8 +2332,11 @@
           });
           item.appendChild(cb);
 
-          // Color swatch from KML style
-          var featureColor = f.properties['marker-color'] || f.properties.stroke || f.properties.fill || '#f38ba8';
+          // Color swatch: gray for icon features, KML color for non-icon/fallback
+          var featureHasIcon = f.properties._iconId && f.properties._iconId !== 'kmz-icon-default';
+          var featureColor = featureHasIcon
+            ? '#999'
+            : (f.properties['marker-color'] || f.properties.stroke || f.properties.fill || '#f38ba8');
           var swatch = document.createElement('span');
           swatch.style.display = 'inline-block';
           swatch.style.width = '8px';
