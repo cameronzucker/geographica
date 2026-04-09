@@ -168,7 +168,9 @@ These are non-obvious implementation details a new agent must understand (accumu
 
 8. **Two M2M staging directories exist.** `/data/m2m_staging/` (new, admin-panel-started) and `/data/m2m_maricopa_staging/` (old, CLI-started, 144 GeoTIFFs). The old one can be deleted after the new download completes.
 
-9. **Hybrid imagery mode uses map.setStyle().** Toggling imagery ON swaps to `STYLES.hybrid`, OFF restores `previousStyle`. The persistent `map.on('style.load')` handler replays all overlays. `map.dragRotate.disable()` MUST be called in this handler (Pitfall #11 — MapLibre resets it on style swap).
+9. **Hybrid imagery mode uses map.setStyle().** Toggling imagery ON swaps to `STYLES.hybrid`, OFF restores `previousStyle`. The persistent `map.on('style.load')` handler replays all overlays AND removes mouseRotate/mousePitch handlers (Pitfall #11).
+
+10. **MapLibre dragRotate: disable() is INSUFFICIENT in v5.21.** Must surgically delete `mouseRotate` and `mousePitch` from `map._handlers._handlersById` and filter from `_handlers` array. This is done in BOTH `initFreeLookCamera()` and the `style.load` handler. `NavigationControl` must use `showCompass: false`. See Pitfall #11 for the full story — 7 failed approaches documented.
 
 10. **Public lands uses 3 fill layers.** `public-lands-fill` (non-tribal, solid), `public-lands-fill-tribal` (striped pattern via fill-pattern), `public-lands-outline` (boundaries). All toggle together. In hybrid mode, z-order anchor finds the first `transportation` source-layer in the hybrid style to insert public lands below roads.
 
