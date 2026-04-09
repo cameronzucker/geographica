@@ -26,8 +26,8 @@ isolated LAN or standalone device.
 - **Coordinate display** — Maidenhead grid locator and MGRS in addition to lat/lon
 - **Imperial and metric units** — switchable distance/elevation units
 - **Draw-on-map bounding box selection** for imagery downloads
-- **Admin config panel** (localhost-only, separated from main app)
-- **Pipeline management** — start/cancel imagery downloads from the browser
+- **Admin config panel** (localhost-only, separated from main app) with 3-tab layout: Dashboard (service health with color-coded status dots, disk/TLS info), Pipelines (imagery with MapLibre minimap bbox selection, elevation, OSM POI extraction), Settings (M2M credentials, TLS config, STT status)
+- **Pipeline management** — start/cancel imagery (direct + M2M), elevation, and OSM POI extraction from the browser with phase-aware M2M progress (login → searching → downloading GeoTIFFs → converting → complete)
 - **Print/export directions** (Mapquest-style printable page)
 - **ATAK integration** — serves as a WMS map source for TAK clients
 - **TLS support** — three modes: HTTP, HTTPS (self-signed), or Tailscale (Let's Encrypt)
@@ -70,14 +70,19 @@ Browser ──> NGINX (:8093) ──┬──> TileServer GL (:8090)   vector/ra
                             ├──> STT (:8098)              speech-to-text (Whisper)
                             └──> GPS (:8095)              WebSocket GPS relay
 
-Config ──> NGINX (:8097) ──────> Search (:8096)           pipeline mgmt (localhost only)
+Config ──> NGINX (:8097) ──┬──> Search (:8096)           pipeline mgmt (localhost only)
+                          ├──> TileServer GL (:8090)   minimap tile proxy
+                          └──> /vendor/                MapLibre GL JS/CSS
 
-Pipeline container (on-demand) ──> acquire_imagery.py     imagery/elevation downloads
+Pipeline container (on-demand) ──> acquire_imagery.py     imagery downloads (direct + M2M)
+                               ──> build_osm_pois.py      OSM POI extraction
+                               ──> download_elevation.py   elevation tile downloads
 ```
 
-Seven Docker Compose services with per-container memory limits to prevent OOM on
-constrained hardware. NGINX reverse-proxies all services behind a single port
-with URL rewriting for TileServer GL style/TileJSON endpoints.
+Seven persistent Docker Compose services plus an on-demand pipeline container,
+with per-container memory limits to prevent OOM on constrained hardware. NGINX
+reverse-proxies all services behind a single port with URL rewriting for
+TileServer GL style/TileJSON endpoints.
 
 ---
 
@@ -335,7 +340,7 @@ status — it won't block the rest of the stack.
 ### 11. Launch the stack
 
 ```bash
-docker compose build    # build gps, search, and stt service images
+docker compose build    # build gps, search, stt, and pipeline service images
 docker compose up -d    # start all 7 services
 ```
 
@@ -359,9 +364,10 @@ docker compose ps                   # check health status
 
 > **Memory limits:** The stack has per-container memory limits to prevent
 > system-wide OOM on 16 GB hardware: Nominatim 8 GB, Valhalla 4 GB,
-> STT 1.5 GB, TileServer 1 GB, Search 256 MB, GPS 128 MB, Frontend 128 MB
-> (~15 GB total ceiling). If a container exceeds its limit, Docker restarts
-> just that container — the system stays up.
+> Pipeline 2 GB, STT 1.5 GB, TileServer 1 GB, Search 256 MB, GPS 128 MB,
+> Frontend 128 MB (~17 GB total ceiling, but pipeline is on-demand).
+> If a container exceeds its limit, Docker restarts just that container —
+> the system stays up.
 
 ### 12. Verify the deployment
 
@@ -407,11 +413,19 @@ docker compose build && docker compose up -d
 ## Config panel
 
 The admin config panel is accessible at **http://localhost:8097/config/** from
-the Pi only. It provides:
+the Pi only. It provides a 3-tab interface:
 
-- Imagery download management — start/cancel acquisition jobs
-- M2M credentials configuration for USGS EarthExplorer
-- Pipeline status monitoring and log viewing
+**Dashboard** — Service health with color-coded status dots (green/yellow/red),
+disk usage (used/free/% full), TLS mode and certificate status, and a pipeline
+progress banner linking to the Pipelines tab.
+
+**Pipelines** — Imagery acquisition (direct USGS or M2M API with phase-aware
+progress), elevation tile downloads, and OSM POI extraction. Includes a MapLibre
+minimap with draw-to-select bounding box. M2M downloads show real-time progress:
+GeoTIFFs downloaded, batch counter, total bytes. Only one pipeline runs at a time.
+
+**Settings** — M2M API credentials (USGS EarthExplorer), TLS configuration
+display, and STT service status.
 
 Security is handled via Docker port binding — port 8097 is bound to `127.0.0.1`,
 so no password is needed. The panel is unreachable from the network.
@@ -487,7 +501,7 @@ To cover a different region, adjust these values consistently:
 | 8095 | GPS | WebSocket GPS relay |
 | 8096 | Search | Unified search API |
 | 8098 | STT | Speech-to-text (Whisper) |
-| — | Pipeline (on-demand) | Imagery/elevation download container |
+| — | Pipeline (on-demand) | Imagery/elevation/OSM POI pipeline container |
 
 All services are proxied through NGINX on port 8093. The config panel on port
 8097 is bound to 127.0.0.1 and only accessible from the Pi itself. Direct port
@@ -547,13 +561,13 @@ heaviest consumer — check its limit first.
 
 ```
 geographica/
-├── docker-compose.yml          # 7-service stack with memory limits
+├── docker-compose.yml          # 7 services + on-demand pipeline, with memory limits
 ├── .env.example                # Environment variable template
 ├── nginx/
 │   └── nginx.conf              # Reverse proxy with URL rewriting
 ├── frontend/
 │   ├── index.html              # Single-page app entry point
-│   ├── app.js                  # MapLibre GL JS application (~2800 lines)
+│   ├── app.js                  # MapLibre GL JS application (~2770 lines)
 │   ├── navigation.js           # Turn-by-turn navigation engine
 │   ├── nav-ui.js               # Navigation UI bridge
 │   ├── stt.js                  # Voice search module (mic button, audio capture)
@@ -572,8 +586,9 @@ geographica/
 ├── services/
 │   ├── gps/                    # FastAPI GPS WebSocket service
 │   │   ├── Dockerfile
-│   │   ├── main.py
-│   │   └── requirements.txt
+│   │   ├── main.py             # WebSocket relay, /health, /position, /status endpoints
+│   │   ├── requirements.txt
+│   │   └── tests/              # GPS endpoint tests
 │   ├── stt/                    # FastAPI speech-to-text service (Whisper)
 │   │   ├── Dockerfile
 │   │   ├── main.py
@@ -583,7 +598,8 @@ geographica/
 │       ├── Dockerfile
 │       ├── main.py             # Nominatim/POI query, admin API, pipeline orchestration
 │       ├── spatial.py          # Intent parser, synonym table, corridor math, spatial endpoint
-│       └── requirements.txt
+│       ├── requirements.txt
+│       └── tests/              # Admin status, pipeline, zoom validation tests
 ├── scripts/
 │   ├── requirements.txt        # Python deps for data pipeline
 │   ├── download_elevation.py   # Terrain-RGB tile downloader

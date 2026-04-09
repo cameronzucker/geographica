@@ -75,8 +75,10 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 - `scripts/provision_tailscale_tls.sh` — Tailscale cert provisioning
 
 ### Tests
-180 tests across project:
+~200 tests across project:
 - `services/stt/tests/` (30) — backend interface, CPU backend, endpoints, NPU, integration
+- `services/gps/tests/` (4) — GPS /status endpoint (3D fix, 2D fix, no fix, no gpsd)
+- `services/search/tests/` (33) — admin status, pipeline M2M, zoom validation, OSM POI pipeline
 - `tests/test_intent_parser.py` (27) — intent detection, category extraction, fallback chain
 - `tests/test_corridor.py` (19) — haversine, Douglas-Peucker, segment distance, corridor filter
 - `tests/test_osm_poi_indexer.py` (33) — OSM extraction, operator normalization, dedup, brand fallback
@@ -87,12 +89,16 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 - `tests/test_pipeline_orchestrator.py` (3) — command building for imagery vs elevation
 - `tests/test_elevation_state.py` (3) — state file merge pattern
 - `tests/test_m2m_api.py` (18) — login, scene search, download URLs, cancellation, progress, product selection
+- `tests/test_m2m_progress.py` (5) — M2M phase-aware progress reporting
 
-Run all: `python3 -m pytest tests/ services/stt/tests/ -v`
+Run all: `python3 -m pytest tests/ services/stt/tests/ services/gps/tests/ -v`
+Run search tests: `cd services/search && python -m pytest tests/ -v`
 
 ### Design & plan documents
-- `docs/superpowers/specs/2026-04-09-admin-panel-redesign-design.md` — Admin panel redesign spec (adversarial reviewed, 29 issues addressed)
-- `docs/plans/2026-04-09-admin-panel-redesign-plan.md` — **READY TO EXECUTE** — 5 tasks, 2819 lines
+- `docs/superpowers/specs/2026-04-09-admin-panel-redesign-design.md` — Admin panel redesign spec (executed)
+- `docs/superpowers/specs/2026-04-09-pipeline-status-ux-design.md` — Pipeline status UX spec (executed)
+- `docs/plans/2026-04-09-admin-panel-redesign-plan.md` — Admin panel redesign plan (executed)
+- `docs/plans/2026-04-09-pipeline-status-ux-plan.md` — Pipeline status UX plan (executed)
 - `docs/superpowers/specs/2026-04-08-whisper-stt-design.md` — STT design (executed)
 - `docs/superpowers/specs/2026-04-08-expanded-poi-sources-design.md` — POI design (executed)
 - `docs/superpowers/specs/2026-04-08-m2m-api-test-plan.md` — M2M test plan (executed)
@@ -100,29 +106,18 @@ Run all: `python3 -m pytest tests/ services/stt/tests/ -v`
 - `docs/pitfalls/implementation-pitfalls.md` — 10 common implementation mistakes
 
 ### Bug hunt and review reports
-- 15+ reports in `dev/bug-hunts/` — STT 405, pipeline, GPS, corridor, TLS
+- 20+ reports in `dev/bug-hunts/` — STT 405, pipeline, GPS, corridor, TLS, admin panel redesign
+- `dev/bug-hunts/2026-04-09-admin-panel-consolidated.md` — 3 confirmed bugs, 2 design decisions (all fixed)
 - `dev/reviews/2026-04-08-readme-adversarial-review.md` — 36 README issues (5 critical)
 - `dev/reviews/2026-04-09-admin-panel-spec-adversarial-review.md` — 29 spec issues (4 critical, all addressed)
 - `dev/m2m-test-results.md` — M2M API validation results
 
 ## What to work on next
 
-### Immediate: Admin Panel Redesign
-**Plan ready to execute:** `docs/plans/2026-04-09-admin-panel-redesign-plan.md`
-
-Invoke `/subagent-driven-development` or `/executing-plans` to implement the plan. It has 5 tasks:
-
-| Task | File(s) | Dependencies | Parallelizable |
-|------|---------|--------------|----------------|
-| 1. GPS `/status` endpoint | `services/gps/main.py` | None | Yes |
-| 2. Enriched `/admin/status` | `services/search/main.py` | Task 1 | After Task 1 |
-| 3. Zoom + OSM POI pipeline | `services/search/main.py` | None | Yes |
-| 4. NGINX + docker-compose | `nginx/nginx.conf`, `docker-compose.yml` | None | Yes |
-| 5. Full frontend rewrite | `frontend/config/index.html` | Tasks 2, 3, 4 | After all others |
-
-Tasks 1, 3, 4 can run in parallel. Task 2 depends on 1. Task 5 depends on all others.
-
-After the admin panel, the backlog is:
+### Recently completed (2026-04-09)
+- **Admin panel redesign** — 3-tab layout (Dashboard/Pipelines/Settings), service health dots, MapLibre minimap bbox selection, enriched /admin/status (STT, GPS, TLS, search stats, disk), OSM POI pipeline type, frontend healthcheck
+- **Pipeline status UX** — Phase-aware M2M progress (login→searching→downloading→converting→complete), service list filtering (7 known services only), stale state time-ago badges, M2M command construction, zoom disable for M2M
+- **Bug hunt fixes** — osm_poi 500 crash, Docker client use-after-close, pipeline banner elevation/OSM progress, admin_status event loop blocking (asyncio.to_thread), pipeline_cancel path consistency
 
 ### Medium priority
 - **Fix README issues** — 36 findings from adversarial review at `dev/reviews/2026-04-08-readme-adversarial-review.md`
