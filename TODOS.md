@@ -110,6 +110,13 @@
 - **Risk:** Larger tiles at z11-13 could worsen the Firefox performance issue. Need to balance road visibility vs tile size.
 - **Estimated time:** 1-2 hours (install + build + verify)
 
+### Monitor: search request latency with multiple tile sources active
+- **What:** With hybrid imagery + public lands + terrain all active, the browser queues the spatial search fetch behind dozens of concurrent tile requests. This caused 7.6s round-trip times despite the server responding in <200ms.
+- **Current fix:** `priority: 'high'` on the search fetch request. This works but is a band-aid — the root cause is browser connection pool contention.
+- **Better fixes to investigate:** (a) Enable HTTP/2 on NGINX (`listen 443 ssl http2`) to multiplex all requests over one connection instead of the HTTP/1.1 6-connection limit, (b) Use a separate subdomain or port for API calls vs tile serving so they don't share connection pools, (c) Investigate whether MapLibre can be configured to use lower fetch priority for tile requests.
+- **How to reproduce:** Open hybrid mode + public lands + terrain, pan the map, then immediately search "gas stations in bisbee, az". Check HAR trace for the /search/spatial request timing.
+- **Evidence:** curl from the same machine shows 197ms. Browser shows 7.6s. The delay is entirely browser connection scheduling.
+
 ### Public lands tile build on Pi 5 8GB
 - **What:** The public lands tile pipeline (`scripts/build_public_lands.py`) requires stopping Docker services and needs ~6-9GB free RAM for ogr2ogr + Tippecanoe. On the 16GB Pi 5 this works (stop services, build, restart). On an 8GB Pi 5 (which the README lists as compatible), it would OOM even with services stopped.
 - **Why:** README claims Pi 5 8GB compatibility. The pipeline needs to work there too.
