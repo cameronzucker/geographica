@@ -606,6 +606,45 @@ TileServer service needs read access to the two new MBTiles files. These are alr
 | TileServer crash with missing MBTiles at startup | Stack boot failure | Dynamic config: entries added only after pipeline completion + TileServer restart via Docker API |
 | Backend helpers route new types to wrong files | Data corruption | Explicit mapping table for state files, mbtiles paths, and scripts per type |
 
+## Security requirements (CSO review)
+
+The following security requirements were identified by a dedicated security review focused on external data ingestion risks. All are mandatory for implementation.
+
+### S1: Deterministic filenames (BLOCKER — prevents path traversal)
+
+Pipeline scripts MUST NOT use server-provided filenames for local file storage. All staging filenames must be deterministically generated from validated identifiers:
+- Sentinel-2: `sentinel_{scene_id}.tif` where `scene_id` is alphanumeric + underscores only
+- NAIP: `naip_{fips_code}.jp2` where `fips_code` is a validated 5-digit string
+
+Downloaded file paths must be validated with `Path.resolve().is_relative_to(staging_dir.resolve())` before any write operation. Reject filenames containing `..`, `/`, `\`, or null bytes.
+
+### S2: File validation before GDAL processing
+
+Before passing any downloaded file to GDAL:
+1. **Magic bytes check** — verify file starts with expected header (JP2: `\x00\x00\x00\x0cjP`, GeoTIFF: `II\x2a\x00` or `MM\x00\x2a`, COG: same as GeoTIFF)
+2. **Size cap enforcement** — reject files larger than 30 GB (NAIP county) or 5 GB (Sentinel scene)
+3. **`gdalinfo` pre-check** — run `gdalinfo` on the file before full processing to catch truncated/corrupted files
+
+### S3: Pagination and resource caps
+
+- STAC API: max 100 pages of results (50,000 scenes — more than enough for any query)
+- NAIP: max 1000 counties per query
+- Per-file: enforce `Content-Length` cap before download begins (HEAD request)
+
+### S4: TLS verification must never be disabled
+
+All HTTPS connections to Copernicus and USDA endpoints must use default TLS verification (`ssl=True` in aiohttp). Add an explicit comment in download code: `# SECURITY: Never set ssl=False or verify_ssl=False`. No certificate pinning needed (government certs rotate too frequently).
+
+### S5: Credential handling
+
+- Copernicus credentials passed to pipeline container via environment variables only (same pattern as M2M at `main.py:1070-1071`)
+- Never mount `credentials.json` into the pipeline container
+- Set `credentials.json` permissions to `0600` on creation
+
+### S6: Docker socket risk (pre-existing, accepted)
+
+The search service's Docker socket access is root-equivalent. This is a pre-existing architectural decision, not introduced by this spec. Pipeline command construction uses list-form `client.containers.run(command=list)` which prevents shell injection. MBTiles filenames are constants, never derived from user input.
+
 ## Adversarial review notes
 
 This spec was reviewed by 5 independent adversarial agents (Haiku, 2x Opus, Codex/GPT-5.4, and a UX specialist). All CRITICAL and HIGH findings have been addressed in this revision. Key finding that all 5 reviewers flagged: **the maxzoom hardcoding risk requires a concrete implementation pattern (TileJSON URL form), not just a policy statement.** The spec now mandates the specific MapLibre addSource pattern and requires an acceptance test.
