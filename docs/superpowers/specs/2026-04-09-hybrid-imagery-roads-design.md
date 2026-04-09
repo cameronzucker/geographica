@@ -196,11 +196,54 @@ opacitySlider.addEventListener('input', function () {
 });
 ```
 
+### Critical: addPlaceholderSources hybrid-awareness (adversarial review findings)
+
+**Do NOT remove the imagery-layer code entirely.** It's still needed for non-hybrid modes (user may want imagery overlay without road labels in future). Instead, guard it:
+
+```js
+// In addPlaceholderSources: only create imagery-layer when NOT in hybrid mode
+// (hybrid style already has its own imagery-base layer)
+if (currentStyle !== 'hybrid' && !map.getLayer('imagery-layer')) {
+  map.addLayer({ id: 'imagery-layer', type: 'raster', source: 'imagery', ... });
+}
+```
+
+**syncLayerVisibility must handle both modes:**
+```js
+// In syncLayerVisibility:
+if (currentStyle === 'hybrid') {
+  // Imagery is baked into style — don't try to toggle imagery-layer
+  // (it doesn't exist in hybrid mode)
+} else {
+  setLayerVisibility('imagery-layer', imageryChecked);
+}
+```
+
+**Public lands z-ordering in hybrid mode:** The hybrid style has its own road layers. When `addPlaceholderSources` adds public lands with `before: 'route-line'`, this works because `route-line` is created first in the function. However, public lands should render BELOW the hybrid style's road layers too. The implementation must insert public lands before the hybrid style's first road casing layer (e.g., `before: 'road-motorway-casing'` or whatever the first road layer is named in the hybrid style). Use a defensive check:
+
+```js
+var publicLandsAnchor = map.getLayer('route-line') ? 'route-line' : undefined;
+// In hybrid mode, insert below roads from the style
+if (currentStyle === 'hybrid') {
+  // Find the first road layer in the hybrid style to insert before
+  var hybridLayers = map.getStyle().layers;
+  for (var i = 0; i < hybridLayers.length; i++) {
+    if (hybridLayers[i]['source-layer'] === 'transportation') {
+      publicLandsAnchor = hybridLayers[i].id;
+      break;
+    }
+  }
+}
+```
+
+**Opacity slider initial sync:** When switching to hybrid, set the slider value to match `imagery-base`'s initial opacity (100%). When switching back, restore to match `imagery-layer`'s value.
+
+**Use persistent style.load handler:** Replace scattered `map.once('style.load')` calls with a single `map.on('style.load')` handler that always runs `addPlaceholderSources()` + `syncLayerVisibility()`. This prevents race conditions from rapid toggle/basemap clicks.
+
 ### What stays the same
-- `addPlaceholderSources()` and `syncLayerVisibility()` — already handle style swaps
+- `addPlaceholderSources()` and `syncLayerVisibility()` — already handle style swaps (with the hybrid-awareness fixes above)
 - All overlays (public lands, KMZ imports, routes, GPS) — already survive style swaps
-- Hillshade and terrain toggles — work independently
-- The old `imagery-layer` raster overlay code can be removed since hybrid mode replaces it
+- Hillshade and terrain toggles — work independently (elevation sources are NOT entangled with imagery code)
 
 ## Section 3: TileServer Configuration
 
@@ -230,14 +273,12 @@ opacitySlider.addEventListener('input', function () {
   },
   "imagery": {
     "type": "raster",
-    "tiles": ["local://data/imagery/{z}/{x}/{y}.jpeg"],
-    "tileSize": 256,
-    "maxzoom": 16
+    "url": "mbtiles://{imagery}"
   }
 }
 ```
 
-**Note:** The imagery source URL format depends on how TileServer GL resolves raster tile references within a style. May need `mbtiles://{imagery}` instead — verify during implementation.
+**Critical (adversarial review finding):** TileServer GL resolves `mbtiles://{name}` against its `config.json` data section for both vector AND raster sources. Do NOT use `local://`, `tiles:[]`, or `tileSize` — TileServer reads tileSize/maxzoom from MBTiles metadata automatically. The `{imagery}` name matches the data entry in config.json.
 
 ### Sprites and glyphs
 
@@ -281,8 +322,7 @@ imagery → public lands fill → public lands outline → route → imports →
 |------|---------|
 | `tileserver/styles/hybrid/style.local.json` | **NEW** — hybrid style (~500 lines) |
 | `tileserver/config.json` | Add `hybrid` style entry |
-| `frontend/app.js` | Smart imagery toggle (setStyle swap), STYLES object, opacity slider update |
-| `frontend/app.js` | Remove old imagery-layer raster overlay code (replaced by hybrid style) |
+| `frontend/app.js` | Smart imagery toggle (setStyle swap), STYLES object, opacity slider, hybrid-aware guards in addPlaceholderSources + syncLayerVisibility, persistent style.load handler, public lands z-order anchor |
 
 ## Testing Strategy
 
