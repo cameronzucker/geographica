@@ -148,7 +148,9 @@
       map.dragRotate.disable();
     });
 
-    map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+    // NavigationControl with showCompass:true calls dragRotate.enable() internally.
+    // Disable compass to prevent it from re-enabling dragRotate (Pitfall #11).
     var scaleUnit = useImperial ? 'imperial' : 'metric';
     map._scaleControl = new maplibregl.ScaleControl({ unit: scaleUnit });
     map.addControl(map._scaleControl, 'bottom-right');
