@@ -456,6 +456,50 @@
       }, 'imported-points');
     }
 
+    // --- Public lands click popup ---
+    map.on('click', 'public-lands-fill', function (e) {
+      if (!e.features || !e.features.length) return;
+      var props = e.features[0].properties || {};
+      var coords = e.lngLat;
+
+      var categoryColors = {
+        BLM: '#f5deb3', USFS: '#228b22', NPS: '#006400', FWS: '#008080',
+        DOD: '#8b4545', USBR: '#4682b4', Tribal: '#cd853f', State: '#d2691e',
+        Wilderness: '#800080', Other: '#a9a9a9'
+      };
+
+      var content = document.createElement('div');
+
+      var badge = document.createElement('span');
+      badge.style.cssText = 'display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;background:' + (categoryColors[props.category] || '#a9a9a9');
+      content.appendChild(badge);
+
+      var title = document.createElement('strong');
+      title.textContent = props.name || props.category || 'Public Land';
+      content.appendChild(title);
+
+      if (props.agency || props.designation) {
+        var sub = document.createElement('p');
+        sub.style.cssText = 'font-size:12px;color:#a6adc8;margin:4px 0 0;';
+        var parts = [];
+        if (props.agency) parts.push(props.agency);
+        if (props.designation) parts.push(props.designation);
+        sub.textContent = parts.join(' \u2014 ');
+        content.appendChild(sub);
+      }
+
+      new maplibregl.Popup({ maxWidth: '280px' })
+        .setLngLat(coords)
+        .setDOMContent(content)
+        .addTo(map);
+    });
+    map.on('mouseenter', 'public-lands-fill', function () {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', 'public-lands-fill', function () {
+      map.getCanvas().style.cursor = '';
+    });
+
     // --- Click handlers for imported features ---
     var importedLayers = ['imported-points', 'imported-lines', 'imported-polygons', 'imported-polygon-outlines'];
 
@@ -1195,7 +1239,7 @@
       // Don't fire if clicking on an existing feature layer or search pin
       var features = map.queryRenderedFeatures(e.point, {
         layers: ['imported-points', 'imported-lines', 'imported-polygons',
-                 'imported-polygon-outlines', 'search-result-circles']
+                 'imported-polygon-outlines', 'search-result-circles', 'public-lands-fill']
       });
       if (features.length > 0) return;
 
@@ -2355,7 +2399,7 @@
       return iconPromise.then(function (iconResult) {
         return yieldToMain().then(function () {
 
-          // ── Stage 4: GeoJSON Conversion ──
+          // ── Stage 4a: GeoJSON Conversion ──
           showImportProgress('Converting to GeoJSON...');
           var geojson = toGeoJSON.kml(kmlDoc);
           if (!geojson.features || geojson.features.length === 0) {
@@ -2364,38 +2408,61 @@
             return;
           }
 
-          // Build folder map from KML DOM (same approach as before)
-          var folderMap = {};
-          var folders = kmlDoc.getElementsByTagName('Folder');
-          for (var i = 0; i < folders.length; i++) {
-            var folderNameEl = folders[i].childNodes;
-            var folderName = 'Ungrouped';
-            for (var j = 0; j < folderNameEl.length; j++) {
-              if (folderNameEl[j].nodeName === 'name' && folderNameEl[j].textContent) {
-                folderName = folderNameEl[j].textContent;
-                break;
-              }
-            }
-            var pms = folders[i].childNodes;
-            for (var k = 0; k < pms.length; k++) {
-              if (pms[k].nodeName === 'Placemark') {
-                var pmName = '';
-                for (var m = 0; m < pms[k].childNodes.length; m++) {
-                  if (pms[k].childNodes[m].nodeName === 'name') {
-                    pmName = pms[k].childNodes[m].textContent || '';
+          return yieldToMain().then(function () {
+
+            // ── Stage 4b: Folder Map Construction (chunked) ──
+            showImportProgress('Building folder map...');
+            var folderMap = {};
+            var folderMapCount = 0;
+            var allFolders = kmlDoc.getElementsByTagName('Folder');
+            var fIdx = 0;
+            var pIdx = 0;
+            var yieldCount = 0;
+
+            function buildFolderMapChunk() {
+              while (fIdx < allFolders.length) {
+                var folderChildNodes = allFolders[fIdx].childNodes;
+                var folderName = 'Ungrouped';
+                for (var j = 0; j < folderChildNodes.length; j++) {
+                  if (folderChildNodes[j].nodeName === 'name' && folderChildNodes[j].textContent) {
+                    folderName = folderChildNodes[j].textContent;
                     break;
                   }
                 }
-                folderMap['pm_' + Object.keys(folderMap).length] = { folder: folderName, name: pmName };
+                var pms = allFolders[fIdx].childNodes;
+                while (pIdx < pms.length) {
+                  if (pms[pIdx].nodeName === 'Placemark') {
+                    var pmName = '';
+                    for (var m = 0; m < pms[pIdx].childNodes.length; m++) {
+                      if (pms[pIdx].childNodes[m].nodeName === 'name') {
+                        pmName = pms[pIdx].childNodes[m].textContent || '';
+                        break;
+                      }
+                    }
+                    folderMap['pm_' + (folderMapCount++)] = { folder: folderName, name: pmName };
+                    yieldCount++;
+                  }
+                  pIdx++;
+                  if (yieldCount >= 1000) {
+                    yieldCount = 0;
+                    return yieldToMain().then(buildFolderMapChunk);
+                  }
+                }
+                fIdx++;
+                pIdx = 0;
               }
+              return Promise.resolve();
             }
-          }
 
-          var totalFeatures = geojson.features.length;
-          var folderEntries = Object.values(folderMap);
-          var folderSet = {};
+            return buildFolderMapChunk().then(function () {
+              return yieldToMain();
+            }).then(function () {
 
-          // Register the import entry early (so Remove button can abort)
+              var totalFeatures = geojson.features.length;
+              var folderEntries = Object.values(folderMap);
+              var folderSet = {};
+
+              // Register the import entry early (so Remove button can abort)
           importedFiles[fileId] = {
             name: filename,
             geojson: { type: 'FeatureCollection', features: [] },
@@ -2529,9 +2596,11 @@
             geojson = null;
             processedFeatures = null;
             importInProgress = false;
-          });
-        });
-      });
+          });       // end processBatch.then() [Stage 5→6]
+            });     // end buildFolderMapChunk().then().then() [Stage 4b]
+          });       // end yieldToMain().then() [Stage 4a→4b]
+        });         // end iconPromise.then() [Stage 3→4a]
+      });           // end IIFE return
     })().catch(function (err) {
       console.error('Import pipeline error:', err);
       showImportStatus('Import failed: ' + (err.message || err), 'error');
