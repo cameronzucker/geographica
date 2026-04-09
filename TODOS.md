@@ -110,6 +110,11 @@
 - **Risk:** Larger tiles at z11-13 could worsen the Firefox performance issue. Need to balance road visibility vs tile size.
 - **Estimated time:** 1-2 hours (install + build + verify)
 
+### Spatial search doesn't adapt to city size
+- **What:** "gas stations in Long Beach, CA" returns no results. The search radius or bounding box doesn't scale to match the size of the city being searched. Works for small cities but fails for larger metro areas where the city center is far from the actual POIs.
+- **Why:** The city-aware search geocodes the city name to a center point, then searches within a fixed radius. Large cities like Long Beach (~50 sq mi) have gas stations throughout but none may fall within the default search radius from the city center.
+- **Fix:** Use the city's bounding box (from Nominatim's `boundingbox` field) to define the search area instead of a fixed radius from the center point.
+
 ### Monitor: search request latency with multiple tile sources active
 - **What:** With hybrid imagery + public lands + terrain all active, the browser queues the spatial search fetch behind dozens of concurrent tile requests. This caused 7.6s round-trip times despite the server responding in <200ms.
 - **Current fix:** `priority: 'high'` on the search fetch request. This works but is a band-aid — the root cause is browser connection pool contention.
