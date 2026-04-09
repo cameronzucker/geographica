@@ -128,6 +128,84 @@ Replace inline error formatting with `formatApiError()`.
 
 All handlers must follow: success path calls `fetchAll()` to refresh UI, error path displays message but does NOT call `fetchAll()` (preserves current UI state).
 
+## Adversarial review fixes
+
+The following issues were identified by 5 adversarial reviewers (Haiku, 2x Opus, Codex/GPT-5.4, UX specialist) and must be addressed in implementation:
+
+### F1 (CRITICAL): File permissions in `_remove_credential_keys`
+
+The helper must call `os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)` (0600) on the temp file BEFORE `os.replace()`. Otherwise the temp file inherits default umask (typically 0644), making credentials world-readable after a type-specific delete.
+
+### F2 (HIGH): Harden M2M credential check in `pipeline_start`
+
+The existing M2M credential check at `pipeline_start()` only checks `CREDENTIALS_PATH.exists()`. After a type-specific delete (which may leave the file with only Copernicus keys), this check passes but the pipeline fails mid-run with missing M2M keys. Fix: change to check for key presence in the file, matching the Sentinel pattern:
+
+```python
+if body.mode == "m2m":
+    if not CREDENTIALS_PATH.exists():
+        raise HTTPException(status_code=422, detail="M2M credentials not configured.")
+    try:
+        creds = json.loads(CREDENTIALS_PATH.read_text())
+        if "m2m_username" not in creds or "m2m_token" not in creds:
+            raise HTTPException(status_code=422, detail="M2M credentials not configured.")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Credentials file is corrupted.")
+```
+
+### F3 (MEDIUM): Handle missing file in `_remove_credential_keys`
+
+If `credentials.json` doesn't exist when a DELETE is called, the helper must return `{"status": "deleted"}` (idempotent) rather than raising `FileNotFoundError`.
+
+### F4 (MEDIUM): Serialize credential file access with asyncio lock
+
+Add `_credential_lock = asyncio.Lock()` and use it in both save and delete handlers to prevent read-modify-write races. Single-user Pi deployment makes this unlikely but correctness matters:
+
+```python
+_credential_lock = asyncio.Lock()
+
+async def save_credentials(body):
+    async with _credential_lock:
+        # read, modify, write
+```
+
+### F5 (MEDIUM): Robust `formatApiError` for all error shapes
+
+Handle object-shaped `detail`, non-JSON responses, and missing `detail` field:
+
+```js
+function formatApiError(detail) {
+    if (!detail) return 'Unknown error';
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) return detail.map(function(e) { return e.msg || JSON.stringify(e); }).join('; ');
+    if (typeof detail === 'object') return detail.msg || JSON.stringify(detail);
+    return String(detail);
+}
+```
+
+Also: wrap the `r.json()` call in the error path with a try/catch for non-JSON responses (e.g., NGINX 502 HTML pages):
+
+```js
+.then(function(r) {
+    if (!r.ok) {
+        return r.text().then(function(text) {
+            try { var d = JSON.parse(text); throw new Error(formatApiError(d.detail)); }
+            catch(e) { if (e instanceof SyntaxError) throw new Error('Server error: ' + r.status); throw e; }
+        });
+    }
+    return r.json();
+})
+```
+
+### F6 (MEDIUM): Sanitize error messages — no raw Python exceptions
+
+Replace raw `f"Failed to save credentials: {e}"` and `f"Failed to delete credentials: {e}"` with generic messages that don't leak file paths or exception details:
+
+```python
+raise HTTPException(status_code=500, detail="Failed to save credentials. Check server logs.")
+```
+
+Log the actual exception server-side with `log.error(...)`.
+
 ## Files modified
 
 | File | Changes |
