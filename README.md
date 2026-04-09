@@ -10,24 +10,25 @@ isolated LAN or standalone device.
 
 ## Features
 
-- **Vector basemaps** with two themes (Positron light, Dark Matter dark) and house number labels
-- **Aerial imagery** overlay (USGS NAIP orthophotos)
+- **Vector basemaps** with three themes (Positron light, Dark Matter dark, Hybrid imagery+roads) and house number labels
+- **Aerial imagery** overlay — USGS NAIP (0.6m, US), Sentinel-2 (10m, global) with per-source toggles and opacity slider
+- **Public lands layer** — BLM, National Forest, National Park, Fish & Wildlife, Military, Bureau of Reclamation, Tribal, State Trust, and Wilderness boundaries with agency-colored fills and legend. Tribal boundaries rendered with diagonal stripe pattern.
 - **3D terrain** with hillshade and adjustable exaggeration slider (z0-14 elevation data)
 - **Free-look camera** for 3D terrain exploration (pitch/bearing control)
 - **Turn-by-turn navigation** with voice guidance, off-route detection, and dead reckoning
 - **Multi-stop waypoint routing** with map click point selection for car, bicycle, and pedestrian
-- **Natural language spatial search** — "nearest gas station", "hospitals near me", "gas stations along my route", "fuel every 50 miles" with distance-ranked results and numbered map pins
+- **Natural language spatial search** — "nearest gas station", "hospitals near me", "gas stations along my route", "fuel every 50 miles", "gas stations in Flagstaff", "restaurants in Phoenix along my route" with distance-ranked results, numbered map pins, and city-aware geocoding
 - **Voice search (STT)** — push-to-hold mic button for hands-free spatial queries via Whisper (base.en, CPU). Say "gas stations near me" and get results. Requires HTTPS.
 - **OSM POI search** — commercial amenities (fuel, food, lodging, pharmacy, grocery) and public land boundaries (BLM, USFS, NPS) extracted from OSM data. Fills the rural coverage gap where GNIS-only data returned no commercial results.
 - **Geocoding** — search for addresses, cities, landmarks
 - **POI search** — GNIS gazetteer with full-text search (data sourced from S3: `prd-tnm.s3.amazonaws.com`)
 - **Live GPS** — hardware GPS streaming over WebSocket with accuracy circle display
-- **KML/KMZ import** — drag-and-drop file overlay with layer management panel
+- **KML/KMZ import** — drag-and-drop file overlay with layer management panel and IndexedDB session persistence
 - **Coordinate display** — Maidenhead grid locator and MGRS in addition to lat/lon
 - **Imperial and metric units** — switchable distance/elevation units
 - **Draw-on-map bounding box selection** for imagery downloads
-- **Admin config panel** (localhost-only, separated from main app) with 3-tab layout: Dashboard (service health with color-coded status dots, disk/TLS info), Pipelines (imagery with MapLibre minimap bbox selection, elevation, OSM POI extraction), Settings (M2M credentials, TLS config, STT status)
-- **Pipeline management** — start/cancel imagery (direct + M2M), elevation, and OSM POI extraction from the browser with phase-aware M2M progress (login → searching → downloading GeoTIFFs → converting → complete)
+- **Admin config panel** (localhost-only, separated from main app) with 3-tab layout: Dashboard (service health with color-coded status dots, disk/TLS info), Pipelines (imagery with MapLibre minimap bbox selection, elevation, OSM POI extraction, Sentinel-2, NAIP), Settings (M2M + Copernicus credentials, TLS config, STT status)
+- **Pipeline management** — start/cancel imagery (direct + M2M), NAIP, Sentinel-2, elevation, public lands, and OSM POI extraction from the browser with phase-aware progress tracking
 - **Print/export directions** (Mapquest-style printable page)
 - **ATAK integration** — serves as a WMS map source for TAK clients
 - **TLS support** — three modes: HTTP, HTTPS (self-signed), or Tailscale (Let's Encrypt)
@@ -51,7 +52,9 @@ isolated LAN or standalone device.
 |---------|------|
 | Vector basemap (OpenMapTiles) | ~2.4 GB |
 | Elevation tiles (zoom 0-14) | ~70 GB |
-| Aerial imagery (USGS, zoom 0-15) | ~30+ GB |
+| Aerial imagery — NAIP (USGS, zoom 0-15) | ~30+ GB |
+| Aerial imagery — Sentinel-2 (Copernicus, 10m) | varies by area |
+| Public lands (PAD-US vector tiles) | ~1-2 GB |
 | OSM extracts (merged PBF) | ~3.1 GB |
 | Valhalla routing graph | ~4.3 GB |
 | Nominatim geocoding DB | ~30-40 GB |
@@ -565,26 +568,29 @@ heaviest consumer — check its limit first.
 
 ```
 geographica/
-├── docker-compose.yml          # 7 services + on-demand pipeline, with memory limits
+├── docker-compose.yml          # 7 persistent services + on-demand pipeline, with memory limits
 ├── .env.example                # Environment variable template
 ├── nginx/
 │   └── nginx.conf              # Reverse proxy with URL rewriting
 ├── frontend/
 │   ├── index.html              # Single-page app entry point
-│   ├── app.js                  # MapLibre GL JS application (~2770 lines)
+│   ├── app.js                  # MapLibre GL JS application (~3900 lines)
 │   ├── navigation.js           # Turn-by-turn navigation engine
 │   ├── nav-ui.js               # Navigation UI bridge
 │   ├── stt.js                  # Voice search module (mic button, audio capture)
 │   ├── stt-worklet.js          # AudioWorklet processor
+│   ├── kmz-import.js           # KML/KMZ file import with icon support
+│   ├── import-store.js         # IndexedDB session persistence for imports
 │   ├── style.css               # UI styles
 │   ├── config/
 │   │   └── index.html          # Admin config panel (3-tab: Dashboard/Pipelines/Settings)
 │   └── vendor/                 # Vendored JS/CSS (gitignored, see step 9)
 ├── tileserver/
-│   ├── config.json             # TileServer GL data source config
-│   ├── styles/                 # Positron + Dark Matter map styles
+│   ├── config.json             # TileServer GL data source config (basemap, elevation, imagery, public lands)
+│   ├── styles/                 # Map styles
 │   │   ├── positron/style.local.json
-│   │   └── darkmatter/style.local.json
+│   │   ├── darkmatter/style.local.json
+│   │   └── hybrid/style.local.json   # Imagery base + roads/labels overlay
 │   ├── fonts-served/           # PBF glyph ranges (gitignored, see step 8)
 │   ├── sources/                # Natural Earth shapefiles (gitignored)
 │   ├── southwest5.mbtiles      # Vector basemap (gitignored, ~2.4 GB)
@@ -604,6 +610,7 @@ geographica/
 │       ├── Dockerfile
 │       ├── main.py             # Nominatim/POI query, admin API, pipeline orchestration
 │       ├── spatial.py          # Intent parser, synonym table, corridor math, spatial endpoint
+│       ├── geocode.py          # Async geocode helper with position-biased caching
 │       ├── requirements.txt
 │       └── tests/              # Admin status, pipeline, zoom validation tests
 ├── scripts/
@@ -611,9 +618,21 @@ geographica/
 │   ├── download_elevation.py   # Terrain-RGB tile downloader
 │   ├── build_poi_index.py      # GNIS POI indexer (FTS5)
 │   ├── build_osm_pois.py       # OSM amenity + public land extractor
-│   ├── acquire_imagery.py      # USGS imagery downloader
+│   ├── build_public_lands.py   # PAD-US public lands vector tile generator
+│   ├── build_county_index.py   # Census TIGER/Line county lookup database
+│   ├── acquire_imagery.py      # USGS legacy imagery downloader
+│   ├── acquire_naip.py         # USGS NAIP county mosaic downloader
+│   ├── acquire_sentinel.py     # Copernicus Sentinel-2 imagery downloader
+│   ├── pipeline_progress.py    # Shared progress reporting module
 │   ├── provision_tailscale_tls.sh  # Tailscale TLS cert provisioning
 │   └── generate_tls.sh         # Self-signed TLS cert generation
+├── tests/                      # Top-level test suite (331 tests)
+│   ├── test_intent_parser.py   # Spatial search intent parser (54 tests)
+│   ├── test_geocode.py         # City geocode with cache (10 tests)
+│   ├── test_spatial_endpoint.py # Endpoint integration (15 tests)
+│   ├── test_spatial_osm.py     # OSM POI + operator queries
+│   ├── test_corridor.py        # Douglas-Peucker + corridor math
+│   └── ...                     # Pipeline, security, sentinel, county tests
 ├── systemd/
 │   ├── geographica-tls-renew.service  # Cert renewal oneshot
 │   └── geographica-tls-renew.timer    # Daily renewal timer
@@ -621,7 +640,8 @@ geographica/
     ├── pbf/                    # OSM state extracts + merged PBF
     ├── nominatim/region.osm.pbf
     ├── valhalla/               # PBF + generated routing graph
-    └── poi.sqlite              # FTS5 search database
+    ├── poi.sqlite              # FTS5 search database
+    └── public-lands.mbtiles    # PAD-US public lands vector tiles
 ```
 
 ## License

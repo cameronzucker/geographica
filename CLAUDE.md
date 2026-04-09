@@ -4,13 +4,14 @@ Offline-first GIS platform for AREDN mesh networks, running on Raspberry Pi 5.
 
 ## Project structure
 
-- `docker-compose.yml` — 6-service stack (tileserver, valhalla, nominatim, gps, search, frontend)
+- `docker-compose.yml` — 7 persistent services + on-demand pipeline (tileserver, valhalla, nominatim, gps, search, stt, frontend)
 - `services/gps/` — FastAPI GPS WebSocket service (reads gpsd)
-- `services/search/` — FastAPI unified search (Nominatim + SQLite FTS5 POI)
-- `scripts/` — Offline data pipeline (imagery acquisition, POI indexer, elevation downloader)
+- `services/search/` — FastAPI unified search (Nominatim + SQLite FTS5 POI + city-aware spatial search + geocode)
+- `services/stt/` — FastAPI speech-to-text service (Whisper on Hailo NPU)
+- `scripts/` — Offline data pipeline (imagery acquisition, POI indexer, elevation, public lands, county index)
 - `frontend/` — Vanilla JS + MapLibre GL JS single-page app
 - `nginx/` — Reverse proxy config with sub_filter URL rewriting
-- `tileserver/` — TileServer GL config and styles
+- `tileserver/` — TileServer GL config and styles (positron, darkmatter, hybrid)
 - `data/` — Symlink to /srv/geographica/data/ (gitignored) MBTiles, PBF, SQLite databases
 
 ## Commands
@@ -29,7 +30,7 @@ python3 scripts/build_osm_pois.py \
   --bbox "-124.8,31.3,-102.0,49.0"
 
 # Stack management
-docker compose build         # build GPS and search service images
+docker compose build         # build GPS, search, and STT service images
 docker compose up -d         # start all services
 docker compose ps            # check service health
 docker compose logs -f gps   # tail GPS service logs
@@ -46,7 +47,10 @@ docker compose down          # stop everything
 ## Testing
 
 ```bash
-# Python service tests
+# All tests (from repo root — includes parser, geocode, endpoint, pipeline tests)
+python -m pytest tests/ -v
+
+# Python service tests (individual)
 cd services/gps && python -m pytest
 cd services/search && python -m pytest
 
