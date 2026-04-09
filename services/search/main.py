@@ -842,6 +842,39 @@ async def admin_status():
 # ---------------------------------------------------------------------------
 # Credential management
 # ---------------------------------------------------------------------------
+_credential_lock = asyncio.Lock()
+
+
+async def _remove_credential_keys(keys_to_remove: list) -> dict:
+    """Remove specified credential keys, deleting the file if none remain."""
+    async with _credential_lock:
+        existing = {}
+        try:
+            existing = json.loads(CREDENTIALS_PATH.read_text())
+        except FileNotFoundError:
+            pass
+
+        for key in keys_to_remove:
+            existing.pop(key, None)
+
+        known_keys = {"m2m_username", "m2m_token", "copernicus_username", "copernicus_password"}
+        has_remaining = any(existing.get(k) for k in known_keys)
+
+        if has_remaining:
+            cred_data = json.dumps(existing)
+            fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=".tmp")
+            try:
+                os.write(fd, cred_data.encode())
+            finally:
+                os.close(fd)
+            os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, str(CREDENTIALS_PATH))
+        else:
+            CREDENTIALS_PATH.unlink(missing_ok=True)
+
+    return {"status": "deleted"}
+
+
 @app.post("/admin/credentials", dependencies=[Depends(require_config_source)])
 async def save_credentials(body: CredentialBody):
     """Store API credentials securely. Supports M2M and/or Copernicus credentials."""
@@ -851,39 +884,41 @@ async def save_credentials(body: CredentialBody):
     if not has_m2m and not has_copernicus:
         raise HTTPException(status_code=422, detail="Provide m2m_username+m2m_token and/or copernicus_username+copernicus_password")
 
-    # Merge with existing credentials (don't overwrite one type when saving the other)
-    existing = {}
-    if CREDENTIALS_PATH.exists():
-        try:
-            existing = json.loads(CREDENTIALS_PATH.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+    async with _credential_lock:
+        # Merge with existing credentials (don't overwrite one type when saving the other)
+        existing = {}
+        if CREDENTIALS_PATH.exists():
+            try:
+                existing = json.loads(CREDENTIALS_PATH.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass
 
-    if has_m2m:
-        existing["m2m_username"] = body.m2m_username
-        existing["m2m_token"] = body.m2m_token
-    if has_copernicus:
-        existing["copernicus_username"] = body.copernicus_username
-        existing["copernicus_password"] = body.copernicus_password
+        if has_m2m:
+            existing["m2m_username"] = body.m2m_username
+            existing["m2m_token"] = body.m2m_token
+        if has_copernicus:
+            existing["copernicus_username"] = body.copernicus_username
+            existing["copernicus_password"] = body.copernicus_password
 
-    cred_data = json.dumps(existing)
+        cred_data = json.dumps(existing)
 
-    # Atomic write: write to temp file, then os.replace
-    try:
-        fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=".tmp")
+        # Atomic write: write to temp file, then os.replace
         try:
-            os.write(fd, cred_data.encode())
-        finally:
-            os.close(fd)
-        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
-        os.replace(tmp_path, str(CREDENTIALS_PATH))
-    except Exception as e:
-        # Clean up temp file if replace failed
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise HTTPException(status_code=500, detail=f"Failed to save credentials: {e}")
+            fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=".tmp")
+            try:
+                os.write(fd, cred_data.encode())
+            finally:
+                os.close(fd)
+            os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
+            os.replace(tmp_path, str(CREDENTIALS_PATH))
+        except Exception as e:
+            # Clean up temp file if replace failed
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            log.error("Failed to save credentials: %s", e)
+            raise HTTPException(status_code=500, detail="Failed to save credentials. Check server logs.")
 
     return {"status": "saved"}
 
@@ -909,8 +944,29 @@ async def delete_credentials():
     try:
         CREDENTIALS_PATH.unlink(missing_ok=True)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete credentials: {e}")
+        log.error("Failed to delete credentials: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to delete credentials. Check server logs.")
     return {"status": "deleted"}
+
+
+@app.delete("/admin/credentials/m2m", dependencies=[Depends(require_config_source)])
+async def delete_m2m_credentials():
+    """Remove only M2M credentials, preserving Copernicus."""
+    try:
+        return await _remove_credential_keys(["m2m_username", "m2m_token"])
+    except Exception as e:
+        log.error("Failed to delete M2M credentials: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to delete credentials. Check server logs.")
+
+
+@app.delete("/admin/credentials/copernicus", dependencies=[Depends(require_config_source)])
+async def delete_copernicus_credentials():
+    """Remove only Copernicus credentials, preserving M2M."""
+    try:
+        return await _remove_credential_keys(["copernicus_username", "copernicus_password"])
+    except Exception as e:
+        log.error("Failed to delete Copernicus credentials: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to delete credentials. Check server logs.")
 
 
 # ---------------------------------------------------------------------------
@@ -1041,6 +1097,12 @@ async def pipeline_start(body: PipelineStartBody):
     if body.mode == "m2m":
         if not CREDENTIALS_PATH.exists():
             raise HTTPException(status_code=422, detail="M2M credentials not configured. POST to /admin/credentials first.")
+        try:
+            creds = json.loads(CREDENTIALS_PATH.read_text())
+            if not creds.get("m2m_username") or not creds.get("m2m_token"):
+                raise HTTPException(status_code=422, detail="M2M credentials not configured. POST to /admin/credentials first.")
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=422, detail="Credentials file is corrupted.")
 
     async with _pipeline_lock:
         client = _get_docker_client()
