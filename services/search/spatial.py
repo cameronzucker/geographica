@@ -852,6 +852,15 @@ async def spatial_search(body: SpatialSearchBody):
                 "category": parsed.get("category"),
                 "place_name": place_name,
             }
+        # Compute distance_m from geocoded city center (not GPS)
+        if geocode_result:
+            city_lat = geocode_result["lat"]
+            city_lon = geocode_result["lon"]
+            for r in merged:
+                try:
+                    r["distance_m"] = round(haversine_m(city_lat, city_lon, float(r["lat"]), float(r["lon"])), 1)
+                except (KeyError, TypeError, ValueError):
+                    r["distance_m"] = None
     elif intent == "city_proximity" and geocode_result:
         city_lat = geocode_result["lat"]
         city_lon = geocode_result["lon"]
