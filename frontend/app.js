@@ -133,7 +133,8 @@
       zoom: DEFAULT_ZOOM,
       attributionControl: false,
       dragRotate: false,  // disable CTRL+drag rotation — we implement free-look instead
-      boxZoom: false       // disable CTRL+drag box zoom — conflicts with free-look
+      boxZoom: false,      // disable CTRL+drag box zoom — conflicts with free-look
+      maxPitch: 85         // default 60 is too low for free-look camera (clamps our jumpTo)
     });
     window._geographicaMap = map;
 
@@ -3533,10 +3534,6 @@
       var dx = e.clientX - startX;
       var dy = e.clientY - startY;
 
-      // Both modes use the same bearing/pitch math — the visual difference is that
-      // free-look keeps the camera position fixed (jumpTo) while orbit would ideally
-      // rotate around a ground anchor. With jumpTo both behave as sky-point rotation,
-      // but SHIFT orbit uses lower sensitivity for a more grounded feel.
       var sensitivity = mode === 'freelook' ? 0.3 : 0.2;
       var newBearing = startBearing + dx * sensitivity;
       var newPitch = Math.max(0, Math.min(85, startPitch - dy * sensitivity));
