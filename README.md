@@ -340,7 +340,8 @@ status — it won't block the rest of the stack.
 ### 11. Launch the stack
 
 ```bash
-docker compose build    # build gps, search, stt, and pipeline service images
+docker compose build    # build gps, search, and stt service images
+docker compose --profile pipeline build  # also build pipeline image (for admin panel downloads)
 docker compose up -d    # start all 7 services
 ```
 
@@ -408,6 +409,9 @@ docker compose restart X   # restart one service
 
 # Rebuild after code changes to gps, search, or stt
 docker compose build && docker compose up -d
+
+# Rebuild pipeline image (needed for admin panel downloads)
+docker compose --profile pipeline build
 ```
 
 ## Config panel
@@ -573,6 +577,8 @@ geographica/
 │   ├── stt.js                  # Voice search module (mic button, audio capture)
 │   ├── stt-worklet.js          # AudioWorklet processor
 │   ├── style.css               # UI styles
+│   ├── config/
+│   │   └── index.html          # Admin config panel (3-tab: Dashboard/Pipelines/Settings)
 │   └── vendor/                 # Vendored JS/CSS (gitignored, see step 9)
 ├── tileserver/
 │   ├── config.json             # TileServer GL data source config

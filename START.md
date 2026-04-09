@@ -61,11 +61,11 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 - `services/stt/main.py` — STT service: `POST /transcribe`, `GET /health`, WAV validation
 - `services/stt/backends/cpu.py` — faster-whisper base.en INT8, hallucination filtering
 - `services/stt/backends/npu.py` — HailoRT skeleton (ready for 5.3.0 firmware)
-- `services/gps/main.py` — GPS WebSocket with accuracy, 50ms poll sleep, `GET /health`, `GET /position`
+- `services/gps/main.py` — GPS WebSocket with accuracy, 50ms poll sleep, `GET /health`, `GET /position`, `GET /status` (admin aggregation — no coordinates)
 - `frontend/app.js` — main frontend (~2800 lines), spatial search, numbered pins, GPS, STT integration
 - `frontend/stt.js` — voice search module (mic button, AudioWorklet, WAV encoding)
 - `frontend/stt-worklet.js` — AudioWorklet processor (sample accumulation)
-- `frontend/config/index.html` — standalone config panel (to be redesigned — see "What to work on next")
+- `frontend/config/index.html` — admin config panel (3-tab: Dashboard/Pipelines/Settings, MapLibre minimap, M2M phase progress)
 - `frontend/navigation.js` — turn-by-turn engine (~790 lines)
 - `frontend/nav-ui.js` — navigation UI bridge (~860 lines)
 - `scripts/acquire_imagery.py` — imagery download (3 modes: direct/tnmaccess/m2m, batched M2M)
