@@ -53,8 +53,9 @@ After JSZip decompresses the KMZ, before feature processing:
    b. Check if the URL is a path within the KMZ archive → extract from archive
    c. If external URL: validate URL (see Section 5), attempt HTTP fetch with 5s timeout
    d. Convert fetched image to `HTMLImageElement`, validate dimensions (max 256x256)
-   e. Register with `map.addImage(iconId, image)` using URL-derived key
+   e. Register with `map.addImage(iconId, image)` — `HTMLImageElement` is accepted directly by MapLibre
 3. Cache loaded icons in session-scoped `Map<url, iconId>`
+4. **Concurrency guard:** Set `var importInProgress = true` at pipeline start, `false` at end. Reject new imports while in progress. Each batch checks whether the file's `fileId` still exists in `importedFiles` (user may have clicked Remove mid-import); if not, abort the pipeline.
 
 #### Icon ID Derivation
 
@@ -68,10 +69,11 @@ Each unique icon URL gets a deterministic ID:
 
 When an icon can't be loaded (offline, 404, timeout, validation failure):
 
-1. Derive abbreviation from KML style name: split on `_` and `-`, take first letter of each significant word (skip "and", "or", "the", "-"), truncate to 2 chars (e.g., `Mine_Shaft` → `MS`, `Open_Pit_Mine` → `OP`, `Gravel_Borrow_Pit` → `GB`)
+1. Derive abbreviation from KML style name: split on `_` and `-`, take first letter of each significant word (skip "and", "or", "the", "-"), truncate to 2 chars (e.g., `Mine_Shaft` → `MS`, `Open_Pit_Mine` → `OP`, `Gravel_Borrow_Pit` → `GB`). If result is 1 char, double it (`D` → `DD`). If empty, use `??`.
 2. Derive color: simple hash of full style name → map to one of 8 hues (0°, 45°, 90°, 135°, 180°, 225°, 270°, 315° HSL at 60% saturation, 50% lightness)
 3. Render 32x32 canvas: filled circle at hashed color, white 2-letter abbreviation centered, 12px bold sans-serif
-4. Register with same `kmz-icon-{id}` key as the real icon would have — transparent to the symbol layer
+4. Extract pixel data: `var imageData = ctx.getImageData(0, 0, 32, 32);` — MapLibre's `addImage()` does NOT accept canvas elements directly
+5. Register: `map.addImage(iconId, {width: 32, height: 32, data: new Uint8Array(imageData.data.buffer)})` — same key as the real icon would have, transparent to the symbol layer
 
 #### Layer Changes
 
@@ -79,11 +81,13 @@ Replace the `imported-points` circle layer with a `symbol` layer:
 
 ```
 Layer: imported-points (type: symbol)
-  icon-image: ['get', '_iconId']
-  icon-size: ['get', '_iconScale']    // from KML <scale>, default 1.0
+  icon-image: ['coalesce', ['image', ['get', '_iconId']], ['image', 'kmz-icon-default']]
+  icon-size: ['coalesce', ['get', '_iconScale'], 1]
   icon-allow-overlap: true            // preserve dense bird's-eye view
   icon-ignore-placement: true         // don't push other symbols away
 ```
+
+**Critical:** `['image', expr]` returns null if the image isn't registered. `['coalesce', ...]` falls through to the default. Without this, features with unregistered icons are silently invisible. The `kmz-icon-default` image MUST be registered before any features are added to the source. `icon-size` similarly needs a coalesce — null `_iconScale` would hide the icon.
 
 Features without icons get `_iconId: 'kmz-icon-default'` — a 32x32 canvas-rendered pink circle matching current appearance.
 
@@ -99,9 +103,12 @@ Single symbol layer handles both icon and non-icon features via data-driven `ico
 
 `processKMLDoc()` becomes async, broken into stages with `yieldToMain()` between each:
 
+```js
+function yieldToMain() {
+  return new Promise(function(resolve) { setTimeout(resolve, 0); });
+}
 ```
-yieldToMain() = new Promise(resolve => setTimeout(resolve, 0))
-```
+Note: use `function` expression, not arrow function — codebase uses `var`/`function` exclusively.
 
 **Stage 1 — DOM Parse** (~100ms even for 28MB):
 - `new DOMParser().parseFromString(kmlText, 'text/xml')`
@@ -127,15 +134,19 @@ yieldToMain() = new Promise(resolve => setTimeout(resolve, 0))
 **Stage 5 — Feature Processing** (batched, yielding):
 - Iterate the GeoJSON features array in batches of 500
 - Each batch: resolve styles via `styleTable`/`styleMapTable` (Section 3), assign `_iconId`/`_iconScale`/`_importFileId`/`_importFeatureId`/`_folder`, build folder map
+- Check `importedFiles[fileId]` still exists before each batch (user may have clicked Remove mid-import — if gone, abort pipeline)
 - Append processed features to `runningCollection`
-- Call `source.setData(runningCollection)` after each batch (progressive map update)
-- `await yieldToMain()` between batches
-- Progress: "Processing features... 2,500 / 45,645"
+- `await yieldToMain()` between batches to keep browser responsive
+- Progress bar updates: "Processing features... 2,500 / 45,645"
+- **Do NOT call `source.setData()` during batching.** Each `setData()` call re-parses the entire GeoJSON and rebuilds MapLibre's internal tile index. Calling it 91 times with increasingly large collections is O(n^2) work — 46x slower than a single call for 45K features. The progress bar provides adequate user feedback without progressive map rendering.
 
 **Stage 6 — Finalization** (single step):
-- `fitBounds()` on complete feature set
+- Single `source.setData(runningCollection)` call with complete feature set
+- `fitBounds()` on feature bounds
 - Call `buildImportLayerUI()` once with complete data (NOT during batching — the layer tree UI needs the full folder/feature inventory)
+- Set `importInProgress = false`
 - Show completion message
+- Explicitly null out references to KML string and DOM to allow GC: `kmlText = null; kmlDoc = null;`
 
 #### Progress UI
 
@@ -172,24 +183,28 @@ This is cheap — 60 StyleMaps + 120 Styles in the USMIN case.
 
 #### Post-process: Resolve Features
 
-After `toGeoJSON.kml()` produces GeoJSON, during Stage 4 batched processing:
+After `toGeoJSON.kml()` produces GeoJSON, during **Stage 5** batched processing:
 
-1. If feature has `properties.styleUrl` (e.g., `#Adit_nStyleMap`):
+**Note:** toGeoJSON DOES resolve StyleMap references and populates `properties.icon` with the icon URL (confirmed in vendored togeojson.js lines 234-251). The custom style table is primarily needed for extracting `<scale>` values, which toGeoJSON does NOT extract. The icon URL from `properties.icon` can be used directly; the style table provides the scale and serves as a verification fallback.
+
+1. If feature has `properties.icon` (toGeoJSON resolved the icon URL):
+   - Use `properties.icon` as `iconUrl`
+   - Look up the icon URL in `styleTable` (keyed by URL) to get `scale`; default 1.0 if not found
+2. Else if feature has `properties.styleUrl` (toGeoJSON preserved the reference but didn't resolve it):
    - Strip `#` prefix
    - Look up in `styleMapTable` → get normal style ID
    - Look up normal style in `styleTable` → get `iconUrl` and `scale`
-2. Else if feature has `properties.icon` (toGeoJSON resolved it directly):
-   - Use `properties.icon` as `iconUrl`, scale defaults to 1.0
-3. Write to feature:
-   - `_iconUrl` → resolved URL
+3. Else: no icon data — use defaults
+4. Write to feature:
+   - `_iconUrl` → resolved URL (or empty string)
    - `_iconScale` → KML scale value (default 1.0)
    - `_iconId` → matching registered icon ID, or `'kmz-icon-default'`
 
 #### Why Not Modify toGeoJSON
 
 - Vendored third-party library — modifying creates maintenance fork
-- Post-processing is simple and handles the specific gap (StyleMap resolution)
-- If future toGeoJSON handles this natively, remove the post-processing step
+- Post-processing is simple and handles the specific gap (scale extraction)
+- If future toGeoJSON handles scale natively, remove the post-processing step
 
 ### Section 4: Performance Preservation & Memory Budget
 
@@ -237,8 +252,14 @@ The import pipeline now fetches external resources directed by untrusted file co
 
 - Only allow `http://` and `https://` schemes
 - Block `javascript:`, `data:`, `file:`, `blob:` schemes
-- Reject URLs targeting localhost, private IP ranges (10.x, 172.16-31.x, 192.168.x), `.local` domains
+- Reject URLs targeting private/loopback addresses (comprehensive list):
+  - IPv4: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `0.0.0.0`
+  - IPv6: `::1`, `[::1]`, `::ffff:127.0.0.1` (IPv4-mapped), `fe80::/10` (link-local), `fc00::/7` (unique local)
+  - Octal/hex encoded: `0177.0.0.1`, `0x7f000001`
+  - `.local` domains
+- Fetch with `redirect: 'error'` to prevent redirect-based bypasses (malicious URL → 301 → private IP)
 - Validation runs before any fetch attempt
+- **Post-fetch validation:** Check `response.url` against the same blocklist (defense against DNS rebinding)
 
 #### Image Validation
 
@@ -279,6 +300,8 @@ A formal security review (CSO skill) must run against this spec before implement
 | `frontend/style.css` | Progress bar styles, updated import status styles |
 | `frontend/index.html` | No changes expected (existing drop zone and file input sufficient) |
 | `frontend/vendor/togeojson.js` | No changes (post-processing approach avoids forking) |
+
+**Caller updates required:** `processKMLDoc()` becomes async (returns a Promise). Both `importKML()` (synchronous `reader.onload`) and `importKMZ()` (Promise `.then()` chain) must be updated to handle the returned Promise with `.catch()` for error handling. `importKML`'s `reader.onload` should call `processKMLDoc(...).catch(showImportError)`. `importKMZ`'s `.then()` chain should chain the returned Promise.
 
 ## Testing Strategy
 

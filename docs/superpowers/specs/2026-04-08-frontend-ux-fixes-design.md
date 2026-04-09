@@ -64,11 +64,11 @@ Added at the top of the `map.on('click')` handler, before the `queryRenderedFeat
 
 **Guard 2 — Drag suppression flag:**
 Add a module-level `var wasDragging = false;` variable.
-- In `initFreeLookCamera()`: set `wasDragging = true` when free-look activates (CTRL+mousedown) or orbit activates (SHIFT/right-click mousedown)
+- In `initFreeLookCamera()` **mousemove** handler: set `wasDragging = true` when actual mouse movement occurs during free-look or orbit (NOT on mousedown — a CTRL+click without drag should still allow the click to proceed)
 - In the generic click handler: check `if (wasDragging) { wasDragging = false; return; }`
-- In mouseup handlers: set `wasDragging = true` (the click fires after mouseup, so the flag persists through to the click handler, then gets cleared)
+- Auto-clear safety: after setting `wasDragging = true` in mouseup, also schedule `setTimeout(function() { wasDragging = false; }, 0)` — if the click event doesn't fire (e.g., user dragged off-canvas), the flag auto-clears on the next event loop tick rather than staying stuck
 
-**Why both guards:** Guard 1 catches the case where user clicks (not drags) with CTRL/SHIFT held. Guard 2 catches the case where user CTRL-drags and releases — the click event fires without modifier keys still down if the user releases CTRL before the mouse button.
+**Why both guards:** Guard 1 catches the case where user clicks (not drags) with CTRL/SHIFT held. Guard 2 catches the case where user CTRL-drags and releases — the click event fires without modifier keys still down if the user releases CTRL before the mouse button. Setting `wasDragging` only on mousemove (not mousedown) preserves intentional CTRL+click behavior.
 
 ### Files Modified
 - `frontend/app.js`: generic `map.on('click')` handler (line 866), `initFreeLookCamera()` (lines 2674-2742)
@@ -312,10 +312,14 @@ function scheduleRouteRegen() {
 
 Call `scheduleRouteRegen()` in each of the three trigger points above.
 
+**Critical:** `clearRoute()` must call `clearTimeout(routeRegenTimer)` to cancel any pending debounced regen. Without this, clearing a route 200ms after a waypoint change causes the 300ms timer to fire `requestRoute()` with null start/end coords, showing a spurious alert dialog.
+
 **UX feedback:** While route is recalculating, show a brief "Updating route..." indicator in the route summary area (reuse the existing "Calculating..." button state).
 
+**Geocode race guard:** `geocodeForRoute()` can have multiple in-flight requests (user types fast, hits Enter twice). Add a sequence counter: `var geocodeSeq = 0;` — increment on each call, capture current value before fetch, discard response if counter has advanced. This prevents stale responses from overwriting fresh data and triggering spurious route regenerations.
+
 ### Files Modified
-- `frontend/app.js`: new `scheduleRouteRegen()` function, modifications to `geocodeForRoute` callback, GPS button handler, `removeWaypoint()`
+- `frontend/app.js`: new `scheduleRouteRegen()` function, geocode sequence counter, modifications to `geocodeForRoute` callback, GPS button handler, `removeWaypoint()`, `clearRoute()` gains `clearTimeout(routeRegenTimer)`
 
 ### Testing
 - Add waypoint to existing route → route regenerates within 300ms
@@ -323,6 +327,8 @@ Call `scheduleRouteRegen()` in each of the three trigger points above.
 - Use GPS button for waypoint → route regenerates
 - Add waypoint with no existing route → no regeneration
 - Rapid add/remove → only one route request (debounced)
+- Clear route during debounce window → no spurious alert
+- Rapid geocode (type, Enter, type, Enter) → only latest response applied
 
 ---
 
@@ -380,7 +386,7 @@ container.addEventListener('drop', function(e) {
 
 **`getDragAfterElement()` helper:** Standard pattern — iterate sibling rows, find the one whose vertical midpoint is just below the cursor Y position.
 
-**Touch support:** HTML5 drag-and-drop has poor mobile support. For mobile, add up/down arrow buttons (small ▲/▼ icons) next to each waypoint that swap with the adjacent row. These are always visible on mobile (`window.innerWidth < 768`) and hidden on desktop where drag works.
+**Touch support:** HTML5 drag-and-drop has poor mobile support. For touch devices, add up/down arrow buttons (small ▲/▼ icons) next to each waypoint that swap with the adjacent row. Use CSS media query `@media (pointer: coarse)` to show arrows on touch devices and hide on pointer devices — this responds to device capabilities rather than viewport width, handling tablets in landscape and desktop touch screens correctly. As a JS fallback for older browsers: `'ontouchstart' in window || navigator.maxTouchPoints > 0`.
 
 **CSS:**
 ```css
