@@ -434,8 +434,9 @@
 
         // Disk card
         var diskEl = document.getElementById('disk-info');
-        if (data.disk_free_gb != null) {
-            diskEl.textContent = data.disk_free_gb + 'GB free (' + data.disk_used_pct + '%)';
+        if (data.disk_free_gb != null && data.disk_total_gb != null) {
+            var usedGb = (data.disk_total_gb - data.disk_free_gb).toFixed(1);
+            diskEl.textContent = usedGb + ' GB used, ' + data.disk_free_gb + ' GB free, ' + data.disk_used_pct + '% full';
         } else {
             diskEl.textContent = '--';
         }
