@@ -159,11 +159,14 @@
    * @returns {string} e.g. 'kmz-icon-adit-n-32'
    */
   function deriveIconId(url) {
+    // Idempotent: return cached ID if this URL was already processed
+    if (iconCache.has(url)) return iconCache.get(url).iconId;
+
     var filename = url.split('/').pop().split('?')[0] || 'unknown';
     var base = filename.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9]/g, '-');
     var candidate = 'kmz-icon-' + base;
 
-    // Collision check against cache
+    // Collision check against cache (different URL → same derived name)
     var suffix = 2;
     var original = candidate;
     iconCache.forEach(function (entry) {
@@ -265,6 +268,7 @@
     } catch (_) {
       return false;
     }
+    if (decoded.indexOf('\0') !== -1) return false;
     if (decoded.indexOf('..') !== -1) return false;
     if (decoded.charAt(0) === '/') return false;
     if (decoded.indexOf('\\') !== -1) return false;
@@ -301,7 +305,7 @@
 
     // Already registered in map (from a previous import)?
     if (mapRef.hasImage(iconId)) {
-      return Promise.resolve({ iconId: iconId, imageData: null });
+      return Promise.resolve({ iconId: iconId, imageData: { alreadyLoaded: true } });
     }
 
     // Try archive path first

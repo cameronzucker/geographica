@@ -83,6 +83,9 @@
     return true;
   }
 
+  // Export for use by kmz-import.js (separate IIFE)
+  window.isUrlSafe = isUrlSafe;
+
   // =====================================================================
   //  STATE
   // =====================================================================
@@ -455,9 +458,13 @@
               // Fallback: strip all HTML if DOMPurify unavailable
               desc.textContent = props.description;
             }
-            // Hide any broken images within the sanitized description
+            // Validate and hide images with unsafe or broken URLs
             var imgs = desc.querySelectorAll('img');
             for (var ii = 0; ii < imgs.length; ii++) {
+              if (!isUrlSafe(imgs[ii].getAttribute('src'))) {
+                imgs[ii].removeAttribute('src');
+                imgs[ii].style.display = 'none';
+              }
               imgs[ii].onerror = function () { this.style.display = 'none'; };
             }
           } else {
