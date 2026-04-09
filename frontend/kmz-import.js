@@ -510,12 +510,12 @@
         if (mapRef && mapRef.hasImage(iconId)) {
           mapRef.removeImage(iconId);
         }
-        // Remove from cache
+        // Remove from cache (collect URLs first to avoid modifying Map during iteration)
+        var urlsToDelete = [];
         iconCache.forEach(function (entry, url) {
-          if (entry.iconId === iconId) {
-            iconCache.delete(url);
-          }
+          if (entry.iconId === iconId) urlsToDelete.push(url);
         });
+        urlsToDelete.forEach(function (url) { iconCache.delete(url); });
       }
     },
     MAX_KML_SIZE: MAX_KML_SIZE,

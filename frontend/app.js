@@ -1278,11 +1278,16 @@
     coordDiv.style.fontFamily = 'monospace';
     coordDiv.style.marginBottom = '8px';
     coordDiv.style.color = '#666';
-    coordDiv.innerHTML =
-      formatDD(lat, 'NS') + ' ' + formatDD(lng, 'EW') + '<br>' +
-      formatDMS(lat, 'NS') + ' ' + formatDMS(lng, 'EW') + '<br>' +
-      'Grid: ' + latLonToMaidenhead(lat, lng, 8) + '<br>' +
-      'MGRS: ' + latLonToMGRS(lat, lng);
+    var coordLines = [
+      formatDD(lat, 'NS') + ' ' + formatDD(lng, 'EW'),
+      formatDMS(lat, 'NS') + ' ' + formatDMS(lng, 'EW'),
+      'Grid: ' + latLonToMaidenhead(lat, lng, 8),
+      'MGRS: ' + latLonToMGRS(lat, lng)
+    ];
+    coordLines.forEach(function (line, ci) {
+      coordDiv.appendChild(document.createTextNode(line));
+      if (ci < coordLines.length - 1) coordDiv.appendChild(document.createElement('br'));
+    });
     content.appendChild(coordDiv);
 
     // Action buttons
@@ -1318,13 +1323,14 @@
       popup.remove();
     }));
 
-    actions.appendChild(makeBtn('Copy coords', function () {
+    var copyBtn = makeBtn('Copy coords', function () {
       var text = lat.toFixed(6) + ', ' + lng.toFixed(6);
       if (navigator.clipboard) {
         navigator.clipboard.writeText(text);
-        b.textContent = 'Copied!';
+        copyBtn.textContent = 'Copied!';
       }
-    }));
+    });
+    actions.appendChild(copyBtn);
 
     content.appendChild(actions);
 
@@ -2399,7 +2405,16 @@
               if (!f.geometry || !f.geometry.coordinates) return;
               addCoordsToBounds(bounds, f.geometry.coordinates, f.geometry.type);
             });
-            if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60 });
+            if (!bounds.isEmpty()) {
+              var isMobileImport = window.innerWidth < 768;
+              var sidebarWImport = parseInt(getComputedStyle(document.documentElement)
+                .getPropertyValue('--sidebar-width')) || 320;
+              map.fitBounds(bounds, {
+                padding: isMobileImport
+                  ? { top: 40, bottom: 100, left: 20, right: 20 }
+                  : { top: 60, bottom: 60, left: sidebarWImport + 20, right: 60 }
+              });
+            }
 
             // Status message
             var iconMsg = '';
@@ -2495,7 +2510,16 @@
             addCoordsToBounds(bounds, f.geometry.coordinates, f.geometry.type);
           }
         });
-        if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60 });
+        if (!bounds.isEmpty()) {
+              var isMobileImport = window.innerWidth < 768;
+              var sidebarWImport = parseInt(getComputedStyle(document.documentElement)
+                .getPropertyValue('--sidebar-width')) || 320;
+              map.fitBounds(bounds, {
+                padding: isMobileImport
+                  ? { top: 40, bottom: 100, left: 20, right: 20 }
+                  : { top: 60, bottom: 60, left: sidebarWImport + 20, right: 60 }
+              });
+            }
       });
       actions.appendChild(zoomBtn);
 
@@ -2964,7 +2988,6 @@
     if (adminTab) {
       adminTab.addEventListener('click', function () {
         fetchAdminStatus();
-        updatePipelineEstimate();
         clearInterval(adminTimer);
         adminTimer = setInterval(fetchAdminStatus, ADMIN_REFRESH_MS);
       });
@@ -2994,8 +3017,6 @@
         if (el) el.textContent = 'Failed to load status';
       });
 
-    // Also poll pipeline status for imagery panel
-    fetchPipelineStatus();
   }
 
   function renderAdminServices(services) {
