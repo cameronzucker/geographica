@@ -120,6 +120,12 @@
 - **Why:** With multiple imagery sources (NAIP, Sentinel-2, direct scraper) at different zoom levels for different regions, it's hard to know what you have without querying MBTiles directly. Users need to see gaps, plan downloads, and verify coverage.
 - **Options:** (a) Admin panel coverage map — query MBTiles metadata/tile counts by zoom and render a coverage heatmap on the minimap, (b) Map toggle overlay — a "Coverage" checkbox that shows colored bounding boxes or tile grid shading indicating which areas have imagery at what resolution, (c) Admin panel table — zoom level × region matrix showing tile counts and estimated coverage percentage.
 
+### Clean up raw GeoTIFF staging files after M2M conversion
+- **What:** M2M downloads store raw GeoTIFFs in staging directories (`m2m_staging_az/`, `m2m_staging_maricopa/`, `m2m_staging_phoenix/`). After GDAL converts them to MBTiles, the raw files persist and consume hundreds of GB.
+- **Why:** 201 GB of old staging files were found on disk from previous M2M runs. Raw GeoTIFFs are ~150MB each and there can be thousands.
+- **Fix:** Either (a) add a `--cleanup` flag to `acquire_imagery.py` that deletes each batch's GeoTIFFs after conversion, (b) add a post-pipeline cleanup step that removes the staging directory, or (c) document manual cleanup: `rm -rf /srv/geographica/data/m2m_staging_*`
+- **Note:** The batched download mode (`m2m_download_batched`) already processes in batches, but verify whether it deletes raw files between batches.
+
 ### Sentinel-2 imagery pipeline not working
 - **What:** `scripts/acquire_sentinel.py` was created by a parallel agent but has not been tested end-to-end. The Copernicus STAC endpoint and auth flow need validation against the live API. The admin panel has a Sentinel-2 pipeline card but it returns 422.
 - **Status:** Code exists but untested. The two working imagery modes are M2M (NAIP GeoTIFFs) and the direct tile scraper (TNMAccess).
