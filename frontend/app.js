@@ -14,7 +14,8 @@
 
   var STYLES = {
     positron:   '/tiles/styles/positron/style.json',
-    darkmatter: '/tiles/styles/darkmatter/style.json'
+    darkmatter: '/tiles/styles/darkmatter/style.json',
+    hybrid:     '/tiles/styles/hybrid/style.json'
   };
 
   var DEFAULT_CENTER = [-111.9, 34.0]; // Southwest US
@@ -92,6 +93,7 @@
 
   var map;                     // MapLibre GL map instance
   var currentStyle = 'positron';
+  var previousStyle = 'positron'; // style to restore when imagery/hybrid is toggled off
   var searchPopup  = null;     // popup for search results
   var searchTimer  = null;     // debounce timer
 
@@ -135,6 +137,13 @@
       maxPitch: 60
     });
     window._geographicaMap = map;
+
+    // Persistent style.load handler — fires on every setStyle() swap
+    // Replaces all scattered map.once('style.load') calls
+    map.on('style.load', function () {
+      addPlaceholderSources();
+      syncLayerVisibility();
+    });
 
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
     var scaleUnit = useImperial ? 'imperial' : 'metric';
@@ -201,7 +210,7 @@
         url: '/tiles/data/imagery.json'
       });
     }
-    if (!map.getLayer('imagery-layer')) {
+    if (currentStyle !== 'hybrid' && !map.getLayer('imagery-layer')) {
       map.addLayer({
         id: 'imagery-layer',
         type: 'raster',
@@ -482,6 +491,19 @@
       });
     }
 
+    // Determine z-order anchor for public lands layers
+    // In hybrid mode, insert below the hybrid style's road layers (not just route-line)
+    var publicLandsAnchor = 'route-line';
+    if (currentStyle === 'hybrid') {
+      var hybridLayers = map.getStyle().layers;
+      for (var pli = 0; pli < hybridLayers.length; pli++) {
+        if (hybridLayers[pli]['source-layer'] === 'transportation') {
+          publicLandsAnchor = hybridLayers[pli].id;
+          break;
+        }
+      }
+    }
+
     // Fill layer for non-tribal categories (solid fill)
     if (!map.getLayer('public-lands-fill')) {
       map.addLayer({
@@ -502,7 +524,7 @@
             '#a9a9a9'],
           'fill-opacity': 0.3
         }
-      }, 'route-line');
+      }, publicLandsAnchor);
     }
     // Tribal fill layer (striped pattern for visual distinction)
     if (!map.getLayer('public-lands-fill-tribal')) {
@@ -517,7 +539,7 @@
           'fill-pattern': 'tribal-stripes',
           'fill-opacity': 0.45
         }
-      }, 'route-line');
+      }, publicLandsAnchor);
     }
     // Outline layer (add SECOND — renders on top of fill)
     if (!map.getLayer('public-lands-outline')) {
@@ -536,7 +558,7 @@
           'line-width': 1,
           'line-opacity': 0.6
         }
-      }, 'route-line');
+      }, publicLandsAnchor);
     }
 
     // --- Click handlers for imported features ---
@@ -710,13 +732,19 @@
     var radios = document.querySelectorAll('input[name="basemap"]');
     radios.forEach(function (radio) {
       radio.addEventListener('change', function () {
+        // If hybrid is active, deactivate it
+        var imageryCheckbox = document.getElementById('toggle-imagery');
+        if (imageryCheckbox && imageryCheckbox.checked) {
+          imageryCheckbox.checked = false;
+          var opRow = document.getElementById('imagery-opacity-row');
+          if (opRow) opRow.classList.remove('visible');
+          var imageryToggles = document.getElementById('imagery-toggles');
+          if (imageryToggles) imageryToggles.style.display = '';
+        }
+        previousStyle = this.value;
         currentStyle = this.value;
         map.setStyle(STYLES[currentStyle]);
-        // Re-add overlay sources/layers after style swap
-        map.once('style.load', function () {
-          addPlaceholderSources();
-          syncLayerVisibility();
-        });
+        // persistent style.load handler fires automatically
       });
     });
 
@@ -724,8 +752,22 @@
     var imageryCheckbox = document.getElementById('toggle-imagery');
     var opacityRow      = document.getElementById('imagery-opacity-row');
     imageryCheckbox.addEventListener('change', function () {
-      setLayerVisibility('imagery-layer', this.checked);
+      if (this.checked) {
+        // Switch to hybrid style (imagery base + roads on top)
+        previousStyle = currentStyle;
+        currentStyle = 'hybrid';
+        map.setStyle(STYLES.hybrid);
+      } else {
+        // Restore previous basemap
+        if (previousStyle === 'hybrid') previousStyle = 'positron';
+        currentStyle = previousStyle;
+        map.setStyle(STYLES[currentStyle]);
+      }
+      // persistent style.load handler fires automatically
       opacityRow.classList.toggle('visible', this.checked);
+      // Hide NAIP/Sentinel toggles in hybrid mode (prevent double imagery)
+      var imageryToggles = document.getElementById('imagery-toggles');
+      if (imageryToggles) imageryToggles.style.display = this.checked ? 'none' : '';
     });
 
     // Imagery opacity slider
@@ -734,7 +776,9 @@
     opacitySlider.addEventListener('input', function () {
       var val = parseInt(this.value, 10);
       opacityLabel.textContent = val + '%';
-      if (map.getLayer('imagery-layer')) {
+      if (currentStyle === 'hybrid' && map.getLayer('imagery-base')) {
+        map.setPaintProperty('imagery-base', 'raster-opacity', val / 100);
+      } else if (map.getLayer('imagery-layer')) {
         map.setPaintProperty('imagery-layer', 'raster-opacity', val / 100);
       }
     });
@@ -851,7 +895,10 @@
     var imagery   = document.getElementById('toggle-imagery').checked;
     var hillshade = document.getElementById('toggle-hillshade').checked;
     var terrainCb = document.getElementById('toggle-terrain');
-    setLayerVisibility('imagery-layer', imagery);
+    // In hybrid mode, imagery is baked into the style — don't toggle imagery-layer
+    if (currentStyle !== 'hybrid') {
+      setLayerVisibility('imagery-layer', imagery);
+    }
     setLayerVisibility('hillshade-layer', hillshade);
     if (terrainCb && terrainCb.checked) {
       var exSlider = document.getElementById('terrain-exaggeration');
