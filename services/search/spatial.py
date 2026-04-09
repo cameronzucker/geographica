@@ -652,9 +652,31 @@ async def spatial_search(body: SpatialSearchBody):
     search_text = parsed["search_text"]
     intent = parsed["intent"]
 
+    # Geocode city intents
+    place_name = parsed.get("place_name")
+    geocode_result = None
+
+    if place_name is not None:
+        from geocode import geocode_place
+        bias_lat = body.position.lat if body.position else None
+        bias_lon = body.position.lon if body.position else None
+        geocode_result = await geocode_place(place_name, bias_lat, bias_lon)
+
+        if geocode_result is None:
+            return {
+                "results": [],
+                "intent": parsed["intent"],
+                "original_intent": parsed["original_intent"],
+                "fallback_reason": "geocode_failed",
+                "category": parsed.get("category"),
+                "place_name": place_name,
+            }
+
     # Build bbox for spatial queries
     bbox = None
-    if intent == "route_corridor" and body.route:
+    if place_name is not None and geocode_result is not None:
+        bbox = geocode_result["bbox"]
+    elif intent == "route_corridor" and body.route:
         lngs = [p[0] for p in body.route]
         lats = [p[1] for p in body.route]
         margin = 0.02  # ~2.2 km
@@ -819,7 +841,27 @@ async def spatial_search(body: SpatialSearchBody):
             r["distance_m"] = None
 
     # Apply spatial filtering
-    if intent == "route_corridor" and body.route:
+    if intent == "city_corridor" and body.route:
+        merged = corridor_filter(body.route, merged, corridor_width_m=CORRIDOR_WIDTH_M, interval_m=parsed.get("interval_m"))
+        if not merged:
+            return {
+                "results": [],
+                "intent": intent,
+                "original_intent": parsed["original_intent"],
+                "fallback_reason": "city_not_on_route",
+                "category": parsed.get("category"),
+                "place_name": place_name,
+            }
+    elif intent == "city_proximity" and geocode_result:
+        city_lat = geocode_result["lat"]
+        city_lon = geocode_result["lon"]
+        for r in merged:
+            try:
+                r["distance_m"] = round(haversine_m(city_lat, city_lon, float(r["lat"]), float(r["lon"])), 1)
+            except (KeyError, TypeError, ValueError):
+                r["distance_m"] = None
+        merged.sort(key=lambda r: r.get("distance_m") or float("inf"))
+    elif intent == "route_corridor" and body.route:
         merged = corridor_filter(
             body.route, merged,
             corridor_width_m=CORRIDOR_WIDTH_M,
@@ -857,6 +899,7 @@ async def spatial_search(body: SpatialSearchBody):
         "results": merged[:max_results],
         "intent": parsed["intent"],
         "original_intent": parsed["original_intent"],
-        "fallback_reason": parsed["fallback_reason"],
-        "category": parsed["category"],
+        "fallback_reason": parsed.get("fallback_reason"),
+        "category": parsed.get("category"),
+        "place_name": place_name,
     }

@@ -183,6 +183,8 @@ async def _open_poi_db() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     state.http_client = httpx.AsyncClient(timeout=httpx.Timeout(5.0))
+    from geocode import init_geocode
+    init_geocode(state.http_client, NOMINATIM_URL)
     await _open_poi_db()
     # Ensure spatial index for bbox queries (corridor/proximity search)
     if state.poi_db and state.poi_db_loaded:
