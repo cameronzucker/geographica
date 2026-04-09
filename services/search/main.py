@@ -71,10 +71,10 @@ class CredentialBody(BaseModel):
 
 
 class PipelineStartBody(BaseModel):
-    type: str  # "imagery" or "elevation"
-    mode: str  # "direct" or "m2m"
-    bbox: str  # "west,south,east,north"
-    zoom: str  # "min-max"
+    type: str  # "imagery", "elevation", or "osm_poi"
+    mode: Optional[str] = None  # "direct" or "m2m" (required for imagery/elevation)
+    bbox: Optional[str] = None  # "west,south,east,north" (required for imagery/elevation)
+    zoom: Optional[str] = None  # "min-max" (required for imagery/elevation)
     concurrency: int = 20
     update: bool = True
 
@@ -114,8 +114,8 @@ def _parse_zoom(zoom_str: str) -> tuple[int, int]:
     if len(parts) != 2:
         raise ValueError("zoom must be in format 'min-max'")
     zoom_min, zoom_max = int(parts[0]), int(parts[1])
-    if zoom_min < 0 or zoom_max > 18 or zoom_min > zoom_max:
-        raise ValueError("zoom values must be 0-18 with min <= max")
+    if zoom_min < 0 or zoom_max > 19 or zoom_min > zoom_max:
+        raise ValueError("zoom values must be 0-19 with min <= max")
     return zoom_min, zoom_max
 
 
@@ -726,6 +726,8 @@ def _state_file_for_type(pipeline_type: str) -> Path:
     """Return the state file path for a given pipeline type."""
     if pipeline_type == "elevation":
         return DATA_DIR / ".elevation-state.json"
+    if pipeline_type == "osm_poi":
+        return DATA_DIR / ".osm-poi-state.json"
     return DATA_DIR / ".pipeline-state.json"
 
 
@@ -760,35 +762,45 @@ def _get_disk_free_gb() -> float:
 
 @app.post("/admin/pipeline/start", dependencies=[Depends(require_config_source)])
 async def pipeline_start(body: PipelineStartBody):
-    """Start an imagery or elevation download pipeline."""
+    """Start an imagery, elevation, or OSM POI pipeline."""
     # Validate type
-    if body.type not in ("imagery", "elevation"):
-        raise HTTPException(status_code=422, detail="type must be 'imagery' or 'elevation'")
-    if body.mode not in ("direct", "m2m"):
-        raise HTTPException(status_code=422, detail="mode must be 'direct' or 'm2m'")
+    if body.type not in ("imagery", "elevation", "osm_poi"):
+        raise HTTPException(status_code=422, detail="type must be 'imagery', 'elevation', or 'osm_poi'")
 
-    # Parse and validate bbox
-    try:
-        bbox = _parse_bbox(body.bbox)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid bbox: {e}")
+    # For imagery/elevation, validate required fields
+    bbox = None
+    zoom_min = zoom_max = tile_count = 0
+    estimated_size_gb = 0.0
+    if body.type in ("imagery", "elevation"):
+        if not body.mode or body.mode not in ("direct", "m2m"):
+            raise HTTPException(status_code=422, detail="mode must be 'direct' or 'm2m'")
+        if not body.bbox:
+            raise HTTPException(status_code=422, detail="bbox is required for imagery/elevation")
+        if not body.zoom:
+            raise HTTPException(status_code=422, detail="zoom is required for imagery/elevation")
 
-    # Parse and validate zoom
-    try:
-        zoom_min, zoom_max = _parse_zoom(body.zoom)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid zoom: {e}")
+        # Parse and validate bbox
+        try:
+            bbox = _parse_bbox(body.bbox)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Invalid bbox: {e}")
 
-    # Estimate tile count and check disk space
-    tile_count = estimate_tile_count(bbox, zoom_min, zoom_max)
-    # Rough estimate: ~20 KB per tile average (measured from USGS imagery)
-    estimated_size_gb = tile_count * 20 * 1024 / (1024 ** 3)
-    disk_free_gb = _get_disk_free_gb()
-    if disk_free_gb - estimated_size_gb < 10.0:
-        raise HTTPException(
-            status_code=507,
-            detail=f"Insufficient disk space. Free: {disk_free_gb:.1f} GB, estimated need: {estimated_size_gb:.1f} GB, minimum 10 GB buffer required",
-        )
+        # Parse and validate zoom
+        try:
+            zoom_min, zoom_max = _parse_zoom(body.zoom)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Invalid zoom: {e}")
+
+        # Estimate tile count and check disk space
+        tile_count = estimate_tile_count(bbox, zoom_min, zoom_max)
+        # Rough estimate: ~20 KB per tile average (measured from USGS imagery)
+        estimated_size_gb = tile_count * 20 * 1024 / (1024 ** 3)
+        disk_free_gb = _get_disk_free_gb()
+        if disk_free_gb - estimated_size_gb < 10.0:
+            raise HTTPException(
+                status_code=507,
+                detail=f"Insufficient disk space. Free: {disk_free_gb:.1f} GB, estimated need: {estimated_size_gb:.1f} GB, minimum 10 GB buffer required",
+            )
 
     # For M2M mode, verify credentials exist
     if body.mode == "m2m":
@@ -815,27 +827,51 @@ async def pipeline_start(body: PipelineStartBody):
                 except json.JSONDecodeError:
                     pass
 
-            # Handle existing mbtiles if not updating
-            mbtiles_path = _mbtiles_path_for_type(body.type)
-            if not body.update and mbtiles_path.exists():
-                prev_path = mbtiles_path.with_suffix(".mbtiles.prev")
-                try:
-                    os.replace(str(mbtiles_path), str(prev_path))
-                except Exception as e:
-                    raise HTTPException(status_code=500, detail=f"Failed to rename existing file: {e}")
+            # Check pipeline image exists
+            try:
+                client.images.get("geographica-pipeline")
+            except Exception:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Pipeline image not built. Run 'docker compose build pipeline' first.",
+                )
 
-            # Build command — imagery and elevation scripts have different args
-            script = _script_for_type(body.type)
-            command = [
-                "python3", script,
-                f"--bbox={body.bbox}",
-                f"--zoom={body.zoom}",
-                "--concurrency", str(body.concurrency),
-                "--output", f"/data/{mbtiles_path.name}",
-            ]
-            # Only imagery script accepts --mode (direct/tnmaccess/m2m)
-            if body.type == "imagery":
-                command[2:2] = ["--mode", body.mode]
+            # Build command based on pipeline type
+            if body.type == "osm_poi":
+                import glob as _glob
+                pbf_files = _glob.glob(str(DATA_DIR / "valhalla" / "*.osm.pbf"))
+                if not pbf_files:
+                    raise HTTPException(status_code=422, detail="No OSM PBF file found in /data/valhalla/")
+                pbf_filename = Path(pbf_files[0]).name
+                command = [
+                    "python3", "/scripts/build_osm_pois.py",
+                    "--pbf", f"/data/valhalla/{pbf_filename}",
+                    "--output", "/data/poi.sqlite",
+                ]
+                if body.bbox:
+                    command.extend(["--bbox", body.bbox])
+            else:
+                # Handle existing mbtiles if not updating
+                mbtiles_path = _mbtiles_path_for_type(body.type)
+                if not body.update and mbtiles_path.exists():
+                    prev_path = mbtiles_path.with_suffix(".mbtiles.prev")
+                    try:
+                        os.replace(str(mbtiles_path), str(prev_path))
+                    except Exception as e:
+                        raise HTTPException(status_code=500, detail=f"Failed to rename existing file: {e}")
+
+                # Build command -- imagery and elevation scripts have different args
+                script = _script_for_type(body.type)
+                command = [
+                    "python3", script,
+                    f"--bbox={body.bbox}",
+                    f"--zoom={body.zoom}",
+                    "--concurrency", str(body.concurrency),
+                    "--output", f"/data/{mbtiles_path.name}",
+                ]
+                # Only imagery script accepts --mode (direct/tnmaccess/m2m)
+                if body.type == "imagery":
+                    command[2:2] = ["--mode", body.mode]
 
             # Build environment
             env = {
@@ -913,6 +949,7 @@ async def pipeline_start(body: PipelineStartBody):
             )
 
             # Write state file
+            from datetime import datetime, timezone as tz
             state_data = {
                 "status": "running",
                 "type": body.type,
@@ -921,8 +958,9 @@ async def pipeline_start(body: PipelineStartBody):
                 "zoom": body.zoom,
                 "concurrency": body.concurrency,
                 "update": body.update,
-                "estimated_tiles": tile_count,
+                "estimated_tiles": tile_count if body.type != "osm_poi" else None,
                 "container_id": container.id,
+                "started_at": datetime.now(tz.utc).isoformat(),
             }
             state_file.write_text(json.dumps(state_data, indent=2))
 
@@ -937,10 +975,10 @@ async def pipeline_start(body: PipelineStartBody):
 
 
 @app.get("/admin/pipeline/status")
-async def pipeline_status(type: str = Query("imagery", description="Pipeline type: imagery or elevation")):
+async def pipeline_status(type: str = Query("imagery", description="Pipeline type: imagery, elevation, or osm_poi")):
     """Get current pipeline job status (no auth required)."""
-    if type not in ("imagery", "elevation"):
-        raise HTTPException(status_code=422, detail="type must be 'imagery' or 'elevation'")
+    if type not in ("imagery", "elevation", "osm_poi"):
+        raise HTTPException(status_code=422, detail="type must be 'imagery', 'elevation', or 'osm_poi'")
 
     state_file = _state_file_for_type(type)
     state_data = {}
@@ -966,6 +1004,13 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
     if state_data.get("status") in ("running", "cancelling") and not container_running:
         new_status = "cancelled" if state_data.get("status") == "cancelling" else "interrupted"
         state_data["status"] = new_status
+
+        # Add completion timestamps
+        from datetime import datetime, timezone as tz
+        state_data["completed_at"] = datetime.now(tz.utc).isoformat()
+        if state_data.get("started_at"):
+            started = datetime.fromisoformat(state_data["started_at"])
+            state_data["duration_seconds"] = int((datetime.now(tz.utc) - started).total_seconds())
 
         # Try to capture last logs from dead container (if it wasn't auto-removed)
         if client:
@@ -1004,10 +1049,11 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
 async def pipeline_cancel():
     """Cancel a running pipeline."""
     async with _pipeline_lock:
-        # Write "cancelling" to both possible state files immediately
+        # Write "cancelling" to all possible state files immediately
         for state_file in [
             Path("/data/.pipeline-state.json"),
             Path("/data/.elevation-state.json"),
+            Path("/data/.osm-poi-state.json"),
         ]:
             if state_file.exists():
                 try:
