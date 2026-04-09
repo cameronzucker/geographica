@@ -1370,7 +1370,7 @@
         if (plProps.agency) plParts.push(plProps.agency);
         if (plProps.designation) plParts.push(plProps.designation);
         plText.textContent = plParts.join(' \u2014 ') || plProps.category || 'Public Land';
-        plText.style.color = '#a6adc8';
+        plText.style.color = '#4a4a5a';
         plDiv.appendChild(plText);
 
         content.appendChild(plDiv);
