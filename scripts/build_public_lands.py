@@ -245,6 +245,21 @@ def download_padus(url, cache_dir):
         for attempt in range(MAX_RETRIES):
             try:
                 urllib.request.urlretrieve(url, zip_dest + ".partial")
+                # Validate we got a real ZIP, not an HTML error page
+                partial_size = os.path.getsize(zip_dest + ".partial")
+                if partial_size < 1_000_000:
+                    with open(zip_dest + ".partial", "rb") as pf:
+                        header = pf.read(4)
+                    if header != b'PK\x03\x04':
+                        os.remove(zip_dest + ".partial")
+                        raise RuntimeError(
+                            f"Download returned {partial_size} bytes of non-ZIP data "
+                            f"(likely an HTML error page or CAPTCHA). "
+                            f"ScienceBase requires a browser for large file downloads. "
+                            f"Please download manually from: "
+                            f"https://www.sciencebase.gov/catalog/item/652d4fc5d34e44db0e2ee45e "
+                            f"and save as {zip_dest}"
+                        )
                 shutil.move(zip_dest + ".partial", zip_dest)
                 log.info("Download complete: %s (%s MB)",
                          zip_dest, os.path.getsize(zip_dest) // (1024 * 1024))
