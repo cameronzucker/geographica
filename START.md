@@ -12,7 +12,7 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## Critical context — read before making any changes
 
-1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs, user preferences, and project decisions. Read the handoff at `handoff_20260408e.md` for the most recent session context.
+1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs, user preferences, and project decisions. Read `handoff_20260409.md` for the most recent session context.
 
 2. **Read CLAUDE.md** in the repo root — it has the project structure, commands, hardware specs, and skill routing rules.
 
@@ -33,13 +33,15 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 - **STT** (:8098) — Whisper base.en CPU backend, push-to-hold mic button. Deployed and working on HTTP + HTTPS. NGINX uses resilient resolver pattern (frontend stays up if STT is down).
 - **NGINX/Frontend** (:8093 HTTP, :443 HTTPS) — main app + config panel on localhost:8097
 
-### Recently deployed (2026-04-08/09)
+### Recently deployed (2026-04-09)
+- **Admin panel redesign** — 3-tab layout (Dashboard/Pipelines/Settings). Dashboard shows 7 services with color-coded health dots, disk usage, TLS status. Pipelines tab has MapLibre minimap for bbox selection, M2M phase-aware progress, elevation/OSM POI extraction. Settings has M2M credentials, TLS config, STT status.
+- **Pipeline status UX** — M2M downloads show phase progress (login→searching→downloading GeoTIFFs→converting→complete) with batch counts and byte totals. Service list filtered to 7 known services (no pipeline container clutter). Frontend has Docker healthcheck (shows green).
+- **Enriched /admin/status** — Concurrent sub-queries (asyncio.gather + to_thread) for STT health, GPS status, TLS cert detection, POI counts, disk usage. Non-blocking — search queries aren't stalled during 10s admin poll cycle.
 - **Voice search (STT)** — deployed and working on HTTP + HTTPS. 405 bug fixed (stale NGINX bind mount).
-- **M2M imagery pipeline** — validated against live USGS API. Batched download system (50 scenes/batch) scales to state/regional areas. Maricopa County download currently running in background (~1022 GeoTIFFs).
 - **OSM POI search** — code complete, not yet deployed to production. Run: `python3 scripts/build_osm_pois.py --pbf /srv/geographica/data/valhalla/western-us.osm.pbf --output /srv/geographica/data/poi.sqlite --bbox "-124.8,31.3,-102.0,49.0" && docker compose restart search`
 
 ### Background process
-- **Maricopa County M2M download** is running in a pipeline container. Monitor: `docker logs -f $(docker ps -q --filter "name=pipeline")`. Output: `/data/maricopa_m2m.mbtiles`. Staging: `/data/m2m_maricopa_staging/`. This will take many hours — do not interrupt.
+- **Maricopa County M2M download** is running via the admin panel's pipeline orchestrator. 1,900 NAIP scenes in 38 batches. Phase-aware progress visible in the admin panel Pipelines tab. Monitor: `docker logs -f $(docker ps -q --filter "name=pipeline")`. Output: `/data/imagery.mbtiles`. New staging: `/data/m2m_staging/`. Old staging (from CLI-started download): `/data/m2m_maricopa_staging/` (144 GeoTIFFs, can be deleted after new download completes). This will take many hours — do not interrupt.
 
 ### Data downloads — all complete
 - **Elevation z0-14**: 1,474,959 tiles — complete
@@ -131,6 +133,26 @@ Run search tests: `cd services/search && python -m pytest tests/ -v`
 
 ### Blocked
 - **Whisper NPU backend** — blocked on `hailo-10-all` reaching 5.3.0 for Pi 5
+
+## Key architectural details from 2026-04-09 session
+
+These are non-obvious implementation details a new agent must understand:
+
+1. **admin_status() is fully async.** All blocking calls (Docker API, openssl subprocess, SQLite, disk) run via `asyncio.to_thread()` through a single `asyncio.gather()` call alongside the async STT/GPS HTTP calls. Don't add synchronous calls directly — wrap them.
+
+2. **Pipeline container detection uses wildcard.** `_is_pipeline_container_running()` matches `geographica-pipeline*` (not exact name) to detect both admin-panel-started containers (`geographica-pipeline`) and CLI-started ones (`geographica-pipeline-run-*`).
+
+3. **Service list is whitelist-filtered.** `KNOWN_SERVICES` frozenset in search/main.py. Pipeline containers are excluded from `/admin/status` services list. Only the 7 core services appear.
+
+4. **M2M pipeline writes phase-aware progress.** `acquire_imagery.py` `update_progress()` has 7 optional kwargs for M2M phases. `m2m_download_batched()` has an `on_batch_complete` callback. The state file gains `phase`, `scenes_total`, `geotiffs_downloaded/total/bytes`, `current_batch/total_batches`.
+
+5. **GPS /status endpoint omits coordinates.** Security invariant: lat/lon/alt/speed/heading NEVER appear in admin panel responses. The `/status` endpoint returns only `{status, fix, accuracy_m}`.
+
+6. **Frontend config panel has no build step.** Single HTML file (`frontend/config/index.html`, ~1150 lines) with inline CSS and JS. MapLibre loaded from `/vendor/`. All API calls go through `cfgFetch()` which adds `X-Geographica` header.
+
+7. **Worktree branches must be gitignored.** `.claude/worktrees/` is in `.gitignore`. If you use subagent worktrees, verify `git status` doesn't show worktree entries before committing. See `feedback_worktree_gitignore.md` in memory.
+
+8. **Two M2M staging directories exist.** `/data/m2m_staging/` (new, admin-panel-started) and `/data/m2m_maricopa_staging/` (old, CLI-started, 144 GeoTIFFs). The old one can be deleted after the new download completes.
 
 ## Known issues to be aware of
 - TileServer config uses `/srv/data/` paths for imagery/elevation (writable mount for WAL)
