@@ -47,14 +47,13 @@ log = logging.getLogger(__name__)
 DEFAULT_BBOX = "-124.8,31.3,-102.0,49.0"
 SAMPLE_BBOX = "-115.5,35.5,-113.5,36.5"
 
-# PAD-US 4.0 GeoPackage download URL (USGS ScienceBase)
+# PAD-US 4.1 Geodatabase download URL (USGS ScienceBase)
 DEFAULT_PADUS_URL = (
-    "https://www.sciencebase.gov/catalog/file/get/652ef930d34edd15305a9b03"
-    "?f=__disk__4e%2F4f%2F51%2F4e4f51dab29e3e35d0ba4a057768e4e4a1a3d45c"
+    "https://sciencebase.usgs.gov/manager/download/cm8wlveow001d0upn7bqaepz8"
 )
 
 LAYER_NAME_REGEX = re.compile(r"^[A-Za-z0-9_]+$")
-LAYER_DETECT_PATTERN = re.compile(r"PADUS.*(?:Combined|Fee)", re.IGNORECASE)
+LAYER_DETECT_PATTERN = re.compile(r"PADUS.*(?:Combined|Fee|Designation)", re.IGNORECASE)
 
 MAX_RETRIES = 3
 RETRY_BACKOFF = 5  # seconds
@@ -173,7 +172,7 @@ def build_tippecanoe_command(output_path, input_path):
 # ---------------------------------------------------------------------------
 
 def detect_layer_name(gpkg_path):
-    """Auto-detect the PAD-US layer name from the GeoPackage.
+    """Auto-detect the PAD-US layer name from a GeoPackage or GDB.
 
     Runs ogrinfo and pattern-matches for PADUS*Combined or PADUS*Fee.
     Validates the result against the safe regex.
@@ -216,14 +215,21 @@ def detect_layer_name(gpkg_path):
 # ---------------------------------------------------------------------------
 
 def download_padus(url, cache_dir):
-    """Download PAD-US GeoPackage with retry and progress."""
-    os.makedirs(cache_dir, exist_ok=True)
-    dest = os.path.join(cache_dir, "padus.gpkg")
+    """Download PAD-US Geodatabase ZIP and extract .gdb directory.
 
-    if os.path.exists(dest) and os.path.getsize(dest) > 100_000_000:
-        log.info("PAD-US GeoPackage already cached at %s (%s MB)",
-                 dest, os.path.getsize(dest) // (1024 * 1024))
-        return dest
+    PAD-US 4.1 is distributed as a ZIP containing a .gdb directory.
+    GDAL/ogr2ogr can read .gdb (FileGDB) directly.
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # Check if already extracted
+    gdb_dirs = [d for d in os.listdir(cache_dir) if d.endswith('.gdb')]
+    if gdb_dirs:
+        gdb_path = os.path.join(cache_dir, gdb_dirs[0])
+        log.info("PAD-US Geodatabase already cached at %s", gdb_path)
+        return gdb_path
+
+    zip_dest = os.path.join(cache_dir, "padus.zip")
 
     if not validate_url_scheme(url):
         raise ValueError(
@@ -231,25 +237,39 @@ def download_padus(url, cache_dir):
             f"Use --allow-insecure if you need HTTP (not recommended)."
         )
 
-    log.info("Downloading PAD-US GeoPackage from %s ...", url[:80])
-    log.info("This is ~2 GB and may take 10-30 minutes.")
+    # Download if ZIP not present
+    if not os.path.exists(zip_dest) or os.path.getsize(zip_dest) < 100_000_000:
+        log.info("Downloading PAD-US Geodatabase from %s ...", url[:80])
+        log.info("This is ~1.5 GB and may take 10-30 minutes.")
 
-    for attempt in range(MAX_RETRIES):
-        try:
-            # Use urllib for simplicity (no extra deps)
-            urllib.request.urlretrieve(url, dest + ".partial")
-            shutil.move(dest + ".partial", dest)
-            log.info("Download complete: %s (%s MB)",
-                     dest, os.path.getsize(dest) // (1024 * 1024))
-            return dest
-        except Exception as e:
-            log.warning("Download attempt %d failed: %s", attempt + 1, e)
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_BACKOFF * (attempt + 1))
-            else:
-                raise RuntimeError(f"Failed to download PAD-US after {MAX_RETRIES} attempts") from e
+        for attempt in range(MAX_RETRIES):
+            try:
+                urllib.request.urlretrieve(url, zip_dest + ".partial")
+                shutil.move(zip_dest + ".partial", zip_dest)
+                log.info("Download complete: %s (%s MB)",
+                         zip_dest, os.path.getsize(zip_dest) // (1024 * 1024))
+                break
+            except Exception as e:
+                log.warning("Download attempt %d failed: %s", attempt + 1, e)
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_BACKOFF * (attempt + 1))
+                else:
+                    raise RuntimeError(f"Failed to download PAD-US after {MAX_RETRIES} attempts") from e
 
-    return dest
+    # Extract .gdb from ZIP
+    log.info("Extracting PAD-US Geodatabase from ZIP ...")
+    import zipfile
+    with zipfile.ZipFile(zip_dest, 'r') as zf:
+        zf.extractall(cache_dir)
+
+    # Find the .gdb directory
+    gdb_dirs = [d for d in os.listdir(cache_dir) if d.endswith('.gdb')]
+    if not gdb_dirs:
+        raise RuntimeError("No .gdb directory found in extracted PAD-US ZIP")
+
+    gdb_path = os.path.join(cache_dir, gdb_dirs[0])
+    log.info("Extracted: %s", gdb_path)
+    return gdb_path
 
 
 # ---------------------------------------------------------------------------
