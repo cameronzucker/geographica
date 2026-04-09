@@ -12,7 +12,7 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## Critical context — read before making any changes
 
-1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs, user preferences, and project decisions. Read `handoff_20260409.md` for the most recent session context.
+1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs, user preferences, and project decisions. Read `handoff_20260409e.md` for the most recent session context (mega session: public lands, hybrid imagery, camera fix, style tuning).
 
 2. **Read CLAUDE.md** in the repo root — it has the project structure, commands, hardware specs, and skill routing rules.
 
@@ -33,21 +33,42 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 - **STT** (:8098) — Whisper base.en CPU backend, push-to-hold mic button. Deployed and working on HTTP + HTTPS. NGINX uses resilient resolver pattern (frontend stays up if STT is down).
 - **NGINX/Frontend** (:8093 HTTP, :443 HTTPS) — main app + config panel on localhost:8097
 
-### Recently deployed (2026-04-09)
-- **Admin panel redesign** — 3-tab layout (Dashboard/Pipelines/Settings). Dashboard shows 7 services with color-coded health dots, disk usage, TLS status. Pipelines tab has MapLibre minimap for bbox selection, M2M phase-aware progress, elevation/OSM POI extraction. Settings has M2M credentials, TLS config, STT status.
-- **Pipeline status UX** — M2M downloads show phase progress (login→searching→downloading GeoTIFFs→converting→complete) with batch counts and byte totals. Service list filtered to 7 known services (no pipeline container clutter). Frontend has Docker healthcheck (shows green).
-- **Enriched /admin/status** — Concurrent sub-queries (asyncio.gather + to_thread) for STT health, GPS status, TLS cert detection, POI counts, disk usage. Non-blocking — search queries aren't stalled during 10s admin poll cycle.
-- **Voice search (STT)** — deployed and working on HTTP + HTTPS. 405 bug fixed (stale NGINX bind mount).
-- **OSM POI search** — code complete, not yet deployed to production. Run: `python3 scripts/build_osm_pois.py --pbf /srv/geographica/data/valhalla/western-us.osm.pbf --output /srv/geographica/data/poi.sqlite --bbox "-124.8,31.3,-102.0,49.0" && docker compose restart search`
+### Recently deployed (2026-04-09 mega session — 104 commits)
 
-### Background process
-- **Maricopa County M2M download** is running via the admin panel's pipeline orchestrator. 1,900 NAIP scenes in 38 batches. Phase-aware progress visible in the admin panel Pipelines tab. Monitor: `docker logs -f $(docker ps -q --filter "name=pipeline")`. Output: `/data/imagery.mbtiles`. New staging: `/data/m2m_staging/`. Old staging (from CLI-started download): `/data/m2m_maricopa_staging/` (144 GeoTIFFs, can be deleted after new download completes). This will take many hours — do not interrupt.
+**Public Lands Overlay:**
+- PAD-US 4.1 + Census AIANNH tribal boundaries, togglable fill overlay with 10 agency categories
+- 412MB MBTiles, 1,077,968 tiles, 75,877 features (BLM, USFS, NPS, FWS, DOD, USBR, Tribal, State, Wilderness, Other)
+- Tribal lands render with diagonal stripe pattern for visual distinction
+- Legend with category swatches and footnotes (Military: restricted, Tribal: incomplete)
+- Public land info merged into normal click popup (badge + name + agency — doesn't replace reverse geocode)
+- Pipeline: `scripts/build_public_lands.py` (ogr2ogr + Tippecanoe, runs on HOST not Docker)
+
+**Hybrid Imagery+Roads Mode:**
+- Pre-authored MapLibre style: `tileserver/styles/hybrid/style.local.json` (35 layers)
+- Imagery raster base + roads/labels/boundaries with Google Maps-inspired subtle rendering
+- Smart imagery toggle: checkbox triggers `map.setStyle()` swap to/from hybrid
+- Trunk roads (US-93, US-95) included with motorway filter
+- Zoom-dependent road visibility: only motorways at z11, major roads z13, minor z13, labels z14-15
+- Persistent `map.on('style.load')` handler replaces scattered `once()` calls
+- Hybrid-aware guards in addPlaceholderSources + syncLayerVisibility + public lands z-order anchor
+
+**Camera Free-Look Fix:**
+- CTRL+drag free-look restored from original commit 3be5183
+- Root cause: `map.dragRotate.disable()` must be called after every style swap (MapLibre resets it)
+- Documented as Implementation Pitfall #11 with 6 failed approaches listed
+
+**Parallel Agent Work (also deployed):**
+- Sentinel-2 + NAIP imagery pipelines with admin panel integration
+- City-aware spatial search ("gas stations in Flagstaff")
+- Credential management fixes
+- County boundary database for pipeline region detection
 
 ### Data downloads — all complete
 - **Elevation z0-14**: 1,474,959 tiles — complete
 - **Imagery z0-16**: 2,588,818 tiles — complete
+- **Public lands**: 1,077,968 tiles — complete (412MB, PAD-US 4.1 + AIANNH tribal)
 - **POI index**: 304,094 GNIS features — complete
-- **OSM POIs**: Not yet extracted (run `build_osm_pois.py` to populate)
+- **OSM POIs**: Deployed
 
 ### TLS
 - **Tailscale HTTPS active**: `https://pandora.twin-bramble.ts.net` (Let's Encrypt, valid until 2026-07-07)
@@ -56,25 +77,25 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ### Key files
 - `docker-compose.yml` — 8 services (7 + pipeline with profiles), includes STT service
-- `docker-compose.hailo.yml` — override for Hailo NPU device passthrough
-- `nginx/nginx.conf` — main app + config panel server blocks, sub_filter for TileJSON, /stt/ resilient proxy
+- `nginx/nginx.conf` — main app + config panel server blocks, sub_filter for TileJSON (including publiclands, imagery_naip, imagery_sentinel), /stt/ resilient proxy
+- `tileserver/config.json` — 4 data sources (southwest5, elevation, imagery, publiclands), 3 styles (positron, darkmatter, hybrid)
+- `tileserver/styles/hybrid/style.local.json` — hybrid imagery+roads style (35 layers, imagery base + vector roads/labels)
 - `services/search/main.py` — Nominatim/POI/OSM POI query, admin API, pipeline orchestration
-- `services/search/spatial.py` — intent parser, synonym table (28 entries incl BLM/USFS/NPS), corridor math, `POST /search/spatial`
-- `services/stt/main.py` — STT service: `POST /transcribe`, `GET /health`, WAV validation
-- `services/stt/backends/cpu.py` — faster-whisper base.en INT8, hallucination filtering
-- `services/stt/backends/npu.py` — HailoRT skeleton (ready for 5.3.0 firmware)
-- `services/gps/main.py` — GPS WebSocket with accuracy, 50ms poll sleep, `GET /health`, `GET /position`, `GET /status` (admin aggregation — no coordinates)
-- `frontend/app.js` — main frontend (~2800 lines), spatial search, numbered pins, GPS, STT integration
-- `frontend/stt.js` — voice search module (mic button, AudioWorklet, WAV encoding)
-- `frontend/stt-worklet.js` — AudioWorklet processor (sample accumulation)
-- `frontend/config/index.html` — admin config panel (3-tab: Dashboard/Pipelines/Settings, MapLibre minimap, M2M phase progress)
+- `services/search/spatial.py` — intent parser, synonym table, corridor math, city-aware geocoding, `POST /search/spatial`
+- `services/search/geocode.py` — async geocode helper with position-biased caching
+- `frontend/app.js` — main frontend (~3200 lines), spatial search, hybrid toggle, public lands, GPS, STT
+- `frontend/kmz-import.js` — KMZ/KML import pipeline (style resolution, icon loading, chunked processing)
 - `frontend/navigation.js` — turn-by-turn engine (~790 lines)
 - `frontend/nav-ui.js` — navigation UI bridge (~860 lines)
-- `scripts/acquire_imagery.py` — imagery download (3 modes: direct/tnmaccess/m2m, batched M2M)
+- `frontend/stt.js` — voice search module
+- `scripts/build_public_lands.py` — PAD-US + AIANNH → public lands vector tiles (runs on HOST, needs Tippecanoe)
+- `scripts/acquire_imagery.py` — imagery download (3 modes: direct/tnmaccess/m2m)
+- `scripts/acquire_naip.py` — USDA NAIP aerial imagery pipeline
+- `scripts/acquire_sentinel.py` — Sentinel-2 satellite imagery pipeline
 - `scripts/build_poi_index.py` — GNIS POI indexer
 - `scripts/build_osm_pois.py` — OSM amenity + public land extractor
 - `scripts/download_elevation.py` — elevation tile download
-- `scripts/provision_tailscale_tls.sh` — Tailscale cert provisioning
+- `docs/pitfalls/implementation-pitfalls.md` — 13 pitfalls (includes #11: MapLibre dragRotate)
 
 ### Tests
 ~200 tests across project:
@@ -96,47 +117,40 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 Run all: `python3 -m pytest tests/ services/stt/tests/ services/gps/tests/ -v`
 Run search tests: `cd services/search && python -m pytest tests/ -v`
 
-### Design & plan documents
-- `docs/superpowers/specs/2026-04-09-admin-panel-redesign-design.md` — Admin panel redesign spec (executed)
-- `docs/superpowers/specs/2026-04-09-pipeline-status-ux-design.md` — Pipeline status UX spec (executed)
-- `docs/plans/2026-04-09-admin-panel-redesign-plan.md` — Admin panel redesign plan (executed)
-- `docs/plans/2026-04-09-pipeline-status-ux-plan.md` — Pipeline status UX plan (executed)
-- `docs/superpowers/specs/2026-04-08-whisper-stt-design.md` — STT design (executed)
-- `docs/superpowers/specs/2026-04-08-expanded-poi-sources-design.md` — POI design (executed)
-- `docs/superpowers/specs/2026-04-08-m2m-api-test-plan.md` — M2M test plan (executed)
+### Design & plan documents (2026-04-09 session)
+- `docs/superpowers/specs/2026-04-09-public-lands-layer-design.md` — Public lands overlay spec (executed, adversarial+CSO reviewed)
+- `docs/plans/2026-04-09-public-lands-layer-plan.md` — Public lands implementation plan (executed)
+- `docs/superpowers/specs/2026-04-09-hybrid-imagery-roads-design.md` — Hybrid imagery+roads spec (executed, adversarial reviewed)
+- `docs/plans/2026-04-09-hybrid-imagery-roads-plan.md` — Hybrid mode implementation plan (executed)
+- `docs/superpowers/specs/2026-04-08-kmz-import-overhaul-design.md` — KMZ import overhaul spec (executed by parallel agent)
+- `docs/superpowers/specs/2026-04-08-frontend-ux-fixes-design.md` — 7 UX fixes spec (executed by parallel agent)
+- `docs/plans/2026-04-08-frontend-overhaul-plan.md` — Frontend overhaul plan (executed by parallel agent)
 - `docs/pitfalls/testing-pitfalls.md` — 8 common testing mistakes
-- `docs/pitfalls/implementation-pitfalls.md` — 10 common implementation mistakes
+- `docs/pitfalls/implementation-pitfalls.md` — 13 common implementation mistakes (includes #11: MapLibre dragRotate)
 
 ### Bug hunt and review reports
-- 20+ reports in `dev/bug-hunts/` — STT 405, pipeline, GPS, corridor, TLS, admin panel redesign
-- `dev/bug-hunts/2026-04-09-admin-panel-consolidated.md` — 3 confirmed bugs, 2 design decisions (all fixed)
-- `dev/reviews/2026-04-08-readme-adversarial-review.md` — 36 README issues (5 critical)
-- `dev/reviews/2026-04-09-admin-panel-spec-adversarial-review.md` — 29 spec issues (4 critical, all addressed)
-- `dev/m2m-test-results.md` — M2M API validation results
+- 30+ reports in `dev/bug-hunts/` — KMZ security, public lands security, STT, pipeline, GPS, corridor, TLS
+- `dev/bug-hunts/2026-04-08-kmz-security-review.md` — CSO review: DOMPurify mandate, URL validation
+- `dev/bug-hunts/2026-04-09-public-lands-security-review.md` — CSO review: shell injection via layer name (mitigate with shell=False)
 
 ## What to work on next
 
-### Recently completed (2026-04-09)
-- **Admin panel redesign** — 3-tab layout (Dashboard/Pipelines/Settings), service health dots, MapLibre minimap bbox selection, enriched /admin/status (STT, GPS, TLS, search stats, disk), OSM POI pipeline type, frontend healthcheck
-- **Pipeline status UX** — Phase-aware M2M progress (login→searching→downloading→converting→complete), service list filtering (7 known services only), stale state time-ago badges, M2M command construction, zoom disable for M2M
-- **Bug hunt fixes** — osm_poi 500 crash, Docker client use-after-close, pipeline banner elevation/OSM progress, admin_status event loop blocking (asyncio.to_thread), pipeline_cancel path consistency
+### High priority
+- **Regenerate vector basemap** — `southwest5.mbtiles` needs rebuilding with Planetiler using a custom profile that lowers minzoom for minor/service/track roads. BLM/Forest Service roads (e.g., road to White Pocket, AZ) are invisible in hybrid mode until z14-15 because Planetiler drops them at lower zoom. Need: install JRE, download Planetiler JAR, create custom profile, rebuild from `western-us.osm.pbf`. See TODOS.md for full details.
+- **Firefox WebGL performance** — hybrid + terrain + public lands is hitchy in Firefox but smooth in Chromium. This is a browser-specific WebGL limitation. Investigate MapLibre rendering optimizations or document Chromium recommendation.
 
 ### Medium priority
-- **Fix README issues** — 36 findings from adversarial review at `dev/reviews/2026-04-08-readme-adversarial-review.md`
-- **OSM POI extraction** — deploy to production (code complete, just needs to run)
-- **Public land use map layer** — add BLM/USFS/NPS boundaries as toggleable overlay
 - **NGINX selective compression** — PBF tiles uncompressed over mesh due to sub_filter blanket
 - **Setup CLI tool** — single `geographica-setup` command
 - **GPS track recording** — record and export as GPX/KML
-- **Valhalla costing toggles** — verify UI checkboxes are wired up
-- **Light/dark mode toggle** — runtime basemap style switching
+- **Public lands build on Pi 5 8GB** — current pipeline needs 6-9GB RAM. See TODOS.md.
 
 ### Blocked
 - **Whisper NPU backend** — blocked on `hailo-10-all` reaching 5.3.0 for Pi 5
 
-## Key architectural details from 2026-04-09 session
+## Key architectural details
 
-These are non-obvious implementation details a new agent must understand:
+These are non-obvious implementation details a new agent must understand (accumulated across sessions):
 
 1. **admin_status() is fully async.** All blocking calls (Docker API, openssl subprocess, SQLite, disk) run via `asyncio.to_thread()` through a single `asyncio.gather()` call alongside the async STT/GPS HTTP calls. Don't add synchronous calls directly — wrap them.
 
@@ -154,6 +168,16 @@ These are non-obvious implementation details a new agent must understand:
 
 8. **Two M2M staging directories exist.** `/data/m2m_staging/` (new, admin-panel-started) and `/data/m2m_maricopa_staging/` (old, CLI-started, 144 GeoTIFFs). The old one can be deleted after the new download completes.
 
+9. **Hybrid imagery mode uses map.setStyle().** Toggling imagery ON swaps to `STYLES.hybrid`, OFF restores `previousStyle`. The persistent `map.on('style.load')` handler replays all overlays. `map.dragRotate.disable()` MUST be called in this handler (Pitfall #11 — MapLibre resets it on style swap).
+
+10. **Public lands uses 3 fill layers.** `public-lands-fill` (non-tribal, solid), `public-lands-fill-tribal` (striped pattern via fill-pattern), `public-lands-outline` (boundaries). All toggle together. In hybrid mode, z-order anchor finds the first `transportation` source-layer in the hybrid style to insert public lands below roads.
+
+11. **Public lands pipeline runs on HOST, not Docker.** `scripts/build_public_lands.py` requires Tippecanoe (built from source on ARM64) and ogr2ogr (GDAL). It downloads PAD-US (~1.5GB, requires browser CAPTCHA) and Census AIANNH (~9MB, direct download). Stop Docker services for full Western US build (~6-9GB RAM needed).
+
+12. **Imagery source in hybrid style needs tileSize: 256.** The imagery MBTiles contains 256px tiles but MapLibre defaults to 512 for raster sources. Without explicit `tileSize: 256`, imagery renders one zoom level too low (blurry).
+
+13. **NAIP/Sentinel toggles hidden in hybrid mode.** The `#imagery-toggles` container is set to `display: none` when hybrid is active to prevent double-imagery stacking.
+
 ## Known issues to be aware of
 - TileServer config uses `/srv/data/` paths for imagery/elevation (writable mount for WAL)
 - sub_filter in NGINX MUST use `$scheme://$http_host` — relative URLs break MapLibre
@@ -164,7 +188,9 @@ These are non-obvious implementation details a new agent must understand:
 - STT service needs internet during Docker build to download the ~140MB Whisper model
 - Total Docker memory allocation is ~15GB on 16GB hardware — tight but functional
 - **NGINX bind mount footgun:** `nginx/nginx.conf` is file-mounted into the frontend container. Git operations (commit, checkout, rebase) create a new file inode — Docker tracks the old inode, so the container silently serves stale config. Always run `docker compose up -d --force-recreate frontend` after editing NGINX config files.
-- **Maricopa M2M download running** — do not stop the pipeline container. Monitor with `docker logs`.
+- **Vector basemap missing minor roads at low zoom.** BLM/Forest Service roads don't appear in `southwest5.mbtiles` until z14-15 because Planetiler drops them. Needs regeneration with custom profile. See TODOS.md.
+- **Firefox WebGL performance.** Hybrid + terrain + public lands is hitchy in Firefox, smooth in Chromium. Browser-specific limitation.
+- **Public lands build OOMs on Pi 5 8GB.** Needs 6-9GB RAM. Works on 16GB with services stopped.
 
 ## Cameron's preferences (from memory)
 - Prioritizes correctness and completeness over speed
