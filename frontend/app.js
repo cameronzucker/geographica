@@ -563,7 +563,7 @@
           content.appendChild(coordP);
         }
 
-        new maplibregl.Popup({ maxWidth: '320px', offset: 35 })
+        new maplibregl.Popup({ maxWidth: '320px', offset: 18 })
           .setLngLat(coords)
           .setDOMContent(content)
           .addTo(map);
