@@ -87,3 +87,15 @@ window.addEventListener('mouseup', function() {
 - `canvas.addEventListener(..., true)` capture phase — MapLibre's HandlerManager bypasses DOM events
 - `stopImmediatePropagation` — MapLibre's handlers registered first, fire first
 - `map.jumpTo({ center, bearing, pitch })` center compensation — wrong abstraction, not the bug
+
+## 12. Pydantic max_length on route polylines
+
+**Critical:** Valhalla route polylines can have 8000-12000+ points for long multi-stop routes (e.g., PHX → Reno with waypoints). The `SpatialSearchBody.route` field's `max_length` must accommodate this — a limit of 10000 caused silent 422 errors that the frontend displayed as "No results found nearby."
+
+**Current limit:** 50000 (sufficient for any realistic route, ~800KB at max).
+
+**Why this is a pitfall:** The 422 response has a JSON body (`{"detail": [...]}`) that the frontend parsed as a normal response. Since `data.results` is undefined in a 422 body, the UI rendered empty results with no error indication. The frontend now handles non-OK responses explicitly, but if you add new Pydantic validation constraints, test with realistic long-route payloads.
+
+## 13. Frontend must handle non-2xx from spatial endpoint
+
+The `performSearch()` function in `app.js` only special-cased 404/405 (fallback to legacy endpoint). Any other error status (422, 500, 503) was parsed as JSON and treated as a normal response, causing misleading UI. Always check `res.ok` before parsing spatial endpoint responses.
