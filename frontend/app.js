@@ -1094,6 +1094,10 @@
               return { results: d.results || d, intent: 'plain', original_intent: 'plain', fallback_reason: null, category: null };
             });
         }
+        if (!res.ok) {
+          console.error('Spatial search error:', res.status);
+          return { results: [], intent: 'plain', original_intent: 'plain', fallback_reason: null, category: null };
+        }
         return res.json();
       })
       .then(function (data) {

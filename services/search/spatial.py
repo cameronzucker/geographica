@@ -634,7 +634,7 @@ class PositionBody(BaseModel):
 class SpatialSearchBody(BaseModel):
     query: str = Field(min_length=1, max_length=500)
     position: Opt[PositionBody] = None
-    route: Opt[list[list[float]]] = Field(None, max_length=10000)
+    route: Opt[list[list[float]]] = Field(None, max_length=50000)
 
 
 @router.post("/spatial")
