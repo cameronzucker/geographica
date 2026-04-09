@@ -31,3 +31,4 @@ tileserver/styles/*/icons/
 tileserver/tmp/
 .temp/
 START.md
+.claude/worktrees/
