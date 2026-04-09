@@ -53,7 +53,13 @@ DEFAULT_PADUS_URL = (
 )
 
 LAYER_NAME_REGEX = re.compile(r"^[A-Za-z0-9_]+$")
-LAYER_DETECT_PATTERN = re.compile(r"PADUS.*(?:Combined|Fee|Designation)", re.IGNORECASE)
+# Prefer Fee layer (actual land ownership, ~296K features) over Combined (~656K+)
+# Combined includes easements, proclamations, marine — doubles memory usage for no visual benefit
+LAYER_DETECT_PATTERNS = [
+    re.compile(r"PADUS\d+_\d+Fee$", re.IGNORECASE),          # Exact Fee layer (preferred)
+    re.compile(r"PADUS.*Fee", re.IGNORECASE),                  # Any Fee variant
+    re.compile(r"PADUS.*Combined", re.IGNORECASE),             # Combined as fallback
+]
 
 MAX_RETRIES = 3
 RETRY_BACKOFF = 5  # seconds
@@ -184,23 +190,29 @@ def detect_layer_name(gpkg_path):
         capture_output=True, text=True, check=True
     )
 
-    candidates = []
+    # Collect all layer names from ogrinfo output
+    all_layers = []
     for line in result.stdout.splitlines():
-        # ogrinfo output: "1: LayerName (type)" for GeoPackage, "Layer: LayerName (type)" for GDB
         match = re.search(r"(?:\d+:|Layer:)\s+(\S+)", line)
         if match:
-            name = match.group(1)
-            if LAYER_DETECT_PATTERN.search(name):
-                candidates.append(name)
+            all_layers.append(match.group(1))
 
-    if not candidates:
+    # Try patterns in priority order: Fee first (smaller, less memory), then Combined
+    layer = None
+    for pattern in LAYER_DETECT_PATTERNS:
+        for name in all_layers:
+            if pattern.search(name):
+                layer = name
+                break
+        if layer:
+            break
+
+    if not layer:
         raise RuntimeError(
             f"No PAD-US layer found in {gpkg_path}. "
-            f"Expected layer matching pattern 'PADUS*Combined' or 'PADUS*Fee'. "
+            f"Expected layer matching 'PADUS*Fee' or 'PADUS*Combined'. "
             f"Available layers:\n{result.stdout}"
         )
-
-    layer = candidates[0]
     if not validate_layer_name(layer):
         raise RuntimeError(
             f"Detected layer name '{layer}' contains unsafe characters. "
