@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import stat
+import subprocess
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,6 +28,7 @@ NOMINATIM_URL = os.environ.get("NOMINATIM_URL", "http://nominatim:8080")
 POI_DB_PATH = os.environ.get("POI_DB_PATH", "/data/poi.sqlite")
 CREDENTIALS_PATH = Path("/data/.credentials.json")
 DATA_DIR = Path("/data")
+TLS_CERT_PATH = Path("/tls/server.crt")
 
 EARTH_RADIUS_M = 6_371_000
 
@@ -536,51 +538,179 @@ def _parse_progress_from_logs(logs: str, container_name: str) -> dict:
     return progress
 
 
+async def _fetch_stt_status() -> dict:
+    """Query STT service health with 2s timeout."""
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get("http://stt:8000/health")
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "status": data.get("status", "ok"),
+                    "backend": data.get("backend"),
+                    "model": data.get("model"),
+                    "npu_available": data.get("npu_available"),
+                }
+    except Exception:
+        pass
+    return {"status": "unreachable", "backend": None, "model": None, "npu_available": None}
+
+
+async def _fetch_gps_status() -> dict:
+    """Query GPS service status with 2s timeout. Never returns coordinates."""
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get("http://gps:8000/status")
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "status": data.get("status", "ok"),
+                    "fix": data.get("fix"),
+                    "accuracy_m": data.get("accuracy_m"),
+                }
+    except Exception:
+        pass
+    return {"status": "unreachable", "fix": None, "accuracy_m": None}
+
+
+def _detect_tls_status() -> dict:
+    """Detect TLS mode from cert file at /tls/server.crt."""
+    result = {"mode": "http", "hostname": None, "cert_expires": None, "cert_valid": None}
+
+    if not TLS_CERT_PATH.exists():
+        return result
+
+    # Parse certificate expiry
+    try:
+        enddate_result = subprocess.run(
+            ["openssl", "x509", "-enddate", "-noout", "-in", str(TLS_CERT_PATH)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if enddate_result.returncode == 0:
+            raw = enddate_result.stdout.strip().split("=", 1)[-1]
+            from datetime import datetime, timezone
+            expiry = datetime.strptime(raw, "%b %d %H:%M:%S %Y GMT").replace(tzinfo=timezone.utc)
+            result["cert_expires"] = expiry.strftime("%Y-%m-%d")
+            result["cert_valid"] = expiry > datetime.now(timezone.utc)
+    except Exception:
+        pass
+
+    # Parse certificate subject for hostname and detect Tailscale
+    try:
+        subject_result = subprocess.run(
+            ["openssl", "x509", "-subject", "-noout", "-in", str(TLS_CERT_PATH)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if subject_result.returncode == 0:
+            subject = subject_result.stdout.strip()
+            cn_match = re.search(r"CN\s*=\s*(.+?)(?:,|$)", subject)
+            if cn_match:
+                cn = cn_match.group(1).strip()
+                if ".ts.net" in cn:
+                    result["mode"] = "tailscale"
+                    result["hostname"] = cn
+                else:
+                    result["mode"] = "https"
+                    result["hostname"] = cn
+    except Exception:
+        if result["cert_expires"]:
+            result["mode"] = "https"
+
+    return result
+
+
+def _get_search_stats() -> dict:
+    """Get POI counts from the SQLite database."""
+    import sqlite3
+    stats = {"gnis_count": 0, "osm_pois_count": 0, "osm_pois_loaded": False}
+    try:
+        conn = sqlite3.connect(POI_DB_PATH, timeout=5)
+        try:
+            stats["gnis_count"] = conn.execute("SELECT COUNT(*) FROM poi_features").fetchone()[0]
+        except Exception:
+            pass
+        try:
+            stats["osm_pois_count"] = conn.execute("SELECT COUNT(*) FROM osm_pois").fetchone()[0]
+            stats["osm_pois_loaded"] = stats["osm_pois_count"] > 0
+        except Exception:
+            pass
+        conn.close()
+    except Exception:
+        pass
+    return stats
+
+
+def _get_disk_info() -> tuple:
+    """Return (free_gb, total_gb, used_pct) for the /data partition."""
+    try:
+        path = str(DATA_DIR) if DATA_DIR.exists() else "/"
+    except Exception:
+        path = "/"
+    usage = shutil.disk_usage(path)
+    free_gb = round(usage.free / (1024 ** 3), 1)
+    total_gb = round(usage.total / (1024 ** 3), 1)
+    used_pct = round(100 - (usage.free / usage.total * 100))
+    return free_gb, total_gb, used_pct
+
+
 @app.get("/admin/status")
 async def admin_status():
     """Return status of all Geographica services and long-running tasks."""
-    client = _get_docker_client()
-    if not client:
-        return {"error": "Docker socket not available", "services": []}
-
+    # --- Docker container listing (non-fatal if unavailable) ---
     services = []
-    try:
-        containers = client.containers.list(all=True, filters={"name": "geographica-"})
-        for c in sorted(containers, key=lambda x: x.name):
-            svc = {
-                "name": c.name.replace("geographica-", ""),
-                "status": c.status,
-                "health": "unknown",
-                "uptime": "",
-                "progress": {},
-            }
+    client = _get_docker_client()
+    if client:
+        try:
+            containers = client.containers.list(all=True, filters={"name": "geographica-"})
+            for c in sorted(containers, key=lambda x: x.name):
+                svc = {
+                    "name": c.name.replace("geographica-", ""),
+                    "status": c.status,
+                    "health": "unknown",
+                    "uptime": "",
+                    "progress": {},
+                }
 
-            # Health from inspect
-            try:
-                inspection = c.attrs
-                health_data = inspection.get("State", {}).get("Health", {})
-                svc["health"] = health_data.get("Status", "none")
-                started = inspection.get("State", {}).get("StartedAt", "")
-                if started:
-                    svc["uptime"] = started
-            except Exception:
-                pass
-
-            # Parse logs for progress on key services
-            if c.name in ("geographica-nominatim", "geographica-valhalla") and c.status == "running":
+                # Health from inspect
                 try:
-                    logs = c.logs(tail=30, timestamps=False).decode("utf-8", errors="replace")
-                    svc["progress"] = _parse_progress_from_logs(logs, c.name)
+                    inspection = c.attrs
+                    health_data = inspection.get("State", {}).get("Health", {})
+                    svc["health"] = health_data.get("Status", "none")
+                    started = inspection.get("State", {}).get("StartedAt", "")
+                    if started:
+                        svc["uptime"] = started
                 except Exception:
                     pass
 
-            services.append(svc)
-    except Exception as e:
-        return {"error": str(e), "services": []}
-    finally:
-        client.close()
+                # Parse logs for progress on key services
+                if c.name in ("geographica-nominatim", "geographica-valhalla") and c.status == "running":
+                    try:
+                        logs = c.logs(tail=30, timestamps=False).decode("utf-8", errors="replace")
+                        svc["progress"] = _parse_progress_from_logs(logs, c.name)
+                    except Exception:
+                        pass
 
-    # Check for data pipeline files (downloads in progress)
+                services.append(svc)
+        except Exception:
+            pass
+        finally:
+            client.close()
+
+    # --- Concurrent sub-queries: STT + GPS ---
+    stt_data, gps_data = await asyncio.gather(
+        _fetch_stt_status(), _fetch_gps_status(), return_exceptions=True
+    )
+    if isinstance(stt_data, Exception):
+        stt_data = {"status": "unreachable", "backend": None, "model": None, "npu_available": None}
+    if isinstance(gps_data, Exception):
+        gps_data = {"status": "unreachable", "fix": None, "accuracy_m": None}
+
+    # --- Synchronous queries: TLS, search stats, disk ---
+    tls_data = _detect_tls_status()
+    search_stats = _get_search_stats()
+    disk_free_gb, disk_total_gb, disk_used_pct = _get_disk_info()
+
+    # --- Data pipeline files (downloads in progress) ---
     data_tasks = []
     import pathlib
     data_dir = pathlib.Path("/data")
@@ -666,7 +796,17 @@ async def admin_status():
         except Exception:
             pass
 
-    return {"services": services, "data_tasks": data_tasks}
+    return {
+        "services": services,
+        "data_tasks": data_tasks,
+        "stt": stt_data,
+        "gps": gps_data,
+        "tls": tls_data,
+        "search_stats": search_stats,
+        "disk_free_gb": disk_free_gb,
+        "disk_total_gb": disk_total_gb,
+        "disk_used_pct": disk_used_pct,
+    }
 
 
 # ---------------------------------------------------------------------------
