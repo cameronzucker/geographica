@@ -165,7 +165,7 @@
         "visibility": "visible"
       },
       "paint": {
-        "line-color": "rgba(255,255,255,0.12)",
+        "line-color": "rgba(255,255,255,0.25)",
         "line-dasharray": [
           1.5,
           1.5
@@ -175,21 +175,25 @@
           "base": 1.0,
           "stops": [
             [
+              14,
+              0.4
+            ],
+            [
               15,
-              0.6
+              0.8
             ],
             [
               17,
-              1.2
+              1.5
             ],
             [
               18,
-              3
+              2.5
             ]
           ]
         }
       },
-      "minzoom": 15
+      "minzoom": 14
     },
     {
       "id": "highway_minor",
@@ -199,7 +203,7 @@
       },
       "source": "openmaptiles",
       "source-layer": "transportation",
-      "minzoom": 15,
+      "minzoom": 14,
       "filter": [
         "all",
         [
@@ -221,18 +225,22 @@
         "visibility": "visible"
       },
       "paint": {
-        "line-color": "rgba(255,255,255,0.12)",
+        "line-color": "rgba(255,255,255,0.3)",
         "line-opacity": 1,
         "line-width": {
           "base": 1.0,
           "stops": [
             [
+              14,
+              0.5
+            ],
+            [
               15,
-              0.6
+              1.0
             ],
             [
               17,
-              1.2
+              1.8
             ],
             [
               18,
