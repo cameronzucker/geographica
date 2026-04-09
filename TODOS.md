@@ -100,6 +100,16 @@
 - **What:** TLS 1.2 with non-PFS ciphers and published private key for Part 97 compliance.
 - **Status:** Deferred — regulatory landscape is ambiguous. HTTP works fine for AREDN.
 
+### Regenerate vector basemap with lower minzoom for minor roads
+- **What:** Rebuild `southwest5.mbtiles` using Planetiler with a custom profile that lowers minzoom for minor/service/track roads from z14 to z11-12. BLM/Forest Service roads are invisible in hybrid mode until very close zoom because Planetiler drops them from low-zoom tiles.
+- **Why:** Off-road navigation is a core use case. BLM and USFS roads to places like White Pocket, AZ are the only routes and need to be visible from ~3.9 miles eye altitude (z13). Currently they don't appear until z14-15 due to Planetiler's default feature dropping.
+- **Prerequisites:** Install `openjdk-21-jre-headless`, download Planetiler JAR, stop Docker services for memory
+- **Source data:** `/srv/geographica/data/valhalla/western-us.osm.pbf` (3.1GB, already on disk)
+- **Current output:** `tileserver/southwest5.mbtiles` (2.4GB)
+- **Approach:** Custom Planetiler YAML profile overriding transportation layer minzoom, or `--transportation-name-min-zoom` CLI flag. Key: lower minzoom for `highway=unclassified/track/service/path` from z14 to z11-12. Must not increase tile sizes so much that rendering becomes slow.
+- **Risk:** Larger tiles at z11-13 could worsen the Firefox performance issue. Need to balance road visibility vs tile size.
+- **Estimated time:** 1-2 hours (install + build + verify)
+
 ### Public lands tile build on Pi 5 8GB
 - **What:** The public lands tile pipeline (`scripts/build_public_lands.py`) requires stopping Docker services and needs ~6-9GB free RAM for ogr2ogr + Tippecanoe. On the 16GB Pi 5 this works (stop services, build, restart). On an 8GB Pi 5 (which the README lists as compatible), it would OOM even with services stopped.
 - **Why:** README claims Pi 5 8GB compatibility. The pipeline needs to work there too.
