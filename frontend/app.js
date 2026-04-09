@@ -106,6 +106,7 @@
   var importedFiles = {};       // { fileId: { name, geojson, visible, folders: { name: visible }, features: { id: visible } } }
   var importCounter = 0;        // unique ID counter for imported files
   var importInProgress = false;  // concurrency guard — reject new imports while processing
+  var wasDragging = false;       // set by camera mousemove, checked by click handler
 
   var gpsMarker  = null;       // MapLibre marker for GPS position
   var gpsWs      = null;       // WebSocket connection
@@ -974,9 +975,14 @@
 
     // Map click: reverse geocode and offer to add as route point
     map.on('click', function (e) {
-      // Don't fire if clicking on an existing feature layer
+      // Suppress click after camera rotation gestures (CTRL/SHIFT drag)
+      if (e.originalEvent.ctrlKey || e.originalEvent.shiftKey) return;
+      if (wasDragging) { wasDragging = false; return; }
+
+      // Don't fire if clicking on an existing feature layer or search pin
       var features = map.queryRenderedFeatures(e.point, {
-        layers: ['imported-points', 'imported-lines', 'imported-polygons', 'imported-polygon-outlines']
+        layers: ['imported-points', 'imported-lines', 'imported-polygons',
+                 'imported-polygon-outlines', 'search-result-circles']
       });
       if (features.length > 0) return;
 
@@ -2976,6 +2982,7 @@
 
   function initFreeLookCamera() {
     var freeLookActive = false;
+    var orbitActive = false;     // true when SHIFT or right-click orbit is in progress
     var startX = 0;
     var startY = 0;
     var startBearing = 0;
@@ -2986,17 +2993,17 @@
     // Disable MapLibre's built-in Ctrl+drag rotation so we can override it
     map.dragRotate.disable();
 
-    // Re-enable right-click drag for the default orbit (shift+drag style)
+    // Right-click drag: ground-orbit (MapLibre default behavior)
     map.on('mousedown', function (e) {
       if (e.originalEvent.button === 2) {
-        // Right-click drag: use default orbit behavior
+        orbitActive = true;
         map.dragRotate.enable();
       }
     });
 
+    // CTRL+left click: free-look mode
     canvas.addEventListener('mousedown', function (e) {
       if (e.ctrlKey && e.button === 0) {
-        // Ctrl+left click: enter free-look mode
         e.preventDefault();
         e.stopPropagation();
         freeLookActive = true;
@@ -3005,21 +3012,30 @@
         startBearing = map.getBearing();
         startPitch = map.getPitch();
         canvas.style.cursor = 'crosshair';
-
-        // Prevent map from starting a regular drag
         map.dragPan.disable();
       }
     });
 
+    // SHIFT+left click: ground-orbit
+    canvas.addEventListener('mousedown', function (e) {
+      if (e.shiftKey && e.button === 0) {
+        orbitActive = true;
+        map.dragRotate.enable();
+      }
+    });
+
     window.addEventListener('mousemove', function (e) {
+      if (!freeLookActive && !orbitActive) return;
+
+      // Set wasDragging only on actual mouse movement, not on mousedown
+      wasDragging = true;
+
       if (!freeLookActive) return;
       e.preventDefault();
 
       var dx = e.clientX - startX;
       var dy = e.clientY - startY;
 
-      // Horizontal movement = bearing change, vertical = pitch change
-      // Sensitivity: 0.3 degrees per pixel
       var newBearing = startBearing + dx * 0.3;
       var newPitch = Math.max(0, Math.min(85, startPitch - dy * 0.3));
 
@@ -3029,18 +3045,21 @@
       });
     });
 
-    window.addEventListener('mouseup', function (e) {
-      if (!freeLookActive) return;
-      freeLookActive = false;
-      canvas.style.cursor = '';
-      map.dragPan.enable();
-    });
-
-    // Also support Shift+drag for ground-orbit (MapLibre default behavior)
-    canvas.addEventListener('mousedown', function (e) {
-      if (e.shiftKey && e.button === 0) {
-        map.dragRotate.enable();
+    // Single mouseup handler restores default state for all gesture types
+    window.addEventListener('mouseup', function () {
+      if (freeLookActive) {
+        freeLookActive = false;
+        canvas.style.cursor = '';
+        map.dragPan.enable();
       }
+      if (orbitActive) {
+        orbitActive = false;
+        map.dragRotate.disable();  // re-disable so left-drag returns to panning
+      }
+      // Auto-clear wasDragging via setTimeout — the click event fires synchronously
+      // after mouseup, so if it fires the click handler clears it. If it doesn't
+      // fire (user dragged off-canvas), this clears it on the next event loop tick.
+      setTimeout(function () { wasDragging = false; }, 0);
     });
   }
 
