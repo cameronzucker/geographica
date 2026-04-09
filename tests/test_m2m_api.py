@@ -249,25 +249,28 @@ class TestSelectBestProducts:
 
 
 class TestRequestAndPollUrls:
-    """Test _m2m_request_and_poll_urls() polling logic."""
+    """Test _m2m_request_and_poll_urls() polling logic.
+
+    Mocks match the official USGS M2M response format:
+    download-request returns availableDownloads, preparingDownloads, newRecords
+    download-retrieve returns available, requested
+    """
 
     @pytest.mark.asyncio
     async def test_immediate_availability(self, mock_session):
-        """Downloads available immediately (no polling needed)."""
+        """All downloads available immediately (no polling needed)."""
         downloads = [{"entityId": "e1", "productId": "p1"}]
 
         request_cm = _make_m2m_response({
-            "availableDownloads": 1,
-            "preparingDownloads": 0,
-        })
-        retrieve_cm = _make_m2m_response({
-            "available": [
-                {"url": "https://example.com/scene_1.tif", "entityId": "e1"}
+            "availableDownloads": [
+                {"downloadId": 100, "url": "https://example.com/scene_1.tif", "entityId": "e1"}
             ],
-            "requested": [],
+            "preparingDownloads": [],
+            "newRecords": {"100": "test_label"},
+            "failed": [],
         })
 
-        mock_session.post = MagicMock(side_effect=[request_cm, retrieve_cm])
+        mock_session.post = MagicMock(return_value=request_cm)
 
         urls = await ai._m2m_request_and_poll_urls(
             mock_session, "api-key", downloads, "test_label"
@@ -278,25 +281,26 @@ class TestRequestAndPollUrls:
 
     @pytest.mark.asyncio
     async def test_polling_until_available(self, mock_session):
-        """Polls until all downloads are ready."""
+        """Preparing downloads become available after polling."""
         downloads = [{"entityId": "e1", "productId": "p1"}]
 
         request_cm = _make_m2m_response({
-            "availableDownloads": 0,
-            "preparingDownloads": 1,
+            "availableDownloads": [],
+            "preparingDownloads": [
+                {"downloadId": 200, "url": "https://staging.example.com/e1.tif", "entityId": "e1"}
+            ],
+            "newRecords": {"200": "test_label"},
+            "failed": [],
         })
-        poll1 = _make_m2m_response({
-            "available": [],
-            "requested": [{"entityId": "e1", "statusText": "Queued"}],
-        })
-        poll2 = _make_m2m_response({
+
+        retrieve_cm = _make_m2m_response({
             "available": [
-                {"url": "https://example.com/scene_1.tif", "entityId": "e1"}
+                {"downloadId": 200, "url": "https://example.com/scene_1.tif", "entityId": "e1"}
             ],
             "requested": [],
         })
 
-        mock_session.post = MagicMock(side_effect=[request_cm, poll1, poll2])
+        mock_session.post = MagicMock(side_effect=[request_cm, retrieve_cm])
 
         with patch("asyncio.sleep", new_callable=AsyncMock):
             urls = await ai._m2m_request_and_poll_urls(
@@ -306,32 +310,30 @@ class TestRequestAndPollUrls:
         assert len(urls) == 1
 
     @pytest.mark.asyncio
-    async def test_deduplicates_urls(self, mock_session):
-        """Same URL from multiple entities is only returned once."""
+    async def test_deduplicates_by_download_id(self, mock_session):
+        """Same downloadId is only collected once."""
         downloads = [
             {"entityId": "e1", "productId": "p1"},
             {"entityId": "e2", "productId": "p2"},
         ]
 
         request_cm = _make_m2m_response({
-            "availableDownloads": 2,
-            "preparingDownloads": 0,
-        })
-        retrieve_cm = _make_m2m_response({
-            "available": [
-                {"url": "https://example.com/shared.tif", "entityId": "e1"},
-                {"url": "https://example.com/shared.tif", "entityId": "e2"},
+            "availableDownloads": [
+                {"downloadId": 300, "url": "https://example.com/shared.tif", "entityId": "e1"},
+                {"downloadId": 301, "url": "https://example.com/other.tif", "entityId": "e2"},
             ],
-            "requested": [],
+            "preparingDownloads": [],
+            "newRecords": {"300": "test_label", "301": "test_label"},
+            "failed": [],
         })
 
-        mock_session.post = MagicMock(side_effect=[request_cm, retrieve_cm])
+        mock_session.post = MagicMock(return_value=request_cm)
 
         urls = await ai._m2m_request_and_poll_urls(
             mock_session, "api-key", downloads, "test_label"
         )
 
-        assert len(urls) == 1
+        assert len(urls) == 2
 
 
 # ---------------------------------------------------------------------------
