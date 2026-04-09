@@ -3486,6 +3486,8 @@
     });
 
     // CTRL+left click: free-look mode (drone-like sky-point rotation)
+    // MUST use capture phase (3rd arg = true) so this fires BEFORE MapLibre's
+    // internal handlers which were registered earlier during new Map().
     canvas.addEventListener('mousedown', function (e) {
       if (e.ctrlKey && e.button === 0) {
         e.preventDefault();
@@ -3498,7 +3500,7 @@
         canvas.style.cursor = 'crosshair';
         map.dragPan.disable();
       }
-    });
+    }, true);  // capture phase — fires before bubble phase handlers
 
     // SHIFT+left click: ground-orbit
     canvas.addEventListener('mousedown', function (e) {
@@ -3506,7 +3508,7 @@
         orbitActive = true;
         map.dragRotate.enable();
       }
-    });
+    }, true);  // capture phase
 
     window.addEventListener('mousemove', function (e) {
       if (!freeLookActive && !orbitActive) return;
