@@ -1,0 +1,3 @@
+data/counties.sqlite binary
+scripts/data/counties.sqlite binary
+scripts/bundled/counties.sqlite binary
