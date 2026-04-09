@@ -564,6 +564,12 @@
               }
               imgs[ii].onerror = function () { this.style.display = 'none'; };
             }
+            // Force KML description links to open in new tabs
+            var links = desc.querySelectorAll('a[href]');
+            for (var li = 0; li < links.length; li++) {
+              links[li].setAttribute('target', '_blank');
+              links[li].setAttribute('rel', 'noopener noreferrer');
+            }
           } else {
             desc.textContent = props.description;
           }
