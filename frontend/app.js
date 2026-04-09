@@ -488,7 +488,7 @@
         content.appendChild(sub);
       }
 
-      new maplibregl.Popup({ maxWidth: '280px' })
+      new maplibregl.Popup({ maxWidth: '280px', offset: 35 })
         .setLngLat(coords)
         .setDOMContent(content)
         .addTo(map);
@@ -607,7 +607,7 @@
           content.appendChild(coordP);
         }
 
-        new maplibregl.Popup({ maxWidth: '320px' })
+        new maplibregl.Popup({ maxWidth: '320px', offset: 35 })
           .setLngLat(coords)
           .setDOMContent(content)
           .addTo(map);
@@ -1099,7 +1099,7 @@
       p.style.color = '#666';
       popupContent.appendChild(p);
     }
-    searchPopup = new maplibregl.Popup({ offset: 25, closeOnClick: true })
+    searchPopup = new maplibregl.Popup({ offset: 35, closeOnClick: true })
       .setLngLat([lng, lat])
       .setDOMContent(popupContent)
       .addTo(map);
@@ -1450,7 +1450,7 @@
 
     content.appendChild(actions);
 
-    var popup = new maplibregl.Popup({ maxWidth: '340px' })
+    var popup = new maplibregl.Popup({ maxWidth: '340px', offset: 35 })
       .setLngLat([lng, lat])
       .setDOMContent(content)
       .addTo(map);
