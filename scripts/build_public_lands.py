@@ -52,6 +52,11 @@ DEFAULT_PADUS_URL = (
     "https://sciencebase.usgs.gov/manager/download/cm8wlveow001d0upn7bqaepz8"
 )
 
+# Census Bureau TIGER/Line AIANNH (American Indian/Alaska Native/Native Hawaiian) boundaries
+# PAD-US has minimal tribal land coverage (most nations haven't consented to inclusion).
+# Census AIANNH has all reservation boundaries — we merge them as the Tribal category.
+AIANNH_URL = "https://www2.census.gov/geo/tiger/TIGER2024/AIANNH/tl_2024_us_aiannh.zip"
+
 LAYER_NAME_REGEX = re.compile(r"^[A-Za-z0-9_]+$")
 # Prefer Fee layer (actual land ownership, ~296K features) over Combined (~656K+)
 # Combined includes easements, proclamations, marine — doubles memory usage for no visual benefit
@@ -331,6 +336,81 @@ def classify_feature(props):
     return "Other", 10
 
 
+def download_aiannh(cache_dir, bbox):
+    """Download Census AIANNH tribal boundaries and clip to bbox.
+
+    Returns list of GeoJSON features classified as Tribal, or empty list on failure.
+    """
+    aiannh_dir = os.path.join(cache_dir, "aiannh")
+    os.makedirs(aiannh_dir, exist_ok=True)
+    zip_path = os.path.join(aiannh_dir, "tl_2024_us_aiannh.zip")
+    shp_path = os.path.join(aiannh_dir, "tl_2024_us_aiannh.shp")
+
+    # Download if not cached
+    if not os.path.exists(shp_path):
+        if not os.path.exists(zip_path) or os.path.getsize(zip_path) < 100_000:
+            log.info("Downloading Census AIANNH tribal boundaries (~9 MB) ...")
+            try:
+                urllib.request.urlretrieve(AIANNH_URL, zip_path)
+            except Exception as e:
+                log.warning("Failed to download AIANNH data: %s (tribal boundaries will be incomplete)", e)
+                return []
+
+        log.info("Extracting AIANNH shapefile ...")
+        import zipfile
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(aiannh_dir)
+
+    if not os.path.exists(shp_path):
+        log.warning("AIANNH shapefile not found after extraction")
+        return []
+
+    # Clip to bbox and convert to GeoJSON
+    parts = bbox.split(",")
+    with tempfile.NamedTemporaryFile(suffix=".geojson", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        result = subprocess.run([
+            "ogr2ogr",
+            "-spat", parts[0].strip(), parts[1].strip(),
+                     parts[2].strip(), parts[3].strip(),
+            "-t_srs", "EPSG:4326",
+            "-f", "GeoJSON",
+            tmp_path,
+            shp_path,
+        ], capture_output=True, text=True)
+
+        if result.returncode != 0:
+            log.warning("ogr2ogr failed on AIANNH: %s", result.stderr[:200])
+            return []
+
+        with open(tmp_path) as f:
+            aiannh_data = json.load(f)
+
+        # Convert to our classification format
+        features = []
+        for feat in aiannh_data.get("features", []):
+            if feat.get("geometry") is None:
+                continue
+            props = feat.get("properties", {})
+            feat["properties"] = {
+                "name": (props.get("NAMELSAD") or props.get("NAME") or "").strip(),
+                "agency": "TRIB",
+                "designation": "TRIBL",
+                "category": "Tribal",
+                "sort_key": 8,
+            }
+            features.append(feat)
+
+        log.info("AIANNH tribal boundaries: %d features in bbox", len(features))
+        return features
+
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
 def run_pipeline(args):
     """Execute the full pipeline: download -> clip -> classify -> tile."""
     bbox = SAMPLE_BBOX if args.sample else args.bbox
@@ -409,6 +489,19 @@ def run_pipeline(args):
 
         # Write classified GeoJSON (only features with geometry)
         data["features"] = [f for f in data["features"] if f.get("geometry") is not None]
+
+        # Step 4b: Merge Census AIANNH tribal boundaries
+        # PAD-US has minimal tribal coverage — Census TIGER has all reservations
+        log.info("Merging Census AIANNH tribal boundaries ...")
+        tribal_features = download_aiannh(args.cache_dir, bbox)
+        if tribal_features:
+            data["features"].extend(tribal_features)
+            feature_count += len(tribal_features)
+            categories["Tribal"] = categories.get("Tribal", 0) + len(tribal_features)
+            log.info("Merged %d tribal boundaries (total features now: %d)", len(tribal_features), feature_count)
+        else:
+            log.warning("No tribal boundaries merged — AIANNH download may have failed")
+
         with open(classified_geojson, "w") as fout:
             json.dump(data, fout)
 
