@@ -902,7 +902,7 @@
       // Show the same full popup as a basemap click (coordinates, route buttons, copy)
       var resultItem = lastSearchResults[idx];
       var resultName = (resultItem && (resultItem.name || resultItem.display_name)) || feat.properties.name || 'Unknown';
-      showMapClickPopup(resultCoords[0], resultCoords[1], resultName, null, 35);
+      showMapClickPopup(resultCoords[0], resultCoords[1], resultName, null, 15);
     });
     map.on('mouseenter', 'search-result-circles', function () {
       map.getCanvas().style.cursor = 'pointer';
@@ -1146,12 +1146,12 @@
         var label = formatDD(lat, 'NS') + ', ' + formatDD(lng, 'EW');
         if (target === 'start') {
           routeStartCoords = [lng, lat];
-          placeRouteMarker('start', [lng, lat]);
+          placeRouteMarker('start', [lng, lat], 'GPS: ' + label);
           document.getElementById('route-start').value = 'GPS: ' + label;
           scheduleRouteRegen();
         } else if (target === 'end') {
           routeEndCoords = [lng, lat];
-          placeRouteMarker('end', [lng, lat]);
+          placeRouteMarker('end', [lng, lat], 'GPS: ' + label);
           document.getElementById('route-end').value = 'GPS: ' + label;
           scheduleRouteRegen();
         }
@@ -1422,22 +1422,25 @@
 
     actions.appendChild(makeBtn('Route from here', function () {
       routeStartCoords = [lng, lat];
-      placeRouteMarker('start', [lng, lat]);
+      placeRouteMarker('start', [lng, lat], name.substring(0, 50));
       document.getElementById('route-start').value = name.substring(0, 50);
+      clearSearchPins();
       popup.remove();
       scheduleRouteRegen();
     }));
 
     actions.appendChild(makeBtn('Route to here', function () {
       routeEndCoords = [lng, lat];
-      placeRouteMarker('end', [lng, lat]);
+      placeRouteMarker('end', [lng, lat], name.substring(0, 50));
       document.getElementById('route-end').value = name.substring(0, 50);
+      clearSearchPins();
       popup.remove();
       scheduleRouteRegen();
     }));
 
     actions.appendChild(makeBtn('Add as stop', function () {
       addWaypointRow(name.substring(0, 50), [lng, lat]);
+      clearSearchPins();
       popup.remove();
       scheduleRouteRegen();
     }));
@@ -1483,7 +1486,7 @@
   function setRouteEnd(coords, name) {
     routeEndCoords = coords;
     document.getElementById('route-end').value = name;
-    placeRouteMarker('end', coords);
+    placeRouteMarker('end', coords, name);
     if (routeStartCoords) {
       requestRoute();
     }
@@ -1527,12 +1530,12 @@
 
         if (which === 'start') {
           routeStartCoords = [lng, lat];
-          placeRouteMarker('start', [lng, lat]);
+          placeRouteMarker('start', [lng, lat], displayName);
           document.getElementById('route-start').value = displayName;
           scheduleRouteRegen();
         } else if (which === 'end') {
           routeEndCoords = [lng, lat];
-          placeRouteMarker('end', [lng, lat]);
+          placeRouteMarker('end', [lng, lat], displayName);
           document.getElementById('route-end').value = displayName;
           scheduleRouteRegen();
         } else if (which === 'waypoint' && wpIdx !== undefined) {
@@ -1551,12 +1554,9 @@
       });
   }
 
-  function placeRouteMarker(which, lngLat) {
+  function placeRouteMarker(which, lngLat, name) {
     var color = which === 'start' ? '#a6e3a1' : '#f38ba8';
-    var label = which === 'start'
-      ? document.getElementById('route-start').value
-      : document.getElementById('route-end').value;
-    var markerName = label || (lngLat[1].toFixed(5) + ', ' + lngLat[0].toFixed(5));
+    var markerName = name || (lngLat[1].toFixed(5) + ', ' + lngLat[0].toFixed(5));
     if (which === 'start') {
       if (routeStartMarker) routeStartMarker.remove();
       routeStartMarker = new maplibregl.Marker({ color: color })
