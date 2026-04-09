@@ -12,7 +12,7 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## Critical context — read before making any changes
 
-1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs, user preferences, and project decisions. Read the handoff at `handoff_20260408d.md` for the most recent session context.
+1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs, user preferences, and project decisions. Read the handoff at `handoff_20260408e.md` for the most recent session context.
 
 2. **Read CLAUDE.md** in the repo root — it has the project structure, commands, hardware specs, and skill routing rules.
 
@@ -30,13 +30,16 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 - **Nominatim** (:8092) — geocoding, 11 Western US states imported
 - **GPS** (:8095) — FastAPI WebSocket, reads Pi's GPS hat via gpsd (0.36% CPU after busy-wait fix)
 - **Search** (:8096) — spatial search (intent parser, corridor, proximity) + admin API + pipeline orchestration
-- **STT** (:8098) — Whisper base.en CPU backend, push-to-hold mic button. NGINX uses resilient resolver pattern (frontend stays up if STT is down)
+- **STT** (:8098) — Whisper base.en CPU backend, push-to-hold mic button. Deployed and working on HTTP + HTTPS. NGINX uses resilient resolver pattern (frontend stays up if STT is down).
 - **NGINX/Frontend** (:8093 HTTP, :443 HTTPS) — main app + config panel on localhost:8097
 
-### Recently deployed (2026-04-08)
-- **Voice search (STT)** — deployed and working. Push-to-hold mic button, AudioWorklet capture, Whisper base.en INT8 transcription → spatial search pipeline. NGINX /stt/ proxy uses resolver pattern for resilience.
-- **OSM POI search** — code complete, **not yet deployed**. Deploy: `python3 scripts/build_osm_pois.py --pbf /srv/geographica/data/valhalla/western-us.osm.pbf --output /srv/geographica/data/poi.sqlite --bbox "-124.8,31.3,-102.0,49.0" && docker compose restart search`
-- **NPU investigation complete** — Whisper-Base.hef (5.3.0) loads metadata on 5.1.1 but fails `configure()` with HAILO_NOT_IMPLEMENTED. Ship CPU, revisit at 5.3.0. See `dev/npu-investigation-results.md`.
+### Recently deployed (2026-04-08/09)
+- **Voice search (STT)** — deployed and working on HTTP + HTTPS. 405 bug fixed (stale NGINX bind mount).
+- **M2M imagery pipeline** — validated against live USGS API. Batched download system (50 scenes/batch) scales to state/regional areas. Maricopa County download currently running in background (~1022 GeoTIFFs).
+- **OSM POI search** — code complete, not yet deployed to production. Run: `python3 scripts/build_osm_pois.py --pbf /srv/geographica/data/valhalla/western-us.osm.pbf --output /srv/geographica/data/poi.sqlite --bbox "-124.8,31.3,-102.0,49.0" && docker compose restart search`
+
+### Background process
+- **Maricopa County M2M download** is running in a pipeline container. Monitor: `docker logs -f $(docker ps -q --filter "name=pipeline")`. Output: `/data/maricopa_m2m.mbtiles`. Staging: `/data/m2m_maricopa_staging/`. This will take many hours — do not interrupt.
 
 ### Data downloads — all complete
 - **Elevation z0-14**: 1,474,959 tiles — complete
@@ -50,29 +53,29 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 - Dual-mode: HTTP on :8093 (LAN/AREDN) + HTTPS on :443 (Tailscale)
 
 ### Key files
-- `docker-compose.yml` — 8 services (7 + pipeline with profiles), includes new STT service
+- `docker-compose.yml` — 8 services (7 + pipeline with profiles), includes STT service
 - `docker-compose.hailo.yml` — override for Hailo NPU device passthrough
-- `nginx/nginx.conf` — main app + config panel server blocks, sub_filter for TileJSON, /stt/ proxy
+- `nginx/nginx.conf` — main app + config panel server blocks, sub_filter for TileJSON, /stt/ resilient proxy
 - `services/search/main.py` — Nominatim/POI/OSM POI query, admin API, pipeline orchestration
 - `services/search/spatial.py` — intent parser, synonym table (28 entries incl BLM/USFS/NPS), corridor math, `POST /search/spatial`
 - `services/stt/main.py` — STT service: `POST /transcribe`, `GET /health`, WAV validation
 - `services/stt/backends/cpu.py` — faster-whisper base.en INT8, hallucination filtering
 - `services/stt/backends/npu.py` — HailoRT skeleton (ready for 5.3.0 firmware)
-- `services/gps/main.py` — GPS WebSocket with accuracy, 50ms poll sleep
+- `services/gps/main.py` — GPS WebSocket with accuracy, 50ms poll sleep, `GET /health`, `GET /position`
 - `frontend/app.js` — main frontend (~2800 lines), spatial search, numbered pins, GPS, STT integration
 - `frontend/stt.js` — voice search module (mic button, AudioWorklet, WAV encoding)
 - `frontend/stt-worklet.js` — AudioWorklet processor (sample accumulation)
+- `frontend/config/index.html` — standalone config panel (to be redesigned — see "What to work on next")
 - `frontend/navigation.js` — turn-by-turn engine (~790 lines)
 - `frontend/nav-ui.js` — navigation UI bridge (~860 lines)
-- `frontend/config/index.html` — standalone config panel
-- `scripts/acquire_imagery.py` — imagery download (3 modes: direct/tnmaccess/m2m)
+- `scripts/acquire_imagery.py` — imagery download (3 modes: direct/tnmaccess/m2m, batched M2M)
 - `scripts/build_poi_index.py` — GNIS POI indexer
-- `scripts/build_osm_pois.py` — **NEW** — OSM amenity + public land extractor
+- `scripts/build_osm_pois.py` — OSM amenity + public land extractor
 - `scripts/download_elevation.py` — elevation tile download
 - `scripts/provision_tailscale_tls.sh` — Tailscale cert provisioning
 
 ### Tests
-164 tests across project:
+180 tests across project:
 - `services/stt/tests/` (30) — backend interface, CPU backend, endpoints, NPU, integration
 - `tests/test_intent_parser.py` (27) — intent detection, category extraction, fallback chain
 - `tests/test_corridor.py` (19) — haversine, Douglas-Peucker, segment distance, corridor filter
@@ -83,38 +86,56 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 - `tests/test_mbtiles_metadata.py` (6) — UNIQUE constraint, minzoom/maxzoom/bounds
 - `tests/test_pipeline_orchestrator.py` (3) — command building for imagery vs elevation
 - `tests/test_elevation_state.py` (3) — state file merge pattern
+- `tests/test_m2m_api.py` (18) — login, scene search, download URLs, cancellation, progress, product selection
 
 Run all: `python3 -m pytest tests/ services/stt/tests/ -v`
 
 ### Design & plan documents
-- `docs/superpowers/specs/2026-04-08-whisper-stt-design.md` — STT design (adversarial reviewed)
-- `docs/superpowers/specs/2026-04-08-expanded-poi-sources-design.md` — POI design (adversarial reviewed)
-- `docs/superpowers/specs/2026-04-08-m2m-api-test-plan.md` — M2M test plan (adversarial reviewed)
-- `docs/plans/2026-04-08-whisper-stt-plan.md` — STT implementation plan (12 tasks, executed)
-- `docs/plans/2026-04-08-expanded-poi-sources-plan.md` — POI implementation plan (8 tasks, executed)
-- `docs/plans/2026-04-08-m2m-api-test-plan.md` — M2M implementation plan (7 tasks, ready to execute)
+- `docs/superpowers/specs/2026-04-09-admin-panel-redesign-design.md` — Admin panel redesign spec (adversarial reviewed, 29 issues addressed)
+- `docs/plans/2026-04-09-admin-panel-redesign-plan.md` — **READY TO EXECUTE** — 5 tasks, 2819 lines
+- `docs/superpowers/specs/2026-04-08-whisper-stt-design.md` — STT design (executed)
+- `docs/superpowers/specs/2026-04-08-expanded-poi-sources-design.md` — POI design (executed)
+- `docs/superpowers/specs/2026-04-08-m2m-api-test-plan.md` — M2M test plan (executed)
 - `docs/pitfalls/testing-pitfalls.md` — 8 common testing mistakes
 - `docs/pitfalls/implementation-pitfalls.md` — 10 common implementation mistakes
 
-### Bug hunt reports
-15 reports in `dev/bug-hunts/` + NPU investigation at `dev/npu-investigation-results.md`
+### Bug hunt and review reports
+- 15+ reports in `dev/bug-hunts/` — STT 405, pipeline, GPS, corridor, TLS
+- `dev/reviews/2026-04-08-readme-adversarial-review.md` — 36 README issues (5 critical)
+- `dev/reviews/2026-04-09-admin-panel-spec-adversarial-review.md` — 29 spec issues (4 critical, all addressed)
+- `dev/m2m-test-results.md` — M2M API validation results
 
 ## What to work on next
 
-See `TODOS.md` for the full backlog with context. Summary:
+### Immediate: Admin Panel Redesign
+**Plan ready to execute:** `docs/plans/2026-04-09-admin-panel-redesign-plan.md`
 
-### High priority
-1. **M2M API end-to-end test** — ERS approval received, plan ready at `docs/plans/2026-04-08-m2m-api-test-plan.md`. Requires live credentials via env vars (NEVER write to file). Fixes code gaps (SIGTERM, progress reporting) then runs phased live API testing.
-2. **Deploy STT + POI** — `docker compose build stt && docker compose up -d` for STT; run `build_osm_pois.py` for POI extraction; restart search service.
-3. **Whisper NPU backend** — blocked on `hailo-10-all` reaching 5.3.0 for Pi 5. HEF loads metadata on 5.1.1 but fails configure. See `dev/npu-investigation-results.md`.
+Invoke `/subagent-driven-development` or `/executing-plans` to implement the plan. It has 5 tasks:
+
+| Task | File(s) | Dependencies | Parallelizable |
+|------|---------|--------------|----------------|
+| 1. GPS `/status` endpoint | `services/gps/main.py` | None | Yes |
+| 2. Enriched `/admin/status` | `services/search/main.py` | Task 1 | After Task 1 |
+| 3. Zoom + OSM POI pipeline | `services/search/main.py` | None | Yes |
+| 4. NGINX + docker-compose | `nginx/nginx.conf`, `docker-compose.yml` | None | Yes |
+| 5. Full frontend rewrite | `frontend/config/index.html` | Tasks 2, 3, 4 | After all others |
+
+Tasks 1, 3, 4 can run in parallel. Task 2 depends on 1. Task 5 depends on all others.
+
+After the admin panel, the backlog is:
 
 ### Medium priority
-4. **Public land use map layer** — add BLM/USFS/NPS boundaries as toggleable overlay
-5. **NGINX selective compression** — PBF tiles uncompressed over mesh due to sub_filter blanket
-6. **Setup CLI tool** — single `geographica-setup` command
-7. **GPS track recording** — record and export as GPX/KML
-8. **Valhalla costing toggles** — verify UI checkboxes are wired up
-9. **Light/dark mode toggle** — runtime basemap style switching
+- **Fix README issues** — 36 findings from adversarial review at `dev/reviews/2026-04-08-readme-adversarial-review.md`
+- **OSM POI extraction** — deploy to production (code complete, just needs to run)
+- **Public land use map layer** — add BLM/USFS/NPS boundaries as toggleable overlay
+- **NGINX selective compression** — PBF tiles uncompressed over mesh due to sub_filter blanket
+- **Setup CLI tool** — single `geographica-setup` command
+- **GPS track recording** — record and export as GPX/KML
+- **Valhalla costing toggles** — verify UI checkboxes are wired up
+- **Light/dark mode toggle** — runtime basemap style switching
+
+### Blocked
+- **Whisper NPU backend** — blocked on `hailo-10-all` reaching 5.3.0 for Pi 5
 
 ## Known issues to be aware of
 - TileServer config uses `/srv/data/` paths for imagery/elevation (writable mount for WAL)
@@ -126,6 +147,7 @@ See `TODOS.md` for the full backlog with context. Summary:
 - STT service needs internet during Docker build to download the ~140MB Whisper model
 - Total Docker memory allocation is ~15GB on 16GB hardware — tight but functional
 - **NGINX bind mount footgun:** `nginx/nginx.conf` is file-mounted into the frontend container. Git operations (commit, checkout, rebase) create a new file inode — Docker tracks the old inode, so the container silently serves stale config. Always run `docker compose up -d --force-recreate frontend` after editing NGINX config files.
+- **Maricopa M2M download running** — do not stop the pipeline container. Monitor with `docker logs`.
 
 ## Cameron's preferences (from memory)
 - Prioritizes correctness and completeness over speed
@@ -137,3 +159,4 @@ See `TODOS.md` for the full backlog with context. Summary:
 - Prefers robust adversarial review (multiple rounds, cross-model) before implementing major features
 - Prefers full brainstorm → adversarial review → implementation plan → TDD execution workflow
 - M2M credentials must NEVER be written to any file — env vars only
+- Doesn't want extended-width UI elements that stretch across full desktop viewport — keep 600px max-width centered
