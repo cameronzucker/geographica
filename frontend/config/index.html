@@ -4,51 +4,139 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Geographica Config</title>
+    <link rel="stylesheet" href="/vendor/maplibre-gl.css">
     <style>
-        /* Dark theme matching the main app sidebar */
+        /* === BASE === */
         body { font-family: -apple-system, sans-serif; background: #1e1e2e; color: #cdd6f4; margin: 0; padding: 20px; }
         .container { max-width: 600px; margin: 0 auto; }
-        h1 { font-size: 20px; color: #f5f5f5; }
-        h2 { font-size: 16px; color: #f5f5f5; margin-top: 24px; }
-        /* Form elements matching sidebar style */
-        label { display: block; font-size: 12px; color: #7a8299; margin: 8px 0 3px; }
-        input, select { width: 100%; padding: 8px; background: #313244; border: 1px solid #45475a; border-radius: 6px; color: #cdd6f4; font-size: 13px; box-sizing: border-box; }
-        button { padding: 10px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; margin: 4px 2px; }
-        .btn-primary { background: #a6e3a1; color: #1e1e2e; font-weight: 600; }
-        .btn-danger { background: #f38ba8; color: #1e1e2e; }
-        .btn-secondary { background: transparent; border: 1px solid #45475a; color: #cdd6f4; }
+
+        /* === TABS === */
+        .tab-bar { display: flex; gap: 0; border-bottom: 1px solid #45475a; margin-bottom: 16px; }
+        .tab-btn { padding: 10px 16px; background: transparent; border: none; color: #7a8299; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; }
+        .tab-btn.active { color: #cdd6f4; border-bottom-color: #89b4fa; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* === SERVICE LIST === */
+        .svc-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #313244; }
+        .svc-left { display: flex; align-items: center; gap: 8px; }
+        .svc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .svc-dot.green { background: #a6e3a1; }
+        .svc-dot.yellow { background: #f9e2af; }
+        .svc-dot.red { background: #f38ba8; }
+        .svc-name { font-size: 13px; font-weight: 500; }
+        .svc-context { font-size: 11px; color: #7a8299; text-align: right; }
+
+        /* === CARDS === */
+        .info-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+        .info-card { background: #313244; border-radius: 8px; padding: 12px; }
+        .info-card-label { font-size: 11px; color: #7a8299; margin-bottom: 4px; }
+        .info-card-value { font-size: 14px; font-weight: 500; }
+
+        /* === PIPELINE BANNER === */
+        .pipeline-banner { background: rgba(137,180,250,0.1); border: 1px solid #89b4fa; border-radius: 8px; padding: 12px; margin-top: 16px; cursor: pointer; }
+
+        /* === REUSED STYLES === */
+        .section { background: #181825; border-radius: 8px; padding: 16px; margin: 12px 0; }
         .status { padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: 12px; }
         .status-ok { background: rgba(166,227,161,0.15); color: #a6e3a1; }
         .status-warn { background: rgba(249,226,175,0.15); color: #f9e2af; }
         .status-error { background: rgba(243,139,168,0.15); color: #f38ba8; }
         .progress-bar { height: 6px; background: #313244; border-radius: 3px; margin: 8px 0; }
         .progress-fill { height: 100%; background: #89b4fa; border-radius: 3px; transition: width 1s; }
-        .section { background: #181825; border-radius: 8px; padding: 16px; margin: 12px 0; }
         .detail { font-size: 11px; color: #7a8299; margin: 4px 0; }
         .mono { font-family: 'SF Mono', monospace; }
+        label { display: block; font-size: 12px; color: #7a8299; margin: 8px 0 3px; }
+        input, select { width: 100%; padding: 8px; background: #313244; border: 1px solid #45475a; border-radius: 6px; color: #cdd6f4; font-size: 13px; box-sizing: border-box; }
+        button { padding: 10px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; margin: 4px 2px; }
+        .btn-primary { background: #a6e3a1; color: #1e1e2e; font-weight: 600; }
+        .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-danger { background: #f38ba8; color: #1e1e2e; }
+        .btn-secondary { background: transparent; border: 1px solid #45475a; color: #cdd6f4; }
+        h2 { font-size: 16px; color: #f5f5f5; margin-top: 24px; }
+
+        /* === MINIMAP === */
+        #minimap { width: 100%; height: 200px; border-radius: 6px; margin: 8px 0; }
+        @media (max-width: 479px) { #minimap-container { display: none; } }
+
+        /* === SETTINGS === */
+        .setting-row { display: flex; justify-content: space-between; padding: 6px 0; }
+        .setting-label { font-size: 12px; color: #7a8299; }
+        .setting-value { font-size: 12px; }
+
+        /* === EMPTY STATE === */
+        .empty-state { text-align: center; padding: 60px 20px; color: #7a8299; }
+
+        /* === CHECKBOX === */
+        .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #cdd6f4; cursor: pointer; }
+        .checkbox-label input[type="checkbox"] { width: auto; margin: 0; }
+
+        /* === INLINE WARNING === */
+        .inline-warn { background: rgba(249,226,175,0.15); color: #f9e2af; padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: 12px; }
+        .inline-warn a { color: #89b4fa; cursor: pointer; text-decoration: underline; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Geographica Configuration</h1>
-        <p class="detail">This panel is only accessible from localhost. Changes take effect immediately.</p>
+<div class="container">
+    <h1 style="font-size:20px;color:#f5f5f5;margin-bottom:4px">Geographica Configuration</h1>
+    <p class="detail">This panel is only accessible from localhost. Changes take effect immediately.</p>
 
-        <div class="section">
-            <h2>System Status</h2>
-            <div id="system-status">Loading...</div>
+    <!-- Tab bar -->
+    <div class="tab-bar">
+        <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+        <button class="tab-btn" data-tab="pipelines">Pipelines</button>
+        <button class="tab-btn" data-tab="settings">Settings</button>
+    </div>
+
+    <!-- DASHBOARD TAB -->
+    <div id="tab-dashboard" class="tab-content active">
+        <div id="empty-state" class="empty-state" style="display:none">
+            <p>No services detected.</p>
+            <p class="mono" style="font-size:12px">Run <code>docker compose up -d</code> to start the stack.</p>
         </div>
+        <div id="dashboard-content">
+            <div class="section">
+                <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">Services</h2>
+                <div id="svc-list">Loading...</div>
+            </div>
+            <div class="info-cards">
+                <div class="info-card"><div class="info-card-label">Disk</div><div class="info-card-value" id="disk-info">--</div></div>
+                <div class="info-card"><div class="info-card-label">TLS</div><div class="info-card-value" id="tls-info">--</div></div>
+            </div>
+            <div id="pipeline-banner" class="pipeline-banner" style="display:none">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span id="banner-title" style="font-size:13px;font-weight:500"></span>
+                    <span class="detail" id="banner-detail"></span>
+                </div>
+                <div class="progress-bar" style="margin-top:8px"><div class="progress-fill" id="banner-progress"></div></div>
+            </div>
+        </div>
+    </div>
 
+    <!-- PIPELINES TAB -->
+    <div id="tab-pipelines" class="tab-content">
+        <!-- Imagery Acquisition -->
         <div class="section">
-            <h2>Imagery Acquisition</h2>
+            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">Imagery Acquisition</h2>
+
             <label>Source</label>
             <select id="cfg-source">
                 <option value="direct">USGS Direct (no auth needed)</option>
                 <option value="m2m">USGS M2M API (requires credentials)</option>
             </select>
 
-            <label>Coverage area</label>
+            <div id="m2m-warning" class="inline-warn" style="display:none">
+                M2M credentials not configured. <a id="m2m-warning-link">Go to Settings</a> to add them.
+            </div>
+
+            <div id="minimap-container">
+                <label>Draw bbox on map or enter manually</label>
+                <div id="minimap"></div>
+            </div>
+
+            <label>Coverage area (bbox)</label>
             <input type="text" id="cfg-bbox" value="-124.8,31.3,-102.0,49.0" class="mono">
-            <div class="detail">Bounding box: west, south, east, north (decimal degrees)</div>
+            <div class="detail">west, south, east, north (decimal degrees)</div>
 
             <label>Zoom range</label>
             <select id="cfg-zoom">
@@ -57,7 +145,7 @@
                 <option value="0-12">Standard (0-12)</option>
                 <option value="0-14">High detail (0-14)</option>
                 <option value="0-15" selected>Very high detail (0-15)</option>
-                <option value="0-16">Maximum — direct mode (0-16)</option>
+                <option value="0-16">Maximum -- direct mode (0-16)</option>
                 <option value="0-17">M2M enhanced (0-17)</option>
                 <option value="0-18">M2M high (0-18)</option>
                 <option value="0-19">M2M maximum (0-19)</option>
@@ -65,16 +153,14 @@
             <div class="detail" id="cfg-zoom-note"></div>
 
             <label>Download speed</label>
-            <select id="cfg-concurrency">
-                <option value="10">Conservative (10)</option>
-                <option value="20" selected>Normal (20)</option>
-                <option value="50">Fast (50)</option>
-                <option value="80">Maximum (80)</option>
-            </select>
+            <select id="cfg-concurrency"></select>
 
-            <label><input type="checkbox" id="cfg-update" checked> Resume/extend existing data</label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="cfg-update" checked>
+                Resume/extend existing data
+            </label>
 
-            <div id="cfg-estimate" class="detail">Calculating...</div>
+            <div id="cfg-estimate" class="detail" style="margin-top:8px">Calculating...</div>
 
             <div style="margin-top:12px">
                 <button type="button" class="btn-primary" id="cfg-start">Start Download</button>
@@ -85,223 +171,850 @@
                 <div class="progress-bar"><div class="progress-fill" id="cfg-progress-fill"></div></div>
                 <div id="cfg-progress-detail" class="detail"></div>
             </div>
+
+            <div id="cfg-imagery-completed" class="status status-ok" style="display:none"></div>
         </div>
 
-        <div class="section" id="cfg-m2m-section" style="display:none">
-            <h2>M2M API Credentials</h2>
-            <label>Username</label>
-            <input type="text" id="cfg-m2m-user" placeholder="USGS ERS username">
-            <label>API Token</label>
-            <input type="password" id="cfg-m2m-token" placeholder="M2M application token">
-            <div style="margin-top:8px">
-                <button type="button" class="btn-secondary" id="cfg-m2m-save">Save Credentials</button>
-                <button type="button" class="btn-danger" id="cfg-m2m-delete" style="display:none">Delete</button>
-            </div>
-            <div id="cfg-m2m-status"></div>
-        </div>
-
+        <!-- Elevation Tiles -->
         <div class="section">
-            <h2>Data Pipeline Status</h2>
-            <div id="cfg-data-status">Loading...</div>
+            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">Elevation Tiles</h2>
+            <div id="elev-status" class="detail">Checking...</div>
+            <div style="margin-top:8px">
+                <button type="button" class="btn-primary" id="elev-start">Start Elevation Download</button>
+                <button type="button" class="btn-danger" id="elev-cancel" style="display:none">Cancel</button>
+            </div>
+            <div id="elev-progress" style="display:none">
+                <div class="progress-bar"><div class="progress-fill" id="elev-progress-fill"></div></div>
+                <div id="elev-progress-detail" class="detail"></div>
+            </div>
+            <div id="elev-completed" class="status status-ok" style="display:none"></div>
+        </div>
+
+        <!-- OSM POI Extraction -->
+        <div class="section">
+            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">OSM POI Extraction</h2>
+            <div id="osm-status" class="detail">Checking...</div>
+            <div style="margin-top:8px">
+                <button type="button" class="btn-primary" id="osm-start">Extract OSM POIs</button>
+            </div>
+            <div id="osm-progress" style="display:none">
+                <div class="progress-bar"><div class="progress-fill" id="osm-progress-fill"></div></div>
+                <div id="osm-progress-detail" class="detail"></div>
+            </div>
+            <div id="osm-completed" class="status status-ok" style="display:none"></div>
         </div>
     </div>
 
-    <script>
-    // Config panel JS -- all API calls include X-Geographica header for CSRF protection
-    (function() {
-        function cfgFetch(url, opts) {
-            opts = opts || {};
-            opts.headers = opts.headers || {};
-            opts.headers['X-Geographica'] = '1';
-            return fetch(url, opts);
+    <!-- SETTINGS TAB -->
+    <div id="tab-settings" class="tab-content">
+        <!-- M2M Credentials -->
+        <div class="section">
+            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">M2M API Credentials</h2>
+            <div id="m2m-configured" style="display:none">
+                <div class="status status-ok">Configured</div>
+                <div style="margin-top:8px">
+                    <button type="button" class="btn-secondary" id="m2m-update-btn">Update</button>
+                    <button type="button" class="btn-danger" id="m2m-delete-btn">Delete</button>
+                </div>
+            </div>
+            <div id="m2m-form">
+                <label>Username</label>
+                <input type="text" id="cfg-m2m-user" placeholder="USGS ERS username">
+                <label>API Token</label>
+                <input type="password" id="cfg-m2m-token" placeholder="M2M application token">
+                <div style="margin-top:8px">
+                    <button type="button" class="btn-primary" id="m2m-save-btn">Save Credentials</button>
+                </div>
+            </div>
+            <div id="m2m-status-msg" class="detail"></div>
+        </div>
+
+        <!-- TLS Configuration -->
+        <div class="section">
+            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">TLS Configuration</h2>
+            <div id="tls-settings">Loading...</div>
+        </div>
+
+        <!-- Voice Search (STT) -->
+        <div class="section">
+            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">Voice Search (STT)</h2>
+            <div id="stt-settings">Loading...</div>
+        </div>
+    </div>
+</div>
+
+<script src="/vendor/maplibre-gl.js"></script>
+<script>
+(function() {
+    'use strict';
+
+    // -----------------------------------------------------------------------
+    // Utility: cfgFetch -- adds X-Geographica header to all requests
+    // -----------------------------------------------------------------------
+    function cfgFetch(url, opts) {
+        opts = opts || {};
+        opts.headers = opts.headers || {};
+        opts.headers['X-Geographica'] = '1';
+        return fetch(url, opts);
+    }
+
+    // -----------------------------------------------------------------------
+    // Tab switching (hash-based)
+    // -----------------------------------------------------------------------
+    function switchTab(name) {
+        document.querySelectorAll('.tab-btn').forEach(function(btn) {
+            btn.classList.toggle('active', btn.dataset.tab === name);
+        });
+        document.querySelectorAll('.tab-content').forEach(function(tab) {
+            tab.classList.toggle('active', tab.id === 'tab-' + name);
+        });
+        history.replaceState(null, '', '#' + name);
+    }
+
+    document.querySelectorAll('.tab-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() { switchTab(this.dataset.tab); });
+    });
+
+    var initTab = location.hash.replace('#', '') || 'dashboard';
+    if (['dashboard', 'pipelines', 'settings'].indexOf(initTab) >= 0) switchTab(initTab);
+
+    // -----------------------------------------------------------------------
+    // Concurrency options
+    // -----------------------------------------------------------------------
+    var CONCURRENCY_DIRECT = [
+        {value: 10, label: 'Conservative (10)'},
+        {value: 20, label: 'Normal (20)', default: true},
+        {value: 50, label: 'Fast (50)'},
+        {value: 80, label: 'Maximum (80)'},
+    ];
+    var CONCURRENCY_M2M = [
+        {value: 3, label: 'M2M safe (3)', default: true},
+        {value: 5, label: 'M2M max (5)'},
+    ];
+
+    function updateConcurrencyOptions() {
+        var sel = document.getElementById('cfg-concurrency');
+        var source = document.getElementById('cfg-source').value;
+        var options = source === 'm2m' ? CONCURRENCY_M2M : CONCURRENCY_DIRECT;
+        sel.textContent = '';
+        options.forEach(function(o) {
+            var opt = document.createElement('option');
+            opt.value = o.value;
+            opt.textContent = o.label;
+            if (o.default) opt.selected = true;
+            sel.appendChild(opt);
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Tile estimation
+    // -----------------------------------------------------------------------
+    function estimateTiles(bbox, zoom) {
+        var parts = bbox.split(',').map(Number);
+        if (parts.length !== 4 || parts.some(isNaN)) return 0;
+        var west = parts[0], south = parts[1], east = parts[2], north = parts[3];
+        var zp = zoom.split('-').map(Number);
+        var total = 0;
+        for (var z = zp[0]; z <= zp[1]; z++) {
+            var n = Math.pow(2, z);
+            var xMin = Math.floor((west + 180) / 360 * n);
+            var xMax = Math.floor((east + 180) / 360 * n);
+            var yMin = Math.floor((1 - Math.log(Math.tan(north * Math.PI / 180) + 1 / Math.cos(north * Math.PI / 180)) / Math.PI) / 2 * n);
+            var yMax = Math.floor((1 - Math.log(Math.tan(south * Math.PI / 180) + 1 / Math.cos(south * Math.PI / 180)) / Math.PI) / 2 * n);
+            total += (xMax - xMin + 1) * (yMax - yMin + 1);
         }
+        return total;
+    }
 
-        // Build a status badge element safely (no innerHTML)
-        function createStatusBadge(name, health, status) {
-            var div = document.createElement('div');
-            div.className = 'status ' + (health === 'healthy' ? 'status-ok' : status === 'running' ? 'status-warn' : 'status-error');
-            div.textContent = name + ': ' + (health || status);
-            return div;
+    function updateEstimate() {
+        var bbox = document.getElementById('cfg-bbox').value;
+        var zoom = document.getElementById('cfg-zoom').value;
+        var count = estimateTiles(bbox, zoom);
+        var sizeGB = (count * 20 * 1024 / (1024 * 1024 * 1024)).toFixed(1);
+        var hours = (count / 680 / 3600).toFixed(1);
+        document.getElementById('cfg-estimate').textContent =
+            count > 0 ? '~' + count.toLocaleString() + ' tiles, ~' + sizeGB + ' GB, ~' + hours + ' hours' : 'Invalid bbox';
+    }
+
+    // -----------------------------------------------------------------------
+    // Service health rendering
+    // -----------------------------------------------------------------------
+    function svcDotColor(svc) {
+        if (svc.health === 'healthy') return 'green';
+        if (svc.status === 'running' && (svc.health === 'starting' || svc.health === 'none')) return 'yellow';
+        if (svc.status === 'running' && svc.name === 'nominatim' && svc.health === 'unhealthy') return 'yellow';
+        return 'red';
+    }
+
+    function svcContext(svc, statusData) {
+        var name = svc.name;
+        if (name === 'search' && statusData.search_stats) {
+            var g = statusData.search_stats.gnis_count;
+            var o = statusData.search_stats.osm_pois_count;
+            var gStr = g >= 1000 ? Math.round(g / 1000) + 'k' : g;
+            if (o > 0) return gStr + ' GNIS + ' + (o >= 1000 ? Math.round(o / 1000) + 'k' : o) + ' OSM';
+            return gStr + ' GNIS';
         }
-
-        // Build a data task detail element safely
-        function createDataDetail(t) {
-            var div = document.createElement('div');
-            div.className = 'detail';
-            var count = t.tiles || t.features || 0;
-            var rate = t.rate ? ' \u00b7 ' + Math.round(t.rate) + '/sec' : '';
-            div.textContent = t.name + ': ' + count.toLocaleString() + (t.tiles ? ' tiles' : ' features') + rate + ' \u2014 ' + t.status;
-            return div;
+        if (name === 'gps' && statusData.gps) {
+            var gps = statusData.gps;
+            if (gps.status === 'unreachable') return 'unreachable';
+            if (gps.status === 'no_gpsd') return 'no gpsd';
+            if (gps.fix === '3d') return '3D fix' + (gps.accuracy_m != null ? ', \u00b1' + gps.accuracy_m + 'm' : '');
+            if (gps.fix === '2d') return '2D fix';
+            return 'no fix';
         }
-
-        // System status polling
-        function fetchStatus() {
-            cfgFetch('/admin/status')
-                .then(function(r) { return r.json(); })
-                .then(function(d) {
-                    var el = document.getElementById('system-status');
-                    el.textContent = '';
-                    (d.services || []).forEach(function(s) {
-                        el.appendChild(createStatusBadge(s.name, s.health, s.status));
-                    });
-
-                    // Data tasks
-                    var dataEl = document.getElementById('cfg-data-status');
-                    dataEl.textContent = '';
-                    (d.data_tasks || []).forEach(function(t) {
-                        dataEl.appendChild(createDataDetail(t));
-                    });
-                });
-
-            // Pipeline status
-            cfgFetch('/admin/pipeline/status')
-                .then(function(r) { return r.json(); })
-                .then(function(d) {
-                    var startBtn = document.getElementById('cfg-start');
-                    var cancelBtn = document.getElementById('cfg-cancel');
-                    var progressDiv = document.getElementById('cfg-progress');
-                    var progressFill = document.getElementById('cfg-progress-fill');
-                    var progressDetail = document.getElementById('cfg-progress-detail');
-
-                    if (d.status === 'running') {
-                        startBtn.style.display = 'none';
-                        cancelBtn.style.display = '';
-                        progressDiv.style.display = '';
-                        var total = d.tiles_total || d.estimated_tiles || 1;
-                        var done = d.tiles_done || 0;
-                        var pct = Math.min(100, (done / total * 100)).toFixed(1);
-                        progressFill.style.width = pct + '%';
-                        var rate = d.rate_per_sec ? ' \u00b7 ' + Math.round(d.rate_per_sec) + ' tiles/sec' : '';
-                        progressDetail.textContent = done.toLocaleString() + ' / ' + total.toLocaleString() + ' (' + pct + '%)' + rate;
-                    } else {
-                        startBtn.style.display = '';
-                        cancelBtn.style.display = 'none';
-                        if (d.status === 'interrupted') {
-                            startBtn.textContent = 'Resume Download';
-                            progressDiv.style.display = '';
-                        } else if (d.status === 'completed') {
-                            startBtn.textContent = 'Start New Download';
-                            progressDiv.style.display = 'none';
-                        } else {
-                            startBtn.textContent = 'Start Download';
-                            progressDiv.style.display = 'none';
-                        }
-                    }
-                });
+        if (name === 'stt' && statusData.stt) {
+            var stt = statusData.stt;
+            if (stt.status === 'unreachable') return 'unreachable';
+            return (stt.backend || '?') + ', ' + (stt.model || '?');
         }
+        if (name === 'nominatim' && svc.progress && svc.progress.phase) return svc.progress.phase;
+        if (name === 'valhalla' && svc.progress && svc.progress.phase) return svc.progress.phase;
+        if (name === 'frontend' && svc.health === 'healthy') return 'nginx';
+        return svc.health || svc.status;
+    }
 
-        // Tile count estimation
-        function estimateTiles(bbox, zoom) {
-            var parts = bbox.split(',').map(Number);
-            if (parts.length !== 4 || parts.some(isNaN)) return 0;
-            var west = parts[0], south = parts[1], east = parts[2], north = parts[3];
-            var zp = zoom.split('-').map(Number);
-            var total = 0;
-            for (var z = zp[0]; z <= zp[1]; z++) {
-                var n = Math.pow(2, z);
-                var xMin = Math.floor((west + 180) / 360 * n);
-                var xMax = Math.floor((east + 180) / 360 * n);
-                var yMin = Math.floor((1 - Math.log(Math.tan(north * Math.PI / 180) + 1 / Math.cos(north * Math.PI / 180)) / Math.PI) / 2 * n);
-                var yMax = Math.floor((1 - Math.log(Math.tan(south * Math.PI / 180) + 1 / Math.cos(south * Math.PI / 180)) / Math.PI) / 2 * n);
-                total += (xMax - xMin + 1) * (yMax - yMin + 1);
-            }
-            return total;
+    // -----------------------------------------------------------------------
+    // Dashboard rendering
+    // -----------------------------------------------------------------------
+    function renderDashboard(data) {
+        var emptyEl = document.getElementById('empty-state');
+        var contentEl = document.getElementById('dashboard-content');
+
+        if (!data.services || data.services.length === 0) {
+            emptyEl.style.display = '';
+            contentEl.style.display = 'none';
+            return;
         }
+        emptyEl.style.display = 'none';
+        contentEl.style.display = '';
 
-        function updateEstimate() {
-            var bbox = document.getElementById('cfg-bbox').value;
-            var zoom = document.getElementById('cfg-zoom').value;
-            var count = estimateTiles(bbox, zoom);
-            var sizeGB = (count * 20 * 1024 / (1024*1024*1024)).toFixed(1);
-            var hours = (count / 680 / 3600).toFixed(1);
-            document.getElementById('cfg-estimate').textContent =
-                count > 0 ? '~' + count.toLocaleString() + ' tiles, ~' + sizeGB + ' GB, ~' + hours + ' hours' : 'Invalid bbox';
-        }
+        // Build service list via DOM manipulation
+        var listEl = document.getElementById('svc-list');
+        listEl.textContent = '';
+        data.services.forEach(function(svc) {
+            var row = document.createElement('div');
+            row.className = 'svc-row';
 
-        // Event handlers
-        document.getElementById('cfg-source').addEventListener('change', function() {
-            document.getElementById('cfg-m2m-section').style.display = this.value === 'm2m' ? '' : 'none';
-            // Re-trigger zoom note update
-            document.getElementById('cfg-zoom').dispatchEvent(new Event('change'));
+            var left = document.createElement('div');
+            left.className = 'svc-left';
+
+            var dot = document.createElement('div');
+            dot.className = 'svc-dot ' + svcDotColor(svc);
+
+            var nameEl = document.createElement('span');
+            nameEl.className = 'svc-name';
+            nameEl.textContent = svc.name;
+
+            left.appendChild(dot);
+            left.appendChild(nameEl);
+
+            var ctx = document.createElement('span');
+            ctx.className = 'svc-context';
+            ctx.textContent = svcContext(svc, data);
+
+            row.appendChild(left);
+            row.appendChild(ctx);
+            listEl.appendChild(row);
         });
 
-        document.getElementById('cfg-bbox').addEventListener('input', updateEstimate);
-        document.getElementById('cfg-zoom').addEventListener('change', function() {
-            updateEstimate();
-            var zoom = this.value;
-            var note = document.getElementById('cfg-zoom-note');
-            var source = document.getElementById('cfg-source');
-            var maxZ = parseInt(zoom.split('-')[1]);
-            if (maxZ > 16 && source.value !== 'm2m') {
-                note.textContent = 'Zoom levels above 16 require M2M mode (NAIP GeoTIFF source).';
-                note.style.color = '#f9e2af';
-            } else if (maxZ > 16) {
-                note.textContent = 'M2M downloads native NAIP GeoTIFFs. GDAL determines actual max zoom from source resolution (~z19).';
-                note.style.color = '#7a8299';
+        // Disk card
+        var diskEl = document.getElementById('disk-info');
+        if (data.disk_free_gb != null) {
+            diskEl.textContent = data.disk_free_gb + 'GB free (' + data.disk_used_pct + '%)';
+        } else {
+            diskEl.textContent = '--';
+        }
+
+        // TLS card
+        var tlsEl = document.getElementById('tls-info');
+        if (data.tls) {
+            var mode = data.tls.mode || 'http';
+            if (mode === 'http') {
+                tlsEl.textContent = 'HTTP only';
+            } else if (data.tls.cert_expires) {
+                tlsEl.textContent = mode + ' (exp ' + data.tls.cert_expires + ')';
             } else {
-                note.textContent = '';
+                tlsEl.textContent = mode;
             }
-        });
+        } else {
+            tlsEl.textContent = '--';
+        }
+    }
 
-        document.getElementById('cfg-start').addEventListener('click', function() {
-            var body = {
-                type: 'imagery',
-                mode: document.getElementById('cfg-source').value,
-                bbox: document.getElementById('cfg-bbox').value,
-                zoom: document.getElementById('cfg-zoom').value,
-                concurrency: parseInt(document.getElementById('cfg-concurrency').value),
-                update: document.getElementById('cfg-update').checked
-            };
-            if (!confirm('Start download? ~' + estimateTiles(body.bbox, body.zoom).toLocaleString() + ' tiles')) return;
-            cfgFetch('/admin/pipeline/start', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(body)
-            }).then(function(r) { return r.json(); })
-              .then(function(d) { if (d.error) alert(d.error); fetchStatus(); });
-        });
+    // -----------------------------------------------------------------------
+    // Pipeline banner (shown on Dashboard tab when a pipeline is running)
+    // -----------------------------------------------------------------------
+    function renderPipelineBanner(imageryData) {
+        var banner = document.getElementById('pipeline-banner');
+        var title = '';
+        var detail = '';
+        var pct = 0;
 
-        document.getElementById('cfg-cancel').addEventListener('click', function() {
-            cfgFetch('/admin/pipeline/cancel', { method: 'POST' })
-                .then(function() { fetchStatus(); });
-        });
+        if (imageryData && imageryData.status === 'running') {
+            title = 'Imagery download in progress';
+            var total = imageryData.estimated_tiles || imageryData.tiles_total || 1;
+            var done = imageryData.tiles_done || 0;
+            pct = Math.min(100, done / total * 100);
+            var rate = imageryData.rate_per_sec ? Math.round(imageryData.rate_per_sec) + ' tiles/sec' : '';
+            detail = done.toLocaleString() + ' / ' + total.toLocaleString() + (rate ? ' \u00b7 ' + rate : '');
+        } else if (_elevRunning) {
+            title = 'Elevation download in progress';
+        } else if (_osmRunning) {
+            title = 'OSM POI extraction in progress';
+        }
 
-        // M2M credentials
-        document.getElementById('cfg-m2m-save').addEventListener('click', function() {
-            cfgFetch('/admin/credentials', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    m2m_username: document.getElementById('cfg-m2m-user').value,
-                    m2m_token: document.getElementById('cfg-m2m-token').value
-                })
-            }).then(function(r) { return r.json(); })
-              .then(function(d) {
-                document.getElementById('cfg-m2m-status').textContent = d.status === 'saved' ? 'Credentials saved' : 'Error: ' + (d.detail || d.error);
-                checkM2M();
+        if (title) {
+            banner.style.display = '';
+            document.getElementById('banner-title').textContent = title;
+            document.getElementById('banner-detail').textContent = detail;
+            document.getElementById('banner-progress').style.width = pct.toFixed(1) + '%';
+        } else {
+            banner.style.display = 'none';
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Imagery progress rendering
+    // -----------------------------------------------------------------------
+    function renderImageryProgress(d) {
+        var startBtn = document.getElementById('cfg-start');
+        var cancelBtn = document.getElementById('cfg-cancel');
+        var progressDiv = document.getElementById('cfg-progress');
+        var progressFill = document.getElementById('cfg-progress-fill');
+        var progressDetail = document.getElementById('cfg-progress-detail');
+        var completedEl = document.getElementById('cfg-imagery-completed');
+
+        if (d.status === 'running') {
+            _imageryRunning = true;
+            startBtn.style.display = 'none';
+            cancelBtn.style.display = '';
+            progressDiv.style.display = '';
+            completedEl.style.display = 'none';
+            var total = d.estimated_tiles || d.tiles_total || 1;
+            var done = d.tiles_done || 0;
+            var pct = Math.min(100, (done / total * 100)).toFixed(1);
+            progressFill.style.width = pct + '%';
+            var rate = d.rate_per_sec ? ' \u00b7 ' + Math.round(d.rate_per_sec) + ' tiles/sec' : '';
+            progressDetail.textContent = done.toLocaleString() + ' / ' + total.toLocaleString() + ' (' + pct + '%)' + rate;
+        } else {
+            _imageryRunning = false;
+            cancelBtn.style.display = 'none';
+            startBtn.style.display = '';
+            if (d.status === 'interrupted') {
+                startBtn.textContent = 'Resume Download';
+                progressDiv.style.display = '';
+                completedEl.style.display = 'none';
+            } else if (d.status === 'completed') {
+                startBtn.textContent = 'Start New Download';
+                progressDiv.style.display = 'none';
+                completedEl.style.display = '';
+                completedEl.textContent = 'Imagery download completed' + (d.tiles_done ? ' \u2014 ' + d.tiles_done.toLocaleString() + ' tiles' : '');
+            } else {
+                startBtn.textContent = 'Start Download';
+                progressDiv.style.display = 'none';
+                completedEl.style.display = 'none';
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Elevation rendering
+    // -----------------------------------------------------------------------
+    function renderElevation(statusData, pipelineData) {
+        var statusEl = document.getElementById('elev-status');
+        var startBtn = document.getElementById('elev-start');
+        var cancelBtn = document.getElementById('elev-cancel');
+        var progressDiv = document.getElementById('elev-progress');
+        var progressFill = document.getElementById('elev-progress-fill');
+        var progressDetail = document.getElementById('elev-progress-detail');
+        var completedEl = document.getElementById('elev-completed');
+
+        // Find elevation data task from status
+        var elevTask = null;
+        if (statusData && statusData.data_tasks) {
+            statusData.data_tasks.forEach(function(t) {
+                if (t.name === 'Elevation tiles') elevTask = t;
+            });
+        }
+
+        if (pipelineData && pipelineData.status === 'running') {
+            _elevRunning = true;
+            startBtn.style.display = 'none';
+            cancelBtn.style.display = '';
+            progressDiv.style.display = '';
+            completedEl.style.display = 'none';
+            var total = pipelineData.estimated_tiles || pipelineData.tiles_total || 1;
+            var done = pipelineData.tiles_done || 0;
+            var pct = Math.min(100, (done / total * 100)).toFixed(1);
+            progressFill.style.width = pct + '%';
+            var rate = pipelineData.rate_per_sec ? ' \u00b7 ' + Math.round(pipelineData.rate_per_sec) + ' tiles/sec' : '';
+            progressDetail.textContent = done.toLocaleString() + ' / ' + total.toLocaleString() + ' (' + pct + '%)' + rate;
+            statusEl.textContent = '';
+        } else {
+            _elevRunning = false;
+            cancelBtn.style.display = 'none';
+            startBtn.style.display = '';
+            if (pipelineData && pipelineData.status === 'completed') {
+                progressDiv.style.display = 'none';
+                completedEl.style.display = '';
+                completedEl.textContent = 'Elevation tiles completed';
+                if (elevTask && elevTask.tiles) {
+                    completedEl.textContent += ' \u2014 ' + elevTask.tiles.toLocaleString() + ' tiles';
+                }
+            } else if (pipelineData && pipelineData.status === 'interrupted') {
+                startBtn.textContent = 'Resume Elevation Download';
+                progressDiv.style.display = '';
+                completedEl.style.display = 'none';
+            } else {
+                startBtn.textContent = 'Start Elevation Download';
+                progressDiv.style.display = 'none';
+                completedEl.style.display = 'none';
+            }
+            if (elevTask && elevTask.tiles && !(pipelineData && pipelineData.status === 'completed')) {
+                statusEl.textContent = elevTask.tiles.toLocaleString() + ' tiles in database';
+            } else if (!elevTask) {
+                statusEl.textContent = 'No elevation data yet';
+            } else {
+                statusEl.textContent = '';
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // OSM POI rendering
+    // -----------------------------------------------------------------------
+    function renderOsmPoi(statusData, pipelineData) {
+        var statusEl = document.getElementById('osm-status');
+        var startBtn = document.getElementById('osm-start');
+        var progressDiv = document.getElementById('osm-progress');
+        var progressFill = document.getElementById('osm-progress-fill');
+        var progressDetail = document.getElementById('osm-progress-detail');
+        var completedEl = document.getElementById('osm-completed');
+
+        var osmCount = 0;
+        if (statusData && statusData.search_stats) {
+            osmCount = statusData.search_stats.osm_pois_count || 0;
+        }
+
+        if (pipelineData && pipelineData.status === 'running') {
+            _osmRunning = true;
+            startBtn.style.display = 'none';
+            progressDiv.style.display = '';
+            completedEl.style.display = 'none';
+            progressFill.style.width = '100%';
+            progressDetail.textContent = 'Extracting POIs from OSM PBF...';
+            statusEl.textContent = '';
+        } else {
+            _osmRunning = false;
+            startBtn.style.display = '';
+            if (pipelineData && pipelineData.status === 'completed') {
+                progressDiv.style.display = 'none';
+                completedEl.style.display = '';
+                completedEl.textContent = 'OSM POI extraction completed' + (osmCount > 0 ? ' \u2014 ' + osmCount.toLocaleString() + ' POIs' : '');
+            } else {
+                progressDiv.style.display = 'none';
+                completedEl.style.display = 'none';
+            }
+            if (osmCount > 0 && !(pipelineData && pipelineData.status === 'completed')) {
+                statusEl.textContent = osmCount.toLocaleString() + ' OSM POIs loaded';
+            } else if (osmCount === 0 && !(pipelineData && pipelineData.status === 'completed')) {
+                statusEl.textContent = 'No OSM POIs extracted yet';
+            } else {
+                statusEl.textContent = '';
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings: TLS
+    // -----------------------------------------------------------------------
+    function renderTLSSettings(tlsData) {
+        var container = document.getElementById('tls-settings');
+        container.textContent = '';
+
+        var rows = [
+            {label: 'Mode', value: tlsData.mode || 'http'},
+            {label: 'Hostname', value: tlsData.hostname || 'n/a'},
+            {label: 'Certificate validity', value: tlsData.cert_expires
+                ? (tlsData.cert_valid ? 'Valid until ' + tlsData.cert_expires : 'Expired ' + tlsData.cert_expires)
+                : 'n/a'},
+        ];
+
+        rows.forEach(function(r) {
+            var row = document.createElement('div');
+            row.className = 'setting-row';
+            var lbl = document.createElement('span');
+            lbl.className = 'setting-label';
+            lbl.textContent = r.label;
+            var val = document.createElement('span');
+            val.className = 'setting-value';
+            val.textContent = r.value;
+            row.appendChild(lbl);
+            row.appendChild(val);
+            container.appendChild(row);
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings: STT
+    // -----------------------------------------------------------------------
+    function renderSTTSettings(sttData) {
+        var container = document.getElementById('stt-settings');
+        container.textContent = '';
+
+        var rows = [
+            {label: 'Backend', value: sttData.backend || 'n/a'},
+            {label: 'Model', value: sttData.model || 'n/a'},
+            {label: 'NPU', value: sttData.npu_available != null ? (sttData.npu_available ? 'Available' : 'Not available') : 'n/a'},
+            {label: 'Status', value: sttData.status || 'unknown'},
+        ];
+
+        rows.forEach(function(r) {
+            var row = document.createElement('div');
+            row.className = 'setting-row';
+            var lbl = document.createElement('span');
+            lbl.className = 'setting-label';
+            lbl.textContent = r.label;
+            var val = document.createElement('span');
+            val.className = 'setting-value';
+            val.textContent = r.value;
+            row.appendChild(lbl);
+            row.appendChild(val);
+            container.appendChild(row);
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings: M2M credentials
+    // -----------------------------------------------------------------------
+    function renderM2MSettings(configured) {
+        _m2mConfigured = configured;
+        var configuredEl = document.getElementById('m2m-configured');
+        var formEl = document.getElementById('m2m-form');
+        if (configured) {
+            configuredEl.style.display = '';
+            formEl.style.display = 'none';
+        } else {
+            configuredEl.style.display = 'none';
+            formEl.style.display = '';
+        }
+        updateM2MWarning();
+    }
+
+    function updateM2MWarning() {
+        var warn = document.getElementById('m2m-warning');
+        var source = document.getElementById('cfg-source').value;
+        if (source === 'm2m' && !_m2mConfigured) {
+            warn.style.display = '';
+        } else {
+            warn.style.display = 'none';
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Concurrent pipeline prevention
+    // -----------------------------------------------------------------------
+    var _anyPipelineRunning = false;
+    var _imageryRunning = false;
+    var _elevRunning = false;
+    var _osmRunning = false;
+    var _m2mConfigured = false;
+
+    function updatePipelineButtons() {
+        _anyPipelineRunning = _imageryRunning || _elevRunning || _osmRunning;
+
+        var imgStart = document.getElementById('cfg-start');
+        var elevStart = document.getElementById('elev-start');
+        var osmStart = document.getElementById('osm-start');
+
+        imgStart.disabled = _anyPipelineRunning;
+        elevStart.disabled = _anyPipelineRunning;
+        osmStart.disabled = _anyPipelineRunning;
+    }
+
+    // -----------------------------------------------------------------------
+    // Minimap (bbox drawing)
+    // -----------------------------------------------------------------------
+    var _map = null, _drawing = false, _startLngLat = null;
+
+    function bboxToGeoJSON(w, s, e, n) {
+        return {
+            type: 'FeatureCollection',
+            features: [{
+                type: 'Feature',
+                geometry: {
+                    type: 'Polygon',
+                    coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]]
+                },
+                properties: {}
+            }]
+        };
+    }
+
+    function syncBboxToMap() {
+        if (!_map || !_map.getSource('bbox-rect')) return;
+        var parts = document.getElementById('cfg-bbox').value.split(',').map(Number);
+        if (parts.length !== 4 || parts.some(isNaN)) return;
+        _map.getSource('bbox-rect').setData(bboxToGeoJSON(parts[0], parts[1], parts[2], parts[3]));
+        _map.fitBounds([[parts[0], parts[1]], [parts[2], parts[3]]], {padding: 20, maxZoom: 8});
+    }
+
+    function syncMapToBbox(w, s, e, n) {
+        document.getElementById('cfg-bbox').value = w.toFixed(4) + ',' + s.toFixed(4) + ',' + e.toFixed(4) + ',' + n.toFixed(4);
+        _map.getSource('bbox-rect').setData(bboxToGeoJSON(w, s, e, n));
+        updateEstimate();
+    }
+
+    function initMinimap() {
+        if (window.innerWidth < 480) return;
+        _map = new maplibregl.Map({
+            container: 'minimap',
+            style: '/tiles/styles/positron/style.json',
+            center: [-113, 40],
+            zoom: 3,
+            attributionControl: false,
+        });
+        _map.on('load', function() {
+            _map.addSource('bbox-rect', {
+                type: 'geojson',
+                data: {type: 'FeatureCollection', features: []}
+            });
+            _map.addLayer({
+                id: 'bbox-rect-fill',
+                type: 'fill',
+                source: 'bbox-rect',
+                paint: {'fill-color': '#89b4fa', 'fill-opacity': 0.15}
+            });
+            _map.addLayer({
+                id: 'bbox-rect-line',
+                type: 'line',
+                source: 'bbox-rect',
+                paint: {'line-color': '#89b4fa', 'line-width': 2}
+            });
+            syncBboxToMap();
+
+            _map.on('mousedown', function(e) {
+                if (e.originalEvent.button !== 0) return;
+                _drawing = true;
+                _startLngLat = e.lngLat;
+                _map.dragPan.disable();
+            });
+            _map.on('mousemove', function(e) {
+                if (!_drawing || !_startLngLat) return;
+                var west = Math.min(_startLngLat.lng, e.lngLat.lng);
+                var east = Math.max(_startLngLat.lng, e.lngLat.lng);
+                var south = Math.min(_startLngLat.lat, e.lngLat.lat);
+                var north = Math.max(_startLngLat.lat, e.lngLat.lat);
+                _map.getSource('bbox-rect').setData(bboxToGeoJSON(west, south, east, north));
+            });
+            _map.on('mouseup', function(e) {
+                if (!_drawing || !_startLngLat) return;
+                _drawing = false;
+                _map.dragPan.enable();
+                var west = Math.min(_startLngLat.lng, e.lngLat.lng);
+                var east = Math.max(_startLngLat.lng, e.lngLat.lng);
+                var south = Math.min(_startLngLat.lat, e.lngLat.lat);
+                var north = Math.max(_startLngLat.lat, e.lngLat.lat);
+                _startLngLat = null;
+                if (Math.abs(east - west) < 0.01 && Math.abs(north - south) < 0.01) {
+                    _map.getSource('bbox-rect').setData({type: 'FeatureCollection', features: []});
+                    return;
+                }
+                syncMapToBbox(west, south, east, north);
             });
         });
+    }
 
-        document.getElementById('cfg-m2m-delete').addEventListener('click', function() {
-            cfgFetch('/admin/credentials', { method: 'DELETE' })
-                .then(function() { checkM2M(); });
-        });
+    // -----------------------------------------------------------------------
+    // Event handlers: source change, zoom change, bbox input
+    // -----------------------------------------------------------------------
+    document.getElementById('cfg-source').addEventListener('change', function() {
+        updateConcurrencyOptions();
+        updateM2MWarning();
+        document.getElementById('cfg-zoom').dispatchEvent(new Event('change'));
+    });
 
-        function checkM2M() {
-            cfgFetch('/admin/credentials/status')
-                .then(function(r) { return r.json(); })
-                .then(function(d) {
-                    document.getElementById('cfg-m2m-delete').style.display = d.m2m_configured ? '' : 'none';
-                    document.getElementById('cfg-m2m-status').textContent = d.m2m_configured ? 'Credentials configured' : '';
-                });
-        }
-
-        // Init
+    document.getElementById('cfg-bbox').addEventListener('input', function() {
         updateEstimate();
-        fetchStatus();
-        checkM2M();
-        setInterval(fetchStatus, 10000);
-    })();
-    </script>
+        syncBboxToMap();
+    });
+
+    document.getElementById('cfg-zoom').addEventListener('change', function() {
+        updateEstimate();
+        var zoom = this.value;
+        var note = document.getElementById('cfg-zoom-note');
+        var source = document.getElementById('cfg-source').value;
+        var maxZ = parseInt(zoom.split('-')[1]);
+        if (maxZ > 16 && source !== 'm2m') {
+            note.textContent = 'Zoom levels above 16 require M2M mode (NAIP GeoTIFF source).';
+            note.style.color = '#f9e2af';
+        } else if (maxZ > 16) {
+            note.textContent = 'M2M downloads native NAIP GeoTIFFs. GDAL determines actual max zoom from source resolution (~z19).';
+            note.style.color = '#7a8299';
+        } else {
+            note.textContent = '';
+        }
+    });
+
+    // M2M warning link -> switch to settings tab
+    document.getElementById('m2m-warning-link').addEventListener('click', function(e) {
+        e.preventDefault();
+        switchTab('settings');
+    });
+
+    // -----------------------------------------------------------------------
+    // Pipeline start handlers
+    // -----------------------------------------------------------------------
+
+    // Imagery Start
+    document.getElementById('cfg-start').addEventListener('click', function() {
+        var body = {
+            type: 'imagery',
+            mode: document.getElementById('cfg-source').value,
+            bbox: document.getElementById('cfg-bbox').value,
+            zoom: document.getElementById('cfg-zoom').value,
+            concurrency: parseInt(document.getElementById('cfg-concurrency').value),
+            update: document.getElementById('cfg-update').checked
+        };
+        if (!confirm('Start download? ~' + estimateTiles(body.bbox, body.zoom).toLocaleString() + ' tiles')) return;
+        cfgFetch('/admin/pipeline/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        }).then(function(r) { return r.json(); })
+          .then(function(d) { if (d.error || d.detail) alert(d.error || d.detail); fetchAll(); });
+    });
+
+    document.getElementById('cfg-cancel').addEventListener('click', function() {
+        cfgFetch('/admin/pipeline/cancel', {method: 'POST'})
+            .then(function() { fetchAll(); });
+    });
+
+    // Elevation Start
+    document.getElementById('elev-start').addEventListener('click', function() {
+        var body = {
+            type: 'elevation',
+            mode: 'direct',
+            bbox: document.getElementById('cfg-bbox').value,
+            zoom: '0-12',
+            concurrency: 20,
+            update: true
+        };
+        cfgFetch('/admin/pipeline/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        }).then(function(r) { return r.json(); })
+          .then(function(d) { if (d.error || d.detail) alert(d.error || d.detail); fetchAll(); });
+    });
+
+    document.getElementById('elev-cancel').addEventListener('click', function() {
+        cfgFetch('/admin/pipeline/cancel', {method: 'POST'})
+            .then(function() { fetchAll(); });
+    });
+
+    // OSM POI Extract
+    document.getElementById('osm-start').addEventListener('click', function() {
+        var body = {type: 'osm_poi'};
+        cfgFetch('/admin/pipeline/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        }).then(function(r) { return r.json(); })
+          .then(function(d) { if (d.error || d.detail) alert(d.error || d.detail); fetchAll(); });
+    });
+
+    // Pipeline banner click -> switch to pipelines tab
+    document.getElementById('pipeline-banner').addEventListener('click', function() {
+        switchTab('pipelines');
+    });
+
+    // -----------------------------------------------------------------------
+    // M2M credential handlers
+    // -----------------------------------------------------------------------
+    document.getElementById('m2m-save-btn').addEventListener('click', function() {
+        var statusMsg = document.getElementById('m2m-status-msg');
+        cfgFetch('/admin/credentials', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                m2m_username: document.getElementById('cfg-m2m-user').value,
+                m2m_token: document.getElementById('cfg-m2m-token').value
+            })
+        }).then(function(r) { return r.json(); })
+          .then(function(d) {
+            if (d.status === 'saved') {
+                statusMsg.textContent = 'Credentials saved';
+                statusMsg.style.color = '#a6e3a1';
+                document.getElementById('cfg-m2m-user').value = '';
+                document.getElementById('cfg-m2m-token').value = '';
+                fetchAll();
+            } else {
+                statusMsg.textContent = 'Error: ' + (d.detail || d.error || 'unknown');
+                statusMsg.style.color = '#f38ba8';
+            }
+        }).catch(function() {
+            statusMsg.textContent = 'Request failed';
+            statusMsg.style.color = '#f38ba8';
+        });
+    });
+
+    document.getElementById('m2m-delete-btn').addEventListener('click', function() {
+        if (!confirm('Delete M2M credentials?')) return;
+        cfgFetch('/admin/credentials', {method: 'DELETE'})
+            .then(function() { fetchAll(); });
+    });
+
+    document.getElementById('m2m-update-btn').addEventListener('click', function() {
+        document.getElementById('m2m-configured').style.display = 'none';
+        document.getElementById('m2m-form').style.display = '';
+    });
+
+    // -----------------------------------------------------------------------
+    // Polling: fetchAll
+    // -----------------------------------------------------------------------
+    var _lastStatus = {};
+
+    function fetchAll() {
+        cfgFetch('/admin/status').then(function(r) { return r.json(); }).then(function(d) {
+            _lastStatus = d;
+            renderDashboard(d);
+            renderTLSSettings(d.tls || {});
+            renderSTTSettings(d.stt || {});
+            updatePipelineButtons();
+        }).catch(function() {});
+
+        cfgFetch('/admin/pipeline/status?type=imagery').then(function(r) { return r.json(); }).then(function(d) {
+            renderImageryProgress(d);
+            renderPipelineBanner(d);
+            updatePipelineButtons();
+        }).catch(function() {});
+
+        cfgFetch('/admin/pipeline/status?type=elevation').then(function(r) { return r.json(); }).then(function(d) {
+            renderElevation(_lastStatus, d);
+            updatePipelineButtons();
+        }).catch(function() {});
+
+        cfgFetch('/admin/pipeline/status?type=osm_poi').then(function(r) { return r.json(); }).then(function(d) {
+            renderOsmPoi(_lastStatus, d);
+            updatePipelineButtons();
+        }).catch(function() {});
+
+        cfgFetch('/admin/credentials/status').then(function(r) { return r.json(); }).then(function(d) {
+            renderM2MSettings(d.m2m_configured);
+        }).catch(function() {});
+    }
+
+    // -----------------------------------------------------------------------
+    // Initialization
+    // -----------------------------------------------------------------------
+    updateConcurrencyOptions();
+    updateEstimate();
+    fetchAll();
+    setInterval(fetchAll, 10000);
+    initMinimap();
+})();
+</script>
 </body>
 </html>
