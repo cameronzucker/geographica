@@ -377,7 +377,7 @@ html, body {
 }
 
 .waypoint-reorder-btn {
-  display: none;  /* shown on touch devices via @media (pointer: coarse) */
+  display: flex;
   background: none;
   border: 1px solid var(--input-border);
   border-radius: var(--radius-sm);
@@ -395,11 +395,6 @@ html, body {
 .waypoint-reorder-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
-}
-
-@media (pointer: coarse) {
-  .waypoint-reorder-btn { display: flex; }
-  .waypoint-row { cursor: default; }  /* disable drag cursor on touch */
 }
 
 .waypoint-row input {
