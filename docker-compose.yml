@@ -126,6 +126,7 @@ services:
     volumes:
       - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${TLS_CERT_DIR:-./tls}:/tls:ro
     depends_on:
       nominatim:
         condition: service_healthy
