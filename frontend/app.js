@@ -148,6 +148,45 @@
     });
   }
 
+  var _availableTileJSON = {};
+
+  function _tryAddTileJSONSource(sourceId, tileJsonUrl, sourceType) {
+    if (map.getSource(sourceId)) return;
+    if (_availableTileJSON[sourceId] === false) return;
+
+    fetch(tileJsonUrl).then(function(resp) {
+      if (!resp.ok) {
+        _availableTileJSON[sourceId] = false;
+        return;
+      }
+      _availableTileJSON[sourceId] = true;
+      if (!map.getSource(sourceId)) {
+        map.addSource(sourceId, { type: sourceType, url: tileJsonUrl });
+        var layerId = sourceId + '-layer';
+        if (!map.getLayer(layerId)) {
+          map.addLayer({
+            id: layerId,
+            type: 'raster',
+            source: sourceId,
+            layout: { visibility: 'none' },
+            paint: { 'raster-opacity': 0.8 }
+          }, _firstSymbolLayer());
+        }
+        _updateImageryToggles();
+      }
+    }).catch(function() {
+      _availableTileJSON[sourceId] = false;
+    });
+  }
+
+  function _firstSymbolLayer() {
+    var layers = map.getStyle().layers;
+    for (var i = 0; i < layers.length; i++) {
+      if (layers[i].type === 'symbol') return layers[i].id;
+    }
+    return undefined;
+  }
+
   /**
    * Pre-register sources and layers that features will populate later.
    * Called once on initial style load and again after every style swap.
@@ -155,11 +194,11 @@
   function addPlaceholderSources() {
     // --- Imagery raster overlay ---
     if (!map.getSource('imagery')) {
+      // CORRECTNESS: Use TileJSON URL form. maxzoom from MBTiles metadata via TileServer.
+      // Prevents bug B1 where hardcoded maxzoom blocked higher-res tiles.
       map.addSource('imagery', {
         type: 'raster',
-        tiles: ['/tiles/data/imagery/{z}/{x}/{y}.jpeg'],
-        tileSize: 256,
-        maxzoom: 18
+        url: '/tiles/data/imagery.json'
       });
     }
     if (!map.getLayer('imagery-layer')) {
@@ -570,11 +609,53 @@
           .addTo(map);
       });
     });
+
+    // --- Optional NAIP / Sentinel-2 imagery sources (appear when MBTiles exist) ---
+    _tryAddTileJSONSource('imagery-naip', '/tiles/data/imagery_naip.json', 'raster');
+    _tryAddTileJSONSource('imagery-sentinel', '/tiles/data/imagery_sentinel.json', 'raster');
   }
 
   /** Helper: empty GeoJSON FeatureCollection */
   function emptyGeoJSON() {
     return { type: 'FeatureCollection', features: [] };
+  }
+
+  /** Rebuild dynamic imagery source toggles (NAIP/Sentinel appear when MBTiles exist) */
+  function _updateImageryToggles() {
+    var container = document.getElementById('imagery-toggles');
+    if (!container) return;
+    // Clear existing toggles
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    // USGS Legacy is handled by the static #toggle-imagery checkbox.
+    // Only show dynamic sources here.
+    if (_availableTileJSON['imagery-naip']) {
+      container.appendChild(_makeLayerToggle('imagery-naip-layer', 'NAIP Aerial', '(0.6m, US)'));
+    }
+    if (_availableTileJSON['imagery-sentinel']) {
+      container.appendChild(_makeLayerToggle('imagery-sentinel-layer', 'Sentinel-2', '(10m, global)'));
+    }
+  }
+
+  function _makeLayerToggle(layerId, label, sublabel) {
+    var div = document.createElement('div');
+    div.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0;';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = map.getLayer(layerId) && map.getLayoutProperty(layerId, 'visibility') === 'visible';
+    cb.addEventListener('change', function() {
+      map.setLayoutProperty(layerId, 'visibility', cb.checked ? 'visible' : 'none');
+    });
+    var lbl = document.createElement('span');
+    lbl.style.cssText = 'font-size:13px;';
+    lbl.textContent = label;
+    var sub = document.createElement('span');
+    sub.style.cssText = 'font-size:11px;color:#888;';
+    sub.textContent = sublabel;
+    div.appendChild(cb);
+    div.appendChild(lbl);
+    div.appendChild(sub);
+    return div;
   }
 
   // =====================================================================
@@ -3675,6 +3756,15 @@
         });
       }
     });
+
+    // Poll for NAIP/Sentinel-2 availability every 30s (sources appear when MBTiles are downloaded)
+    setInterval(function() {
+      if (!map) return;
+      _availableTileJSON['imagery-naip'] = undefined;
+      _availableTileJSON['imagery-sentinel'] = undefined;
+      _tryAddTileJSONSource('imagery-naip', '/tiles/data/imagery_naip.json', 'raster');
+      _tryAddTileJSONSource('imagery-sentinel', '/tiles/data/imagery_sentinel.json', 'raster');
+    }, 30000);
   });
 
 })();
