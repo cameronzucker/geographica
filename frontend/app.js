@@ -456,50 +456,6 @@
       }, 'imported-points');
     }
 
-    // --- Public lands click popup ---
-    map.on('click', 'public-lands-fill', function (e) {
-      if (!e.features || !e.features.length) return;
-      var props = e.features[0].properties || {};
-      var coords = e.lngLat;
-
-      var categoryColors = {
-        BLM: '#f5deb3', USFS: '#228b22', NPS: '#006400', FWS: '#008080',
-        DOD: '#8b4545', USBR: '#4682b4', Tribal: '#cd853f', State: '#d2691e',
-        Wilderness: '#800080', Other: '#a9a9a9'
-      };
-
-      var content = document.createElement('div');
-
-      var badge = document.createElement('span');
-      badge.style.cssText = 'display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;background:' + (categoryColors[props.category] || '#a9a9a9');
-      content.appendChild(badge);
-
-      var title = document.createElement('strong');
-      title.textContent = props.name || props.category || 'Public Land';
-      content.appendChild(title);
-
-      if (props.agency || props.designation) {
-        var sub = document.createElement('p');
-        sub.style.cssText = 'font-size:12px;color:#a6adc8;margin:4px 0 0;';
-        var parts = [];
-        if (props.agency) parts.push(props.agency);
-        if (props.designation) parts.push(props.designation);
-        sub.textContent = parts.join(' \u2014 ');
-        content.appendChild(sub);
-      }
-
-      new maplibregl.Popup({ maxWidth: '280px' })
-        .setLngLat(coords)
-        .setDOMContent(content)
-        .addTo(map);
-    });
-    map.on('mouseenter', 'public-lands-fill', function () {
-      map.getCanvas().style.cursor = 'pointer';
-    });
-    map.on('mouseleave', 'public-lands-fill', function () {
-      map.getCanvas().style.cursor = '';
-    });
-
     // --- Click handlers for imported features ---
     var importedLayers = ['imported-points', 'imported-lines', 'imported-polygons', 'imported-polygon-outlines'];
 
@@ -1211,7 +1167,7 @@
       // Don't fire if clicking on an existing feature layer or search pin
       var features = map.queryRenderedFeatures(e.point, {
         layers: ['imported-points', 'imported-lines', 'imported-polygons',
-                 'imported-polygon-outlines', 'search-result-circles', 'public-lands-fill']
+                 'imported-polygon-outlines', 'search-result-circles']
       });
       if (features.length > 0) return;
 
@@ -1387,6 +1343,39 @@
     title.textContent = name.length > 60 ? name.substring(0, 60) + '...' : name;
     title.style.marginBottom = '8px';
     content.appendChild(title);
+
+    // Public land info (if the click point is on a public land polygon)
+    if (map.getLayer('public-lands-fill') && map.getLayoutProperty('public-lands-fill', 'visibility') !== 'none') {
+      var plFeatures = map.queryRenderedFeatures(
+        map.project([lng, lat]),
+        { layers: ['public-lands-fill'] }
+      );
+      if (plFeatures.length > 0) {
+        var plProps = plFeatures[0].properties || {};
+        var categoryColors = {
+          BLM: '#f5deb3', USFS: '#228b22', NPS: '#006400', FWS: '#008080',
+          DOD: '#8b4545', USBR: '#4682b4', Tribal: '#cd853f', State: '#d2691e',
+          Wilderness: '#800080', Other: '#a9a9a9'
+        };
+        var plDiv = document.createElement('div');
+        plDiv.style.cssText = 'padding:4px 8px;margin-bottom:8px;border-radius:4px;font-size:12px;display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);';
+
+        var badge = document.createElement('span');
+        badge.style.cssText = 'display:inline-block;width:10px;height:10px;border-radius:50%;flex-shrink:0;background:' + (categoryColors[plProps.category] || '#a9a9a9');
+        plDiv.appendChild(badge);
+
+        var plText = document.createElement('span');
+        var plParts = [];
+        if (plProps.name) plParts.push(plProps.name);
+        if (plProps.agency) plParts.push(plProps.agency);
+        if (plProps.designation) plParts.push(plProps.designation);
+        plText.textContent = plParts.join(' \u2014 ') || plProps.category || 'Public Land';
+        plText.style.color = '#a6adc8';
+        plDiv.appendChild(plText);
+
+        content.appendChild(plDiv);
+      }
+    }
 
     // Coordinates in all formats
     var coordDiv = document.createElement('div');
