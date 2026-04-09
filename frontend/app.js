@@ -455,13 +455,41 @@
         maxzoom: 14
       });
     }
-    // Fill layer (add FIRST — outline goes on top with same 'before' anchor)
+
+    // Register tribal stripe pattern (diagonal stripes in two peru shades)
+    if (!map.hasImage('tribal-stripes')) {
+      var stripeCanvas = document.createElement('canvas');
+      stripeCanvas.width = 16;
+      stripeCanvas.height = 16;
+      var sctx = stripeCanvas.getContext('2d');
+      // Base color (peru)
+      sctx.fillStyle = '#cd853f';
+      sctx.fillRect(0, 0, 16, 16);
+      // Lighter diagonal stripes
+      sctx.strokeStyle = '#dea868';
+      sctx.lineWidth = 3;
+      // Draw diagonal lines across the tile (and wrap for seamless tiling)
+      for (var si = -16; si < 32; si += 6) {
+        sctx.beginPath();
+        sctx.moveTo(si, 0);
+        sctx.lineTo(si + 16, 16);
+        sctx.stroke();
+      }
+      var stripeData = sctx.getImageData(0, 0, 16, 16);
+      map.addImage('tribal-stripes', {
+        width: 16, height: 16,
+        data: new Uint8Array(stripeData.data.buffer)
+      });
+    }
+
+    // Fill layer for non-tribal categories (solid fill)
     if (!map.getLayer('public-lands-fill')) {
       map.addLayer({
         id: 'public-lands-fill',
         type: 'fill',
         source: 'public-lands',
         'source-layer': 'public_lands',
+        filter: ['!=', ['get', 'category'], 'Tribal'],
         layout: {
           visibility: 'none',
           'fill-sort-key': ['get', 'sort_key']
@@ -470,9 +498,24 @@
           'fill-color': ['match', ['get', 'category'],
             'BLM', '#f5deb3', 'USFS', '#228b22', 'NPS', '#006400',
             'FWS', '#008080', 'DOD', '#8b4545', 'USBR', '#4682b4',
-            'Tribal', '#cd853f', 'State', '#d2691e', 'Wilderness', '#800080',
+            'State', '#d2691e', 'Wilderness', '#800080',
             '#a9a9a9'],
           'fill-opacity': 0.3
+        }
+      }, 'route-line');
+    }
+    // Tribal fill layer (striped pattern for visual distinction)
+    if (!map.getLayer('public-lands-fill-tribal')) {
+      map.addLayer({
+        id: 'public-lands-fill-tribal',
+        type: 'fill',
+        source: 'public-lands',
+        'source-layer': 'public_lands',
+        filter: ['==', ['get', 'category'], 'Tribal'],
+        layout: { visibility: 'none' },
+        paint: {
+          'fill-pattern': 'tribal-stripes',
+          'fill-opacity': 0.45
         }
       }, 'route-line');
     }
@@ -737,6 +780,7 @@
     if (publicLandsCheckbox) {
       publicLandsCheckbox.addEventListener('change', function () {
         setLayerVisibility('public-lands-fill', this.checked);
+        setLayerVisibility('public-lands-fill-tribal', this.checked);
         setLayerVisibility('public-lands-outline', this.checked);
         if (publicLandsOpacityRow) {
           publicLandsOpacityRow.classList.toggle('visible', this.checked);
@@ -755,6 +799,9 @@
         if (publicLandsOpacityLabel) publicLandsOpacityLabel.textContent = val + '%';
         if (map.getLayer('public-lands-fill')) {
           map.setPaintProperty('public-lands-fill', 'fill-opacity', val / 100 * 0.6);
+        }
+        if (map.getLayer('public-lands-fill-tribal')) {
+          map.setPaintProperty('public-lands-fill-tribal', 'fill-opacity', val / 100 * 0.7);
         }
         if (map.getLayer('public-lands-outline')) {
           map.setPaintProperty('public-lands-outline', 'line-opacity', val / 100 * 0.8);
@@ -815,12 +862,16 @@
     var plCheckbox = document.getElementById('toggle-public-lands');
     if (plCheckbox) {
       setLayerVisibility('public-lands-fill', plCheckbox.checked);
+      setLayerVisibility('public-lands-fill-tribal', plCheckbox.checked);
       setLayerVisibility('public-lands-outline', plCheckbox.checked);
       if (plCheckbox.checked) {
         var plSlider = document.getElementById('public-lands-opacity');
         if (plSlider && map.getLayer('public-lands-fill')) {
           var plVal = parseInt(plSlider.value, 10);
           map.setPaintProperty('public-lands-fill', 'fill-opacity', plVal / 100 * 0.6);
+          if (map.getLayer('public-lands-fill-tribal')) {
+            map.setPaintProperty('public-lands-fill-tribal', 'fill-opacity', plVal / 100 * 0.7);
+          }
           map.setPaintProperty('public-lands-outline', 'line-opacity', plVal / 100 * 0.8);
         }
       }
@@ -1427,10 +1478,15 @@
     content.appendChild(title);
 
     // Public land info (if the click point is on a public land polygon)
-    if (map.getLayer('public-lands-fill') && map.getLayoutProperty('public-lands-fill', 'visibility') !== 'none') {
+    var plVisible = (map.getLayer('public-lands-fill') && map.getLayoutProperty('public-lands-fill', 'visibility') !== 'none') ||
+                    (map.getLayer('public-lands-fill-tribal') && map.getLayoutProperty('public-lands-fill-tribal', 'visibility') !== 'none');
+    if (plVisible) {
+      var plQueryLayers = [];
+      if (map.getLayer('public-lands-fill')) plQueryLayers.push('public-lands-fill');
+      if (map.getLayer('public-lands-fill-tribal')) plQueryLayers.push('public-lands-fill-tribal');
       var plFeatures = map.queryRenderedFeatures(
         map.project([lng, lat]),
-        { layers: ['public-lands-fill'] }
+        { layers: plQueryLayers }
       );
       if (plFeatures.length > 0) {
         var plProps = plFeatures[0].properties || {};
