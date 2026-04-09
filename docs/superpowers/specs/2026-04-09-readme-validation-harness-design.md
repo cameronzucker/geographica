@@ -1,7 +1,7 @@
 # README Validation Harness
 
 **Date:** 2026-04-09
-**Status:** Approved
+**Status:** Approved (revised after 5-round adversarial review: Opus, Haiku, Codex)
 
 ## Problem
 
@@ -13,65 +13,172 @@ An LXD-based test harness that creates a clean Debian container, then has an age
 
 ### Two Modes
 
-| Mode | Data strategy | Duration | When to use |
-|------|--------------|----------|-------------|
-| **Quick** | Bind-mount host's `/srv/geographica/data/` read-only | ~15 min | After README edits, frequent validation |
-| **Full** | Download everything from scratch (small bbox) | Hours | Pre-release dress rehearsal |
+| Mode | Data strategy | Duration (first run) | Duration (cached) | When to use |
+|------|--------------|---------------------|-------------------|-------------|
+| **Quick** | Bind-mount host's data read-only + overlay for writable dirs | ~30 min | ~15 min | After README edits, frequent validation |
+| **Full** | Download everything from scratch (Arizona-only bbox) | Hours | Hours | Pre-release dress rehearsal |
+
+Note: First run in either mode pulls Docker images (~10 GB, 15-30 min). Subsequent runs with a reused LXD storage pool skip image pulls.
 
 ### Host Prerequisites
 
 One-time setup performed by the agent on first run:
 
 1. Add current user to `lxd` group: `sudo usermod -aG lxd $USER`
-2. Run `lxd init --minimal` (creates default storage pool + network bridge)
+2. Run `lxd init` with a **`dir`-backed storage pool** rooted on the existing SSD (avoids the undersized default loop file). Use `--minimal` but verify the pool type is `dir`, not `btrfs` or `zfs` loop.
 3. Verify with `lxc list`
 
 The agent is authorized to run these commands. If permissions are needed, the user will approve interactively.
 
+### Pre-Flight Checks
+
+Before launching the container, the agent MUST verify:
+
+1. **Prod stack is stopped:** `docker compose ps` in the geographica repo — if any containers are running, abort with: "Stop the production stack first: `docker compose down`". The Pi has 16 GB RAM; running two full stacks simultaneously will OOM.
+2. **Disk space:** `df -h /srv/geographica` — abort if less than 50 GB free (full mode needs ~40 GB for images + Nominatim import + tiles).
+3. **LXD daemon running:** `lxc list` succeeds.
+
 ### LXC Container Configuration
+
+```bash
+lxc launch images:debian/13 geographica-test \
+  -c security.nesting=true \
+  -c security.syscalls.intercept.mknod=true \
+  -c security.syscalls.intercept.setxattr=true
+```
 
 - **Base image:** `images:debian/13` (Trixie arm64, matches Pi's OS)
 - **Container name:** `geographica-test`
-- **Nesting:** `security.nesting=true` (required for Docker-inside-LXC)
-- **Network:** Default LXD bridge (`lxdbr0`) — container gets its own IP, routable from host
-- **Storage:** Default LXD pool on existing SSD
+- **Nesting + cgroup v2 delegation:** `security.nesting=true` alone is NOT sufficient for Docker-in-LXC on kernel 6.12 with cgroup v2. The `security.syscalls.intercept.mknod` and `security.syscalls.intercept.setxattr` flags are also required. If Docker still fails to start inside the container, add `raw.lxc: lxc.cgroup.relative = 0` as a fallback.
+- **Network:** Default LXD bridge (`lxdbr0`) — container gets its own IP, routable from host. Docker port bindings inside the container do NOT conflict with host ports because LXC provides network namespace isolation.
+- **Memory:** `limits.memory=14GB` — prevents the container from consuming all host RAM.
+- **Storage:** `dir`-backed LXD pool on existing SSD (shares full filesystem space).
 
-**Quick mode only — bind-mount:**
+**Container network verification (run immediately after launch):**
+```bash
+lxc exec geographica-test -- ping -c1 8.8.8.8        # internet connectivity
+lxc exec geographica-test -- apt update               # DNS + HTTPS working
 ```
+If either fails, abort — the container can't install packages or pull images.
+
+**Quick mode only — bind-mount + writable overlay:**
+```bash
 lxc config device add geographica-test hostdata disk \
   source=/srv/geographica/data path=/srv/geographica/data readonly=true
 ```
 
-### Agent Behavior
+For services that need write access (Nominatim PostgreSQL, SQLite WAL files), the agent creates container-local copies of writable directories:
+```bash
+lxc exec geographica-test -- mkdir -p /srv/geographica/data-writable/nominatim
+lxc exec geographica-test -- cp -a /srv/geographica/data/nominatim/* /srv/geographica/data-writable/nominatim/
+```
+Then uses a docker-compose override to mount the writable copy for Nominatim. Alternatively, quick mode may skip the Nominatim import entirely (the read-only database is already populated) and verify the service starts with the existing data.
 
-The agent operates as a first-time user with only basic Linux knowledge. It:
+### Quick Mode — File Verification Checklist
 
-- Reads the README and follows instructions literally
-- Does NOT use any project knowledge beyond what the README states
-- Executes every command shown in the README
-- Records the output of every command
-- Notes any instruction that is ambiguous, missing context, or produces an unexpected result
-- Does NOT fix issues — it reports them
+When bind-mounted data is used, the agent verifies these paths exist before proceeding:
 
-**Quick mode deviations:** For steps 4-7 (data downloads), the agent verifies the bind-mounted files exist at the expected paths instead of downloading. It documents what was skipped.
+| Path | Created by step |
+|------|----------------|
+| `/srv/geographica/data/pbf/western-us.osm.pbf` | Step 4 |
+| `/srv/geographica/data/nominatim/region.osm.pbf` | Step 4 |
+| `/srv/geographica/data/valhalla/western-us.osm.pbf` | Step 4 |
+| `/srv/geographica/data/poi.sqlite` | Steps 7 + 7b |
+| `/srv/geographica/data/elevation.mbtiles` or `tileserver/elevation.mbtiles` | Step 6 |
 
-**Full mode bbox:** Uses Arizona only (`"-114.8,31.3,-109.0,37.0"`) instead of the full 11-state Western US, to reduce download time and storage while still testing the complete pipeline.
+If any are missing, the agent reports the gap and continues (some services may still start without all data).
+
+### Getting the Code Into the Container
+
+The README step 1 uses a placeholder URL (`https://github.com/your-org/geographica.git`). Since the repo may be private and the container has no git credentials, the agent copies the code from the host:
+
+```bash
+# On host: create a tarball of the current repo (respecting .gitignore)
+cd /home/administrator/Code/geographica
+git archive HEAD --format=tar.gz -o /tmp/geographica.tar.gz
+
+# Push into container
+lxc file push /tmp/geographica.tar.gz geographica-test/root/
+
+# Inside container: extract
+lxc exec geographica-test -- bash -c "mkdir -p /root/geographica && tar -xzf /root/geographica.tar.gz -C /root/geographica"
+```
+
+The agent notes in the report that step 1 (git clone) was replaced with a tarball copy, and flags the placeholder URL as a README issue.
+
+### HOST_IP Inside the Container
+
+README step 3 says "set HOST_IP to your Pi's LAN address." Inside the container, the agent sets HOST_IP to the container's own LXD bridge IP:
+
+```bash
+CONTAINER_IP=$(lxc exec geographica-test -- hostname -I | awk '{print $1}')
+lxc exec geographica-test -- sed -i "s/HOST_IP=.*/HOST_IP=${CONTAINER_IP}/" /root/geographica/.env
+```
+
+### GPS Service Handling
+
+The docker-compose.yml maps `/dev/ttyAMA0` and `/run/gpsd.sock` into the GPS container. These devices don't exist inside LXC. The agent creates a compose override to remove hardware dependencies:
+
+```bash
+# Inside container: create override
+cat > /root/geographica/docker-compose.override.yml << 'EOF'
+services:
+  gps:
+    devices: []
+    privileged: false
+EOF
+```
+
+The GPS service will start in no-fix mode (no GPS data). The report notes: "GPS — started in no-fix mode (no hardware in container, expected)."
+
+### lxc exec and Shell State
+
+`lxc exec` runs each command as a separate process — environment variables and `cd` don't persist between calls. The agent uses `bash -lc` for commands that need shell context:
+
+```bash
+lxc exec geographica-test -- bash -lc "cd /root/geographica && source .venv/bin/activate && python scripts/build_poi_index.py ..."
+```
+
+Alternatively, install Python packages globally inside the container (no venv) to simplify command execution.
 
 ### TLS Validation
 
 The README documents three TLS modes. The agent tests **self-signed** mode:
 
-1. Run `scripts/generate_tls.sh` as documented in the README
-2. NGINX binds port 443 with the generated cert
-3. Playwright connects with `--ignore-https-errors`
+1. Run `scripts/generate_tls.sh` inside the container (generates certs for the container's hostname/IP)
+2. Set `TLS_MODE=https` and `TLS_CERT_DIR=/srv/geographica/tls` in `.env`
+3. Restart the frontend service: `docker compose up -d frontend`
+4. NGINX binds port 443 with the generated cert
 
-This validates the self-signed TLS path. Tailscale TLS cannot be tested in isolation (requires Tailscale auth + domain). The report notes this as "not tested — requires manual Tailscale setup."
+**Note:** The README does not currently document the self-signed TLS setup path in detail. If the agent finds the instructions insufficient, this is a valid README finding.
 
-HTTPS is required for STT (Web Audio API) and other browser APIs that need a secure context.
+Tailscale TLS cannot be tested in isolation (requires Tailscale auth + domain). The report notes this as "not tested — requires manual Tailscale setup."
 
 ### Validation Screenshots
 
-Captured via Playwright running on the host, connecting to the container's IP through the LXD bridge.
+Captured via Playwright's `browser_run_code` tool (NOT `browser_navigate`) to enable `acceptInsecureCerts: true` for self-signed TLS:
+
+```javascript
+const context = await browser.newContext({ 
+  acceptInsecureCerts: true,
+  viewport: { width: 1280, height: 800 }
+});
+const page = await context.newPage();
+await page.goto('https://<container-ip>');
+```
+
+**WebGL consideration:** MapLibre GL JS requires WebGL. Headless Chromium on Pi 5 may lack GPU acceleration inside LXC, causing tiles to render via software rasterization (slow) or not at all. If the map canvas is blank, the agent documents this as an environment limitation, not a README bug.
+
+**Tile loading timing:** Before capturing map screenshots, wait for MapLibre's `idle` event:
+```javascript
+await page.waitForFunction(() => {
+  const map = window.map;  // MapLibre instance exposed on window
+  return map && map.loaded() && !map.isMoving();
+}, { timeout: 30000 });
+```
+If the map doesn't expose `window.map`, wait for the canvas element to stabilize (no pixel changes for 2 seconds).
+
+**Guard against testing host stack:** Before taking screenshots, verify the response is from the test container by checking the container IP matches the URL being tested. Never use the host's LAN IP.
 
 | # | Milestone | Modes | Filename |
 |---|-----------|-------|----------|
@@ -105,7 +212,7 @@ Output: `docs/validation/<date>-<mode>-report.md`
 | Step | Description | Status | Duration | Notes |
 |------|-------------|--------|----------|-------|
 | Prerequisites | apt install, Docker setup | PASS | 2m | |
-| 1. Clone | git clone | PASS | 0.5m | |
+| 1. Clone | git clone (tarball copy) | PASS | 0.5m | Placeholder URL flagged |
 | ... | ... | ... | ... | |
 
 ## Steps Skipped (quick mode only)
@@ -127,19 +234,40 @@ Output: `docs/validation/<date>-<mode>-report.md`
 - Tailscale TLS not tested (requires manual auth)
 - HTTPS-dependent features (STT) validated under self-signed cert
 
+## Environment Limitations
+- GPS: no hardware, started in no-fix mode (expected)
+- WebGL: [rendered / software fallback / blank canvas]
+- Hailo NPU: not available in container
+
 ## Verdict
 PASS / FAIL (with explanation)
 ```
 
 ### Container Lifecycle
 
-1. **Create:** `lxc launch images:debian/13 geographica-test -c security.nesting=true`
-2. **Run test:** Agent uses `lxc exec geographica-test -- <command>` to run README steps inside (no SSH needed)
-3. **Screenshots:** Playwright on host hits container IP
-4. **Report:** Written to `docs/validation/`
-5. **Cleanup:** `lxc delete geographica-test --force` (or keep for debugging)
+1. **Pre-flight:** Verify prod stack stopped, disk space, LXD running
+2. **Create:** `lxc launch images:debian/13 geographica-test -c security.nesting=true -c security.syscalls.intercept.mknod=true -c security.syscalls.intercept.setxattr=true`
+3. **Verify networking:** ping + apt update inside container
+4. **Copy code:** `git archive` tarball pushed into container
+5. **Run test:** Agent uses `lxc exec geographica-test -- bash -lc "<command>"` for each README step
+6. **Screenshots:** Playwright `browser_run_code` with `acceptInsecureCerts: true` on host hits container IP
+7. **Report:** Written to `docs/validation/`
+8. **Cleanup:** `lxc delete geographica-test --force` — removes container and all Docker images/volumes within it
 
 The container is disposable. Each test run starts fresh.
+
+### Disk Estimates (Full Mode)
+
+| Component | Size |
+|-----------|------|
+| Docker images (tileserver, valhalla, nominatim, custom builds) | ~10 GB |
+| Arizona OSM extract | ~0.3 GB |
+| Valhalla routing graph (Arizona) | ~0.5 GB |
+| Nominatim import (Arizona) | ~5-10 GB |
+| Elevation tiles (Arizona bbox, z0-14) | ~5 GB |
+| Vector basemap (Arizona, Planetiler) | ~0.2 GB |
+| POI index | ~10 MB |
+| **Total** | **~25-30 GB** |
 
 ### What This Tests
 
@@ -160,3 +288,14 @@ The container is disposable. Each test run starts fresh.
 - Hailo NPU acceleration (requires hardware)
 - Performance under load
 - Multi-user scenarios
+- Cert distribution to clients (Playwright bypasses with acceptInsecureCerts)
+
+### Known Environment Differences from Real Deployment
+
+The test container differs from a real Pi deployment in these ways. These are NOT README bugs:
+
+1. Code copied via tarball, not `git clone` (placeholder URL in README)
+2. GPS runs in no-fix mode (no hardware)
+3. Self-signed TLS instead of Tailscale
+4. WebGL may use software rasterization (no GPU in container)
+5. Smaller bbox (Arizona only) in full mode
