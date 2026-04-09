@@ -1,0 +1,25 @@
+{
+    "results": [
+        {
+            "name": "Grand Canyon",
+            "type": "poi",
+            "class": "Populated Place",
+            "lat": 36.0544273,
+            "lon": -112.139336,
+            "display_name": "Grand Canyon, Coconino, Arizona"
+        },
+        {
+            "name": "Grand Canyon",
+            "type": "poi",
+            "class": "Valley",
+            "lat": 36.112764,
+            "lon": -113.9960696,
+            "display_name": "Grand Canyon, Mohave, Arizona"
+        },
+        {
+            "name": "Grand Canyon Caverns",
+            "type": "poi",
+            "class": "Populated Place",
+            "lat": 35.5283267,
+            "lon": -113.2313159,
+            "display_name": "Grand Canyon Caverns, Coconino, Arizona"
