@@ -44,6 +44,17 @@
           49.0
         ]
       }
+    },
+    "hybrid": {
+      "style": "hybrid/style.local.json",
+      "tilejson": {
+        "bounds": [
+          -124.8,
+          31.3,
+          -102.0,
+          49.0
+        ]
+      }
     }
   }
 }
