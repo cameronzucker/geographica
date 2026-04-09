@@ -77,9 +77,27 @@ New Python script following the pattern of `build_poi_index.py` and `acquire_ima
 **Steps:**
 1. Download PAD-US GeoPackage to cache dir (with retry-with-backoff; Range resume if server supports it)
 2. Auto-detect the Fee/Combined layer name: run `ogrinfo padus.gpkg` and match pattern `PADUS*Fee*` or `PADUS*Combined*`. Fail with clear error if no match (PAD-US version may have changed). Verify output is non-empty after clipping.
-3. Clip and reproject with ogr2ogr: `ogr2ogr -clipsrc {bbox} -t_srs EPSG:4326 -f GeoJSON clipped.geojson padus.gpkg {detected_layer}` — PAD-US is published in NAD83 (EPSG:4269); explicit WGS84 reprojection ensures Tippecanoe gets correct coordinates.
-4. Classify features using ogr2ogr SQL (avoids loading entire GeoJSON into Python memory): `ogr2ogr -sql "SELECT Unit_Nm AS name, Mang_Name AS agency, Des_Tp AS designation, Mang_Type, CASE WHEN Des_Tp LIKE '%Wilderness%' THEN 'Wilderness' WHEN Mang_Name IN ('BLM') THEN 'BLM' WHEN Mang_Name IN ('USFS') THEN 'USFS' WHEN Mang_Name IN ('NPS') THEN 'NPS' WHEN Mang_Name IN ('FWS') THEN 'FWS' WHEN Mang_Name IN ('DOD') THEN 'DOD' WHEN Mang_Name IN ('USBR') THEN 'USBR' WHEN Mang_Name IN ('TRIB','BIA') THEN 'Tribal' WHEN Mang_Type = 'STAT' THEN 'State' ELSE 'Other' END AS category FROM {layer}" ...` This avoids the Python GeoJSON memory bottleneck entirely.
-5. Run Tippecanoe: `tippecanoe -o {output} -Z0 -z14 -l public_lands --coalesce-smallest-as-needed --simplification=10 --detect-shared-borders -pk clipped_classified.geojson`
+3. Clip, reproject, AND classify in a **single ogr2ogr call** (avoids intermediate GeoJSON file and the `FROM {layer}` mismatch that would occur if step 4 read from a GeoJSON file instead of the GeoPackage):
+
+```bash
+ogr2ogr -clipsrc {bbox} -t_srs EPSG:4326 -f GeoJSON clipped_classified.geojson \
+  padus.gpkg -sql "SELECT Unit_Nm AS name, Mang_Name AS agency, Des_Tp AS designation, \
+  CASE WHEN Des_Tp LIKE '%Wilderness%' THEN 'Wilderness' \
+  WHEN Mang_Name = 'BLM' THEN 'BLM' WHEN Mang_Name = 'USFS' THEN 'USFS' \
+  WHEN Mang_Name = 'NPS' THEN 'NPS' WHEN Mang_Name = 'FWS' THEN 'FWS' \
+  WHEN Mang_Name = 'DOD' THEN 'DOD' WHEN Mang_Name = 'USBR' THEN 'USBR' \
+  WHEN Mang_Name IN ('TRIB','BIA') THEN 'Tribal' \
+  WHEN Mang_Type = 'STAT' THEN 'State' ELSE 'Other' END AS category, \
+  CASE WHEN Des_Tp LIKE '%Wilderness%' THEN 1 WHEN Mang_Name = 'NPS' THEN 2 \
+  WHEN Mang_Name = 'FWS' THEN 3 WHEN Mang_Name = 'USFS' THEN 4 \
+  WHEN Mang_Name = 'DOD' THEN 5 WHEN Mang_Name = 'BLM' THEN 6 \
+  WHEN Mang_Name = 'USBR' THEN 7 WHEN Mang_Name IN ('TRIB','BIA') THEN 8 \
+  WHEN Mang_Type = 'STAT' THEN 9 ELSE 10 END AS sort_key \
+  FROM {detected_layer}"
+```
+
+**Critical:** This MUST be a single ogr2ogr call reading from the GeoPackage. Do NOT split into clip + classify steps — the SQL `FROM {detected_layer}` references the GeoPackage layer name, which doesn't exist in an intermediate GeoJSON file. PAD-US is NAD83 (EPSG:4269); `-t_srs EPSG:4326` ensures WGS84 output for Tippecanoe.
+5. Run Tippecanoe: `tippecanoe -o {output} -Z0 -z14 -l public_lands --coalesce-smallest-as-needed --simplification=10 --no-simplification-of-shared-nodes --maximum-tile-bytes=500000 clipped_classified.geojson`
 6. Verify output: check MBTiles has expected zoom levels and non-zero tile count
 7. Report: tile count, file size, categories found, total features
 
@@ -90,8 +108,8 @@ New Python script following the pattern of `build_poi_index.py` and `acquire_ima
 - `-l public_lands` — layer name in the vector tiles
 - `--coalesce-smallest-as-needed` — merge the smallest adjacent same-category polygons at low zooms to reduce tile size. **Do NOT use `--drop-densest-as-needed`** — that drops entire polygons, causing BLM areas composed of many small cadastral polygons to disappear at low zoom.
 - `--simplification=10` — simplify polygon vertices at low zoom (10 = moderate simplification). This reduces vertex count without dropping entire features.
-- `--detect-shared-borders` — prevents gaps between adjacent polygons when simplifying shared boundaries
-- `-pk` — no tile size limit (preserves all feature properties for click popups; accept larger tiles)
+- `--no-simplification-of-shared-nodes` — prevents gaps between adjacent polygons when simplifying shared boundaries
+- `--maximum-tile-bytes=500000` — cap tile size at 500KB. On AREDN mesh networks (2-20 Mbps), uncapped tiles with complex BLM multipolygons could reach 2-5MB, causing 1-20 second load times per tile. 500KB is a good balance between property preservation and network performance.
 - **Do NOT use `--extend-zooms-if-still-dropping`** — contradicts `maxzoom: 14` on the MapLibre source
 
 **CRS note:** PAD-US is published in NAD83 (EPSG:4269). The ~1m difference from WGS84 is invisible at render zoom but the `-t_srs EPSG:4326` ensures correctness for Tippecanoe.
@@ -135,6 +153,23 @@ Add `publiclands` data source to `tileserver/config.json`:
 
 TileServer GL automatically serves vector tiles at `/tiles/data/publiclands/{z}/{x}/{y}.pbf`. No style changes to positron or darkmatter style files.
 
+**NGINX configuration required:** The existing NGINX config has explicit `location` blocks with `sub_filter` for southwest5, imagery, and elevation TileJSON endpoints. While the spec's frontend code uses a hardcoded tile URL template (not TileJSON discovery), a `publiclands.json` location block should be added for consistency and future-proofing:
+
+```nginx
+location /tiles/data/publiclands.json {
+    proxy_pass http://tileserver:8080/data/publiclands.json;
+    proxy_http_version 1.1;
+    proxy_set_header Accept-Encoding "";
+    sub_filter_once off;
+    sub_filter_types application/json text/plain;
+    sub_filter 'http://tileserver:8080/data/' '$scheme://$http_host/tiles/data/';
+}
+```
+
+**Graceful degradation if MBTiles missing:** If `public-lands.mbtiles` doesn't exist, TileServer won't serve the source and tile requests will 404. The frontend toggle checkbox should remain functional (it still shows/hides the layer definition), but no tiles render. This is acceptable — it matches how the system behaves before any pipeline has run. No error message needed; the toggle simply has no visible effect until tiles are generated.
+
+**Admin panel integration:** The public lands pipeline is **NOT launchable from the admin panel** — it's a host-only script requiring Tippecanoe (a compiled binary not in the pipeline Docker image). This is explicitly by design and differs from imagery/elevation/OSM POI pipelines which run in Docker. Document this in the admin panel's Pipelines tab as "Public Lands: run manually on host (requires Tippecanoe)".
+
 ## Section 3: Frontend Layer Integration
 
 ### Source and Layers
@@ -155,6 +190,8 @@ map.addSource('public-lands', {
 Layer: public-lands-fill (type: fill)
   source: public-lands
   source-layer: public_lands
+  layout:
+    fill-sort-key: ['get', 'sort_key']   // LAYOUT property (NOT paint). Wilderness on top of forest.
   paint:
     fill-color: ['match', ['get', 'category'],
       'BLM', '#f5deb3', 'USFS', '#228b22', 'NPS', '#006400',
@@ -162,7 +199,6 @@ Layer: public-lands-fill (type: fill)
       'Tribal', '#cd853f', 'State', '#d2691e', 'Wilderness', '#800080',
       '#a9a9a9']
     fill-opacity: 0.3
-    fill-sort-key: ['get', 'sort_key']   // Wilderness on top of forest, etc.
   before: 'imported-points'  // MUST be added AFTER imported-points exists in addPlaceholderSources
 ```
 
@@ -182,7 +218,7 @@ Layer: public-lands-outline (type: line)
   before: 'imported-points'
 ```
 
-**Layer insertion:** Both layers inserted BELOW imported features and search pins, ABOVE the basemap. This ensures KMZ imports and search results render on top of public land shading.
+**Layer insertion:** Both layers inserted BELOW imported features and search pins, ABOVE the basemap. **Add `public-lands-fill` FIRST, then `public-lands-outline`.** With the same `before` anchor, the last-added layer renders closest to `imported-points`. If reversed, the fill renders on top of the outline, hiding boundary lines. This ensures KMZ imports and search results render on top of public land shading.
 
 ### Toggle UI
 
@@ -222,7 +258,7 @@ MapLibre's `fill` layers drape correctly over 3D terrain mesh automatically. Sem
 After sample tile generation, verify the rendering visually:
 
 1. Navigate Playwright to running Geographica at `http://localhost:8093`
-2. Enable the Public Lands toggle via UI interaction
+2. Enable the Public Lands toggle: `page.click('#toggle-public-lands')`
 3. Fly to test area: center `[-114.5, 36.0]`, zoom 9
 4. Screenshot with public lands overlay visible
 5. Visual comparison: verify BLM (wheat), NPS (dark green), USFS (forest green), State Trust (chocolate), Wilderness (purple) all rendering correctly relative to known landmarks (Hoover Dam, Kingman, Lake Mead)
@@ -261,6 +297,7 @@ Layout: `display: grid; grid-template-columns: 1fr 1fr` with 10 items (5 rows x 
 | `frontend/app.js` | Public lands source/layers in addPlaceholderSources, toggle logic, click popup, syncLayerVisibility |
 | `frontend/index.html` | Public Lands checkbox, opacity slider, legend HTML |
 | `frontend/style.css` | Legend styles, toggle interaction |
+| `nginx/nginx.conf` | Add publiclands.json TileJSON sub_filter block |
 
 ## Dependencies
 
@@ -288,3 +325,5 @@ Negligible relative to imagery (53 GB) and elevation (119 GB).
 - Visual test: Playwright screenshots of Hoover Dam area against known maps
 - Performance test: enable public lands + terrain + hillshade simultaneously, verify smooth pan/zoom on Pi 5
 - Click test: click on a public land polygon, verify popup shows correct name/agency/designation
+- Overlap test: click a wilderness area inside a national forest, verify wilderness popup appears (not forest). Visually confirm purple renders on top of green (fill-sort-key working).
+- Low zoom test: pan at z0-z5 over full Western US, verify large BLM/USFS areas are visible (not dropped by Tippecanoe)
