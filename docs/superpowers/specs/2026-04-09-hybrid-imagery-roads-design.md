@@ -240,6 +240,23 @@ if (currentStyle === 'hybrid') {
 
 **Use persistent style.load handler:** Replace scattered `map.once('style.load')` calls with a single `map.on('style.load')` handler that always runs `addPlaceholderSources()` + `syncLayerVisibility()`. This prevents race conditions from rapid toggle/basemap clicks.
 
+### NAIP/Sentinel imagery overlays in hybrid mode (adversarial review finding)
+
+The parallel agent added a dynamic multi-imagery system with `imagery-naip-layer` and `imagery-sentinel-layer` toggles. In hybrid mode, these overlays would stack ON TOP of the hybrid style's `imagery-base` layer — double aerial imagery. **When hybrid mode is active, disable the NAIP/Sentinel source toggles** (hide the `#imagery-toggles` container). The hybrid style uses whichever imagery source is configured in `mbtiles://{imagery}`. If the user wants to switch between NAIP and Sentinel, they do it at the pipeline level (different MBTiles), not as a runtime overlay.
+
+### Radio handler must clean up opacity row (adversarial review finding)
+
+When the basemap radio handler unchecks `imageryCheckbox.checked = false` programmatically, the `change` event does NOT fire on the checkbox. The opacity row will remain visible. Add explicit cleanup:
+```js
+opacityRow.classList.remove('visible');
+var imageryToggles = document.getElementById('imagery-toggles');
+if (imageryToggles) imageryToggles.style.display = '';
+```
+
+### previousStyle defensive guard
+
+Add `if (previousStyle === 'hybrid') previousStyle = 'positron';` before restoring — prevents a code path from accidentally restoring hybrid when toggling off.
+
 ### What stays the same
 - `addPlaceholderSources()` and `syncLayerVisibility()` — already handle style swaps (with the hybrid-awareness fixes above)
 - All overlays (public lands, KMZ imports, routes, GPS) — already survive style swaps
@@ -301,6 +318,14 @@ Same as positron/darkmatter:
    - Reduce line widths
 6. Update sources section to include both `openmaptiles` and `imagery`
 7. Test with Playwright visual verification
+
+**Explicit layer retention guide (adversarial review finding):** The darkmatter style has 100+ layers with many per source-layer (e.g., `tunnel_motorway_casing`, `tunnel_motorway`, `road_motorway_casing`, `road_motorway`, etc.). "Keep transportation" means keeping ALL of these road sublayers. The subagent must:
+- Open `darkmatter/style.local.json` and list all layer IDs
+- Keep layers where `source-layer` is one of: `transportation`, `transportation_name`, `place`, `boundary`, `water_name`
+- Add filter for rail: keep layers with `class: rail` filter within `transportation`
+- Delete ALL layers where `source-layer` is: `landcover`, `landuse`, `water`, `park`, `building`, `housenumber`, `aeroway`, `mountain_peak`, `poi`
+- Delete ALL `background` type layers
+- Do NOT guess which layers to keep — read the actual JSON and filter by source-layer field
 
 ## Section 5: Visual Verification
 
