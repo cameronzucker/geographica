@@ -100,11 +100,11 @@ two phases: **data acquisition** (requires internet, takes several hours) and
 ```bash
 sudo apt update
 sudo apt install -y \
-  docker.io docker-compose-v2 \
+  docker.io docker-compose \
   python3 python3-venv python3-pip \
   gdal-bin osmium-tool \
   gpsd gpsd-clients \
-  git npm
+  git npm wget curl unzip
 ```
 
 Add your user to the `docker` group:
@@ -124,7 +124,7 @@ docker compose version   # needs v2.x+
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/your-org/geographica.git
+git clone https://github.com/cdzucker/geographica.git
 cd geographica
 ```
 
@@ -145,8 +145,16 @@ ln -s /srv/geographica/data data
 cp .env.example .env
 ```
 
-Edit `.env` and set `HOST_IP` to your Pi's LAN address. The defaults are tuned
-for a 16 GB Pi 5. For 8 GB, reduce the PostgreSQL memory settings:
+Edit `.env` and set `HOST_IP` to your Pi's primary LAN IP address — the one
+other devices on your network use to reach it. Find it with:
+
+```bash
+ip -4 addr show | grep 'inet ' | grep -v '127.0.0.1\|docker' | awk '{print $2}' | cut -d/ -f1
+```
+
+Use this IP, not `localhost`, `127.0.0.1`, or a Docker bridge address
+(172.x.x.x). The defaults are tuned for a 16 GB Pi 5. For 8 GB, reduce
+the PostgreSQL memory settings:
 
 ```bash
 # .env adjustments for 8 GB RAM
