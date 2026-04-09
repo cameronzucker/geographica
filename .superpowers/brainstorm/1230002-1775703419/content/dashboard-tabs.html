@@ -1,0 +1,50 @@
+<h2>Admin Panel Tab Layout</h2>
+<p class="subtitle">Four tabs organizing all system features. Click to select a tab arrangement.</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Dashboard &bull; Imagery &bull; Data &bull; Settings</h3>
+      <p><strong>Dashboard:</strong> Service health grid, GPS fix, disk space, TLS mode, active download progress<br>
+      <strong>Imagery:</strong> Source/bbox/zoom controls, M2M credentials, start/cancel, batch progress<br>
+      <strong>Data:</strong> Elevation pipeline, OSM POI extraction trigger + status, POI database stats<br>
+      <strong>Settings:</strong> TLS mode info, cert expiry, STT backend config, system info</p>
+      <div style="margin-top:12px; padding:12px; background:#313244; border-radius:6px; font-family:monospace; font-size:11px; color:#7a8299;">
+        <div style="display:flex; gap:2px; margin-bottom:12px;">
+          <span style="background:#a6e3a1; color:#1e1e2e; padding:4px 12px; border-radius:4px; font-weight:600;">Dashboard</span>
+          <span style="background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:4px 12px; border-radius:4px;">Imagery</span>
+          <span style="background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:4px 12px; border-radius:4px;">Data</span>
+          <span style="background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:4px 12px; border-radius:4px;">Settings</span>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <div style="background:#181825; padding:8px; border-radius:4px;">
+            <div style="color:#a6e3a1; font-size:10px;">&#9679; Services (7/7 healthy)</div>
+            <div style="color:#7a8299; font-size:9px; margin-top:4px;">tileserver &bull; valhalla &bull; nominatim &bull; gps &bull; search &bull; stt &bull; frontend</div>
+          </div>
+          <div style="background:#181825; padding:8px; border-radius:4px;">
+            <div style="color:#89b4fa; font-size:10px;">&#128225; GPS: 3D Fix</div>
+            <div style="color:#7a8299; font-size:9px; margin-top:4px;">12 sats &bull; &plusmn;2.1m &bull; 33.4512, -112.0740</div>
+          </div>
+          <div style="background:#181825; padding:8px; border-radius:4px;">
+            <div style="color:#f9e2af; font-size:10px;">&#128190; Disk: 587 GB free</div>
+            <div style="color:#7a8299; font-size:9px; margin-top:4px;">34% used of 896 GB</div>
+          </div>
+          <div style="background:#181825; padding:8px; border-radius:4px;">
+            <div style="color:#a6e3a1; font-size:10px;">&#128274; TLS: Tailscale</div>
+            <div style="color:#7a8299; font-size:9px; margin-top:4px;">cert expires 2026-07-07</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Status &bull; Downloads &bull; Settings</h3>
+      <p>Three tabs instead of four. Merges Imagery + Data into "Downloads" since both are pipeline operations. Settings includes credentials + TLS + STT.</p>
+      <p style="color:#7a8299; font-size:11px;">Fewer tabs = less clicking, but the Downloads tab gets heavy with both imagery and elevation + POI controls.</p>
+    </div>
+  </div>
+</div>

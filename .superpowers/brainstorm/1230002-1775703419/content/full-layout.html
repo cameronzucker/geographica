@@ -1,0 +1,188 @@
+<h2>Admin Panel — Full Three-Tab Layout</h2>
+<p class="subtitle">Review each tab's content and organization. Scroll down to see all three.</p>
+
+<!-- TAB 1: DASHBOARD -->
+<div class="section">
+  <h3>Tab 1: Dashboard</h3>
+  <p class="subtitle">At-a-glance system health. Auto-refreshes every 10 seconds.</p>
+  <div style="background:#1e1e2e; padding:16px; border-radius:8px; font-family:-apple-system,sans-serif;">
+    <!-- Tab bar -->
+    <div style="display:flex; gap:2px; margin-bottom:16px;">
+      <span style="background:#a6e3a1; color:#1e1e2e; padding:6px 16px; border-radius:4px; font-weight:600; font-size:13px;">Dashboard</span>
+      <span style="background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:6px 16px; border-radius:4px; font-size:13px;">Pipelines</span>
+      <span style="background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:6px 16px; border-radius:4px; font-size:13px;">Settings</span>
+    </div>
+
+    <!-- Service health grid -->
+    <div style="color:#f5f5f5; font-size:14px; font-weight:600; margin-bottom:8px;">Services</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:16px;">
+      <div style="background:#181825; padding:8px 10px; border-radius:6px; border-left:3px solid #a6e3a1;">
+        <div style="color:#cdd6f4; font-size:12px; font-weight:600;">&#9679; tileserver</div>
+        <div style="color:#7a8299; font-size:10px;">3 sources, z0-19 &bull; up 5h</div>
+      </div>
+      <div style="background:#181825; padding:8px 10px; border-radius:6px; border-left:3px solid #a6e3a1;">
+        <div style="color:#cdd6f4; font-size:12px; font-weight:600;">&#9679; valhalla</div>
+        <div style="color:#7a8299; font-size:10px;">graph ready, 4.3 GB &bull; up 5h</div>
+      </div>
+      <div style="background:#181825; padding:8px 10px; border-radius:6px; border-left:3px solid #f9e2af;">
+        <div style="color:#cdd6f4; font-size:12px; font-weight:600;">&#9679; nominatim</div>
+        <div style="color:#f9e2af; font-size:10px;">importing — rank 28/30 &bull; up 5h</div>
+      </div>
+      <div style="background:#181825; padding:8px 10px; border-radius:6px; border-left:3px solid #a6e3a1;">
+        <div style="color:#cdd6f4; font-size:12px; font-weight:600;">&#9679; search</div>
+        <div style="color:#7a8299; font-size:10px;">304k GNIS + 12k OSM POIs &bull; up 5h</div>
+      </div>
+      <div style="background:#181825; padding:8px 10px; border-radius:6px; border-left:3px solid #a6e3a1;">
+        <div style="color:#cdd6f4; font-size:12px; font-weight:600;">&#9679; stt</div>
+        <div style="color:#7a8299; font-size:10px;">cpu backend, base.en &bull; up 5h</div>
+      </div>
+      <div style="background:#181825; padding:8px 10px; border-radius:6px; border-left:3px solid #a6e3a1;">
+        <div style="color:#cdd6f4; font-size:12px; font-weight:600;">&#9679; gps</div>
+        <div style="color:#7a8299; font-size:10px;">3D fix, 12 sats, ±2.1m &bull; up 5h</div>
+      </div>
+      <div style="background:#181825; padding:8px 10px; border-radius:6px; border-left:3px solid #a6e3a1;">
+        <div style="color:#cdd6f4; font-size:12px; font-weight:600;">&#9679; frontend</div>
+        <div style="color:#7a8299; font-size:10px;">nginx 1.29 &bull; up 5h</div>
+      </div>
+    </div>
+
+    <!-- System info row -->
+    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
+      <div style="background:#181825; padding:10px; border-radius:6px; text-align:center;">
+        <div style="color:#89b4fa; font-size:18px; font-weight:700;">587 GB</div>
+        <div style="color:#7a8299; font-size:10px;">disk free (66%)</div>
+      </div>
+      <div style="background:#181825; padding:10px; border-radius:6px; text-align:center;">
+        <div style="color:#a6e3a1; font-size:18px; font-weight:700;">Tailscale</div>
+        <div style="color:#7a8299; font-size:10px;">TLS &bull; expires 2026-07-07</div>
+      </div>
+      <div style="background:#181825; padding:10px; border-radius:6px; text-align:center;">
+        <div style="color:#a6e3a1; font-size:18px; font-weight:700;">7 / 7</div>
+        <div style="color:#7a8299; font-size:10px;">services healthy</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TAB 2: PIPELINES -->
+<div class="section">
+  <h3>Tab 2: Pipelines</h3>
+  <p class="subtitle">Imagery downloads (direct + M2M), elevation tiles, OSM POI extraction.</p>
+  <div style="background:#1e1e2e; padding:16px; border-radius:8px; font-family:-apple-system,sans-serif;">
+    <!-- Tab bar -->
+    <div style="display:flex; gap:2px; margin-bottom:16px;">
+      <span style="background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:6px 16px; border-radius:4px; font-size:13px;">Dashboard</span>
+      <span style="background:#a6e3a1; color:#1e1e2e; padding:6px 16px; border-radius:4px; font-weight:600; font-size:13px;">Pipelines</span>
+      <span style="background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:6px 16px; border-radius:4px; font-size:13px;">Settings</span>
+    </div>
+
+    <!-- Imagery section -->
+    <div style="color:#f5f5f5; font-size:14px; font-weight:600; margin-bottom:8px;">Imagery Acquisition</div>
+    <div style="background:#181825; padding:12px; border-radius:6px; margin-bottom:12px;">
+      <div style="display:grid; grid-template-columns:auto 1fr; gap:6px 12px; font-size:12px; color:#cdd6f4;">
+        <span style="color:#7a8299;">Source</span>
+        <div><select style="background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:4px 8px; border-radius:4px; font-size:12px; width:100%;">
+          <option>USGS Direct (no auth)</option>
+          <option selected>USGS M2M API</option>
+        </select></div>
+        <span style="color:#7a8299;">Coverage</span>
+        <div style="font-family:monospace; background:#313244; padding:4px 8px; border-radius:4px; border:1px solid #45475a;">-113.33,32.51,-111.04,34.04</div>
+        <span style="color:#7a8299;">Zoom</span>
+        <div><select style="background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:4px 8px; border-radius:4px; font-size:12px; width:100%;">
+          <option>0-16 max direct</option>
+          <option selected>0-19 M2M max</option>
+        </select></div>
+        <span style="color:#7a8299;">Speed</span>
+        <div><select style="background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:4px 8px; border-radius:4px; font-size:12px; width:100%;">
+          <option selected>Normal (3 concurrent)</option>
+          <option>Fast (5 concurrent)</option>
+        </select></div>
+      </div>
+      <div style="margin-top:10px;">
+        <span style="background:#a6e3a1; color:#1e1e2e; padding:5px 12px; border-radius:4px; font-size:12px; font-weight:600; cursor:pointer;">Start Download</span>
+        <span style="color:#7a8299; font-size:10px; margin-left:8px;">~1,022 files &bull; est. ~274 GB</span>
+      </div>
+    </div>
+
+    <!-- Active download progress (M2M batched) -->
+    <div style="background:#181825; padding:12px; border-radius:6px; margin-bottom:12px; border-left:3px solid #89b4fa;">
+      <div style="color:#89b4fa; font-size:12px; font-weight:600;">&#9660; Maricopa County M2M — downloading</div>
+      <div style="background:#313244; height:6px; border-radius:3px; margin:8px 0;">
+        <div style="background:#89b4fa; height:100%; width:8%; border-radius:3px;"></div>
+      </div>
+      <div style="display:flex; justify-content:space-between; font-size:10px; color:#7a8299;">
+        <span>Batch 2/38 &bull; 53/1,022 files</span>
+        <span>~4.2 MB/s &bull; ~18h remaining</span>
+      </div>
+    </div>
+
+    <!-- Elevation section -->
+    <div style="color:#f5f5f5; font-size:14px; font-weight:600; margin-bottom:8px; margin-top:16px;">Elevation Tiles</div>
+    <div style="background:#181825; padding:12px; border-radius:6px; margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; font-size:12px;">
+        <span style="color:#a6e3a1;">&#10003; Complete — 1,474,959 tiles (z0-14)</span>
+        <span style="color:#7a8299;">70 GB</span>
+      </div>
+    </div>
+
+    <!-- OSM POI section -->
+    <div style="color:#f5f5f5; font-size:14px; font-weight:600; margin-bottom:8px; margin-top:16px;">OSM POI Extraction</div>
+    <div style="background:#181825; padding:12px; border-radius:6px;">
+      <div style="font-size:12px; color:#f9e2af; margin-bottom:8px;">&#9888; Not yet extracted</div>
+      <div style="font-size:10px; color:#7a8299; margin-bottom:8px;">Extracts commercial amenities + public land boundaries from the OSM PBF. Requires ~10 min.</div>
+      <span style="background:#a6e3a1; color:#1e1e2e; padding:5px 12px; border-radius:4px; font-size:12px; font-weight:600; cursor:pointer;">Extract OSM POIs</span>
+    </div>
+  </div>
+</div>
+
+<!-- TAB 3: SETTINGS -->
+<div class="section">
+  <h3>Tab 3: Settings</h3>
+  <p class="subtitle">Credentials, TLS configuration, STT backend info.</p>
+  <div style="background:#1e1e2e; padding:16px; border-radius:8px; font-family:-apple-system,sans-serif;">
+    <!-- Tab bar -->
+    <div style="display:flex; gap:2px; margin-bottom:16px;">
+      <span style="background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:6px 16px; border-radius:4px; font-size:13px;">Dashboard</span>
+      <span style="background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:6px 16px; border-radius:4px; font-size:13px;">Pipelines</span>
+      <span style="background:#a6e3a1; color:#1e1e2e; padding:6px 16px; border-radius:4px; font-weight:600; font-size:13px;">Settings</span>
+    </div>
+
+    <!-- M2M Credentials -->
+    <div style="color:#f5f5f5; font-size:14px; font-weight:600; margin-bottom:8px;">M2M API Credentials</div>
+    <div style="background:#181825; padding:12px; border-radius:6px; margin-bottom:12px;">
+      <div style="display:grid; grid-template-columns:auto 1fr; gap:6px 12px; font-size:12px; color:#cdd6f4;">
+        <span style="color:#7a8299;">Username</span>
+        <div style="background:#313244; padding:4px 8px; border-radius:4px; border:1px solid #45475a;">c*****@gmail.com</div>
+        <span style="color:#7a8299;">Token</span>
+        <div style="background:#313244; padding:4px 8px; border-radius:4px; border:1px solid #45475a;">&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226; (64 chars)</div>
+      </div>
+      <div style="margin-top:8px;">
+        <span style="color:#a6e3a1; font-size:11px;">&#10003; Configured</span>
+        <span style="background:transparent; border:1px solid #45475a; color:#cdd6f4; padding:3px 10px; border-radius:4px; font-size:11px; margin-left:8px; cursor:pointer;">Update</span>
+        <span style="background:transparent; border:1px solid #f38ba8; color:#f38ba8; padding:3px 10px; border-radius:4px; font-size:11px; margin-left:4px; cursor:pointer;">Delete</span>
+      </div>
+    </div>
+
+    <!-- TLS -->
+    <div style="color:#f5f5f5; font-size:14px; font-weight:600; margin-bottom:8px; margin-top:16px;">TLS Configuration</div>
+    <div style="background:#181825; padding:12px; border-radius:6px; margin-bottom:12px;">
+      <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:12px; color:#cdd6f4;">
+        <span style="color:#7a8299;">Mode</span><span>Tailscale (Let's Encrypt)</span>
+        <span style="color:#7a8299;">Hostname</span><span style="font-family:monospace;">pandora.twin-bramble.ts.net</span>
+        <span style="color:#7a8299;">Certificate</span><span style="color:#a6e3a1;">Valid — expires 2026-07-07 (90 days)</span>
+        <span style="color:#7a8299;">Renewal</span><span>systemd timer active, daily check</span>
+      </div>
+    </div>
+
+    <!-- STT -->
+    <div style="color:#f5f5f5; font-size:14px; font-weight:600; margin-bottom:8px; margin-top:16px;">Voice Search (STT)</div>
+    <div style="background:#181825; padding:12px; border-radius:6px;">
+      <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:12px; color:#cdd6f4;">
+        <span style="color:#7a8299;">Backend</span><span>CPU (faster-whisper)</span>
+        <span style="color:#7a8299;">Model</span><span>base.en (INT8, ~140 MB)</span>
+        <span style="color:#7a8299;">NPU</span><span style="color:#7a8299;">Not available (requires Hailo firmware 5.3.0+)</span>
+        <span style="color:#7a8299;">Status</span><span style="color:#a6e3a1;">&#9679; Healthy</span>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,274 @@
+<h2>Admin Panel — Constrained Width Layout</h2>
+<p class="subtitle">Same 600px max-width as current panel. Centered on desktop, full-width on mobile.</p>
+
+<!-- Simulated 600px container -->
+<div style="max-width:600px; margin:0 auto; background:#1e1e2e; padding:20px; border-radius:12px; font-family:-apple-system,sans-serif; color:#cdd6f4;">
+
+  <!-- Header -->
+  <div style="font-size:20px; color:#f5f5f5; font-weight:600; margin-bottom:4px;">Geographica Configuration</div>
+  <div style="font-size:11px; color:#7a8299; margin-bottom:16px;">This panel is only accessible from localhost.</div>
+
+  <!-- Tab bar -->
+  <div style="display:flex; gap:0; margin-bottom:16px; background:#313244; border-radius:6px; padding:3px;">
+    <span style="flex:1; text-align:center; background:#a6e3a1; color:#1e1e2e; padding:7px 0; border-radius:4px; font-weight:600; font-size:13px;">Dashboard</span>
+    <span style="flex:1; text-align:center; color:#7a8299; padding:7px 0; font-size:13px; cursor:pointer;">Pipelines</span>
+    <span style="flex:1; text-align:center; color:#7a8299; padding:7px 0; font-size:13px; cursor:pointer;">Settings</span>
+  </div>
+
+  <!-- DASHBOARD TAB CONTENT -->
+
+  <!-- Services list (single column, compact) -->
+  <div style="background:#181825; border-radius:8px; padding:14px; margin-bottom:12px;">
+    <div style="font-size:13px; color:#f5f5f5; font-weight:600; margin-bottom:10px;">Services</div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #313244;">
+      <div>
+        <span style="color:#a6e3a1; font-size:10px;">&#9679;</span>
+        <span style="color:#cdd6f4; font-size:12px; font-weight:500; margin-left:6px;">tileserver</span>
+      </div>
+      <div style="color:#7a8299; font-size:10px;">3 sources, z0-19 &bull; 5h</div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #313244;">
+      <div>
+        <span style="color:#a6e3a1; font-size:10px;">&#9679;</span>
+        <span style="color:#cdd6f4; font-size:12px; font-weight:500; margin-left:6px;">valhalla</span>
+      </div>
+      <div style="color:#7a8299; font-size:10px;">graph ready, 4.3 GB &bull; 5h</div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #313244;">
+      <div>
+        <span style="color:#f9e2af; font-size:10px;">&#9679;</span>
+        <span style="color:#cdd6f4; font-size:12px; font-weight:500; margin-left:6px;">nominatim</span>
+      </div>
+      <div style="color:#f9e2af; font-size:10px;">importing — rank 28/30 &bull; 5h</div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #313244;">
+      <div>
+        <span style="color:#a6e3a1; font-size:10px;">&#9679;</span>
+        <span style="color:#cdd6f4; font-size:12px; font-weight:500; margin-left:6px;">search</span>
+      </div>
+      <div style="color:#7a8299; font-size:10px;">304k GNIS + 12k OSM &bull; 5h</div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #313244;">
+      <div>
+        <span style="color:#a6e3a1; font-size:10px;">&#9679;</span>
+        <span style="color:#cdd6f4; font-size:12px; font-weight:500; margin-left:6px;">stt</span>
+      </div>
+      <div style="color:#7a8299; font-size:10px;">cpu, base.en &bull; 5h</div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #313244;">
+      <div>
+        <span style="color:#a6e3a1; font-size:10px;">&#9679;</span>
+        <span style="color:#cdd6f4; font-size:12px; font-weight:500; margin-left:6px;">gps</span>
+      </div>
+      <div style="color:#7a8299; font-size:10px;">3D fix, 12 sats, ±2.1m &bull; 5h</div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0;">
+      <div>
+        <span style="color:#a6e3a1; font-size:10px;">&#9679;</span>
+        <span style="color:#cdd6f4; font-size:12px; font-weight:500; margin-left:6px;">frontend</span>
+      </div>
+      <div style="color:#7a8299; font-size:10px;">nginx &bull; 5h</div>
+    </div>
+  </div>
+
+  <!-- System info cards -->
+  <div style="display:flex; gap:8px; margin-bottom:12px;">
+    <div style="flex:1; background:#181825; padding:12px; border-radius:8px; text-align:center;">
+      <div style="color:#89b4fa; font-size:20px; font-weight:700;">587 GB</div>
+      <div style="color:#7a8299; font-size:10px;">free (66%)</div>
+    </div>
+    <div style="flex:1; background:#181825; padding:12px; border-radius:8px; text-align:center;">
+      <div style="color:#a6e3a1; font-size:14px; font-weight:600; margin-top:3px;">Tailscale</div>
+      <div style="color:#7a8299; font-size:10px;">expires 2026-07-07</div>
+    </div>
+  </div>
+
+  <!-- Active pipeline banner (shows on dashboard when a download is running) -->
+  <div style="background:#181825; border-radius:8px; padding:12px; border-left:3px solid #89b4fa;">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div style="color:#89b4fa; font-size:12px; font-weight:600;">&#11015; Imagery — Maricopa M2M</div>
+      <div style="color:#7a8299; font-size:10px;">batch 2/38</div>
+    </div>
+    <div style="background:#313244; height:4px; border-radius:2px; margin:8px 0;">
+      <div style="background:#89b4fa; height:100%; width:5%; border-radius:2px;"></div>
+    </div>
+    <div style="display:flex; justify-content:space-between; font-size:10px; color:#7a8299;">
+      <span>53 / 1,022 files</span>
+      <span>~18h remaining</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- Spacer -->
+<div style="height:32px;"></div>
+
+<!-- PIPELINES TAB -->
+<div style="max-width:600px; margin:0 auto; background:#1e1e2e; padding:20px; border-radius:12px; font-family:-apple-system,sans-serif; color:#cdd6f4;">
+
+  <div style="font-size:20px; color:#f5f5f5; font-weight:600; margin-bottom:4px;">Geographica Configuration</div>
+  <div style="font-size:11px; color:#7a8299; margin-bottom:16px;">This panel is only accessible from localhost.</div>
+
+  <div style="display:flex; gap:0; margin-bottom:16px; background:#313244; border-radius:6px; padding:3px;">
+    <span style="flex:1; text-align:center; color:#7a8299; padding:7px 0; font-size:13px; cursor:pointer;">Dashboard</span>
+    <span style="flex:1; text-align:center; background:#a6e3a1; color:#1e1e2e; padding:7px 0; border-radius:4px; font-weight:600; font-size:13px;">Pipelines</span>
+    <span style="flex:1; text-align:center; color:#7a8299; padding:7px 0; font-size:13px; cursor:pointer;">Settings</span>
+  </div>
+
+  <!-- Imagery -->
+  <div style="background:#181825; border-radius:8px; padding:14px; margin-bottom:12px;">
+    <div style="font-size:13px; color:#f5f5f5; font-weight:600; margin-bottom:10px;">Imagery Acquisition</div>
+
+    <div style="margin-bottom:8px;">
+      <div style="font-size:11px; color:#7a8299; margin-bottom:3px;">Source</div>
+      <select style="width:100%; background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:8px; border-radius:6px; font-size:13px; box-sizing:border-box;">
+        <option>USGS Direct (no auth needed)</option>
+        <option selected>USGS M2M API (requires credentials)</option>
+      </select>
+    </div>
+
+    <div style="margin-bottom:8px;">
+      <div style="font-size:11px; color:#7a8299; margin-bottom:3px;">Coverage area</div>
+      <input value="-113.33,32.51,-111.04,34.04" style="width:100%; background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:8px; border-radius:6px; font-size:13px; font-family:monospace; box-sizing:border-box;" readonly>
+    </div>
+
+    <div style="display:flex; gap:8px; margin-bottom:8px;">
+      <div style="flex:1;">
+        <div style="font-size:11px; color:#7a8299; margin-bottom:3px;">Zoom range</div>
+        <select style="width:100%; background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:8px; border-radius:6px; font-size:13px; box-sizing:border-box;">
+          <option>0-16 direct max</option>
+          <option selected>0-19 M2M max</option>
+        </select>
+      </div>
+      <div style="flex:1;">
+        <div style="font-size:11px; color:#7a8299; margin-bottom:3px;">Concurrency</div>
+        <select style="width:100%; background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:8px; border-radius:6px; font-size:13px; box-sizing:border-box;">
+          <option selected>3 (M2M safe)</option>
+          <option>5 (M2M max)</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="font-size:10px; color:#7a8299; margin-bottom:10px;">~1,022 files &bull; est. ~274 GB &bull; M2M zoom determined by source resolution (~z19)</div>
+
+    <div style="display:flex; gap:8px; align-items:center;">
+      <span style="background:#a6e3a1; color:#1e1e2e; padding:8px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Start Download</span>
+      <label style="font-size:11px; color:#7a8299; margin:0; display:flex; align-items:center; gap:4px;"><input type="checkbox" checked style="width:auto;"> Resume existing</label>
+    </div>
+  </div>
+
+  <!-- Active download -->
+  <div style="background:#181825; border-radius:8px; padding:14px; margin-bottom:12px; border-left:3px solid #89b4fa;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+      <div style="color:#89b4fa; font-size:12px; font-weight:600;">Maricopa County M2M — downloading</div>
+      <span style="background:#f38ba8; color:#1e1e2e; padding:3px 10px; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer;">Cancel</span>
+    </div>
+    <div style="background:#313244; height:4px; border-radius:2px; margin:8px 0;">
+      <div style="background:#89b4fa; height:100%; width:5%; border-radius:2px;"></div>
+    </div>
+    <div style="font-size:10px; color:#7a8299;">Batch 2/38 &bull; 53/1,022 files &bull; ~4.2 MB/s &bull; ~18h remaining</div>
+  </div>
+
+  <!-- Elevation -->
+  <div style="background:#181825; border-radius:8px; padding:14px; margin-bottom:12px;">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div style="font-size:13px; color:#f5f5f5; font-weight:600;">Elevation Tiles</div>
+      <span style="color:#a6e3a1; font-size:11px;">&#10003; Complete</span>
+    </div>
+    <div style="font-size:10px; color:#7a8299; margin-top:4px;">1,474,959 tiles (z0-14) &bull; 70 GB</div>
+  </div>
+
+  <!-- OSM POI -->
+  <div style="background:#181825; border-radius:8px; padding:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div style="font-size:13px; color:#f5f5f5; font-weight:600;">OSM POI Extraction</div>
+      <span style="color:#f9e2af; font-size:11px;">&#9888; Not extracted</span>
+    </div>
+    <div style="font-size:10px; color:#7a8299; margin:6px 0;">Extracts amenities + public land from OSM PBF. ~10 min.</div>
+    <span style="background:#a6e3a1; color:#1e1e2e; padding:6px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">Extract POIs</span>
+  </div>
+
+</div>
+
+<!-- Spacer -->
+<div style="height:32px;"></div>
+
+<!-- SETTINGS TAB -->
+<div style="max-width:600px; margin:0 auto; background:#1e1e2e; padding:20px; border-radius:12px; font-family:-apple-system,sans-serif; color:#cdd6f4;">
+
+  <div style="font-size:20px; color:#f5f5f5; font-weight:600; margin-bottom:4px;">Geographica Configuration</div>
+  <div style="font-size:11px; color:#7a8299; margin-bottom:16px;">This panel is only accessible from localhost.</div>
+
+  <div style="display:flex; gap:0; margin-bottom:16px; background:#313244; border-radius:6px; padding:3px;">
+    <span style="flex:1; text-align:center; color:#7a8299; padding:7px 0; font-size:13px; cursor:pointer;">Dashboard</span>
+    <span style="flex:1; text-align:center; color:#7a8299; padding:7px 0; font-size:13px; cursor:pointer;">Pipelines</span>
+    <span style="flex:1; text-align:center; background:#a6e3a1; color:#1e1e2e; padding:7px 0; border-radius:4px; font-weight:600; font-size:13px;">Settings</span>
+  </div>
+
+  <!-- M2M Credentials -->
+  <div style="background:#181825; border-radius:8px; padding:14px; margin-bottom:12px;">
+    <div style="font-size:13px; color:#f5f5f5; font-weight:600; margin-bottom:10px;">M2M API Credentials</div>
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #313244;">
+      <span style="font-size:11px; color:#7a8299;">Username</span>
+      <span style="font-size:12px; color:#cdd6f4;">c*****@gmail.com</span>
+    </div>
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0;">
+      <span style="font-size:11px; color:#7a8299;">Token</span>
+      <span style="font-size:12px; color:#cdd6f4;">&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226; (64 chars)</span>
+    </div>
+    <div style="margin-top:10px; display:flex; gap:8px;">
+      <span style="background:transparent; border:1px solid #45475a; color:#cdd6f4; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer;">Update</span>
+      <span style="background:transparent; border:1px solid #f38ba8; color:#f38ba8; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer;">Delete</span>
+    </div>
+  </div>
+
+  <!-- TLS -->
+  <div style="background:#181825; border-radius:8px; padding:14px; margin-bottom:12px;">
+    <div style="font-size:13px; color:#f5f5f5; font-weight:600; margin-bottom:10px;">TLS Configuration</div>
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid #313244;">
+      <span style="font-size:11px; color:#7a8299;">Mode</span>
+      <span style="font-size:12px; color:#cdd6f4;">Tailscale (Let's Encrypt)</span>
+    </div>
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid #313244;">
+      <span style="font-size:11px; color:#7a8299;">Hostname</span>
+      <span style="font-size:12px; color:#cdd6f4; font-family:monospace;">pandora.twin-bramble.ts.net</span>
+    </div>
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid #313244;">
+      <span style="font-size:11px; color:#7a8299;">Certificate</span>
+      <span style="font-size:12px; color:#a6e3a1;">Valid — expires 2026-07-07</span>
+    </div>
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0;">
+      <span style="font-size:11px; color:#7a8299;">Renewal</span>
+      <span style="font-size:12px; color:#cdd6f4;">systemd timer, daily</span>
+    </div>
+  </div>
+
+  <!-- STT -->
+  <div style="background:#181825; border-radius:8px; padding:14px;">
+    <div style="font-size:13px; color:#f5f5f5; font-weight:600; margin-bottom:10px;">Voice Search (STT)</div>
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid #313244;">
+      <span style="font-size:11px; color:#7a8299;">Backend</span>
+      <span style="font-size:12px; color:#cdd6f4;">CPU (faster-whisper)</span>
+    </div>
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid #313244;">
+      <span style="font-size:11px; color:#7a8299;">Model</span>
+      <span style="font-size:12px; color:#cdd6f4;">base.en (INT8)</span>
+    </div>
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid #313244;">
+      <span style="font-size:11px; color:#7a8299;">NPU</span>
+      <span style="font-size:12px; color:#7a8299;">Requires firmware 5.3.0+</span>
+    </div>
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0;">
+      <span style="font-size:11px; color:#7a8299;">Status</span>
+      <span style="font-size:12px; color:#a6e3a1;">&#9679; Healthy</span>
+    </div>
+  </div>
+
+</div>

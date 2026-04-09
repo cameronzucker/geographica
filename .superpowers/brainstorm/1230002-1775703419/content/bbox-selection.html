@@ -1,0 +1,116 @@
+<h2>Coverage Area Selection</h2>
+<p class="subtitle">How should users define the imagery download area in the admin panel?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Embedded Minimap with Draw Rectangle</h3>
+      <p>A small MapLibre map (~250px tall) embedded in the Pipelines tab. User draws a rectangle directly on the map. The bbox text field auto-populates from the drawn rectangle and vice versa.</p>
+      <div style="margin-top:12px; max-width:560px;">
+        <div style="background:#1e1e2e; padding:14px; border-radius:8px; font-family:-apple-system,sans-serif;">
+          <div style="font-size:11px; color:#7a8299; margin-bottom:3px;">Coverage area</div>
+          <!-- Fake minimap -->
+          <div style="background:#2a3a2a; border-radius:6px; height:200px; border:1px solid #45475a; position:relative; overflow:hidden;">
+            <!-- Simplified map feel -->
+            <div style="position:absolute; inset:0; opacity:0.3; background:linear-gradient(135deg, #1a2a1a 25%, #2a3a2a 50%, #1a2a1a 75%);"></div>
+            <!-- State outlines hint -->
+            <svg viewBox="0 0 560 200" style="position:absolute; inset:0; width:100%; height:100%;">
+              <path d="M 100,40 L 180,35 L 200,80 L 190,140 L 100,145 Z" fill="none" stroke="#45475a" stroke-width="1"/>
+              <path d="M 200,30 L 300,25 L 310,75 L 290,130 L 200,80 Z" fill="none" stroke="#45475a" stroke-width="1"/>
+              <path d="M 300,25 L 400,30 L 390,90 L 310,75 Z" fill="none" stroke="#45475a" stroke-width="1"/>
+            </svg>
+            <!-- Drawn rectangle -->
+            <div style="position:absolute; left:140px; top:55px; width:90px; height:70px; border:2px solid #89b4fa; background:rgba(137,180,250,0.15); border-radius:2px;"></div>
+            <!-- Corner handles -->
+            <div style="position:absolute; left:137px; top:52px; width:8px; height:8px; background:#89b4fa; border-radius:50%;"></div>
+            <div style="position:absolute; left:227px; top:52px; width:8px; height:8px; background:#89b4fa; border-radius:50%;"></div>
+            <div style="position:absolute; left:137px; top:122px; width:8px; height:8px; background:#89b4fa; border-radius:50%;"></div>
+            <div style="position:absolute; left:227px; top:122px; width:8px; height:8px; background:#89b4fa; border-radius:50%;"></div>
+            <!-- Label -->
+            <div style="position:absolute; left:145px; top:80px; color:#89b4fa; font-size:9px; font-family:monospace;">Maricopa County</div>
+            <!-- Map controls hint -->
+            <div style="position:absolute; top:8px; right:8px; display:flex; flex-direction:column; gap:2px;">
+              <div style="background:#313244; width:24px; height:24px; border-radius:4px; text-align:center; line-height:24px; color:#cdd6f4; font-size:14px; border:1px solid #45475a;">+</div>
+              <div style="background:#313244; width:24px; height:24px; border-radius:4px; text-align:center; line-height:24px; color:#cdd6f4; font-size:14px; border:1px solid #45475a;">−</div>
+            </div>
+            <!-- Draw hint -->
+            <div style="position:absolute; bottom:8px; left:8px; background:rgba(30,30,46,0.8); padding:3px 8px; border-radius:4px; font-size:9px; color:#7a8299;">Click and drag to draw area</div>
+          </div>
+          <!-- Bbox text field (synced) -->
+          <div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
+            <input value="-113.33,32.51,-111.04,34.04" style="flex:1; background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:6px 8px; border-radius:4px; font-size:11px; font-family:monospace;" readonly>
+            <span style="font-size:9px; color:#7a8299;">or type coordinates</span>
+          </div>
+        </div>
+      </div>
+      <div class="pros-cons" style="margin-top:12px;">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Visual, intuitive — see exactly what you're downloading</li>
+          <li>Two-way sync: draw updates text, text updates rectangle</li>
+          <li>MapLibre is already vendored in the frontend</li>
+          <li>Can show existing imagery coverage as context</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Config panel is on port 8097 (localhost only) — needs access to tile server for the basemap</li>
+          <li>More code (~100 lines for draw interaction)</li>
+          <li>Map resources loaded even when not needed</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Preset Regions + Custom Bbox</h3>
+      <p>A dropdown of named regions (Western US, Arizona, Maricopa County, etc.) that auto-fill the bbox, plus a manual text field for custom coordinates. No map needed.</p>
+      <div style="margin-top:12px; max-width:560px;">
+        <div style="background:#1e1e2e; padding:14px; border-radius:8px; font-family:-apple-system,sans-serif;">
+          <div style="font-size:11px; color:#7a8299; margin-bottom:3px;">Coverage area</div>
+          <select style="width:100%; background:#313244; border:1px solid #45475a; color:#cdd6f4; padding:8px; border-radius:6px; font-size:13px; box-sizing:border-box; margin-bottom:6px;">
+            <option>Western US (11 states)</option>
+            <option>Arizona</option>
+            <option selected>Maricopa County, AZ</option>
+            <option>Tucson Metro, AZ</option>
+            <option>Custom coordinates...</option>
+          </select>
+          <input value="-113.33,32.51,-111.04,34.04" style="width:100%; background:#313244; border:1px solid #45475a; color:#7a8299; padding:6px 8px; border-radius:4px; font-size:11px; font-family:monospace; box-sizing:border-box;" readonly>
+          <div style="font-size:9px; color:#7a8299; margin-top:4px;">west, south, east, north (decimal degrees)</div>
+        </div>
+      </div>
+      <div class="pros-cons" style="margin-top:12px;">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Zero additional dependencies</li>
+          <li>Works perfectly on mobile</li>
+          <li>Named regions are self-documenting</li>
+          <li>Easy to add new presets</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Custom areas still require knowing coordinates</li>
+          <li>No visual feedback on what you're selecting</li>
+          <li>Preset list needs curation and maintenance</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Both: Presets + Minimap</h3>
+      <p>Combine A and B. Preset dropdown fills the bbox and centers the minimap. Or draw directly on the map. Best of both worlds.</p>
+      <div class="pros-cons" style="margin-top:8px;">
+        <div class="pros"><h4>Pros</h4><ul>
+          <li>Quick selection for common areas</li>
+          <li>Visual confirmation for any selection</li>
+          <li>Handles both casual and power users</li>
+        </ul></div>
+        <div class="cons"><h4>Cons</h4><ul>
+          <li>Most complex implementation</li>
+          <li>Presets + map + text field is a lot of UI for one input</li>
+        </ul></div>
+      </div>
+    </div>
+  </div>
+</div>
