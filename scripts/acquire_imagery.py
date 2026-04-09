@@ -151,11 +151,16 @@ def tile_ranges(bbox: tuple[float, float, float, float], zoom: int):
 
 
 async def fetch_with_retry(session: aiohttp.ClientSession, url: str,
-                           retries: int = MAX_RETRIES) -> bytes | None:
-    """GET *url* with exponential-backoff retry.  Returns bytes or None."""
+                           retries: int = MAX_RETRIES,
+                           timeout_s: int = 1200) -> bytes | None:
+    """GET *url* with exponential-backoff retry.  Returns bytes or None.
+
+    Default timeout is 1200s (20 minutes) per USGS M2M guidance for
+    large GeoTIFF downloads.
+    """
     for attempt in range(retries):
         try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout_s)) as resp:
                 if resp.status == 200:
                     return await resp.read()
                 if resp.status in (429, 500, 502, 503, 504):
@@ -650,42 +655,27 @@ async def _m2m_request_and_poll_urls(
     session: aiohttp.ClientSession, api_key: str,
     downloads: list[dict], batch_label: str,
 ) -> list[str]:
-    """Request downloads for a batch and poll until URLs are ready."""
+    """Request downloads for a batch and poll until URLs are ready.
+
+    Per USGS guidance:
+    - Only use URLs marked "available" or "proxied", never "preparing"
+    - Poll download-retrieve until items move from requested → available
+    """
     api_batch = [{"entityId": d["entityId"], "productId": d["productId"]}
                  for d in downloads]
-    resp = await m2m_request(session, "download-request", {
+    await m2m_request(session, "download-request", {
         "downloads": api_batch,
         "label": batch_label,
     }, api_key=api_key)
 
-    # download-request returns preparingDownloads with URLs we can use directly
-    req_data = resp.get("data", {})
-    preparing = req_data.get("preparingDownloads", [])
-    available_now = req_data.get("availableDownloads", [])
+    # Brief delay to let USGS begin staging
+    await asyncio.sleep(5)
 
-    # Collect URLs from the request response itself (faster than polling)
+    # Poll download-retrieve for available URLs
     urls = []
     seen: set[str] = set()
-    for item in (preparing if isinstance(preparing, list) else []):
-        url = item.get("url")
-        if url and url not in seen:
-            urls.append(url)
-            seen.add(url)
-    for item in (available_now if isinstance(available_now, list) else []):
-        url = item.get("url")
-        if url and url not in seen:
-            urls.append(url)
-            seen.add(url)
+    empty_count = 0
 
-    if urls:
-        log.info("  Got %d URLs directly from download-request", len(urls))
-        return urls
-
-    # Fallback: poll download-retrieve if request didn't return URLs
-    # Brief delay to let USGS stage the downloads
-    await asyncio.sleep(3)
-
-    expected_count = len(downloads)
     for attempt in range(M2M_POLL_MAX_ATTEMPTS):
         resp = await m2m_request(session, "download-retrieve", {
             "label": batch_label,
@@ -693,34 +683,37 @@ async def _m2m_request_and_poll_urls(
         data = resp.get("data", {})
         available = data.get("available", [])
         requested = data.get("requested", [])
-        queue_size = data.get("queueSize", 0)
 
         for item in available:
+            # Only use "available" or "proxied" status per USGS guidance
+            status = (item.get("statusCode", "") or "").upper()
+            if status not in ("A", "P", ""):
+                continue
             url = item.get("url")
             if url and url not in seen:
                 urls.append(url)
                 seen.add(url)
 
-        # Done when: we have URLs and nothing is still queued
+        # Done: we have URLs and nothing is still queued
         if urls and not requested:
             break
 
-        # If both empty but we haven't found anything yet, keep trying
-        # (USGS may still be staging the downloads)
-        if not available and not requested and not urls:
-            if attempt < 5:
+        # If both empty, USGS may still be staging — retry a few times
+        if not available and not requested:
+            empty_count += 1
+            if empty_count <= 6:
                 log.info("  Waiting for USGS to stage downloads (attempt %d)...",
-                         attempt + 1)
+                         empty_count)
                 await asyncio.sleep(M2M_POLL_INTERVAL)
                 continue
             else:
-                log.warning("  No downloads surfaced after %d attempts", attempt + 1)
+                log.warning("  No downloads surfaced after %d empty polls", empty_count)
                 break
 
-        if requested:
-            log.info("  %d available, %d still queued – waiting %ds",
-                     len(available), len(requested), M2M_POLL_INTERVAL)
-            await asyncio.sleep(M2M_POLL_INTERVAL)
+        empty_count = 0  # reset on any non-empty response
+        log.info("  %d available, %d still queued – waiting %ds",
+                 len(urls), len(requested), M2M_POLL_INTERVAL)
+        await asyncio.sleep(M2M_POLL_INTERVAL)
     else:
         log.warning("Timed out waiting for downloads (label: %s). "
                     "Got %d URLs so far.", batch_label, len(urls))
