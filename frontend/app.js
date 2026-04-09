@@ -1355,6 +1355,11 @@
     if (wp.marker) wp.marker.remove();
     wp.marker = new maplibregl.Marker({ color: '#f9e2af' })
       .setLngLat(wp.coords).addTo(map);
+    var wpName = wp.name || (wp.coords[1].toFixed(5) + ', ' + wp.coords[0].toFixed(5));
+    wp.marker.getElement().addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      showMapClickPopup(wp.coords[0], wp.coords[1], wpName, null);
+    });
   }
 
   // ── Map click → reverse geocode popup ────────────────────────────────
@@ -1545,14 +1550,26 @@
 
   function placeRouteMarker(which, lngLat) {
     var color = which === 'start' ? '#a6e3a1' : '#f38ba8';
+    var label = which === 'start'
+      ? document.getElementById('route-start').value
+      : document.getElementById('route-end').value;
+    var markerName = label || (lngLat[1].toFixed(5) + ', ' + lngLat[0].toFixed(5));
     if (which === 'start') {
       if (routeStartMarker) routeStartMarker.remove();
       routeStartMarker = new maplibregl.Marker({ color: color })
         .setLngLat(lngLat).addTo(map);
+      routeStartMarker.getElement().addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        showMapClickPopup(lngLat[0], lngLat[1], markerName, null);
+      });
     } else {
       if (routeEndMarker) routeEndMarker.remove();
       routeEndMarker = new maplibregl.Marker({ color: color })
         .setLngLat(lngLat).addTo(map);
+      routeEndMarker.getElement().addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        showMapClickPopup(lngLat[0], lngLat[1], markerName, null);
+      });
     }
   }
 
@@ -1594,8 +1611,21 @@
     });
     locations.push({ lat: routeEndCoords[1], lon: routeEndCoords[0] });
 
+    // Deduplicate adjacent identical locations (Valhalla errors on these)
+    var dedupedLocations = [locations[0]];
+    for (var li = 1; li < locations.length; li++) {
+      var prev = dedupedLocations[dedupedLocations.length - 1];
+      if (locations[li].lat !== prev.lat || locations[li].lon !== prev.lon) {
+        dedupedLocations.push(locations[li]);
+      }
+    }
+    if (dedupedLocations.length < 2) {
+      showImportStatus('Start and end locations are the same.', 'warning');
+      return;
+    }
+
     var body = {
-      locations: locations,
+      locations: dedupedLocations,
       costing: costing,
       costing_options: costingOptions,
       directions_options: { units: useImperial ? 'miles' : 'kilometers' }
