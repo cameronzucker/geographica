@@ -265,6 +265,47 @@ html, body {
   display: flex;
 }
 
+#public-lands-opacity-row {
+  display: none;
+}
+
+#public-lands-opacity-row.visible {
+  display: flex;
+}
+
+.public-lands-legend {
+  display: none;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  padding: 8px 0 4px 24px;
+  font-size: 12px;
+}
+
+.public-lands-legend.visible {
+  display: grid;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text, #cdd6f4);
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.legend-footnotes {
+  grid-column: 1 / -1;
+  color: var(--subtext0, #a6adc8);
+  padding-top: 4px;
+}
+
 /* ----- Route Panel ----- */
 .route-field {
   margin-bottom: 10px;
