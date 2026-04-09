@@ -144,9 +144,58 @@ The B1 bug fix already changed the condition to `if state_data.get("bbox") and s
 if state_data.get("bbox") and state_data.get("zoom") and state_data.get("zoom") != "n/a":
 ```
 
-### Handle M2M zoom in `pipeline_start()`
+### Handle M2M in `pipeline_start()`
 
-Currently `pipeline_start()` requires `mode`, `bbox`, and `zoom` for imagery/elevation types. For M2M imagery, zoom is irrelevant (the script determines zoom from GeoTIFF resolution). The validation block for `body.type in ("imagery", "elevation")` should be split: when `body.mode == "m2m"`, skip zoom validation and set `zoom = "n/a"` in the state file. `bbox` is still required for M2M (it defines the scene search area).
+Currently `pipeline_start()` requires `mode`, `bbox`, and `zoom` for imagery/elevation types. For M2M imagery, zoom is irrelevant (the script determines zoom from GeoTIFF resolution). The validation block needs an M2M branch:
+
+**Validation logic for imagery type:**
+```
+if body.type == "imagery" and body.mode == "m2m":
+    # M2M: bbox required, zoom NOT required
+    if not body.bbox:
+        raise HTTPException(422, "bbox is required")
+    # Skip zoom validation — script auto-detects from GeoTIFF resolution
+    zoom = "n/a"
+elif body.type in ("imagery", "elevation"):
+    # Direct/elevation: bbox AND zoom required
+    if not body.mode or body.mode not in ("direct", "m2m"):
+        raise HTTPException(422, "mode must be 'direct' or 'm2m'")
+    if not body.bbox:
+        raise HTTPException(422, "bbox is required")
+    if not body.zoom:
+        raise HTTPException(422, "zoom is required")
+    # ... existing zoom/bbox parse ...
+```
+
+**M2M command construction** (different from direct mode):
+```python
+if body.type == "imagery" and body.mode == "m2m":
+    command = [
+        "python3", "/scripts/acquire_imagery.py",
+        "--mode", "m2m",
+        f"--bbox={body.bbox}",
+        "--output", "/data/imagery.mbtiles",
+        "--staging", "/data/m2m_staging",
+        "--concurrency", str(body.concurrency),
+    ]
+    # M2M credentials passed via env vars (already handled by existing env block)
+    # --zoom is intentionally omitted — script auto-detects from source
+```
+
+Note: `--staging /data/m2m_staging` provides the GeoTIFF download directory. This is separate from the final MBTiles output.
+
+**State file for M2M:**
+```python
+state_data = {
+    "status": "running",
+    "type": body.type,
+    "mode": body.mode,
+    "phase": "login",  # M2M starts at login phase
+    "bbox": body.bbox,
+    "zoom": "n/a",
+    # ... other fields ...
+}
+```
 
 ### Fix reconciliation for completed-but-exited containers
 
@@ -204,9 +253,9 @@ When there is no state file at all (fresh install, or state was cleared):
 
 The `renderPipelineBanner()` function (already updated to accept all three pipeline types' data) adapts for M2M:
 
-- During `downloading` phase: "M2M imagery: 50/1022 GeoTIFFs (batch 2/21)"
-- During `converting` phase: "M2M imagery: Converting to tiles..."
-- During `login`/`searching`: "M2M imagery: Initializing..."
+- During `downloading` phase: Title "M2M imagery: 50/1022 GeoTIFFs (batch 2/21)". Progress bar: `geotiffs_downloaded / geotiffs_total * 100` (guard: if `geotiffs_total === 0`, show 0%).
+- During `converting` phase: "M2M imagery: Converting to tiles..." with indeterminate progress bar.
+- During `login`/`searching`: "M2M imagery: Initializing..." with no progress bar.
 
 ### Zoom Selector Interaction with M2M
 
@@ -214,14 +263,23 @@ When source select changes to `m2m`:
 - Disable the zoom `<select>` element (add `disabled` attribute)
 - Show note below: "M2M mode auto-detects zoom from source imagery (~z17-z19 for NAIP)"
 - The zoom value is NOT sent in the pipeline start request for M2M
+- **Hide the tile/size/time estimate** (`#cfg-estimate`), or replace its text with: "M2M: download size depends on source imagery coverage"
 
 When source changes back to `direct`:
 - Re-enable the zoom selector
 - Clear the note
+- Re-show the tile/size/time estimate and call `updateEstimate()`
 
 ### Concurrency Options (no change)
 
 M2M concurrency options stay as-is: 3 (default), 5 (max). Direct mode: 10, 20 (default), 50, 80.
+
+### Edge Case Guards
+
+- **Division by zero:** When `geotiffs_total` is 0, display 0% progress (guard `geotiffs_total > 0` before division).
+- **Missing `completed_at`:** On terminal states without `completed_at`, show status without time-ago (e.g., "Completed" instead of "Completed 2h ago").
+- **Partial batch completion:** The `download_geotiffs` callback counts only successfully downloaded files. If 48/50 in a batch succeed and 2 get HTTP errors, `geotiffs_downloaded` shows 48, not 50. The errors are logged but don't stop the batch.
+- **Legacy state files:** State files without `mode` or `phase` fields render using the existing direct-mode logic (backward compatible).
 
 ### Concurrent Pipeline Prevention (no change)
 
