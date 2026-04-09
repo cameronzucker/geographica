@@ -367,10 +367,9 @@ def download_aiannh(cache_dir, bbox):
 
     # Clip to bbox and convert to GeoJSON
     parts = bbox.split(",")
-    with tempfile.NamedTemporaryFile(suffix=".geojson", delete=False) as tmp:
-        tmp_path = tmp.name
+    with tempfile.TemporaryDirectory() as aiannh_tmp:
+        tmp_path = os.path.join(aiannh_tmp, "aiannh_clipped.geojson")
 
-    try:
         result = subprocess.run([
             "ogr2ogr",
             "-spat", parts[0].strip(), parts[1].strip(),
@@ -405,10 +404,6 @@ def download_aiannh(cache_dir, bbox):
 
         log.info("AIANNH tribal boundaries: %d features in bbox", len(features))
         return features
-
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
 
 
 def run_pipeline(args):
