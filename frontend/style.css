@@ -507,6 +507,13 @@ html, body {
   color: var(--warning);
 }
 
+#import-status.import-progress {
+  background: linear-gradient(to right, rgba(137, 180, 250, 0.25), rgba(137, 180, 250, 0.25)) no-repeat;
+  background-size: 0% 100%;
+  color: var(--accent);
+  transition: background-size 0.2s ease;
+}
+
 /* ----- GPS Badge ----- */
 #gps-badge {
   position: absolute;

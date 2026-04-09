@@ -102,6 +102,7 @@
 
   var importedFiles = {};       // { fileId: { name, geojson, visible, folders: { name: visible }, features: { id: visible } } }
   var importCounter = 0;        // unique ID counter for imported files
+  var importInProgress = false;  // concurrency guard — reject new imports while processing
 
   var gpsMarker  = null;       // MapLibre marker for GPS position
   var gpsWs      = null;       // WebSocket connection
@@ -1904,101 +1905,268 @@
   }
 
   /**
-   * Parse KML document: extract folder structure, convert to GeoJSON,
-   * tag features with folder names and unique IDs, register as a managed import.
+   * Yield to the main thread to keep browser responsive during long operations.
    */
-  function processKMLDoc(kmlDoc, filename) {
+  function yieldToMain() {
+    return new Promise(function (resolve) { setTimeout(resolve, 0); });
+  }
+
+  /**
+   * Show import progress in the status element.
+   * @param {string} text - status message
+   * @param {number} [current] - current progress count
+   * @param {number} [total] - total count
+   */
+  function showImportProgress(text, current, total) {
+    var el = document.getElementById('import-status');
+    el.classList.remove('hidden');
+    if (current !== undefined && total) {
+      var pct = Math.round((current / total) * 100);
+      el.textContent = text + ' ' + current.toLocaleString() + ' / ' + total.toLocaleString();
+      el.style.backgroundSize = pct + '% 100%';
+      el.className = 'import-progress';
+    } else {
+      el.textContent = text;
+      el.style.backgroundSize = '0% 100%';
+      el.className = 'import-progress';
+    }
+  }
+
+  /**
+   * Async KML processing pipeline with chunked batching and icon loading.
+   * Stages: 1) validate DOM, 2) style tables, 3) load icons, 4) toGeoJSON,
+   * 5) batch features with yield, 6) finalize (single setData).
+   *
+   * @param {Document} kmlDoc - pre-parsed KML DOM
+   * @param {string} filename - display name
+   * @param {Object|null} zipArchive - JSZip object (null for plain KML)
+   * @returns {Promise<void>}
+   */
+  function processKMLDoc(kmlDoc, filename, zipArchive) {
     if (typeof toGeoJSON === 'undefined') {
       showImportStatus('toGeoJSON library not loaded.', 'error');
-      return;
+      return Promise.resolve();
+    }
+    if (importInProgress) {
+      showImportStatus('Import already in progress. Please wait.', 'warning');
+      return Promise.resolve();
     }
 
-    // Build a lookup: placemark name → folder name by walking the KML DOM
-    var folderMap = {};
-    var folders = kmlDoc.getElementsByTagName('Folder');
-    for (var i = 0; i < folders.length; i++) {
-      var folderNameEl = folders[i].childNodes;
-      var folderName = 'Ungrouped';
-      for (var j = 0; j < folderNameEl.length; j++) {
-        if (folderNameEl[j].nodeName === 'name' && folderNameEl[j].textContent) {
-          folderName = folderNameEl[j].textContent;
-          break;
-        }
+    var fileId = 'import_' + (++importCounter);
+    importInProgress = true;
+    var kmzImport = window._kmzImport;
+    var batchSize = (kmzImport && kmzImport.BATCH_SIZE) || 500;
+
+    return (function () {
+      // ── Stage 1: Validate DOM ──
+      showImportProgress('Validating...');
+      var parseError = kmlDoc.getElementsByTagName('parsererror');
+      if (parseError.length > 0) {
+        showImportStatus('Invalid KML: parse error in ' + filename, 'error');
+        importInProgress = false;
+        return Promise.resolve();
       }
-      // Direct child placemarks of this folder
-      var pms = folders[i].childNodes;
-      for (var k = 0; k < pms.length; k++) {
-        if (pms[k].nodeName === 'Placemark') {
-          var pmName = '';
-          for (var m = 0; m < pms[k].childNodes.length; m++) {
-            if (pms[k].childNodes[m].nodeName === 'name') {
-              pmName = pms[k].childNodes[m].textContent || '';
-              break;
+      var placemarks = kmlDoc.getElementsByTagName('Placemark');
+      if (placemarks.length === 0) {
+        showImportStatus('No features found in ' + filename, 'warning');
+        importInProgress = false;
+        return Promise.resolve();
+      }
+
+      // ── Stage 2: Style Resolution Tables ──
+      var tables = null;
+      if (kmzImport && kmzImport.buildStyleTables) {
+        showImportProgress('Building style tables...');
+        tables = kmzImport.buildStyleTables(kmlDoc);
+      }
+
+      // ── Stage 3: Icon Loading ──
+      var iconPromise;
+      if (tables && kmzImport && kmzImport.loadAllIcons) {
+        showImportProgress('Loading icons...', 0, 1);
+        iconPromise = kmzImport.loadAllIcons(tables, zipArchive, map, function (loaded, total) {
+          showImportProgress('Loading icons...', loaded, total);
+        });
+      } else {
+        iconPromise = Promise.resolve({ loaded: 0, failed: 0, total: 0 });
+      }
+
+      return iconPromise.then(function (iconResult) {
+        return yieldToMain().then(function () {
+
+          // ── Stage 4: GeoJSON Conversion ──
+          showImportProgress('Converting to GeoJSON...');
+          var geojson = toGeoJSON.kml(kmlDoc);
+          if (!geojson.features || geojson.features.length === 0) {
+            showImportStatus('No features found in ' + filename, 'warning');
+            importInProgress = false;
+            return;
+          }
+
+          // Build folder map from KML DOM (same approach as before)
+          var folderMap = {};
+          var folders = kmlDoc.getElementsByTagName('Folder');
+          for (var i = 0; i < folders.length; i++) {
+            var folderNameEl = folders[i].childNodes;
+            var folderName = 'Ungrouped';
+            for (var j = 0; j < folderNameEl.length; j++) {
+              if (folderNameEl[j].nodeName === 'name' && folderNameEl[j].textContent) {
+                folderName = folderNameEl[j].textContent;
+                break;
+              }
+            }
+            var pms = folders[i].childNodes;
+            for (var k = 0; k < pms.length; k++) {
+              if (pms[k].nodeName === 'Placemark') {
+                var pmName = '';
+                for (var m = 0; m < pms[k].childNodes.length; m++) {
+                  if (pms[k].childNodes[m].nodeName === 'name') {
+                    pmName = pms[k].childNodes[m].textContent || '';
+                    break;
+                  }
+                }
+                folderMap['pm_' + Object.keys(folderMap).length] = { folder: folderName, name: pmName };
+              }
             }
           }
-          // Use placemark index as fallback key
-          folderMap['pm_' + Object.keys(folderMap).length] = { folder: folderName, name: pmName };
-        }
-      }
-    }
 
-    var geojson = toGeoJSON.kml(kmlDoc);
-    if (!geojson.features || geojson.features.length === 0) {
-      showImportStatus('No features found in ' + filename, 'warning');
-      return;
-    }
+          var totalFeatures = geojson.features.length;
+          var folderEntries = Object.values(folderMap);
+          var folderSet = {};
 
-    // Assign unique IDs and folder names to features
-    var fileId = 'import_' + (++importCounter);
-    var folderEntries = Object.values(folderMap);
-    var folderSet = {};
+          // Register the import entry early (so Remove button can abort)
+          importedFiles[fileId] = {
+            name: filename,
+            geojson: { type: 'FeatureCollection', features: [] },
+            visible: true,
+            folders: {},
+            features: {}
+          };
 
-    geojson.features.forEach(function (f, idx) {
-      f.properties = f.properties || {};
-      f.properties._importFileId = fileId;
-      f.properties._importFeatureId = fileId + '_f' + idx;
-      // Match to folder by index (toGeoJSON preserves order)
-      if (folderEntries[idx]) {
-        f.properties._folder = folderEntries[idx].folder;
-      } else {
-        f.properties._folder = 'Ungrouped';
-      }
-      folderSet[f.properties._folder] = true;
+          // ── Stage 5: Batch feature processing with yield ──
+          var processed = 0;
+          var processedFeatures = [];
+
+          function processBatch() {
+            // Check if user removed the file mid-import
+            if (!importedFiles[fileId]) {
+              showImportStatus('Import cancelled.', 'warning');
+              importInProgress = false;
+              return Promise.resolve();
+            }
+
+            var end = Math.min(processed + batchSize, totalFeatures);
+            for (var idx = processed; idx < end; idx++) {
+              var f = geojson.features[idx];
+              f.properties = f.properties || {};
+              f.properties._importFileId = fileId;
+              f.properties._importFeatureId = fileId + '_f' + idx;
+
+              // Folder assignment
+              if (folderEntries[idx]) {
+                f.properties._folder = folderEntries[idx].folder;
+              } else {
+                f.properties._folder = 'Ungrouped';
+              }
+              folderSet[f.properties._folder] = true;
+
+              // Icon resolution
+              if (tables && kmzImport && kmzImport.resolveFeatureIcon) {
+                var resolved = kmzImport.resolveFeatureIcon(f.properties, tables);
+                f.properties._iconUrl = resolved.iconUrl;
+                f.properties._iconScale = resolved.scale;
+                if (resolved.iconUrl && kmzImport.deriveIconId) {
+                  var iconId = kmzImport.deriveIconId(resolved.iconUrl);
+                  // Check if this icon was actually loaded/cached
+                  var cache = kmzImport.getIconCache();
+                  var cacheEntry = cache.get(resolved.iconUrl);
+                  if (cacheEntry) {
+                    f.properties._iconId = cacheEntry.iconId;
+                    kmzImport.incrementIconRef(cacheEntry.iconId);
+                  } else {
+                    f.properties._iconId = 'kmz-icon-default';
+                  }
+                } else {
+                  f.properties._iconId = 'kmz-icon-default';
+                }
+              } else {
+                f.properties._iconId = 'kmz-icon-default';
+                f.properties._iconScale = 1;
+              }
+
+              processedFeatures.push(f);
+            }
+
+            processed = end;
+            showImportProgress('Processing features...', processed, totalFeatures);
+
+            if (processed < totalFeatures) {
+              return yieldToMain().then(processBatch);
+            }
+            return Promise.resolve();
+          }
+
+          return yieldToMain().then(processBatch).then(function () {
+            // Check abort
+            if (!importedFiles[fileId]) {
+              importInProgress = false;
+              return;
+            }
+
+            // ── Stage 6: Finalization ──
+            showImportProgress('Finalizing...');
+
+            var featureVisibility = {};
+            processedFeatures.forEach(function (f) {
+              featureVisibility[f.properties._importFeatureId] = true;
+            });
+
+            var folderVisibility = {};
+            Object.keys(folderSet).forEach(function (fn) { folderVisibility[fn] = true; });
+
+            importedFiles[fileId].geojson = { type: 'FeatureCollection', features: processedFeatures };
+            importedFiles[fileId].folders = folderVisibility;
+            importedFiles[fileId].features = featureVisibility;
+
+            // Single setData call (NOT during batching — avoids O(n^2))
+            updateImportedMapData();
+            buildImportLayerUI();
+
+            // Fit map to imported data
+            var bounds = new maplibregl.LngLatBounds();
+            processedFeatures.forEach(function (f) {
+              if (!f.geometry || !f.geometry.coordinates) return;
+              addCoordsToBounds(bounds, f.geometry.coordinates, f.geometry.type);
+            });
+            if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60 });
+
+            // Status message
+            var iconMsg = '';
+            if (iconResult && iconResult.total > 0) {
+              if (iconResult.failed > 0) {
+                iconMsg = ' (' + (iconResult.total - iconResult.failed) + '/' + iconResult.total + ' icons loaded, ' + iconResult.failed + ' using fallbacks)';
+              } else {
+                iconMsg = ' (' + iconResult.total + ' icons loaded)';
+              }
+            }
+            showImportStatus(
+              'Imported ' + processedFeatures.length.toLocaleString() + ' feature(s) from ' + filename + iconMsg,
+              iconResult && iconResult.failed > 0 ? 'warning' : 'success'
+            );
+
+            // Release references for GC
+            kmlDoc = null;
+            geojson = null;
+            processedFeatures = null;
+            importInProgress = false;
+          });
+        });
+      });
+    })().catch(function (err) {
+      console.error('Import pipeline error:', err);
+      showImportStatus('Import failed: ' + (err.message || err), 'error');
+      importInProgress = false;
     });
-
-    // Register the import
-    var featureVisibility = {};
-    geojson.features.forEach(function (f) {
-      featureVisibility[f.properties._importFeatureId] = true;
-    });
-
-    var folderVisibility = {};
-    Object.keys(folderSet).forEach(function (fn) { folderVisibility[fn] = true; });
-
-    importedFiles[fileId] = {
-      name: filename,
-      geojson: geojson,
-      visible: true,
-      folders: folderVisibility,
-      features: featureVisibility
-    };
-
-    // Update map and UI
-    updateImportedMapData();
-    buildImportLayerUI();
-
-    // Fit map to imported data
-    var bounds = new maplibregl.LngLatBounds();
-    geojson.features.forEach(function (f) {
-      if (!f.geometry || !f.geometry.coordinates) return;
-      addCoordsToBounds(bounds, f.geometry.coordinates, f.geometry.type);
-    });
-    if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 60 });
-
-    showImportStatus(
-      'Imported ' + geojson.features.length + ' feature(s) from ' + filename,
-      'success'
-    );
   }
 
   /**
