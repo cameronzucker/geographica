@@ -143,9 +143,16 @@
     map.on('style.load', function () {
       addPlaceholderSources();
       syncLayerVisibility();
-      // Re-disable dragRotate after style swap — MapLibre resets it to default (enabled)
-      // See Implementation Pitfall #11: must use .disable() after init, not constructor options
+      // Re-disable and re-remove dragRotate handlers after style swap
+      // MapLibre resets handler state on style change — see Pitfall #11
       map.dragRotate.disable();
+      if (map._handlers && map._handlers._handlersById) {
+        delete map._handlers._handlersById['mouseRotate'];
+        delete map._handlers._handlersById['mousePitch'];
+        map._handlers._handlers = map._handlers._handlers.filter(function (h) {
+          return h.handlerName !== 'mouseRotate' && h.handlerName !== 'mousePitch';
+        });
+      }
     });
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
@@ -3683,8 +3690,18 @@
 
     var canvas = map.getCanvas();
 
-    // Disable MapLibre's built-in Ctrl+drag rotation so we can override it
+    // Disable AND remove MapLibre's built-in CTRL+drag rotation handlers.
+    // dragRotate.disable() alone is insufficient in MapLibre v5.21 — the internal
+    // handler pipeline still processes CTRL+mousedown. We must remove the handlers
+    // from the HandlerManager entirely. See Pitfall #11.
     map.dragRotate.disable();
+    if (map._handlers && map._handlers._handlersById) {
+      delete map._handlers._handlersById['mouseRotate'];
+      delete map._handlers._handlersById['mousePitch'];
+      map._handlers._handlers = map._handlers._handlers.filter(function (h) {
+        return h.handlerName !== 'mouseRotate' && h.handlerName !== 'mousePitch';
+      });
+    }
 
     // Right-click drag: temporarily re-enable MapLibre's orbit behavior
     map.on('mousedown', function (e) {
