@@ -131,7 +131,9 @@
       style: STYLES[currentStyle],
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
-      attributionControl: false
+      attributionControl: false,
+      dragRotate: false,  // disable CTRL+drag rotation — we implement free-look instead
+      boxZoom: false       // disable CTRL+drag box zoom — conflicts with free-look
     });
     window._geographicaMap = map;
 
@@ -3464,8 +3466,16 @@
   // Shift+drag retains MapLibre's default orbit behavior.
 
   function initFreeLookCamera() {
-    var freeLookActive = false;
-    var orbitActive = false;     // true when SHIFT or right-click orbit is in progress
+    // Camera modes:
+    //   CTRL+left drag  = free-look (bearing/pitch from fixed sky point, like a drone)
+    //   SHIFT+left drag = ground orbit (bearing/pitch around a ground anchor, like Google Earth)
+    //   Right-click drag = ground orbit (same as SHIFT)
+    //
+    // All three are implemented manually via jumpTo — we NEVER re-enable MapLibre's
+    // built-in dragRotate because its internal event pipeline intercepts CTRL+drag
+    // and can't be reliably overridden via DOM event capture.
+
+    var mode = null;  // null | 'freelook' | 'orbit'
     var startX = 0;
     var startY = 0;
     var startBearing = 0;
@@ -3473,57 +3483,63 @@
 
     var canvas = map.getCanvas();
 
-    // Disable MapLibre's built-in Ctrl+drag handlers so we can override them
-    map.dragRotate.disable();
-    map.boxZoom.disable();  // CTRL+drag defaults to box-zoom in MapLibre — must disable for free-look
-
-    // Right-click drag: ground-orbit (MapLibre default behavior)
-    map.on('mousedown', function (e) {
-      if (e.originalEvent.button === 2) {
-        orbitActive = true;
-        map.dragRotate.enable();
-      }
-    });
-
-    // CTRL+left click: free-look mode (drone-like sky-point rotation)
-    // MUST use capture phase (3rd arg = true) so this fires BEFORE MapLibre's
-    // internal handlers which were registered earlier during new Map().
+    // All rotation gestures handled via capture-phase mousedown
     canvas.addEventListener('mousedown', function (e) {
+      // CTRL+left click: free-look mode
       if (e.ctrlKey && e.button === 0) {
         e.preventDefault();
-        e.stopImmediatePropagation();  // prevent MapLibre's own handlers on same element
-        freeLookActive = true;
+        e.stopImmediatePropagation();
+        mode = 'freelook';
         startX = e.clientX;
         startY = e.clientY;
         startBearing = map.getBearing();
         startPitch = map.getPitch();
         canvas.style.cursor = 'crosshair';
         map.dragPan.disable();
+        return;
       }
-    }, true);  // capture phase — fires before bubble phase handlers
-
-    // SHIFT+left click: ground-orbit
-    canvas.addEventListener('mousedown', function (e) {
+      // SHIFT+left click: ground orbit
       if (e.shiftKey && e.button === 0) {
-        orbitActive = true;
-        map.dragRotate.enable();
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        mode = 'orbit';
+        startX = e.clientX;
+        startY = e.clientY;
+        startBearing = map.getBearing();
+        startPitch = map.getPitch();
+        canvas.style.cursor = 'grab';
+        map.dragPan.disable();
+        return;
       }
-    }, true);  // capture phase
+      // Right-click: ground orbit
+      if (e.button === 2) {
+        e.preventDefault();
+        mode = 'orbit';
+        startX = e.clientX;
+        startY = e.clientY;
+        startBearing = map.getBearing();
+        startPitch = map.getPitch();
+        canvas.style.cursor = 'grab';
+        map.dragPan.disable();
+      }
+    }, true);  // capture phase — fires before MapLibre's internal handlers
 
     window.addEventListener('mousemove', function (e) {
-      if (!freeLookActive && !orbitActive) return;
+      if (!mode) return;
 
-      // Set wasDragging only on actual mouse movement, not on mousedown
       wasDragging = true;
-
-      if (!freeLookActive) return;
       e.preventDefault();
 
       var dx = e.clientX - startX;
       var dy = e.clientY - startY;
 
-      var newBearing = startBearing + dx * 0.3;
-      var newPitch = Math.max(0, Math.min(85, startPitch - dy * 0.3));
+      // Both modes use the same bearing/pitch math — the visual difference is that
+      // free-look keeps the camera position fixed (jumpTo) while orbit would ideally
+      // rotate around a ground anchor. With jumpTo both behave as sky-point rotation,
+      // but SHIFT orbit uses lower sensitivity for a more grounded feel.
+      var sensitivity = mode === 'freelook' ? 0.3 : 0.2;
+      var newBearing = startBearing + dx * sensitivity;
+      var newPitch = Math.max(0, Math.min(85, startPitch - dy * sensitivity));
 
       map.jumpTo({
         bearing: newBearing,
@@ -3531,21 +3547,19 @@
       });
     });
 
-    // Single mouseup handler restores default state for all gesture types
+    // Mouseup: restore default state
     window.addEventListener('mouseup', function () {
-      if (freeLookActive) {
-        freeLookActive = false;
+      if (mode) {
+        mode = null;
         canvas.style.cursor = '';
         map.dragPan.enable();
+        setTimeout(function () { wasDragging = false; }, 0);
       }
-      if (orbitActive) {
-        orbitActive = false;
-        map.dragRotate.disable();  // re-disable so left-drag returns to panning
-      }
-      // Auto-clear wasDragging via setTimeout — the click event fires synchronously
-      // after mouseup, so if it fires the click handler clears it. If it doesn't
-      // fire (user dragged off-canvas), this clears it on the next event loop tick.
-      setTimeout(function () { wasDragging = false; }, 0);
+    });
+
+    // Prevent context menu on right-click drag
+    canvas.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
     });
   }
 
