@@ -434,7 +434,7 @@
             '#a9a9a9'],
           'fill-opacity': 0.3
         }
-      }, 'imported-points');
+      }, 'route-line');
     }
     // Outline layer (add SECOND — renders on top of fill)
     if (!map.getLayer('public-lands-outline')) {
@@ -453,7 +453,7 @@
           'line-width': 1,
           'line-opacity': 0.6
         }
-      }, 'imported-points');
+      }, 'route-line');
     }
 
     // --- Click handlers for imported features ---
