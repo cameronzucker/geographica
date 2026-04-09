@@ -1449,7 +1449,14 @@
       return b.extend(coord);
     }, new maplibregl.LngLatBounds(allCoords[0], allCoords[0]));
 
-    map.fitBounds(bounds, { padding: 60 });
+    var isMobileRoute = window.innerWidth < 768;
+    var sidebarWRoute = parseInt(getComputedStyle(document.documentElement)
+      .getPropertyValue('--sidebar-width')) || 320;
+    map.fitBounds(bounds, {
+      padding: isMobileRoute
+        ? { top: 40, bottom: 100, left: 20, right: 20 }
+        : { top: 60, bottom: 60, left: sidebarWRoute + 20, right: 60 }
+    });
 
     // Show route summary
     var summary = trip.summary || {};
