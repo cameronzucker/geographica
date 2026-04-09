@@ -914,10 +914,16 @@ def _script_for_type(pipeline_type: str) -> str:
 
 
 def _is_pipeline_container_running(client) -> bool:
-    """Check if the pipeline container is currently running."""
+    """Check if any pipeline container is currently running.
+
+    Matches both admin-started containers (geographica-pipeline) and
+    CLI-started ones (geographica-pipeline-run-*).
+    """
     try:
-        container = client.containers.get("geographica-pipeline")
-        return container.status == "running"
+        containers = client.containers.list(
+            all=False, filters={"name": "geographica-pipeline"}
+        )
+        return any(c.status == "running" for c in containers)
     except Exception:
         return False
 
@@ -1219,6 +1225,11 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
 
     # Add live fields
     state_data["container_running"] = container_running
+
+    # Fix stale status: if state says interrupted/completed but a container is running,
+    # the state file is stale from a previous reconciliation — correct it
+    if container_running and state_data.get("status") in ("interrupted", "completed", "cancelled"):
+        state_data["status"] = "running"
 
     # Calculate estimated tiles if bbox/zoom available (skip for osm_poi/M2M)
     if (state_data.get("bbox") and state_data.get("zoom")
