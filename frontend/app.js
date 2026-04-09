@@ -108,6 +108,8 @@
   var importInProgress = false;  // concurrency guard — reject new imports while processing
   var wasDragging = false;       // set by camera mousemove, checked by click handler
   var lastSearchResults = [];    // populated in renderSearchResults for pin click handler
+  var routeRegenTimer = null;    // debounce timer for auto-regeneration
+  var geocodeSeq = 0;            // sequence counter for geocode race prevention
 
   var gpsMarker  = null;       // MapLibre marker for GPS position
   var gpsWs      = null;       // WebSocket connection
@@ -1113,6 +1115,7 @@
       input.value = 'GPS: ' + label;
       wpData.name = input.value;
       placeWaypointMarker(idx);
+      scheduleRouteRegen();
     });
 
     var removeBtn = document.createElement('button');
@@ -1138,6 +1141,7 @@
     }
     routeWaypoints.splice(idx, 1);
     rebuildWaypointUI();
+    scheduleRouteRegen();
   }
 
   function rebuildWaypointUI() {
@@ -1274,6 +1278,17 @@
   }
 
   /**
+   * Debounced route regeneration — 300ms delay prevents rapid re-routing.
+   * Only triggers if a route already exists and both endpoints are set.
+   */
+  function scheduleRouteRegen() {
+    if (!lastRouteTrip) return;
+    if (!routeStartCoords || !routeEndCoords) return;
+    clearTimeout(routeRegenTimer);
+    routeRegenTimer = setTimeout(requestRoute, 300);
+  }
+
+  /**
    * Geocode a text query and store coordinates for routing.
    * @param {string} query - search text
    * @param {'start'|'end'|'waypoint'} which - which endpoint
@@ -1281,10 +1296,12 @@
    */
   function geocodeForRoute(query, which, wpIdx) {
     if (!query.trim()) return;
+    var seq = ++geocodeSeq;  // capture sequence number to detect stale responses
     var url = '/search/search?q=' + encodeURIComponent(query) + '&limit=1';
     fetch(url)
       .then(function (res) { return res.json(); })
       .then(function (data) {
+        if (seq !== geocodeSeq) return;  // stale response, discard
         var results = data.results || data;
         if (!results || results.length === 0) {
           alert('Location not found: ' + query);
@@ -1300,10 +1317,12 @@
           routeStartCoords = [lng, lat];
           placeRouteMarker('start', [lng, lat]);
           document.getElementById('route-start').value = displayName;
+          scheduleRouteRegen();
         } else if (which === 'end') {
           routeEndCoords = [lng, lat];
           placeRouteMarker('end', [lng, lat]);
           document.getElementById('route-end').value = displayName;
+          scheduleRouteRegen();
         } else if (which === 'waypoint' && wpIdx !== undefined) {
           routeWaypoints[wpIdx].coords = [lng, lat];
           routeWaypoints[wpIdx].name = displayName;
@@ -1312,6 +1331,7 @@
           if (rows[wpIdx]) {
             rows[wpIdx].querySelector('input').value = displayName;
           }
+          scheduleRouteRegen();
         }
       })
       .catch(function (err) {
@@ -1496,6 +1516,7 @@
   }
 
   function clearRoute() {
+    clearTimeout(routeRegenTimer);  // cancel any pending debounced regen
     var source = map.getSource('route');
     if (source) source.setData(emptyGeoJSON());
 
