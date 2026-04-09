@@ -613,111 +613,196 @@ async def m2m_scene_search(session: aiohttp.ClientSession, api_key: str,
     return scenes
 
 
-async def m2m_get_download_urls(session: aiohttp.ClientSession, api_key: str,
-                                dataset_alias: str,
-                                scenes: list[dict]) -> list[str]:
-    """Get download URLs for scenes via download-options and download-request."""
+M2M_BATCH_SIZE = 50  # scenes per batch — keeps URL lifetime short
+
+
+def _select_best_products(options: list[dict]) -> list[dict]:
+    """Pick one product per entity, preferring smaller downloads.
+
+    Priority: compressed > geotiff/tif > full resolution.
+    """
+    entity_products: dict[str, dict] = {}
+    for opt in options:
+        if not opt.get("available"):
+            continue
+        product_name = (opt.get("productName", "") or "").lower()
+        eid = opt["entityId"]
+        if "compressed" in product_name:
+            priority = 0  # best — smallest download
+        elif "geotiff" in product_name or "tif" in product_name:
+            priority = 1
+        elif "full resolution" in product_name:
+            priority = 2  # largest — fallback only
+        else:
+            continue
+        existing = entity_products.get(eid)
+        if existing is None or priority < existing["_priority"]:
+            entity_products[eid] = {
+                "entityId": eid,
+                "productId": opt.get("id") or opt.get("productId", ""),
+                "_productName": opt.get("productName", ""),
+                "_priority": priority,
+            }
+    return list(entity_products.values())
+
+
+async def _m2m_request_and_poll_urls(
+    session: aiohttp.ClientSession, api_key: str,
+    downloads: list[dict], batch_label: str,
+) -> list[str]:
+    """Request downloads for a batch and poll until URLs are ready."""
+    api_batch = [{"entityId": d["entityId"], "productId": d["productId"]}
+                 for d in downloads]
+    await m2m_request(session, "download-request", {
+        "downloads": api_batch,
+        "label": batch_label,
+    }, api_key=api_key)
+
+    urls = []
+    seen: set[str] = set()
+    for attempt in range(M2M_POLL_MAX_ATTEMPTS):
+        resp = await m2m_request(session, "download-retrieve", {
+            "label": batch_label,
+        }, api_key=api_key)
+        data = resp.get("data", {})
+        available = data.get("available", [])
+        requested = data.get("requested", [])
+
+        for item in available:
+            url = item.get("url")
+            if url and url not in seen:
+                urls.append(url)
+                seen.add(url)
+
+        if not requested:
+            break
+
+        log.info("  %d available, %d still queued – waiting %ds",
+                 len(available), len(requested), M2M_POLL_INTERVAL)
+        await asyncio.sleep(M2M_POLL_INTERVAL)
+    else:
+        log.warning("Timed out waiting for downloads (label: %s). "
+                    "Got %d URLs so far.", batch_label, len(urls))
+
+    return urls
+
+
+async def m2m_download_batched(
+    session: aiohttp.ClientSession, api_key: str,
+    dataset_alias: str, scenes: list[dict],
+    staging: Path, checkpoint_path: Path,
+    concurrency: int = 3,
+) -> list[Path]:
+    """Download scenes in batches: options → request → poll → download per chunk.
+
+    Processes M2M_BATCH_SIZE scenes at a time through the full
+    request→poll→download cycle. This keeps download URL lifetime
+    short and avoids overwhelming USGS rate limits. Checkpoint file
+    tracks completed downloads for resume across batches and restarts.
+    """
+    global _cancel_requested
+
     entity_ids = [s["entityId"] for s in scenes]
 
-    # Get download options (batch in groups of 100)
-    downloads_to_request = []
-    for i in range(0, len(entity_ids), 100):
-        batch = entity_ids[i:i + 100]
-        log.info("Fetching download options for %d scenes", len(batch))
+    # Load checkpoint to skip already-downloaded entities
+    done: dict[str, str] = {}
+    if checkpoint_path.exists():
+        done = json.loads(checkpoint_path.read_text())
+    downloaded_urls = set(done.keys())
+
+    total_scenes = len(entity_ids)
+    total_downloaded = len(done)
+    log.info("M2M batched download: %d scenes, %d already downloaded, batch size %d",
+             total_scenes, total_downloaded, M2M_BATCH_SIZE)
+
+    product_names_logged = False
+
+    for batch_start in range(0, total_scenes, M2M_BATCH_SIZE):
+        if _cancel_requested:
+            log.info("Cancellation requested between batches")
+            break
+
+        batch_ids = entity_ids[batch_start:batch_start + M2M_BATCH_SIZE]
+        batch_num = batch_start // M2M_BATCH_SIZE + 1
+        total_batches = (total_scenes + M2M_BATCH_SIZE - 1) // M2M_BATCH_SIZE
+        log.info("=== Batch %d/%d: %d scenes (starting at %d) ===",
+                 batch_num, total_batches, len(batch_ids), batch_start)
+
+        # --- Download options for this batch ---
         resp = await m2m_request(session, "download-options", {
             "datasetName": dataset_alias,
-            "entityIds": batch,
+            "entityIds": batch_ids,
         }, api_key=api_key)
         options = resp.get("data", [])
-        # Log ALL product names for diagnosis before filtering
-        all_product_names = set()
-        for opt in options:
-            pn = opt.get("productName", "")
-            if pn:
-                all_product_names.add(pn)
-        if all_product_names:
-            log.info("Available product names: %s", sorted(all_product_names))
 
-        # Pick one product per entity, preferring smaller downloads.
-        # Priority: compressed > geotiff/tif > full resolution
-        entity_products: dict[str, dict] = {}
-        for opt in options:
-            if not opt.get("available"):
+        # Log product names once for diagnosis
+        if not product_names_logged:
+            all_product_names = {opt.get("productName", "")
+                                 for opt in options if opt.get("productName")}
+            if all_product_names:
+                log.info("Available product names: %s", sorted(all_product_names))
+            product_names_logged = True
+
+        products = _select_best_products(options)
+        if not products:
+            log.warning("Batch %d: no downloadable products, skipping", batch_num)
+            continue
+
+        # Skip products whose entity was already downloaded
+        # (checkpoint tracks by URL, but we can also skip if the entity
+        # already has a file in staging)
+        new_products = []
+        for p in products:
+            staging_files = list(staging.glob(f"*{p['entityId']}*"))
+            if staging_files:
+                log.debug("Skipping entity %s — already in staging", p["entityId"])
                 continue
-            product_name = (opt.get("productName", "") or "").lower()
-            eid = opt["entityId"]
-            if "compressed" in product_name:
-                priority = 0  # best — smallest download
-            elif "geotiff" in product_name or "tif" in product_name:
-                priority = 1
-            elif "full resolution" in product_name:
-                priority = 2  # largest — fallback only
-            else:
-                continue
-            existing = entity_products.get(eid)
-            if existing is None or priority < existing["_priority"]:
-                entity_products[eid] = {
-                    "entityId": eid,
-                    "productId": opt.get("id") or opt.get("productId", ""),
-                    "_productName": opt.get("productName", ""),
-                    "_priority": priority,
-                }
-        downloads_to_request.extend(entity_products.values())
+            new_products.append(p)
 
-    if not downloads_to_request:
-        log.warning("No downloadable imagery products found")
-        return []
+        if not new_products:
+            log.info("Batch %d: all %d products already downloaded, skipping",
+                     batch_num, len(products))
+            continue
 
-    # Log what we selected
-    for d in downloads_to_request:
-        log.info("Selected product for %s: %s", d["entityId"], d.get("_productName", "?"))
+        log.info("Batch %d: requesting %d downloads (%d skipped as already done)",
+                 batch_num, len(new_products), len(products) - len(new_products))
 
-    log.info("Requesting %d downloads", len(downloads_to_request))
+        # --- Request + poll for this batch ---
+        label = f"geographica_m2m_{int(time.time())}_{batch_start}"
+        urls = await _m2m_request_and_poll_urls(
+            session, api_key, new_products, label
+        )
 
-    # Request downloads (batch in groups of 100)
-    labels = []
-    for i in range(0, len(downloads_to_request), 100):
-        batch = [{"entityId": d["entityId"], "productId": d["productId"]}
-                 for d in downloads_to_request[i:i + 100]]
-        label = f"geographica_m2m_{int(time.time())}_{i}"
-        resp = await m2m_request(session, "download-request", {
-            "downloads": batch,
-            "label": label,
-        }, api_key=api_key)
-        labels.append(label)
+        if not urls:
+            log.warning("Batch %d: no download URLs obtained", batch_num)
+            continue
 
-    # Poll download-retrieve until all URLs are available
-    urls = []
-    seen_urls: set[str] = set()
-    for label in labels:
-        log.info("Polling download-retrieve for label: %s", label)
-        for attempt in range(M2M_POLL_MAX_ATTEMPTS):
-            resp = await m2m_request(session, "download-retrieve", {
-                "label": label,
-            }, api_key=api_key)
-            data = resp.get("data", {})
-            available = data.get("available", [])
-            requested = data.get("requested", [])
+        # Filter out already-downloaded URLs
+        new_urls = [u for u in urls if u not in downloaded_urls]
+        log.info("Batch %d: %d URLs (%d new, %d already downloaded)",
+                 batch_num, len(urls), len(new_urls), len(urls) - len(new_urls))
 
-            for item in available:
-                url = item.get("url")
-                if url and url not in seen_urls:
-                    urls.append(url)
-                    seen_urls.add(url)
+        if not new_urls:
+            continue
 
-            if not requested:
-                # All downloads for this label are ready
-                break
+        # --- Download this batch's files immediately ---
+        batch_paths = await download_geotiffs(
+            new_urls, staging, checkpoint_path, concurrency=concurrency
+        )
 
-            log.info("  %d available, %d still queued – waiting %ds",
-                     len(available), len(requested), M2M_POLL_INTERVAL)
-            await asyncio.sleep(M2M_POLL_INTERVAL)
-        else:
-            log.warning("Timed out waiting for downloads (label: %s). "
-                        "Got %d URLs so far.", label, len(urls))
+        # Reload checkpoint after download
+        if checkpoint_path.exists():
+            done = json.loads(checkpoint_path.read_text())
+            downloaded_urls = set(done.keys())
 
-    log.info("Total download URLs: %d", len(urls))
-    return urls
+        total_downloaded = len(done)
+        log.info("Batch %d complete: %d files this batch, %d total downloaded",
+                 batch_num, len(batch_paths), total_downloaded)
+
+    # Return all downloaded files
+    all_paths = [Path(p) for p in done.values() if Path(p).exists()]
+    log.info("M2M batched download complete: %d files total", len(all_paths))
+    return all_paths
 
 
 async def run_m2m(args):
@@ -797,52 +882,32 @@ async def run_m2m(args):
                                 0, len(scenes), status="cancelled")
                 return
 
-            # --- Get download URLs ---
-            urls = await m2m_get_download_urls(
-                session, api_key, dataset_alias, scenes
+            # --- Batched download: options → request → poll → download per chunk ---
+            log.info("Starting batched download for %d scenes", len(scenes))
+            tif_paths = await m2m_download_batched(
+                session, api_key, dataset_alias, scenes,
+                staging, checkpoint, concurrency=m2m_concurrency,
             )
-            if not urls:
-                log.error("No downloadable URLs obtained")
-                update_progress(output, "m2m", args.bbox, "n/a",
-                                0, len(scenes), status="error",
-                                error="No downloadable GeoTIFF URLs obtained from M2M API")
-                sys.exit(1)
-
-            log.info("Got %d download URLs for %d scenes", len(urls), len(scenes))
 
         finally:
             await m2m_logout(session, api_key)
 
     if _cancel_requested:
-        log.info("Cancellation requested before downloads — stopping")
-        update_progress(output, "m2m", args.bbox, "n/a",
-                        0, len(urls), status="cancelled")
-        return
-
-    # --- Download GeoTIFFs (reuse existing helper) ---
-    update_progress(output, "m2m", args.bbox, "n/a",
-                    0, len(urls), status="running")
-
-    tif_paths = await download_geotiffs(
-        urls, staging, checkpoint, concurrency=m2m_concurrency
-    )
-
-    if _cancel_requested:
         log.info("Cancellation requested after downloads — skipping conversion")
         update_progress(output, "m2m", args.bbox, "n/a",
-                        len(tif_paths), len(urls), status="cancelled")
+                        len(tif_paths), len(scenes), status="cancelled")
         return
 
     if not tif_paths:
         log.error("No GeoTIFF files were downloaded successfully")
         update_progress(output, "m2m", args.bbox, "n/a",
-                        0, len(urls), status="error",
+                        0, len(scenes), status="error",
                         error="All GeoTIFF downloads failed")
         sys.exit(1)
 
     # --- Convert to MBTiles ---
     update_progress(output, "m2m", args.bbox, "n/a",
-                    len(tif_paths), len(urls), status="running")
+                    len(tif_paths), len(scenes), status="running")
 
     try:
         convert_geotiffs_to_mbtiles(tif_paths, output)
@@ -854,8 +919,8 @@ async def run_m2m(args):
         sys.exit(1)
 
     update_progress(output, "m2m", args.bbox, "n/a",
-                    len(urls), len(urls), status="completed")
-    log.info("M2M pipeline complete: %s", output)
+                    len(tif_paths), len(scenes), status="completed")
+    log.info("M2M pipeline complete: %d files → %s", len(tif_paths), output)
 
 
 # ---------------------------------------------------------------------------

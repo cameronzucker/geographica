@@ -194,44 +194,83 @@ class TestM2MSceneSearch:
 # m2m_get_download_urls tests
 # ---------------------------------------------------------------------------
 
-class TestM2MGetDownloadUrls:
-    """Test m2m_get_download_urls() polling logic."""
+class TestSelectBestProducts:
+    """Test _select_best_products() product priority logic."""
+
+    def test_prefers_compressed(self):
+        """Compressed product is preferred over Full Resolution."""
+        options = [
+            {"entityId": "e1", "id": "p1", "productName": "Full Resolution", "available": True},
+            {"entityId": "e1", "id": "p2", "productName": "Compressed", "available": True},
+        ]
+        result = ai._select_best_products(options)
+        assert len(result) == 1
+        assert result[0]["_productName"] == "Compressed"
+
+    def test_falls_back_to_full_resolution(self):
+        """Full Resolution used when no compressed option exists."""
+        options = [
+            {"entityId": "e1", "id": "p1", "productName": "Full Resolution", "available": True},
+        ]
+        result = ai._select_best_products(options)
+        assert len(result) == 1
+        assert result[0]["_productName"] == "Full Resolution"
+
+    def test_skips_non_imagery_products(self):
+        """Non-imagery products like JPEG Preview are skipped."""
+        options = [
+            {"entityId": "e1", "id": "p1", "productName": "JPEG Preview", "available": True},
+            {"entityId": "e1", "id": "p2", "productName": "Metadata XML", "available": True},
+        ]
+        result = ai._select_best_products(options)
+        assert result == []
+
+    def test_one_product_per_entity(self):
+        """Each entity gets exactly one product."""
+        options = [
+            {"entityId": "e1", "id": "p1", "productName": "Compressed", "available": True},
+            {"entityId": "e2", "id": "p2", "productName": "Full Resolution", "available": True},
+            {"entityId": "e2", "id": "p3", "productName": "Compressed", "available": True},
+        ]
+        result = ai._select_best_products(options)
+        assert len(result) == 2
+        by_entity = {r["entityId"]: r for r in result}
+        assert by_entity["e2"]["_productName"] == "Compressed"
+
+    def test_skips_unavailable(self):
+        """Products with available=False are skipped."""
+        options = [
+            {"entityId": "e1", "id": "p1", "productName": "Compressed", "available": False},
+            {"entityId": "e1", "id": "p2", "productName": "Full Resolution", "available": True},
+        ]
+        result = ai._select_best_products(options)
+        assert len(result) == 1
+        assert result[0]["_productName"] == "Full Resolution"
+
+
+class TestRequestAndPollUrls:
+    """Test _m2m_request_and_poll_urls() polling logic."""
 
     @pytest.mark.asyncio
     async def test_immediate_availability(self, mock_session):
         """Downloads available immediately (no polling needed)."""
-        scenes = [{"entityId": "scene_1"}]
+        downloads = [{"entityId": "e1", "productId": "p1"}]
 
-        # download-options response
-        options_cm = _make_m2m_response([
-            {
-                "entityId": "scene_1",
-                "productId": "prod_1",
-                "productName": "GeoTIFF",
-                "available": True,
-            }
-        ])
-
-        # download-request response
         request_cm = _make_m2m_response({
             "availableDownloads": 1,
             "preparingDownloads": 0,
         })
-
-        # download-retrieve response — all available immediately
         retrieve_cm = _make_m2m_response({
             "available": [
-                {"url": "https://example.com/scene_1.tif", "entityId": "scene_1"}
+                {"url": "https://example.com/scene_1.tif", "entityId": "e1"}
             ],
             "requested": [],
         })
 
-        mock_session.post = MagicMock(
-            side_effect=[options_cm, request_cm, retrieve_cm]
-        )
+        mock_session.post = MagicMock(side_effect=[request_cm, retrieve_cm])
 
-        urls = await ai.m2m_get_download_urls(
-            mock_session, "api-key", "naip_alias", scenes
+        urls = await ai._m2m_request_and_poll_urls(
+            mock_session, "api-key", downloads, "test_label"
         )
 
         assert len(urls) == 1
@@ -239,118 +278,57 @@ class TestM2MGetDownloadUrls:
 
     @pytest.mark.asyncio
     async def test_polling_until_available(self, mock_session):
-        """Downloads require polling — first call has requested items, second is ready."""
-        scenes = [{"entityId": "scene_1"}]
-
-        options_cm = _make_m2m_response([
-            {
-                "entityId": "scene_1",
-                "productId": "prod_1",
-                "productName": "GeoTIFF",
-                "available": True,
-            }
-        ])
+        """Polls until all downloads are ready."""
+        downloads = [{"entityId": "e1", "productId": "p1"}]
 
         request_cm = _make_m2m_response({
             "availableDownloads": 0,
             "preparingDownloads": 1,
         })
-
-        # First poll: still queued
-        retrieve_poll1 = _make_m2m_response({
+        poll1 = _make_m2m_response({
             "available": [],
-            "requested": [{"entityId": "scene_1", "statusText": "Queued"}],
+            "requested": [{"entityId": "e1", "statusText": "Queued"}],
         })
-
-        # Second poll: ready
-        retrieve_poll2 = _make_m2m_response({
+        poll2 = _make_m2m_response({
             "available": [
-                {"url": "https://example.com/scene_1.tif", "entityId": "scene_1"}
+                {"url": "https://example.com/scene_1.tif", "entityId": "e1"}
             ],
             "requested": [],
         })
 
-        mock_session.post = MagicMock(
-            side_effect=[options_cm, request_cm, retrieve_poll1, retrieve_poll2]
-        )
+        mock_session.post = MagicMock(side_effect=[request_cm, poll1, poll2])
 
-        # Patch sleep to avoid actual waiting in tests
         with patch("asyncio.sleep", new_callable=AsyncMock):
-            urls = await ai.m2m_get_download_urls(
-                mock_session, "api-key", "naip_alias", scenes
+            urls = await ai._m2m_request_and_poll_urls(
+                mock_session, "api-key", downloads, "test_label"
             )
 
         assert len(urls) == 1
 
     @pytest.mark.asyncio
-    async def test_no_geotiff_products(self, mock_session):
-        """Returns empty list when no GeoTIFF products are available."""
-        scenes = [{"entityId": "scene_1"}]
-
-        # Products with names that don't match the geotiff filter
-        options_cm = _make_m2m_response([
-            {
-                "entityId": "scene_1",
-                "productId": "prod_1",
-                "productName": "JPEG Preview",
-                "available": True,
-            },
-            {
-                "entityId": "scene_1",
-                "productId": "prod_2",
-                "productName": "Metadata XML",
-                "available": True,
-            },
-        ])
-
-        mock_session.post = MagicMock(return_value=options_cm)
-
-        urls = await ai.m2m_get_download_urls(
-            mock_session, "api-key", "naip_alias", scenes
-        )
-
-        assert urls == []
-
-    @pytest.mark.asyncio
     async def test_deduplicates_urls(self, mock_session):
-        """Same URL from multiple scenes is only returned once."""
-        scenes = [{"entityId": "scene_1"}, {"entityId": "scene_2"}]
-
-        options_cm = _make_m2m_response([
-            {
-                "entityId": "scene_1",
-                "productId": "prod_1",
-                "productName": "GeoTIFF",
-                "available": True,
-            },
-            {
-                "entityId": "scene_2",
-                "productId": "prod_2",
-                "productName": "GeoTIFF",
-                "available": True,
-            },
-        ])
+        """Same URL from multiple entities is only returned once."""
+        downloads = [
+            {"entityId": "e1", "productId": "p1"},
+            {"entityId": "e2", "productId": "p2"},
+        ]
 
         request_cm = _make_m2m_response({
             "availableDownloads": 2,
             "preparingDownloads": 0,
         })
-
-        # Both scenes resolve to the same URL (edge case)
         retrieve_cm = _make_m2m_response({
             "available": [
-                {"url": "https://example.com/shared.tif", "entityId": "scene_1"},
-                {"url": "https://example.com/shared.tif", "entityId": "scene_2"},
+                {"url": "https://example.com/shared.tif", "entityId": "e1"},
+                {"url": "https://example.com/shared.tif", "entityId": "e2"},
             ],
             "requested": [],
         })
 
-        mock_session.post = MagicMock(
-            side_effect=[options_cm, request_cm, retrieve_cm]
-        )
+        mock_session.post = MagicMock(side_effect=[request_cm, retrieve_cm])
 
-        urls = await ai.m2m_get_download_urls(
-            mock_session, "api-key", "naip_alias", scenes
+        urls = await ai._m2m_request_and_poll_urls(
+            mock_session, "api-key", downloads, "test_label"
         )
 
         assert len(urls) == 1
