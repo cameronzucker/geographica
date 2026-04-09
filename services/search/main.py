@@ -72,8 +72,10 @@ async def require_config_source(
 # Pydantic models
 # ---------------------------------------------------------------------------
 class CredentialBody(BaseModel):
-    m2m_username: str
-    m2m_token: str
+    m2m_username: str = ""
+    m2m_token: str = ""
+    copernicus_username: str = ""
+    copernicus_password: str = ""
 
 
 class PipelineStartBody(BaseModel):
@@ -842,14 +844,29 @@ async def admin_status():
 # ---------------------------------------------------------------------------
 @app.post("/admin/credentials", dependencies=[Depends(require_config_source)])
 async def save_credentials(body: CredentialBody):
-    """Store M2M API credentials securely."""
-    if not body.m2m_username.strip() or not body.m2m_token.strip():
-        raise HTTPException(status_code=422, detail="Both m2m_username and m2m_token must be non-empty")
+    """Store API credentials securely. Supports M2M and/or Copernicus credentials."""
+    has_m2m = body.m2m_username.strip() and body.m2m_token.strip()
+    has_copernicus = body.copernicus_username.strip() and body.copernicus_password.strip()
 
-    cred_data = json.dumps({
-        "m2m_username": body.m2m_username,
-        "m2m_token": body.m2m_token,
-    })
+    if not has_m2m and not has_copernicus:
+        raise HTTPException(status_code=422, detail="Provide m2m_username+m2m_token and/or copernicus_username+copernicus_password")
+
+    # Merge with existing credentials (don't overwrite one type when saving the other)
+    existing = {}
+    if CREDENTIALS_PATH.exists():
+        try:
+            existing = json.loads(CREDENTIALS_PATH.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if has_m2m:
+        existing["m2m_username"] = body.m2m_username
+        existing["m2m_token"] = body.m2m_token
+    if has_copernicus:
+        existing["copernicus_username"] = body.copernicus_username
+        existing["copernicus_password"] = body.copernicus_password
+
+    cred_data = json.dumps(existing)
 
     # Atomic write: write to temp file, then os.replace
     try:
@@ -874,7 +891,16 @@ async def save_credentials(body: CredentialBody):
 @app.get("/admin/credentials/status")
 async def credentials_status():
     """Check if credentials are configured (no auth required)."""
-    return {"m2m_configured": CREDENTIALS_PATH.exists()}
+    m2m = False
+    copernicus = False
+    if CREDENTIALS_PATH.exists():
+        try:
+            creds = json.loads(CREDENTIALS_PATH.read_text())
+            m2m = bool(creds.get("m2m_username") and creds.get("m2m_token"))
+            copernicus = bool(creds.get("copernicus_username") and creds.get("copernicus_password"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"m2m_configured": m2m, "copernicus_configured": copernicus}
 
 
 @app.delete("/admin/credentials", dependencies=[Depends(require_config_source)])
