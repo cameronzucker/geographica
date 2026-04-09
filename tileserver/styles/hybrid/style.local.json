@@ -28,7 +28,8 @@
     },
     "imagery": {
       "type": "raster",
-      "url": "mbtiles://{imagery}"
+      "url": "mbtiles://{imagery}",
+      "tileSize": 256
     }
   },
   "sprite": "{styleJsonFolder}/sprite",
