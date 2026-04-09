@@ -132,9 +132,7 @@
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
       attributionControl: false,
-      dragRotate: false,  // disable CTRL+drag rotation — we implement free-look instead
-      boxZoom: false,      // disable CTRL+drag box zoom — conflicts with free-look
-      maxPitch: 60         // default — don't allow seeing over the horizon (no sky rendering)
+      maxPitch: 60
     });
     window._geographicaMap = map;
 
@@ -3467,145 +3465,93 @@
   // Shift+drag retains MapLibre's default orbit behavior.
 
   function initFreeLookCamera() {
-    // Camera modes:
-    //   CTRL+left drag  = free-look: camera POSITION stays fixed in the sky,
-    //                     only the view direction changes (like turning your head
-    //                     from a drone). The center point MOVES to compensate.
-    //   SHIFT+left drag = ground orbit: center stays fixed, camera orbits around it.
-    //   Right-click drag = ground orbit (same as SHIFT).
+    // Restored to the original working implementation (commit 3be5183) with
+    // added wasDragging flag for click suppression and orbit mouseup re-disable.
     //
-    // The critical difference: jumpTo({bearing, pitch}) without changing center
-    // IS ground orbit. For free-look, we must also compute a new center that
-    // keeps the camera at the same 3D position.
+    // CTRL+left drag  = free-look (bearing/pitch via jumpTo, dragPan disabled)
+    // SHIFT+left drag = ground orbit (MapLibre's built-in dragRotate, temporarily enabled)
+    // Right-click drag = ground orbit (same)
+    //
+    // The original approach: disable dragRotate at init, re-enable it temporarily
+    // for SHIFT/right-click, re-disable on mouseup. This works because MapLibre's
+    // .disable()/.enable() after init correctly gates the internal handler pipeline.
+    // Constructor-level dragRotate:false does NOT work the same way.
 
-    var mode = null;  // null | 'freelook' | 'orbit'
+    var freeLookActive = false;
+    var orbitActive = false;
     var startX = 0;
     var startY = 0;
     var startBearing = 0;
     var startPitch = 0;
-    var startCenter = null;
-    var startZoom = 0;
 
     var canvas = map.getCanvas();
-    var DEG2RAD = Math.PI / 180;
-    var RAD2DEG = 180 / Math.PI;
 
-    /**
-     * Compute the camera's ground-projected position relative to the center.
-     * In MapLibre's camera model, the camera sits behind and above the center
-     * point. The ground distance from center to the camera's nadir (ground
-     * projection) depends on pitch and altitude (zoom).
-     *
-     * Returns offset in degrees [dlng, dlat] from center to camera nadir.
-     */
-    function cameraOffset(bearing, pitch, zoom, lat) {
-      // Approximate ground distance from center to camera nadir
-      // altitude ∝ 1/2^zoom, ground offset = altitude * tan(pitch)
-      var metersPerDeg = 111320 * Math.cos(lat * DEG2RAD);
-      var altitude = 40075016 / (Math.pow(2, zoom) * 2 * Math.PI) * 2; // rough cam height in meters
-      var groundDist = altitude * Math.tan(pitch * DEG2RAD); // meters from center to cam nadir
-      var distDeg = groundDist / metersPerDeg;
+    // Disable MapLibre's built-in Ctrl+drag rotation so we can override it
+    map.dragRotate.disable();
 
-      // Camera is BEHIND the center in the bearing direction
-      var bRad = bearing * DEG2RAD;
-      return [
-        -Math.sin(bRad) * distDeg,
-        -Math.cos(bRad) * distDeg
-      ];
-    }
+    // Right-click drag: temporarily re-enable MapLibre's orbit behavior
+    map.on('mousedown', function (e) {
+      if (e.originalEvent.button === 2) {
+        orbitActive = true;
+        map.dragRotate.enable();
+      }
+    });
 
-    // All rotation gestures handled via capture-phase mousedown
+    // CTRL+left click: enter free-look mode
     canvas.addEventListener('mousedown', function (e) {
-      // CTRL+left click: free-look mode
       if (e.ctrlKey && e.button === 0) {
         e.preventDefault();
-        e.stopImmediatePropagation();
-        mode = 'freelook';
+        e.stopPropagation();
+        freeLookActive = true;
         startX = e.clientX;
         startY = e.clientY;
         startBearing = map.getBearing();
         startPitch = map.getPitch();
-        startCenter = [map.getCenter().lng, map.getCenter().lat];
-        startZoom = map.getZoom();
         canvas.style.cursor = 'crosshair';
         map.dragPan.disable();
-        return;
       }
-      // SHIFT+left click: ground orbit
-      if (e.shiftKey && e.button === 0) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        mode = 'orbit';
-        startX = e.clientX;
-        startY = e.clientY;
-        startBearing = map.getBearing();
-        startPitch = map.getPitch();
-        canvas.style.cursor = 'grab';
-        map.dragPan.disable();
-        return;
-      }
-      // Right-click: ground orbit
-      if (e.button === 2) {
-        e.preventDefault();
-        mode = 'orbit';
-        startX = e.clientX;
-        startY = e.clientY;
-        startBearing = map.getBearing();
-        startPitch = map.getPitch();
-        canvas.style.cursor = 'grab';
-        map.dragPan.disable();
-      }
-    }, true);
+    });
 
+    // Mousemove: update bearing/pitch during free-look
     window.addEventListener('mousemove', function (e) {
-      if (!mode) return;
+      if (!freeLookActive) return;
+      e.preventDefault();
 
       wasDragging = true;
-      e.preventDefault();
 
       var dx = e.clientX - startX;
       var dy = e.clientY - startY;
 
-      if (mode === 'freelook') {
-        // Free-look: keep camera at same 3D position, change view direction
-        var newBearing = startBearing + dx * 0.3;
-        var newPitch = Math.max(0, Math.min(60, startPitch - dy * 0.3));
+      var newBearing = startBearing + dx * 0.3;
+      var newPitch = Math.max(0, Math.min(60, startPitch - dy * 0.3));
 
-        // Camera nadir at start position
-        var oldOff = cameraOffset(startBearing, startPitch, startZoom, startCenter[1]);
-        // Camera nadir at new orientation (should be same point)
-        var newOff = cameraOffset(newBearing, newPitch, startZoom, startCenter[1]);
-
-        // Move center so camera stays at the same nadir
-        var newCenter = [
-          startCenter[0] + (oldOff[0] - newOff[0]),
-          Math.max(-85, Math.min(85, startCenter[1] + (oldOff[1] - newOff[1])))
-        ];
-
-        map.jumpTo({
-          center: newCenter,
-          bearing: newBearing,
-          pitch: newPitch
-        });
-      } else {
-        // Ground orbit: center stays fixed, camera orbits around it
-        var orbitBearing = startBearing + dx * 0.2;
-        var orbitPitch = Math.max(0, Math.min(60, startPitch - dy * 0.2));
-
-        map.jumpTo({
-          bearing: orbitBearing,
-          pitch: orbitPitch
-        });
-      }
+      map.jumpTo({
+        bearing: newBearing,
+        pitch: newPitch
+      });
     });
 
     // Mouseup: restore default state
     window.addEventListener('mouseup', function () {
-      if (mode) {
-        mode = null;
+      if (freeLookActive) {
+        freeLookActive = false;
         canvas.style.cursor = '';
         map.dragPan.enable();
+      }
+      if (orbitActive) {
+        orbitActive = false;
+        map.dragRotate.disable();
+      }
+      if (wasDragging) {
         setTimeout(function () { wasDragging = false; }, 0);
+      }
+    });
+
+    // SHIFT+left click: temporarily re-enable MapLibre's orbit behavior
+    canvas.addEventListener('mousedown', function (e) {
+      if (e.shiftKey && e.button === 0) {
+        orbitActive = true;
+        map.dragRotate.enable();
       }
     });
 
