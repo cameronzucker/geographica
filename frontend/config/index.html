@@ -401,6 +401,14 @@
         return fetch(url, opts);
     }
 
+    function formatApiError(detail) {
+        if (!detail) return 'Unknown error';
+        if (typeof detail === 'string') return detail;
+        if (Array.isArray(detail)) return detail.map(function(e) { return e.msg || JSON.stringify(e); }).join('; ');
+        if (typeof detail === 'object') return detail.msg || JSON.stringify(detail);
+        return String(detail);
+    }
+
     function timeAgo(isoString) {
         if (!isoString) return '';
         var then = new Date(isoString);
@@ -1422,28 +1430,41 @@
                 m2m_username: document.getElementById('cfg-m2m-user').value,
                 m2m_token: document.getElementById('cfg-m2m-token').value
             })
-        }).then(function(r) { return r.json(); })
-          .then(function(d) {
-            if (d.status === 'saved') {
-                statusMsg.textContent = 'Credentials saved';
-                statusMsg.style.color = '#a6e3a1';
-                document.getElementById('cfg-m2m-user').value = '';
-                document.getElementById('cfg-m2m-token').value = '';
-                fetchAll();
-            } else {
-                statusMsg.textContent = 'Error: ' + (d.detail || d.error || 'unknown');
-                statusMsg.style.color = '#f38ba8';
-            }
-        }).catch(function() {
-            statusMsg.textContent = 'Request failed';
+        }).then(function(r) {
+            if (!r.ok) return r.text().then(function(text) {
+                try { var d = JSON.parse(text); throw new Error(formatApiError(d.detail)); }
+                catch(e) { if (e instanceof SyntaxError) throw new Error('Server error: ' + r.status); throw e; }
+            });
+            return r.json();
+        }).then(function(d) {
+            statusMsg.textContent = 'Credentials saved';
+            statusMsg.style.color = '#a6e3a1';
+            document.getElementById('cfg-m2m-user').value = '';
+            document.getElementById('cfg-m2m-token').value = '';
+            fetchAll();
+        }).catch(function(err) {
+            statusMsg.textContent = 'Error: ' + err.message;
             statusMsg.style.color = '#f38ba8';
         });
     });
 
     document.getElementById('m2m-delete-btn').addEventListener('click', function() {
         if (!confirm('Delete M2M credentials?')) return;
-        cfgFetch('/admin/credentials', {method: 'DELETE'})
-            .then(function() { fetchAll(); });
+        var statusMsg = document.getElementById('m2m-status-msg');
+        cfgFetch('/admin/credentials/m2m', {method: 'DELETE'}).then(function(r) {
+            if (!r.ok) return r.text().then(function(text) {
+                try { var d = JSON.parse(text); throw new Error(formatApiError(d.detail)); }
+                catch(e) { if (e instanceof SyntaxError) throw new Error('Server error: ' + r.status); throw e; }
+            });
+            return r.json();
+        }).then(function() {
+            statusMsg.textContent = 'Credentials deleted';
+            statusMsg.style.color = '#a6e3a1';
+            fetchAll();
+        }).catch(function(err) {
+            statusMsg.textContent = 'Error: ' + err.message;
+            statusMsg.style.color = '#f38ba8';
+        });
     });
 
     document.getElementById('m2m-update-btn').addEventListener('click', function() {
@@ -1463,28 +1484,41 @@
                 copernicus_username: document.getElementById('cfg-copernicus-user').value,
                 copernicus_password: document.getElementById('cfg-copernicus-pass').value
             })
-        }).then(function(r) { return r.json(); })
-          .then(function(d) {
-            if (d.status === 'saved') {
-                statusMsg.textContent = 'Credentials saved';
-                statusMsg.style.color = '#a6e3a1';
-                document.getElementById('cfg-copernicus-user').value = '';
-                document.getElementById('cfg-copernicus-pass').value = '';
-                fetchAll();
-            } else {
-                statusMsg.textContent = 'Error: ' + (d.detail || d.error || 'unknown');
-                statusMsg.style.color = '#f38ba8';
-            }
-        }).catch(function() {
-            statusMsg.textContent = 'Request failed';
+        }).then(function(r) {
+            if (!r.ok) return r.text().then(function(text) {
+                try { var d = JSON.parse(text); throw new Error(formatApiError(d.detail)); }
+                catch(e) { if (e instanceof SyntaxError) throw new Error('Server error: ' + r.status); throw e; }
+            });
+            return r.json();
+        }).then(function(d) {
+            statusMsg.textContent = 'Credentials saved';
+            statusMsg.style.color = '#a6e3a1';
+            document.getElementById('cfg-copernicus-user').value = '';
+            document.getElementById('cfg-copernicus-pass').value = '';
+            fetchAll();
+        }).catch(function(err) {
+            statusMsg.textContent = 'Error: ' + err.message;
             statusMsg.style.color = '#f38ba8';
         });
     });
 
     document.getElementById('copernicus-delete-btn').addEventListener('click', function() {
         if (!confirm('Delete Copernicus credentials?')) return;
-        cfgFetch('/admin/credentials/copernicus', {method: 'DELETE'})
-            .then(function() { fetchAll(); });
+        var statusMsg = document.getElementById('copernicus-status-msg');
+        cfgFetch('/admin/credentials/copernicus', {method: 'DELETE'}).then(function(r) {
+            if (!r.ok) return r.text().then(function(text) {
+                try { var d = JSON.parse(text); throw new Error(formatApiError(d.detail)); }
+                catch(e) { if (e instanceof SyntaxError) throw new Error('Server error: ' + r.status); throw e; }
+            });
+            return r.json();
+        }).then(function() {
+            statusMsg.textContent = 'Credentials deleted';
+            statusMsg.style.color = '#a6e3a1';
+            fetchAll();
+        }).catch(function(err) {
+            statusMsg.textContent = 'Error: ' + err.message;
+            statusMsg.style.color = '#f38ba8';
+        });
     });
 
     document.getElementById('copernicus-update-btn').addEventListener('click', function() {
