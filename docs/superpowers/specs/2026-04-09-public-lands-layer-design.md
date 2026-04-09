@@ -48,11 +48,20 @@ Map PAD-US `Mang_Name` values to display categories:
 | FWS | Fish & Wildlife | `#008080` (teal) | `#006666` |
 | DOD | Military | `#8b4545` (red-gray) | `#6b3535` |
 | USBR | Bureau of Reclamation | `#4682b4` (steel blue) | `#366fa0` |
-| State (various: SDNR, SFISH, SLAND, SPARK, etc.) | State Trust | `#d2691e` (chocolate) | `#a34f1a` |
+| TRIB / BIA | Tribal / BIA | `#cd853f` (peru) | `#a0682f` |
+| `Mang_Type='STAT'` | State Trust | `#d2691e` (chocolate) | `#a34f1a` |
 | Any with `Des_Tp` containing "Wilderness" | Wilderness | `#800080` (purple) | `#660066` |
 | All other federal | Other Federal | `#a9a9a9` (dark gray) | `#808080` |
 
-**Wilderness override:** If `Des_Tp` contains "Wilderness" (regardless of managing agency), classify as Wilderness. This is checked BEFORE the agency classification so wilderness areas within national forests get the distinct purple treatment.
+**Classification priority order:**
+1. If `Des_Tp` contains "Wilderness" → Wilderness (regardless of agency — wilderness areas within national forests get distinct purple)
+2. Match `Mang_Name` against known federal agencies (BLM, USFS, NPS, FWS, DOD, USBR, TRIB, BIA)
+3. If `Mang_Type = 'STAT'` → State Trust (catches all state agency codes without hardcoding each: SDNR, SFISH, SLAND, SPARK, SFWD, SOTH, SBOE, etc.)
+4. All remaining → Other Federal
+
+**Tribal lands note:** PAD-US includes tribal lands under `Mang_Name = TRIB` or `BIA`, but coverage is incomplete — many tribal nations have not consented to inclusion. Large Western US tribal areas (Navajo Nation ~71,000 sq km, Tohono O'odham, Fort Apache, etc.) may be partially mapped. The legend should include a disclaimer: "Tribal boundaries may be incomplete."
+
+**Military land note:** DOD boundaries are publicly available data (they appear on USGS topo maps). The legend should note "Military — restricted access" to prevent users from assuming these areas are accessible public land.
 
 ### Pipeline Script: `scripts/build_public_lands.py`
 
@@ -66,21 +75,35 @@ New Python script following the pattern of `build_poi_index.py` and `acquire_ima
 - `--sample` — if set, use the sample bbox for quick testing
 
 **Steps:**
-1. Download PAD-US GeoPackage to cache dir (with resume support via HTTP Range headers)
-2. Clip to bbox with ogr2ogr: `ogr2ogr -clipsrc {bbox} -f GeoJSON clipped.geojson padus.gpkg {layer_name}`
-3. Classify features: read GeoJSON, map Mang_Name to category, simplify properties to `{category, name, agency, designation}`
-4. Write classified GeoJSON to temp file
-5. Run Tippecanoe: `tippecanoe -o {output} -Z0 -z14 -l public_lands --drop-densest-as-needed --extend-zooms-if-still-dropping --coalesce-densest-as-needed clipped_classified.geojson`
-6. Report: tile count, file size, categories found
+1. Download PAD-US GeoPackage to cache dir (with retry-with-backoff; Range resume if server supports it)
+2. Auto-detect the Fee/Combined layer name: run `ogrinfo padus.gpkg` and match pattern `PADUS*Fee*` or `PADUS*Combined*`. Fail with clear error if no match (PAD-US version may have changed). Verify output is non-empty after clipping.
+3. Clip and reproject with ogr2ogr: `ogr2ogr -clipsrc {bbox} -t_srs EPSG:4326 -f GeoJSON clipped.geojson padus.gpkg {detected_layer}` — PAD-US is published in NAD83 (EPSG:4269); explicit WGS84 reprojection ensures Tippecanoe gets correct coordinates.
+4. Classify features using ogr2ogr SQL (avoids loading entire GeoJSON into Python memory): `ogr2ogr -sql "SELECT Unit_Nm AS name, Mang_Name AS agency, Des_Tp AS designation, Mang_Type, CASE WHEN Des_Tp LIKE '%Wilderness%' THEN 'Wilderness' WHEN Mang_Name IN ('BLM') THEN 'BLM' WHEN Mang_Name IN ('USFS') THEN 'USFS' WHEN Mang_Name IN ('NPS') THEN 'NPS' WHEN Mang_Name IN ('FWS') THEN 'FWS' WHEN Mang_Name IN ('DOD') THEN 'DOD' WHEN Mang_Name IN ('USBR') THEN 'USBR' WHEN Mang_Name IN ('TRIB','BIA') THEN 'Tribal' WHEN Mang_Type = 'STAT' THEN 'State' ELSE 'Other' END AS category FROM {layer}" ...` This avoids the Python GeoJSON memory bottleneck entirely.
+5. Run Tippecanoe: `tippecanoe -o {output} -Z0 -z14 -l public_lands --coalesce-smallest-as-needed --simplification=10 --detect-shared-borders -pk clipped_classified.geojson`
+6. Verify output: check MBTiles has expected zoom levels and non-zero tile count
+7. Report: tile count, file size, categories found, total features
 
 **Dependencies:** ogr2ogr (GDAL), tippecanoe, Python 3
 
 **Tippecanoe flags explained:**
 - `-Z0 -z14` — zoom levels 0-14 (matching basemap)
 - `-l public_lands` — layer name in the vector tiles
-- `--drop-densest-as-needed` — at low zooms, drop the smallest polygons to keep tile sizes manageable
-- `--extend-zooms-if-still-dropping` — if still dropping at z14, extend
-- `--coalesce-densest-as-needed` — merge adjacent polygons of the same category at low zooms
+- `--coalesce-smallest-as-needed` — merge the smallest adjacent same-category polygons at low zooms to reduce tile size. **Do NOT use `--drop-densest-as-needed`** — that drops entire polygons, causing BLM areas composed of many small cadastral polygons to disappear at low zoom.
+- `--simplification=10` — simplify polygon vertices at low zoom (10 = moderate simplification). This reduces vertex count without dropping entire features.
+- `--detect-shared-borders` — prevents gaps between adjacent polygons when simplifying shared boundaries
+- `-pk` — no tile size limit (preserves all feature properties for click popups; accept larger tiles)
+- **Do NOT use `--extend-zooms-if-still-dropping`** — contradicts `maxzoom: 14` on the MapLibre source
+
+**CRS note:** PAD-US is published in NAD83 (EPSG:4269). The ~1m difference from WGS84 is invisible at render zoom but the `-t_srs EPSG:4326` ensures correctness for Tippecanoe.
+
+**Overlapping polygons:** PAD-US contains overlapping features (e.g., wilderness areas inside national forests). Classification adds a `sort_key` field (Wilderness=1, NPS=2, USFS=3, etc.) and Tippecanoe's `-pk` preserves it. The frontend uses `fill-sort-key: ['get', 'sort_key']` to render wilderness on top. At semi-transparent opacity, overlapping zones will appear slightly darker — this is acceptable and matches how OnX renders the same data.
+
+**Memory and performance guidance:**
+- **Full Western US build:** Tippecanoe requires 4-6GB free RAM for the full dataset. The ogr2ogr SQL classification avoids Python memory overhead. **Recommend running with Docker services stopped** (`docker compose stop`) or building on an x86 machine and copying the MBTiles to the Pi.
+- **Sample build (NW Arizona bbox):** Runs fine on Pi 5 with services active (~50MB intermediate data).
+- **Expected build time:** Sample: 2-5 minutes. Full Western US: 30-90 minutes on Pi 5, 5-15 minutes on x86.
+
+**Host execution note:** This script runs on the host, NOT via `docker compose run pipeline`. Tippecanoe is a compiled C++ binary that must be installed on the host (or built from source on ARM64). This is the only pipeline script with this constraint — all others run in the pipeline Docker container.
 
 ### Sample Pipeline for Visual Testing
 
@@ -116,7 +139,7 @@ TileServer GL automatically serves vector tiles at `/tiles/data/publiclands/{z}/
 
 ### Source and Layers
 
-In `addPlaceholderSources()` (frontend/app.js), after existing overlay sources:
+In `addPlaceholderSources()` (frontend/app.js), **AFTER the `imported-points` layer is created** (critical — the `before` parameter references a layer that must already exist):
 
 **Source:**
 ```js
@@ -136,10 +159,11 @@ Layer: public-lands-fill (type: fill)
     fill-color: ['match', ['get', 'category'],
       'BLM', '#f5deb3', 'USFS', '#228b22', 'NPS', '#006400',
       'FWS', '#008080', 'DOD', '#8b4545', 'USBR', '#4682b4',
-      'State', '#d2691e', 'Wilderness', '#800080',
+      'Tribal', '#cd853f', 'State', '#d2691e', 'Wilderness', '#800080',
       '#a9a9a9']
     fill-opacity: 0.3
-  before: 'imported-points'  // Below imported features and search pins
+    fill-sort-key: ['get', 'sort_key']   // Wilderness on top of forest, etc.
+  before: 'imported-points'  // MUST be added AFTER imported-points exists in addPlaceholderSources
 ```
 
 **Outline layer** (boundary lines):
@@ -151,7 +175,7 @@ Layer: public-lands-outline (type: line)
     line-color: ['match', ['get', 'category'],
       'BLM', '#c8a870', 'USFS', '#1a6b1a', 'NPS', '#004d00',
       'FWS', '#006666', 'DOD', '#6b3535', 'USBR', '#366fa0',
-      'State', '#a34f1a', 'Wilderness', '#660066',
+      'Tribal', '#a0682f', 'State', '#a34f1a', 'Wilderness', '#660066',
       '#808080']
     line-width: 1
     line-opacity: 0.6
@@ -166,23 +190,28 @@ In `frontend/index.html`, add to the layer controls panel alongside imagery/hill
 
 ```html
 <label><input type="checkbox" id="toggle-public-lands"> Public Lands</label>
-<input type="range" id="public-lands-opacity" min="0" max="100" value="30">
+<input type="range" id="public-lands-opacity" min="0" max="100" value="50">
 ```
 
 **Toggle logic in `initLayerControls()`:**
 - Checkbox toggles visibility of both `public-lands-fill` and `public-lands-outline`
-- Opacity slider controls `fill-opacity` (mapped: slider 0-100 to opacity 0.0-0.6 — even at max, semi-transparent so basemap shows through)
-- State saved/restored on style swap via `syncLayerVisibility()`
+- Opacity slider: value 0-100 maps to fill-opacity `val / 100 * 0.6`. Default slider value = 50 (produces 0.3, matching layer default). Outline opacity coupled: `val / 100 * 0.8`.
+- **Layer `fill-opacity` in the addLayer call must be `0.3`** (matching slider default 50). No UX jump on first slider touch.
 - Layers default to hidden (checkbox unchecked) — user opts in
+
+**Style swap restoration in `syncLayerVisibility()`:**
+Explicitly restore public lands state after style swap (following imagery toggle pattern):
+1. Read `#toggle-public-lands` checked state → set layer visibility
+2. Read `#public-lands-opacity` slider value → apply fill-opacity and line-opacity via `setPaintProperty`
 
 ### Click Interaction
 
-Clicking a public land polygon shows a popup:
+**Dedicated click handler:** Register `map.on('click', 'public-lands-fill', ...)` showing popup:
 - **Title:** Unit name (e.g., "Lake Mead National Recreation Area")
 - **Subtitle:** Managing agency + designation type (e.g., "NPS — National Recreation Area")
 - **Category badge:** Colored dot matching the fill color
 
-Uses `queryRenderedFeatures` on `public-lands-fill` layer. Added to the generic click handler's layer exclusion list so public land clicks don't also trigger reverse geocode.
+**Generic click handler exclusion:** Add `'public-lands-fill'` to the `queryRenderedFeatures` layer array in the generic click handler (line ~1103). Without this, clicking a public land polygon fires BOTH the dedicated popup AND a reverse geocode. The dedicated handler fires first (MapLibre dispatches layer-specific before generic), then the exclusion prevents the generic handler from also firing.
 
 ### Terrain Interaction
 
@@ -209,10 +238,14 @@ Compact legend in the layer controls panel, visible when Public Lands toggle is 
 ```
   ■ BLM          ■ Nat'l Forest
   ■ Nat'l Park   ■ Fish & Wildlife
-  ■ Military     ■ Bur. of Reclamation
-  ■ State Trust  ■ Wilderness
-  ■ Other Federal
+  ■ Military*    ■ Bur. of Reclamation
+  ■ Tribal†      ■ State Trust
+  ■ Wilderness   ■ Other Federal
 ```
+\* Restricted access
+† Boundaries may be incomplete
+
+Layout: `display: grid; grid-template-columns: 1fr 1fr` with 10 items (5 rows x 2 cols, no orphan).
 
 - 12x12px colored squares next to category labels
 - Two-column layout to save vertical space
@@ -245,6 +278,8 @@ Compact legend in the layer controls panel, visible when Public Lands toggle is 
 | **Total new permanent storage** | **~50-200 MB** |
 
 Negligible relative to imagery (53 GB) and elevation (119 GB).
+
+**Scope note:** This pipeline is scoped to the Western US bbox. Alaska and Hawaii are excluded from the default configuration. PAD-US covers both, but the basemap tiles (`southwest5.mbtiles`) do not — the public lands overlay would render with no basemap underneath. The `--bbox` parameter can be adjusted for other regions if basemap tiles are generated for them.
 
 ## Testing Strategy
 
