@@ -115,6 +115,11 @@
 - **Root cause:** Geocode timeout was 1.0s but Nominatim takes 1.3s+ for cold queries. The geocode silently failed, returning `geocode_failed` instead of a bbox. The bbox logic was already correct (uses Nominatim's boundingbox).
 - **Fix:** Raised geocode timeout to 5.0s in `services/search/geocode.py:69`. Now returns 10 results in 0.47s.
 
+### Sentinel-2 imagery pipeline not working
+- **What:** `scripts/acquire_sentinel.py` was created by a parallel agent but has not been tested end-to-end. The Copernicus STAC endpoint and auth flow need validation against the live API. The admin panel has a Sentinel-2 pipeline card but it returns 422.
+- **Status:** Code exists but untested. The two working imagery modes are M2M (NAIP GeoTIFFs) and the direct tile scraper (TNMAccess).
+- **To validate:** Need Copernicus credentials, test STAC search, test download, test GDAL conversion, verify MBTiles output.
+
 ### Monitor: search request latency with multiple tile sources active
 - **What:** With hybrid imagery + public lands + terrain all active, the browser queues the spatial search fetch behind dozens of concurrent tile requests. This caused 7.6s round-trip times despite the server responding in <200ms.
 - **Current fix:** `priority: 'high'` on the search fetch request. This works but is a band-aid — the root cause is browser connection pool contention.
