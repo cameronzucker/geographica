@@ -296,11 +296,31 @@ The import pipeline now fetches external resources directed by untrusted file co
 - If `Image.decode()` fails or dimensions exceed limit, discard and use fallback symbol
 - Never inject fetched content as `innerHTML`, SVG source, or any DOM context
 
-#### KML Content Sanitization
+#### KML Content Sanitization — MANDATORY
 
-- Popup descriptions: existing `textContent` path for non-HTML is safe — preserve it
-- HTML descriptions: existing `innerHTML` usage is a known XSS vector — flag for CSO review
-- Consider DOMPurify or a strict tag allowlist for HTML descriptions (out of scope for this spec, but noted)
+**Critical (CSO review finding):** The existing popup code at app.js:354 renders KML `description` fields as raw HTML, enabling XSS from malicious KMZ files. This MUST be fixed as part of this overhaul since the overhaul encourages importing untrusted files.
+
+**Fix:** Vendor DOMPurify (~14KB minified) into `frontend/vendor/dompurify.min.js`. Update popup code:
+- Plain text descriptions (no HTML detected): continue using `textContent` (safe)
+- HTML descriptions: sanitize with `DOMPurify.sanitize(props.description)` before rendering as HTML
+- DOMPurify default config strips scripts, event handlers, iframes, and dangerous elements while preserving safe formatting (tables, bold, links, images with validated src)
+
+**Popup icon URL validation:** The existing `iconImg.src = props.icon` (app.js:341) must also go through the same URL validation as the icon pipeline (Section 5). If validation fails, don't render the popup icon image.
+
+#### Archive Path Validation
+
+Before looking up icon hrefs in the KMZ archive (`zipArchive.file(href)`), validate the path:
+- Reject any href containing `..` (path traversal)
+- Reject any href starting with `/` (absolute path)
+- Reject any href containing `\` (backslash)
+- Normalize the path to prevent URL-encoded traversal (`%2e%2e%2f`)
+
+#### Decompression Bomb Protection
+
+After JSZip extracts the KML entry but before reading its contents:
+- Check `kmlFile._data.uncompressedSize` (if available from ZIP directory)
+- Reject if uncompressed size exceeds 500MB (`MAX_KML_SIZE`)
+- This prevents a small compressed KMZ from decompressing to GB-scale KML that OOMs the browser
 
 #### Resource Limits
 
@@ -328,6 +348,7 @@ A formal security review (CSO skill) must run against this spec before implement
 | `frontend/style.css` | Progress bar styles, updated import status styles |
 | `frontend/index.html` | No changes expected (existing drop zone and file input sufficient) |
 | `frontend/vendor/togeojson.js` | No changes (post-processing approach avoids forking) |
+| `frontend/vendor/dompurify.min.js` | **NEW** — vendored DOMPurify for HTML sanitization (~14KB) |
 
 **Caller updates required:** `processKMLDoc()` becomes async with signature `processKMLDoc(kmlDoc, filename, zipArchive)`. Both callers must be updated:
 - `importKML()`: `reader.onload` calls `processKMLDoc(kmlDoc, file.name, null).catch(showImportError)` — passes `null` for zipArchive since plain KML has no archive
