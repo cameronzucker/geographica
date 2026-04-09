@@ -1146,10 +1146,12 @@
           routeStartCoords = [lng, lat];
           placeRouteMarker('start', [lng, lat]);
           document.getElementById('route-start').value = 'GPS: ' + label;
+          scheduleRouteRegen();
         } else if (target === 'end') {
           routeEndCoords = [lng, lat];
           placeRouteMarker('end', [lng, lat]);
           document.getElementById('route-end').value = 'GPS: ' + label;
+          scheduleRouteRegen();
         }
       });
     });
@@ -1415,6 +1417,7 @@
       placeRouteMarker('start', [lng, lat]);
       document.getElementById('route-start').value = name.substring(0, 50);
       popup.remove();
+      scheduleRouteRegen();
     }));
 
     actions.appendChild(makeBtn('Route to here', function () {
@@ -1422,11 +1425,13 @@
       placeRouteMarker('end', [lng, lat]);
       document.getElementById('route-end').value = name.substring(0, 50);
       popup.remove();
+      scheduleRouteRegen();
     }));
 
     actions.appendChild(makeBtn('Add as stop', function () {
       addWaypointRow(name.substring(0, 50), [lng, lat]);
       popup.remove();
+      scheduleRouteRegen();
     }));
 
     var copyBtn = makeBtn('Copy coords', function () {
