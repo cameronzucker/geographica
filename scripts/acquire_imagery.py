@@ -97,10 +97,21 @@ def write_pipeline_state(output_path: Path, state: dict):
 
 def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
                     tiles_done: int, tiles_total: int, rate: float = 0,
-                    status: str = "running", error: str = None):
-    """Write structured progress to the state file."""
+                    status: str = "running", error: str = None,
+                    # M2M phase-aware fields
+                    phase: str = None,
+                    scenes_total: int = None,
+                    geotiffs_downloaded: int = None, geotiffs_total: int = None,
+                    geotiffs_bytes: int = None,
+                    current_batch: int = None, total_batches: int = None):
+    """Write structured progress to the state file.
+
+    For direct mode: tiles_done/tiles_total/rate are the primary fields.
+    For M2M mode: phase + geotiffs fields are primary during downloading;
+    tiles_done/tiles_total during converting phase.
+    """
     import datetime
-    write_pipeline_state(output_path, {
+    state = {
         "status": status,
         "mode": mode,
         "bbox": bbox,
@@ -111,7 +122,22 @@ def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
         "started_at": getattr(update_progress, '_started_at', None),
         "last_updated": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "error": error,
-    })
+    }
+    if phase is not None:
+        state["phase"] = phase
+    if scenes_total is not None:
+        state["scenes_total"] = scenes_total
+    if geotiffs_downloaded is not None:
+        state["geotiffs_downloaded"] = geotiffs_downloaded
+    if geotiffs_total is not None:
+        state["geotiffs_total"] = geotiffs_total
+    if geotiffs_bytes is not None:
+        state["geotiffs_bytes"] = geotiffs_bytes
+    if current_batch is not None:
+        state["current_batch"] = current_batch
+    if total_batches is not None:
+        state["total_batches"] = total_batches
+    write_pipeline_state(output_path, state)
 
 
 # ---------------------------------------------------------------------------
@@ -745,6 +771,7 @@ async def m2m_download_batched(
     dataset_alias: str, scenes: list[dict],
     staging: Path, checkpoint_path: Path,
     concurrency: int = 3,
+    on_batch_complete=None,
 ) -> list[Path]:
     """Download scenes in batches: options → request → poll → download per chunk.
 
@@ -852,6 +879,18 @@ async def m2m_download_batched(
         log.info("Batch %d complete: %d files this batch, %d total downloaded",
                  batch_num, len(batch_paths), total_downloaded)
 
+        if on_batch_complete:
+            total_bytes = sum(
+                Path(p).stat().st_size for p in done.values() if Path(p).exists()
+            )
+            on_batch_complete(
+                geotiffs_downloaded=total_downloaded,
+                geotiffs_total=total_scenes,
+                geotiffs_bytes=total_bytes,
+                current_batch=batch_num,
+                total_batches=total_batches,
+            )
+
     # Return all downloaded files
     all_paths = [Path(p) for p in done.values() if Path(p).exists()]
     log.info("M2M batched download complete: %d files total", len(all_paths))
@@ -893,28 +932,30 @@ async def run_m2m(args):
         except Exception as exc:
             log.error("M2M login failed: %s", exc)
             update_progress(output, "m2m", args.bbox, "n/a",
-                            0, 0, status="error",
+                            0, 0, status="error", phase="error",
                             error=f"Login failed: {exc}")
             sys.exit(1)
 
         update_progress(output, "m2m", args.bbox, "n/a",
-                        0, 0, status="running")
+                        0, 0, status="running", phase="login")
 
         if _cancel_requested:
             log.info("Cancellation requested after login — logging out")
             await m2m_logout(session, api_key)
             update_progress(output, "m2m", args.bbox, "n/a",
-                            0, 0, status="cancelled")
+                            0, 0, status="cancelled", phase="cancelled")
             return
 
         try:
             # --- Find NAIP dataset alias ---
+            update_progress(output, "m2m", args.bbox, "n/a",
+                            0, 0, phase="searching")
             dataset_alias = await m2m_find_naip_dataset(session, api_key)
 
             if _cancel_requested:
                 log.info("Cancellation requested after dataset search — logging out")
                 update_progress(output, "m2m", args.bbox, "n/a",
-                                0, 0, status="cancelled")
+                                0, 0, status="cancelled", phase="cancelled")
                 return
 
             # --- Search for scenes ---
@@ -922,24 +963,42 @@ async def run_m2m(args):
             if not scenes:
                 log.error("No NAIP scenes found for bbox %s", args.bbox)
                 update_progress(output, "m2m", args.bbox, "n/a",
-                                0, 0, status="error",
+                                0, 0, status="error", phase="error",
                                 error=f"No NAIP scenes found for bbox {args.bbox}")
                 sys.exit(1)
 
+            total_batches = (len(scenes) + M2M_BATCH_SIZE - 1) // M2M_BATCH_SIZE
             update_progress(output, "m2m", args.bbox, "n/a",
-                            0, len(scenes), status="running")
+                            0, 0, phase="downloading",
+                            scenes_total=len(scenes),
+                            geotiffs_downloaded=0, geotiffs_total=len(scenes),
+                            geotiffs_bytes=0,
+                            current_batch=0, total_batches=total_batches)
 
             if _cancel_requested:
                 log.info("Cancellation requested after scene search — logging out")
                 update_progress(output, "m2m", args.bbox, "n/a",
-                                0, len(scenes), status="cancelled")
+                                0, len(scenes), status="cancelled", phase="cancelled")
                 return
 
             # --- Batched download: options → request → poll → download per chunk ---
             log.info("Starting batched download for %d scenes", len(scenes))
+
+            def _on_batch(geotiffs_downloaded, geotiffs_total, geotiffs_bytes,
+                          current_batch, total_batches):
+                update_progress(output, "m2m", args.bbox, "n/a",
+                                0, 0, phase="downloading",
+                                scenes_total=len(scenes),
+                                geotiffs_downloaded=geotiffs_downloaded,
+                                geotiffs_total=geotiffs_total,
+                                geotiffs_bytes=geotiffs_bytes,
+                                current_batch=current_batch,
+                                total_batches=total_batches)
+
             tif_paths = await m2m_download_batched(
                 session, api_key, dataset_alias, scenes,
                 staging, checkpoint, concurrency=m2m_concurrency,
+                on_batch_complete=_on_batch,
             )
 
         finally:
@@ -948,31 +1007,37 @@ async def run_m2m(args):
     if _cancel_requested:
         log.info("Cancellation requested after downloads — skipping conversion")
         update_progress(output, "m2m", args.bbox, "n/a",
-                        len(tif_paths), len(scenes), status="cancelled")
+                        len(tif_paths), len(scenes), status="cancelled", phase="cancelled",
+                        scenes_total=len(scenes),
+                        geotiffs_downloaded=len(tif_paths), geotiffs_total=len(scenes))
         return
 
     if not tif_paths:
         log.error("No GeoTIFF files were downloaded successfully")
         update_progress(output, "m2m", args.bbox, "n/a",
-                        0, len(scenes), status="error",
+                        0, len(scenes), status="error", phase="error",
                         error="All GeoTIFF downloads failed")
         sys.exit(1)
 
     # --- Convert to MBTiles ---
     update_progress(output, "m2m", args.bbox, "n/a",
-                    len(tif_paths), len(scenes), status="running")
+                    0, 0, phase="converting",
+                    scenes_total=len(scenes),
+                    geotiffs_downloaded=len(tif_paths), geotiffs_total=len(scenes))
 
     try:
         convert_geotiffs_to_mbtiles(tif_paths, output)
     except Exception as exc:
         log.error("GDAL conversion failed: %s", exc)
         update_progress(output, "m2m", args.bbox, "n/a",
-                        len(tif_paths), len(urls), status="error",
+                        0, 0, status="error", phase="error",
                         error=f"GDAL conversion failed: {exc}")
         sys.exit(1)
 
     update_progress(output, "m2m", args.bbox, "n/a",
-                    len(tif_paths), len(scenes), status="completed")
+                    0, len(scenes), status="completed", phase="complete",
+                    scenes_total=len(scenes),
+                    geotiffs_downloaded=len(tif_paths), geotiffs_total=len(scenes))
     log.info("M2M pipeline complete: %d files → %s", len(tif_paths), output)
 
 

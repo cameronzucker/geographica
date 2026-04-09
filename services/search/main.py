@@ -30,6 +30,10 @@ CREDENTIALS_PATH = Path("/data/.credentials.json")
 DATA_DIR = Path("/data")
 TLS_CERT_PATH = Path("/tls/server.crt")
 
+KNOWN_SERVICES = frozenset({
+    "frontend", "gps", "nominatim", "search", "stt", "tileserver", "valhalla"
+})
+
 EARTH_RADIUS_M = 6_371_000
 
 # Lock to prevent concurrent pipeline starts
@@ -662,8 +666,11 @@ def _list_docker_services() -> list[dict]:
     try:
         containers = client.containers.list(all=True, filters={"name": "geographica-"})
         for c in sorted(containers, key=lambda x: x.name):
+            svc_name = c.name.replace("geographica-", "")
+            if svc_name not in KNOWN_SERVICES:
+                continue
             svc = {
-                "name": c.name.replace("geographica-", ""),
+                "name": svc_name,
                 "status": c.status,
                 "health": "unknown",
                 "uptime": "",
@@ -932,12 +939,13 @@ async def pipeline_start(body: PipelineStartBody):
     bbox = None
     zoom_min = zoom_max = tile_count = 0
     estimated_size_gb = 0.0
+    is_m2m = body.type == "imagery" and body.mode == "m2m"
     if body.type in ("imagery", "elevation"):
         if not body.mode or body.mode not in ("direct", "m2m"):
             raise HTTPException(status_code=422, detail="mode must be 'direct' or 'm2m'")
         if not body.bbox:
             raise HTTPException(status_code=422, detail="bbox is required for imagery/elevation")
-        if not body.zoom:
+        if not is_m2m and not body.zoom:
             raise HTTPException(status_code=422, detail="zoom is required for imagery/elevation")
 
         # Parse and validate bbox
@@ -946,22 +954,23 @@ async def pipeline_start(body: PipelineStartBody):
         except ValueError as e:
             raise HTTPException(status_code=422, detail=f"Invalid bbox: {e}")
 
-        # Parse and validate zoom
-        try:
-            zoom_min, zoom_max = _parse_zoom(body.zoom)
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=f"Invalid zoom: {e}")
+        # Parse and validate zoom (not required for M2M)
+        if body.zoom:
+            try:
+                zoom_min, zoom_max = _parse_zoom(body.zoom)
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=f"Invalid zoom: {e}")
 
-        # Estimate tile count and check disk space
-        tile_count = estimate_tile_count(bbox, zoom_min, zoom_max)
-        # Rough estimate: ~20 KB per tile average (measured from USGS imagery)
-        estimated_size_gb = tile_count * 20 * 1024 / (1024 ** 3)
-        disk_free_gb = _get_disk_free_gb()
-        if disk_free_gb - estimated_size_gb < 10.0:
-            raise HTTPException(
-                status_code=507,
-                detail=f"Insufficient disk space. Free: {disk_free_gb:.1f} GB, estimated need: {estimated_size_gb:.1f} GB, minimum 10 GB buffer required",
-            )
+        # Estimate tile count and check disk space (skip for M2M — auto-detected)
+        if not is_m2m:
+            tile_count = estimate_tile_count(bbox, zoom_min, zoom_max)
+            estimated_size_gb = tile_count * 20 * 1024 / (1024 ** 3)
+            disk_free_gb = _get_disk_free_gb()
+            if disk_free_gb - estimated_size_gb < 10.0:
+                raise HTTPException(
+                    status_code=507,
+                    detail=f"Insufficient disk space. Free: {disk_free_gb:.1f} GB, estimated need: {estimated_size_gb:.1f} GB, minimum 10 GB buffer required",
+                )
 
     # For M2M mode, verify credentials exist
     if body.mode == "m2m":
@@ -1021,18 +1030,28 @@ async def pipeline_start(body: PipelineStartBody):
                     except Exception as e:
                         raise HTTPException(status_code=500, detail=f"Failed to rename existing file: {e}")
 
-                # Build command -- imagery and elevation scripts have different args
-                script = _script_for_type(body.type)
-                command = [
-                    "python3", script,
-                    f"--bbox={body.bbox}",
-                    f"--zoom={body.zoom}",
-                    "--concurrency", str(body.concurrency),
-                    "--output", f"/data/{mbtiles_path.name}",
-                ]
-                # Only imagery script accepts --mode (direct/tnmaccess/m2m)
-                if body.type == "imagery":
-                    command[2:2] = ["--mode", body.mode]
+                if is_m2m:
+                    # M2M command: no --zoom, add --staging
+                    command = [
+                        "python3", "/scripts/acquire_imagery.py",
+                        "--mode", "m2m",
+                        f"--bbox={body.bbox}",
+                        "--output", f"/data/{mbtiles_path.name}",
+                        "--staging", "/data/m2m_staging",
+                        "--concurrency", str(body.concurrency),
+                    ]
+                else:
+                    # Build command -- imagery and elevation scripts have different args
+                    script = _script_for_type(body.type)
+                    command = [
+                        "python3", script,
+                        f"--bbox={body.bbox}",
+                        f"--zoom={body.zoom}",
+                        "--concurrency", str(body.concurrency),
+                        "--output", f"/data/{mbtiles_path.name}",
+                    ]
+                    if body.type == "imagery":
+                        command[2:2] = ["--mode", body.mode]
 
             # Build environment
             env = {
@@ -1116,10 +1135,11 @@ async def pipeline_start(body: PipelineStartBody):
                 "type": body.type,
                 "mode": body.mode,
                 "bbox": body.bbox,
-                "zoom": body.zoom,
+                "zoom": body.zoom if not is_m2m else "n/a",
+                "phase": "login" if is_m2m else None,
                 "concurrency": body.concurrency,
                 "update": body.update,
-                "estimated_tiles": tile_count if body.type != "osm_poi" else None,
+                "estimated_tiles": tile_count if body.type != "osm_poi" and not is_m2m else None,
                 "container_id": container.id,
                 "started_at": datetime.now(tz.utc).isoformat(),
             }
@@ -1162,9 +1182,6 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
         # Reconcile: if state says running but container is dead, mark interrupted
         # and capture last logs for crash diagnosis
         if state_data.get("status") in ("running", "cancelling") and not container_running:
-            new_status = "cancelled" if state_data.get("status") == "cancelling" else "interrupted"
-            state_data["status"] = new_status
-
             # Add completion timestamps
             from datetime import datetime, timezone as tz
             state_data["completed_at"] = datetime.now(tz.utc).isoformat()
@@ -1181,6 +1198,15 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
                 except Exception:
                     pass
 
+            # Determine final status: check logs for success before marking interrupted
+            if state_data.get("status") == "cancelling":
+                new_status = "cancelled"
+            elif "MBTiles written to" in (state_data.get("last_logs") or ""):
+                new_status = "completed"
+            else:
+                new_status = "interrupted"
+            state_data["status"] = new_status
+
             try:
                 tmp = state_file.with_suffix(".json.tmp")
                 tmp.write_text(json.dumps(state_data, indent=2))
@@ -1194,8 +1220,9 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
     # Add live fields
     state_data["container_running"] = container_running
 
-    # Calculate estimated tiles if bbox/zoom available (osm_poi has null bbox/zoom)
-    if state_data.get("bbox") and state_data.get("zoom"):
+    # Calculate estimated tiles if bbox/zoom available (skip for osm_poi/M2M)
+    if (state_data.get("bbox") and state_data.get("zoom")
+            and state_data.get("zoom") != "n/a"):
         try:
             bbox = _parse_bbox(state_data["bbox"])
             zoom_min, zoom_max = _parse_zoom(state_data["zoom"])

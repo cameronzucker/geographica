@@ -181,6 +181,12 @@ services:
     environment:
       TLS_MODE: "${TLS_MODE:-http}"
     entrypoint: ["/bin/sh", "/etc/nginx/entrypoint.sh"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8094/config/", "-o", "/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     deploy:
       resources:
         limits:
