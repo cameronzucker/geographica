@@ -23,8 +23,8 @@
   var SEARCH_DEBOUNCE_MS = 300;
   var GPS_RECONNECT_MS   = 5000;
 
-  var MAX_FILE_SIZE_WARN   = 10 * 1024 * 1024;  // 10 MB
-  var MAX_FILE_SIZE_REJECT = 50 * 1024 * 1024;  // 50 MB
+  var MAX_FILE_SIZE_WARN   = 25 * 1024 * 1024;   // 25 MB (chunked processing handles large files)
+  var MAX_FILE_SIZE_REJECT = 100 * 1024 * 1024;  // 100 MB
 
   // =====================================================================
   //  URL VALIDATION (security — blocks SSRF, tracking, XSS via icon URLs)
@@ -1868,7 +1868,10 @@
       try {
         var parser = new DOMParser();
         var kmlDoc = parser.parseFromString(e.target.result, 'text/xml');
-        processKMLDoc(kmlDoc, file.name);
+        processKMLDoc(kmlDoc, file.name, null).catch(function (err) {
+          console.error('KML import error:', err);
+          showImportStatus('Failed to import KML: ' + err.message, 'error');
+        });
       } catch (err) {
         console.error('KML parse error:', err);
         showImportStatus('Failed to parse KML: ' + err.message, 'error');
@@ -1883,21 +1886,32 @@
       return;
     }
 
+    var maxKmlSize = (window._kmzImport && window._kmzImport.MAX_KML_SIZE) || (500 * 1024 * 1024);
+
     JSZip.loadAsync(file).then(function (zip) {
       var kmlFile = null;
+      var entryCount = 0;
       zip.forEach(function (path, entry) {
+        entryCount++;
+        if (entryCount > 100) return;  // limit archive scanning
         if (path.match(/\.kml$/i) && !kmlFile) kmlFile = entry;
       });
       if (!kmlFile) {
         showImportStatus('No KML file found inside KMZ archive.', 'error');
         return;
       }
-      return kmlFile.async('string');
-    }).then(function (kmlText) {
-      if (!kmlText) return;
-      var parser = new DOMParser();
-      var kmlDoc = parser.parseFromString(kmlText, 'text/xml');
-      processKMLDoc(kmlDoc, file.name);
+      // Decompression bomb check
+      if (kmlFile._data && kmlFile._data.uncompressedSize > maxKmlSize) {
+        showImportStatus('KML inside archive too large (' +
+          Math.round(kmlFile._data.uncompressedSize / 1024 / 1024) + ' MB). Import rejected.', 'error');
+        return;
+      }
+      return kmlFile.async('string').then(function (kmlText) {
+        if (!kmlText) return;
+        var parser = new DOMParser();
+        var kmlDoc = parser.parseFromString(kmlText, 'text/xml');
+        return processKMLDoc(kmlDoc, file.name, zip);
+      });
     }).catch(function (err) {
       console.error('KMZ extract error:', err);
       showImportStatus('Failed to extract KMZ: ' + err.message, 'error');
