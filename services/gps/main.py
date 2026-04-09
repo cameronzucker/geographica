@@ -207,6 +207,38 @@ async def position() -> dict[str, Any]:
     return _position
 
 
+@app.get("/status")
+async def status() -> dict[str, Any]:
+    """Structured GPS status for admin aggregation.
+
+    Returns fix type and accuracy without coordinates.
+    Three states:
+    - ok + 3d/2d fix: GPS working
+    - ok + none fix: gpsd connected but no satellite fix
+    - no_gpsd: cannot reach gpsd daemon
+    """
+    if not _gps_connected:
+        return {
+            "status": "no_gpsd",
+            "fix": None,
+            "accuracy_m": None,
+        }
+
+    fix_raw = _position.get("fix", 0)
+    if fix_raw >= 3:
+        fix_str = "3d"
+    elif fix_raw >= 2:
+        fix_str = "2d"
+    else:
+        fix_str = "none"
+
+    return {
+        "status": "ok",
+        "fix": fix_str,
+        "accuracy_m": _position.get("accuracy"),
+    }
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     await ws.accept()
