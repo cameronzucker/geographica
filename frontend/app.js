@@ -488,7 +488,7 @@
         content.appendChild(sub);
       }
 
-      new maplibregl.Popup({ maxWidth: '280px', offset: 35 })
+      new maplibregl.Popup({ maxWidth: '280px' })
         .setLngLat(coords)
         .setDOMContent(content)
         .addTo(map);
@@ -870,9 +870,10 @@
           performSearch(query);
         }
       }
-      // Escape clears results
+      // Escape clears results and pins
       if (e.key === 'Escape') {
         hideSearchResults();
+        clearSearchPins();
       }
     });
 
@@ -901,7 +902,7 @@
       // Show the same full popup as a basemap click (coordinates, route buttons, copy)
       var resultItem = lastSearchResults[idx];
       var resultName = (resultItem && (resultItem.name || resultItem.display_name)) || feat.properties.name || 'Unknown';
-      showMapClickPopup(resultCoords[0], resultCoords[1], resultName, null);
+      showMapClickPopup(resultCoords[0], resultCoords[1], resultName, null, 35);
     });
     map.on('mouseenter', 'search-result-circles', function () {
       map.getCanvas().style.cursor = 'pointer';
@@ -1107,7 +1108,8 @@
 
   function hideSearchResults() {
     document.getElementById('search-results').classList.remove('visible');
-    clearSearchPins();
+    // Do NOT clear search pins here — they should persist until a new search
+    // or explicit clear. Pins disappearing on outside click is disorienting.
     if (searchPopup) { searchPopup.remove(); searchPopup = null; }
   }
 
@@ -1356,9 +1358,10 @@
     wp.marker = new maplibregl.Marker({ color: '#f9e2af' })
       .setLngLat(wp.coords).addTo(map);
     var wpName = wp.name || (wp.coords[1].toFixed(5) + ', ' + wp.coords[0].toFixed(5));
+    wp.marker.getElement().style.cursor = 'pointer';
     wp.marker.getElement().addEventListener('click', function (ev) {
       ev.stopPropagation();
-      showMapClickPopup(wp.coords[0], wp.coords[1], wpName, null);
+      showMapClickPopup(wp.coords[0], wp.coords[1], wpName, null, 35);
     });
   }
 
@@ -1377,7 +1380,7 @@
       });
   }
 
-  function showMapClickPopup(lng, lat, name, geocodeData) {
+  function showMapClickPopup(lng, lat, name, geocodeData, popupOffset) {
     var content = document.createElement('div');
 
     var title = document.createElement('h4');
@@ -1450,7 +1453,7 @@
 
     content.appendChild(actions);
 
-    var popup = new maplibregl.Popup({ maxWidth: '340px', offset: 35 })
+    var popup = new maplibregl.Popup({ maxWidth: '340px', offset: popupOffset || 0 })
       .setLngLat([lng, lat])
       .setDOMContent(content)
       .addTo(map);
@@ -1558,17 +1561,19 @@
       if (routeStartMarker) routeStartMarker.remove();
       routeStartMarker = new maplibregl.Marker({ color: color })
         .setLngLat(lngLat).addTo(map);
+      routeStartMarker.getElement().style.cursor = 'pointer';
       routeStartMarker.getElement().addEventListener('click', function (ev) {
         ev.stopPropagation();
-        showMapClickPopup(lngLat[0], lngLat[1], markerName, null);
+        showMapClickPopup(lngLat[0], lngLat[1], markerName, null, 35);
       });
     } else {
       if (routeEndMarker) routeEndMarker.remove();
       routeEndMarker = new maplibregl.Marker({ color: color })
         .setLngLat(lngLat).addTo(map);
+      routeEndMarker.getElement().style.cursor = 'pointer';
       routeEndMarker.getElement().addEventListener('click', function (ev) {
         ev.stopPropagation();
-        showMapClickPopup(lngLat[0], lngLat[1], markerName, null);
+        showMapClickPopup(lngLat[0], lngLat[1], markerName, null, 35);
       });
     }
   }
