@@ -407,6 +407,55 @@
       });
     }
 
+    // --- Public lands vector tile overlay ---
+    if (!map.getSource('public-lands')) {
+      map.addSource('public-lands', {
+        type: 'vector',
+        tiles: [window.location.origin + '/tiles/data/publiclands/{z}/{x}/{y}.pbf'],
+        maxzoom: 14
+      });
+    }
+    // Fill layer (add FIRST — outline goes on top with same 'before' anchor)
+    if (!map.getLayer('public-lands-fill')) {
+      map.addLayer({
+        id: 'public-lands-fill',
+        type: 'fill',
+        source: 'public-lands',
+        'source-layer': 'public_lands',
+        layout: {
+          visibility: 'none',
+          'fill-sort-key': ['get', 'sort_key']
+        },
+        paint: {
+          'fill-color': ['match', ['get', 'category'],
+            'BLM', '#f5deb3', 'USFS', '#228b22', 'NPS', '#006400',
+            'FWS', '#008080', 'DOD', '#8b4545', 'USBR', '#4682b4',
+            'Tribal', '#cd853f', 'State', '#d2691e', 'Wilderness', '#800080',
+            '#a9a9a9'],
+          'fill-opacity': 0.3
+        }
+      }, 'imported-points');
+    }
+    // Outline layer (add SECOND — renders on top of fill)
+    if (!map.getLayer('public-lands-outline')) {
+      map.addLayer({
+        id: 'public-lands-outline',
+        type: 'line',
+        source: 'public-lands',
+        'source-layer': 'public_lands',
+        layout: { visibility: 'none' },
+        paint: {
+          'line-color': ['match', ['get', 'category'],
+            'BLM', '#c8a870', 'USFS', '#1a6b1a', 'NPS', '#004d00',
+            'FWS', '#006666', 'DOD', '#6b3535', 'USBR', '#366fa0',
+            'Tribal', '#a0682f', 'State', '#a34f1a', 'Wilderness', '#660066',
+            '#808080'],
+          'line-width': 1,
+          'line-opacity': 0.6
+        }
+      }, 'imported-points');
+    }
+
     // --- Click handlers for imported features ---
     var importedLayers = ['imported-points', 'imported-lines', 'imported-polygons', 'imported-polygon-outlines'];
 
@@ -594,6 +643,37 @@
       });
     }
 
+    // Public lands toggle
+    var publicLandsCheckbox = document.getElementById('toggle-public-lands');
+    var publicLandsOpacityRow = document.getElementById('public-lands-opacity-row');
+    if (publicLandsCheckbox) {
+      publicLandsCheckbox.addEventListener('change', function () {
+        setLayerVisibility('public-lands-fill', this.checked);
+        setLayerVisibility('public-lands-outline', this.checked);
+        if (publicLandsOpacityRow) {
+          publicLandsOpacityRow.classList.toggle('visible', this.checked);
+        }
+        var legend = document.getElementById('public-lands-legend');
+        if (legend) legend.classList.toggle('visible', this.checked);
+      });
+    }
+
+    // Public lands opacity slider
+    var publicLandsOpacity = document.getElementById('public-lands-opacity');
+    var publicLandsOpacityLabel = document.getElementById('public-lands-opacity-value');
+    if (publicLandsOpacity) {
+      publicLandsOpacity.addEventListener('input', function () {
+        var val = parseInt(this.value, 10);
+        if (publicLandsOpacityLabel) publicLandsOpacityLabel.textContent = val + '%';
+        if (map.getLayer('public-lands-fill')) {
+          map.setPaintProperty('public-lands-fill', 'fill-opacity', val / 100 * 0.6);
+        }
+        if (map.getLayer('public-lands-outline')) {
+          map.setPaintProperty('public-lands-outline', 'line-opacity', val / 100 * 0.8);
+        }
+      });
+    }
+
     // Coordinate format toggle
     var coordRadios = document.querySelectorAll('input[name="coordfmt"]');
     coordRadios.forEach(function (radio) {
@@ -642,6 +722,20 @@
       var exSlider = document.getElementById('terrain-exaggeration');
       var ex = exSlider ? parseFloat(exSlider.value) / 10 : 1.5;
       map.setTerrain({ source: 'elevation-terrain', exaggeration: ex });
+    }
+    // Restore public lands toggle + opacity
+    var plCheckbox = document.getElementById('toggle-public-lands');
+    if (plCheckbox) {
+      setLayerVisibility('public-lands-fill', plCheckbox.checked);
+      setLayerVisibility('public-lands-outline', plCheckbox.checked);
+      if (plCheckbox.checked) {
+        var plSlider = document.getElementById('public-lands-opacity');
+        if (plSlider && map.getLayer('public-lands-fill')) {
+          var plVal = parseInt(plSlider.value, 10);
+          map.setPaintProperty('public-lands-fill', 'fill-opacity', plVal / 100 * 0.6);
+          map.setPaintProperty('public-lands-outline', 'line-opacity', plVal / 100 * 0.8);
+        }
+      }
     }
   }
 
