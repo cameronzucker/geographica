@@ -158,3 +158,154 @@ class TestGNISClasses:
     def test_dam_has_gnis_class(self):
         result = parse_intent("nearest dam", has_position=True, has_route=False)
         assert result["gnis_class"] == "Dam"
+
+
+class TestCityPlaceExtraction:
+    def test_category_in_city(self):
+        result = parse_intent("gas stations in flagstaff", has_position=False, has_route=False)
+        assert result["place_name"] == "flagstaff"
+        assert result["category"] == "gas station"
+        assert result["intent"] == "city_proximity"
+
+    def test_category_in_city_uppercase(self):
+        result = parse_intent("Gas Stations In Flagstaff", has_position=False, has_route=False)
+        assert result["place_name"] == "Flagstaff"
+        assert result["category"] == "gas station"
+        assert result["intent"] == "city_proximity"
+
+    def test_multi_word_city(self):
+        result = parse_intent("restaurants in las vegas", has_position=False, has_route=False)
+        assert result["place_name"] == "las vegas"
+        assert result["category"] == "restaurant"
+
+    def test_city_with_state_suffix(self):
+        result = parse_intent("gas stations in phoenix, az", has_position=False, has_route=False)
+        assert result["place_name"] == "phoenix, az"
+        assert result["category"] == "gas station"
+
+    def test_trailing_punctuation_stripped(self):
+        result = parse_intent("gas stations in phoenix!", has_position=False, has_route=False)
+        assert result["place_name"] == "phoenix"
+
+    def test_trailing_period_stripped(self):
+        result = parse_intent("gas stations in phoenix.", has_position=False, has_route=False)
+        assert result["place_name"] == "phoenix"
+
+    def test_zip_code_as_place(self):
+        result = parse_intent("gas stations in 85001", has_position=False, has_route=False)
+        assert result["place_name"] == "85001"
+        assert result["category"] == "gas station"
+
+    def test_no_place_after_in(self):
+        result = parse_intent("gas stations in", has_position=True, has_route=False)
+        assert result["place_name"] is None
+
+    def test_empty_before_in(self):
+        result = parse_intent("in flagstaff", has_position=True, has_route=False)
+        assert result["place_name"] is None
+        assert result["intent"] == "plain"
+
+    def test_in_inside_word_not_matched(self):
+        result = parse_intent("drinking water in phoenix", has_position=False, has_route=False)
+        assert result["place_name"] == "phoenix"
+        assert result["category"] == "water"
+
+
+class TestCompoundInPhrases:
+    def test_drive_in_hyphenated_no_second_in(self):
+        result = parse_intent("drive-in theater", has_position=True, has_route=False)
+        assert result["place_name"] is None
+
+    def test_drive_in_hyphenated_with_city(self):
+        result = parse_intent("drive-in restaurants in phoenix", has_position=False, has_route=False)
+        assert result["place_name"] == "phoenix"
+        assert result["category"] == "restaurant"
+
+    def test_drive_in_unhyphenated_with_city(self):
+        result = parse_intent("drive in restaurants in phoenix", has_position=False, has_route=False)
+        assert result["place_name"] == "phoenix"
+        assert result["category"] == "restaurant"
+
+    def test_walk_in_clinic_no_city(self):
+        result = parse_intent("walk-in clinic", has_position=True, has_route=False)
+        assert result["place_name"] is None
+
+    def test_dine_in_with_city(self):
+        result = parse_intent("dine in restaurants in mesa", has_position=False, has_route=False)
+        assert result["place_name"] == "mesa"
+        assert result["category"] == "restaurant"
+
+
+class TestApproachCFallback:
+    def test_brand_in_city(self):
+        result = parse_intent("shell in tucson", has_position=False, has_route=False)
+        assert result["place_name"] == "tucson"
+        assert result["category"] is None
+        assert result["search_text"] == "shell"
+        assert result["intent"] == "city_proximity"
+
+    def test_unknown_business_in_city(self):
+        result = parse_intent("filibertos in mesa", has_position=False, has_route=False)
+        assert result["place_name"] == "mesa"
+        assert result["category"] is None
+        assert "filibertos" in result["search_text"].lower()
+
+
+class TestExistingIntentsRegression:
+    def test_plain_has_no_place(self):
+        result = parse_intent("Phoenix", has_position=True, has_route=False)
+        assert result["place_name"] is None
+
+    def test_proximity_has_no_place(self):
+        result = parse_intent("nearest gas station", has_position=True, has_route=False)
+        assert result["place_name"] is None
+
+    def test_corridor_has_no_place(self):
+        result = parse_intent("gas stations along my route", has_position=True, has_route=True)
+        assert result["place_name"] is None
+
+    def test_fallback_has_no_place(self):
+        result = parse_intent("nearest hospital", has_position=False, has_route=False)
+        assert result["place_name"] is None
+
+    def test_implicit_proximity_has_no_place(self):
+        result = parse_intent("gas", has_position=True, has_route=False)
+        assert result["place_name"] is None
+
+
+class TestCityCorridorIntent:
+    def test_city_corridor_with_route(self):
+        result = parse_intent("gas stations in flagstaff along my route",
+                              has_position=True, has_route=True)
+        assert result["intent"] == "city_corridor"
+        assert result["place_name"] == "flagstaff"
+        assert result["category"] == "gas station"
+
+    def test_city_corridor_on_route(self):
+        result = parse_intent("restaurants in phoenix on my route",
+                              has_position=True, has_route=True)
+        assert result["intent"] == "city_corridor"
+        assert result["place_name"] == "phoenix"
+        assert result["category"] == "restaurant"
+
+    def test_city_corridor_every_n_miles(self):
+        result = parse_intent("gas stations in flagstaff every 50 miles",
+                              has_position=True, has_route=True)
+        assert result["intent"] == "city_corridor"
+        assert result["place_name"] == "flagstaff"
+        assert result["interval_m"] is not None
+
+    def test_city_corridor_falls_back_without_route(self):
+        result = parse_intent("gas stations in flagstaff along my route",
+                              has_position=True, has_route=False)
+        assert result["intent"] == "city_proximity"
+        assert result["original_intent"] == "city_corridor"
+        assert result["fallback_reason"] == "no_route"
+        assert result["place_name"] == "flagstaff"
+
+    def test_city_corridor_falls_back_without_anything(self):
+        result = parse_intent("gas stations in flagstaff along my route",
+                              has_position=False, has_route=False)
+        assert result["intent"] == "city_proximity"
+        assert result["original_intent"] == "city_corridor"
+        assert result["fallback_reason"] == "no_route"

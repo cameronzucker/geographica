@@ -24,6 +24,9 @@ FILLER_WORDS = {
     "look", "for", "where", "is", "are", "get", "list",
 }
 
+COMPOUND_IN_PHRASES = {"drive in", "check in", "walk in", "plug in", "built in",
+                       "dine in", "sign in", "log in", "trade in", "break in"}
+
 # ---------------------------------------------------------------------------
 # Synonym table
 # ---------------------------------------------------------------------------
@@ -192,6 +195,68 @@ def _parse_unit_to_meters(value: int, unit: str) -> float:
     return value * KM_TO_METERS
 
 
+def _extract_place(text: str) -> tuple[str, Optional[str]]:
+    """Extract place name from ' in <place>' pattern at end of text.
+
+    Returns (before_text, place_name) or (original_text, None).
+    Uses space-bounded matching only (no \\b word boundary) because
+    Python's \\b matches at hyphens, breaking compound phrases like 'drive-in'.
+    """
+    lowered = text.lower()
+
+    # Find all space-bounded " in " positions, plus " in" at end of string
+    candidates = []
+    start = 0
+    while True:
+        pos = lowered.find(" in ", start)
+        if pos == -1:
+            break
+        candidates.append(pos)
+        start = pos + 1
+
+    # Also check for " in" at the very end (no place after)
+    if lowered.endswith(" in"):
+        candidates.append(len(text) - 3)
+
+    if not candidates:
+        return text, None
+
+    # Process candidates right to left (prefer LAST valid "in")
+    for pos in reversed(candidates):
+        before_in = text[:pos]
+        after_in = text[pos + 4:] if pos + 4 <= len(text) else ""
+
+        # Check if this "in" is part of a compound phrase
+        # Normalize hyphens to spaces before checking
+        before_normalized = before_in.replace("-", " ").lower()
+        is_compound = False
+        for phrase in COMPOUND_IN_PHRASES:
+            if before_normalized.endswith(phrase.rsplit(" ", 1)[0]):
+                # e.g. before_normalized ends with "drive" and phrase is "drive in"
+                is_compound = True
+                break
+        if is_compound:
+            continue
+
+        # This is a valid "in" — extract the place
+        place_candidate = after_in.strip()
+
+        # Strip trailing punctuation
+        place_candidate = place_candidate.rstrip(".,!?;:")
+
+        if not place_candidate:
+            return text, None
+
+        # Check if before_in is meaningful (not just filler words)
+        before_stripped = _strip_filler(before_in).strip()
+        if not before_stripped:
+            return text, None
+
+        return before_in.strip(), place_candidate
+
+    return text, None
+
+
 # ---------------------------------------------------------------------------
 # Intent parser
 # ---------------------------------------------------------------------------
@@ -295,16 +360,38 @@ def parse_intent(
         if not has_position:
             fallback_reason = "no_position"
 
-    # Strip filler words from extracted category text
-    category_text = _strip_filler(spatial_keywords_removed).strip()
+    # --- Rule 2b: "in <place>" extraction ---
+    place_name = None
+    before_text, place_candidate = _extract_place(spatial_keywords_removed)
 
-    # Look up category in synonym table
-    entry, search_text = _lookup_category(category_text)
+    if place_candidate is not None:
+        place_name = place_candidate
+        # Use before_text for category lookup
+        category_text = _strip_filler(before_text).strip()
+        entry, search_text = _lookup_category(category_text)
 
-    # --- Rule 3: Implicit proximity for bare category words ---
-    if intent == "plain" and fallback_reason is None and has_position and entry is not None:
-        intent = "proximity"
-        original_intent = "proximity"
+        if original_intent == "route_corridor":
+            # Corridor + city = city_corridor
+            original_intent = "city_corridor"
+            if has_route:
+                intent = "city_corridor"
+            else:
+                intent = "city_proximity"
+                fallback_reason = "no_route"
+        else:
+            intent = "city_proximity"
+            original_intent = "city_proximity"
+    else:
+        # Strip filler words from extracted category text
+        category_text = _strip_filler(spatial_keywords_removed).strip()
+
+        # Look up category in synonym table
+        entry, search_text = _lookup_category(category_text)
+
+        # --- Rule 3: Implicit proximity for bare category words ---
+        if intent == "plain" and fallback_reason is None and has_position and entry is not None:
+            intent = "proximity"
+            original_intent = "proximity"
 
     return {
         "intent": intent,
@@ -318,6 +405,7 @@ def parse_intent(
         "osm_operator": entry.get("osm_operator") if entry else None,
         "radius_m": radius_m,
         "interval_m": interval_m,
+        "place_name": place_name,
     }
 
 
