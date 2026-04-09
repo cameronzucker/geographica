@@ -258,6 +258,20 @@
         return fetch(url, opts);
     }
 
+    function timeAgo(isoString) {
+        if (!isoString) return '';
+        var then = new Date(isoString);
+        var now = new Date();
+        var diffMs = now - then;
+        var diffMin = Math.floor(diffMs / 60000);
+        if (diffMin < 1) return 'just now';
+        if (diffMin < 60) return diffMin + 'm ago';
+        var diffH = Math.floor(diffMin / 60);
+        if (diffH < 24) return diffH + 'h ago';
+        var diffD = Math.floor(diffH / 24);
+        return diffD + 'd ago';
+    }
+
     // -----------------------------------------------------------------------
     // Tab switching (hash-based)
     // -----------------------------------------------------------------------
@@ -452,12 +466,30 @@
         var pct = 0;
 
         if (imageryData && imageryData.status === 'running') {
-            title = 'Imagery download in progress';
-            var total = imageryData.estimated_tiles || imageryData.tiles_total || 1;
-            var done = imageryData.tiles_done || 0;
-            pct = Math.min(100, done / total * 100);
-            var rate = imageryData.rate_per_sec ? Math.round(imageryData.rate_per_sec) + ' tiles/sec' : '';
-            detail = done.toLocaleString() + ' / ' + total.toLocaleString() + (rate ? ' \u00b7 ' + rate : '');
+            if (imageryData.mode === 'm2m') {
+                var phase = imageryData.phase || 'downloading';
+                if (phase === 'login' || phase === 'searching') {
+                    title = 'M2M imagery: Initializing...';
+                } else if (phase === 'downloading') {
+                    var dl = imageryData.geotiffs_downloaded || 0;
+                    var gt = imageryData.geotiffs_total || 0;
+                    var batch = imageryData.current_batch && imageryData.total_batches
+                        ? ' (batch ' + imageryData.current_batch + '/' + imageryData.total_batches + ')'
+                        : '';
+                    title = 'M2M imagery: ' + dl + '/' + gt + ' GeoTIFFs' + batch;
+                    pct = gt > 0 ? Math.min(100, dl / gt * 100) : 0;
+                } else if (phase === 'converting') {
+                    title = 'M2M imagery: Converting to tiles...';
+                    pct = 100;
+                }
+            } else {
+                title = 'Imagery download in progress';
+                var total = imageryData.estimated_tiles || imageryData.tiles_total || 1;
+                var done = imageryData.tiles_done || 0;
+                pct = Math.min(100, done / total * 100);
+                var rate = imageryData.rate_per_sec ? Math.round(imageryData.rate_per_sec) + ' tiles/sec' : '';
+                detail = done.toLocaleString() + ' / ' + total.toLocaleString() + (rate ? ' \u00b7 ' + rate : '');
+            }
         } else if (elevData && elevData.status === 'running') {
             title = 'Elevation download in progress';
             var eTotal = elevData.estimated_tiles || elevData.tiles_total || 1;
@@ -496,27 +528,81 @@
             _imageryRunning = true;
             startBtn.style.display = 'none';
             cancelBtn.style.display = '';
-            progressDiv.style.display = '';
             completedEl.style.display = 'none';
-            var total = d.estimated_tiles || d.tiles_total || 1;
-            var done = d.tiles_done || 0;
-            var pct = Math.min(100, (done / total * 100)).toFixed(1);
-            progressFill.style.width = pct + '%';
-            var rate = d.rate_per_sec ? ' \u00b7 ' + Math.round(d.rate_per_sec) + ' tiles/sec' : '';
-            progressDetail.textContent = done.toLocaleString() + ' / ' + total.toLocaleString() + ' (' + pct + '%)' + rate;
+
+            if (d.mode === 'm2m') {
+                // M2M phase-aware rendering
+                progressDiv.style.display = '';
+                var phase = d.phase || 'downloading';
+                if (phase === 'login' || phase === 'searching') {
+                    progressFill.style.width = '0%';
+                    progressFill.style.opacity = '1';
+                    progressDetail.textContent = phase === 'login'
+                        ? 'Logging in to USGS M2M API...'
+                        : 'Searching for NAIP scenes...';
+                } else if (phase === 'downloading') {
+                    var dl = d.geotiffs_downloaded || 0;
+                    var total = d.geotiffs_total || 1;
+                    var pct = total > 0 ? Math.min(100, dl / total * 100) : 0;
+                    progressFill.style.width = pct.toFixed(1) + '%';
+                    progressFill.style.opacity = '1';
+                    var bytes = d.geotiffs_bytes ? (d.geotiffs_bytes / 1e9).toFixed(1) + ' GB' : '';
+                    var batch = d.current_batch && d.total_batches
+                        ? ' (batch ' + d.current_batch + '/' + d.total_batches + ')'
+                        : '';
+                    progressDetail.textContent = 'Downloading GeoTIFFs: ' +
+                        dl.toLocaleString() + '/' + total.toLocaleString() +
+                        batch + (bytes ? ' \u2014 ' + bytes : '');
+                } else if (phase === 'converting') {
+                    progressFill.style.width = '100%';
+                    progressFill.style.opacity = '0.6';
+                    progressDetail.textContent = 'Converting GeoTIFFs to tiles...';
+                }
+            } else {
+                // Direct mode — existing tile progress
+                progressDiv.style.display = '';
+                progressFill.style.opacity = '1';
+                var total = d.estimated_tiles || d.tiles_total || 1;
+                var done = d.tiles_done || 0;
+                var pct = Math.min(100, (done / total * 100)).toFixed(1);
+                progressFill.style.width = pct + '%';
+                var rate = d.rate_per_sec ? ' \u00b7 ' + Math.round(d.rate_per_sec) + ' tiles/sec' : '';
+                progressDetail.textContent = done.toLocaleString() + ' / ' + total.toLocaleString() + ' (' + pct + '%)' + rate;
+            }
         } else {
             _imageryRunning = false;
             cancelBtn.style.display = 'none';
             startBtn.style.display = '';
-            if (d.status === 'interrupted') {
-                startBtn.textContent = 'Resume Download';
-                progressDiv.style.display = '';
-                completedEl.style.display = 'none';
-            } else if (d.status === 'completed') {
-                startBtn.textContent = 'Start New Download';
+            progressFill.style.opacity = '1';
+
+            // Terminal state rendering with time-ago
+            var ago = timeAgo(d.completed_at);
+
+            if (d.status === 'completed') {
+                startBtn.textContent = 'Start Download';
                 progressDiv.style.display = 'none';
                 completedEl.style.display = '';
-                completedEl.textContent = 'Imagery download completed' + (d.tiles_done ? ' \u2014 ' + d.tiles_done.toLocaleString() + ' tiles' : '');
+                completedEl.className = 'status status-ok';
+                var tileInfo = d.tiles_done ? ' \u2014 ' + d.tiles_done.toLocaleString() + ' tiles' : '';
+                completedEl.textContent = 'Completed' + (ago ? ' ' + ago : '') + tileInfo;
+            } else if (d.status === 'interrupted') {
+                startBtn.textContent = 'Start Download';
+                progressDiv.style.display = 'none';
+                completedEl.style.display = '';
+                completedEl.className = 'status status-warn';
+                completedEl.textContent = 'Interrupted' + (ago ? ' ' + ago : '');
+            } else if (d.status === 'cancelled') {
+                startBtn.textContent = 'Start Download';
+                progressDiv.style.display = 'none';
+                completedEl.style.display = '';
+                completedEl.className = 'status status-warn';
+                completedEl.textContent = 'Cancelled' + (ago ? ' ' + ago : '');
+            } else if (d.status === 'error') {
+                startBtn.textContent = 'Start Download';
+                progressDiv.style.display = 'none';
+                completedEl.style.display = '';
+                completedEl.className = 'status status-error';
+                completedEl.textContent = 'Failed' + (ago ? ' ' + ago : '') + (d.error ? ' \u2014 ' + d.error : '');
             } else {
                 startBtn.textContent = 'Start Download';
                 progressDiv.style.display = 'none';
@@ -837,6 +923,19 @@
     // Event handlers: source change, zoom change, bbox input
     // -----------------------------------------------------------------------
     document.getElementById('cfg-source').addEventListener('change', function() {
+        var isM2M = this.value === 'm2m';
+        var zoomEl = document.getElementById('cfg-zoom');
+        var estimateEl = document.getElementById('cfg-estimate');
+
+        zoomEl.disabled = isM2M;
+        if (isM2M) {
+            estimateEl.textContent = 'M2M: download size depends on source imagery coverage';
+            estimateEl.style.color = '#7a8299';
+        } else {
+            estimateEl.style.color = '';
+            updateEstimate();
+        }
+
         updateConcurrencyOptions();
         updateM2MWarning();
         document.getElementById('cfg-zoom').dispatchEvent(new Event('change'));
@@ -848,17 +947,21 @@
     });
 
     document.getElementById('cfg-zoom').addEventListener('change', function() {
+        var source = document.getElementById('cfg-source').value;
+        var note = document.getElementById('cfg-zoom-note');
+
+        if (source === 'm2m') {
+            note.textContent = 'M2M mode auto-detects zoom from source imagery (~z17-z19 for NAIP)';
+            note.style.color = '#7a8299';
+            return;
+        }
+
         updateEstimate();
         var zoom = this.value;
-        var note = document.getElementById('cfg-zoom-note');
-        var source = document.getElementById('cfg-source').value;
         var maxZ = parseInt(zoom.split('-')[1]);
-        if (maxZ > 16 && source !== 'm2m') {
+        if (maxZ > 16) {
             note.textContent = 'Zoom levels above 16 require M2M mode (NAIP GeoTIFF source).';
             note.style.color = '#f9e2af';
-        } else if (maxZ > 16) {
-            note.textContent = 'M2M downloads native NAIP GeoTIFFs. GDAL determines actual max zoom from source resolution (~z19).';
-            note.style.color = '#7a8299';
         } else {
             note.textContent = '';
         }
@@ -876,15 +979,24 @@
 
     // Imagery Start
     document.getElementById('cfg-start').addEventListener('click', function() {
+        var source = document.getElementById('cfg-source').value;
+        var isM2M = source === 'm2m';
         var body = {
             type: 'imagery',
-            mode: document.getElementById('cfg-source').value,
+            mode: source,
             bbox: document.getElementById('cfg-bbox').value,
-            zoom: document.getElementById('cfg-zoom').value,
             concurrency: parseInt(document.getElementById('cfg-concurrency').value),
             update: document.getElementById('cfg-update').checked
         };
-        if (!confirm('Start download? ~' + estimateTiles(body.bbox, body.zoom).toLocaleString() + ' tiles')) return;
+        if (!isM2M) {
+            body.zoom = document.getElementById('cfg-zoom').value;
+        }
+
+        var confirmMsg = isM2M
+            ? 'Start M2M download for ' + body.bbox + '?'
+            : 'Start download? ~' + estimateTiles(body.bbox, document.getElementById('cfg-zoom').value).toLocaleString() + ' tiles';
+        if (!confirm(confirmMsg)) return;
+
         cfgFetch('/admin/pipeline/start', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
