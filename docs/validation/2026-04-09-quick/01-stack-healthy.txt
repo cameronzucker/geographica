@@ -1,0 +1,8 @@
+NAME                     IMAGE                                            COMMAND                  SERVICE      CREATED          STATUS                            PORTS
+geographica-frontend     nginx:alpine                                     "/bin/sh /etc/nginx/…"   frontend     37 seconds ago   Up 32 seconds (healthy)           0.0.0.0:443->443/tcp, :::443->443/tcp, 0.0.0.0:8093->80/tcp, :::8093->80/tcp, 127.0.0.1:8097->8094/tcp
+geographica-gps          geographica-gps                                  "uvicorn main:app --…"   gps          2 minutes ago    Up 2 minutes (healthy)            0.0.0.0:8095->8000/tcp, :::8095->8000/tcp
+geographica-nominatim    mediagis/nominatim:5.2.0                         "/app/start.sh"          nominatim    2 minutes ago    Up 2 minutes (health: starting)   5432/tcp, 0.0.0.0:8092->8080/tcp, :::8092->8080/tcp
+geographica-search       geographica-search                               "uvicorn main:app --…"   search       2 minutes ago    Up 2 minutes (healthy)            0.0.0.0:8096->8000/tcp, :::8096->8000/tcp
+geographica-stt          geographica-stt                                  "uvicorn main:app --…"   stt          2 minutes ago    Up 2 minutes (healthy)            0.0.0.0:8098->8000/tcp, :::8098->8000/tcp
+geographica-tileserver   maptiler/tileserver-gl:v5.5.0-arm64              "/usr/src/app/docker…"   tileserver   2 minutes ago    Up 2 minutes (healthy)            0.0.0.0:8090->8080/tcp, :::8090->8080/tcp
+geographica-valhalla     ghcr.io/gis-ops/docker-valhalla/valhalla:3.5.1   "/valhalla/scripts/r…"   valhalla     2 minutes ago    Up 2 minutes (healthy)            0.0.0.0:8094->8002/tcp, :::8094->8002/tcp
