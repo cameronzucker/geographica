@@ -265,21 +265,19 @@ unzip -q /tmp/fonts.zip -d tileserver/fonts-served
 rm /tmp/fonts.zip
 ```
 
-**Styles** — The `style.local.json` files are checked into the repo. Sprite and
-icon assets are needed from the upstream OpenMapTiles style repos:
+**Styles** — Style files (`style.local.json`) and sprite assets are checked into
+the repo. Icon directories are needed from the upstream OpenMapTiles style repos:
 
 ```bash
 cd tileserver/styles
 
-# Positron
+# Positron — icons only (sprites are already in the repo)
 git clone --depth 1 https://github.com/openmaptiles/positron-gl-style.git positron-tmp
-cp positron-tmp/sprite* positron/
 cp -r positron-tmp/icons positron/
 rm -rf positron-tmp
 
-# Dark Matter
+# Dark Matter — icons only (sprites are already in the repo)
 git clone --depth 1 https://github.com/openmaptiles/dark-matter-gl-style.git darkmatter-tmp
-cp darkmatter-tmp/sprite* darkmatter/
 cp -r darkmatter-tmp/icons darkmatter/
 rm -rf darkmatter-tmp
 

@@ -256,6 +256,13 @@ PASS / FAIL (with explanation)
 
 The container is disposable. Each test run starts fresh.
 
+**Post-cleanup verification:** After deleting the container, verify no residue remains:
+- `lxc list` — no containers
+- `lxc image list` — delete cached Debian image if not needed (`lxc image delete <fingerprint>`)
+- `ss -tlnp | grep ':809'` — only prod stack ports, no stale test bindings
+- `ls /tmp/geographica*` — no temp files
+- Prod stack restored: `docker compose up -d`
+
 ### Disk Estimates (Full Mode)
 
 | Component | Size |
