@@ -27,6 +27,63 @@
   var MAX_FILE_SIZE_REJECT = 50 * 1024 * 1024;  // 50 MB
 
   // =====================================================================
+  //  URL VALIDATION (security — blocks SSRF, tracking, XSS via icon URLs)
+  // =====================================================================
+
+  /**
+   * Check whether a URL is safe to load as an image source.
+   * Blocks private IPs, dangerous schemes, .local domains, octal/hex IPs.
+   * @param {string} url
+   * @returns {boolean}
+   */
+  function isUrlSafe(url) {
+    if (!url || typeof url !== 'string') return false;
+    var trimmed = url.trim().toLowerCase();
+
+    // Only allow http: and https:
+    if (trimmed.indexOf('http://') !== 0 && trimmed.indexOf('https://') !== 0) return false;
+
+    var hostname;
+    try {
+      hostname = new URL(url).hostname.toLowerCase();
+    } catch (_) {
+      return false;
+    }
+
+    // Block .local domains
+    if (hostname.endsWith('.local')) return false;
+
+    // Block IPv6 loopback and private
+    if (hostname === '[::1]' || hostname === '::1') return false;
+    if (hostname.indexOf('fe80') === 0) return false;  // link-local
+    if (hostname.indexOf('fc') === 0 || hostname.indexOf('fd') === 0) return false;  // unique local
+    if (hostname.indexOf('::ffff:') !== -1) return false;  // IPv4-mapped IPv6
+
+    // Block octal IP (e.g. 0177.0.0.1)
+    if (/^0\d/.test(hostname.split('.')[0])) return false;
+    // Block hex IP (e.g. 0x7f000001)
+    if (/^0x[0-9a-f]+$/i.test(hostname)) return false;
+
+    // Block private/loopback IPv4
+    var parts = hostname.split('.');
+    if (parts.length === 4 && parts.every(function (p) { return /^\d+$/.test(p); })) {
+      var a = parseInt(parts[0], 10);
+      var b = parseInt(parts[1], 10);
+      if (a === 127) return false;                        // 127.0.0.0/8
+      if (a === 10) return false;                         // 10.0.0.0/8
+      if (a === 172 && b >= 16 && b <= 31) return false;  // 172.16.0.0/12
+      if (a === 192 && b === 168) return false;           // 192.168.0.0/16
+      if (a === 0) return false;                          // 0.0.0.0
+      if (a === 169 && b === 254) return false;           // 169.254.0.0/16 link-local
+    }
+
+    // Block localhost by name
+    if (hostname === 'localhost') return false;
+
+    return true;
+  }
+
+  // =====================================================================
   //  STATE
   // =====================================================================
 
@@ -335,8 +392,8 @@
           content.appendChild(title);
         }
 
-        // Show KML icon as an image if available and reachable
-        if (props.icon && typeof props.icon === 'string') {
+        // Show KML icon as an image if available, reachable, and URL-safe
+        if (props.icon && typeof props.icon === 'string' && isUrlSafe(props.icon)) {
           var iconImg = document.createElement('img');
           iconImg.src = props.icon;
           iconImg.style.maxWidth = '32px';
@@ -350,10 +407,17 @@
         if (props.description) {
           var desc = document.createElement('div');
           desc.className = 'kml-description';
-          // KML descriptions may contain HTML — render as HTML but fix broken images
+          // KML descriptions may contain HTML — sanitize with DOMPurify to prevent XSS
           if (/<[a-z][\s\S]*>/i.test(props.description)) {
-            desc.innerHTML = props.description;
-            // Hide any broken images within the description
+            if (typeof DOMPurify !== 'undefined') {
+              // DOMPurify.sanitize() strips scripts, event handlers, iframes —
+              // safe to assign the sanitized output to innerHTML
+              desc.innerHTML = DOMPurify.sanitize(props.description);  // eslint-disable-line -- sanitized
+            } else {
+              // Fallback: strip all HTML if DOMPurify unavailable
+              desc.textContent = props.description;
+            }
+            // Hide any broken images within the sanitized description
             var imgs = desc.querySelectorAll('img');
             for (var ii = 0; ii < imgs.length; ii++) {
               imgs[ii].onerror = function () { this.style.display = 'none'; };
