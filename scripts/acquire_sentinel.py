@@ -40,7 +40,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-STAC_SEARCH_URL = "https://catalogue.dataspace.copernicus.eu/stac/search"
+# NOTE: Legacy endpoint catalogue.dataspace.copernicus.eu/stac was deprecated Nov 2025
+STAC_SEARCH_URL = "https://stac.dataspace.copernicus.eu/v1/search"
 OAUTH_TOKEN_URL = (
     "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/"
     "protocol/openid-connect/token"

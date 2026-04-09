@@ -62,7 +62,7 @@ Admin Console                    Backend (search service)              Pipeline 
 
 ### Copernicus STAC API
 
-- **Endpoint:** `https://catalogue.dataspace.copernicus.eu/stac/search`
+- **Endpoint:** `https://stac.dataspace.copernicus.eu/v1/search` (legacy `catalogue.dataspace.copernicus.eu/stac` was deprecated Nov 2025)
 - **Auth:** OAuth2 token from `https://identity.dataspace.copernicus.eu` (free account registration required)
 - **Search:** By bbox, date range, cloud cover percentage
 - **Download:** Direct HTTP URLs for Cloud-Optimized GeoTIFF (COG) files
