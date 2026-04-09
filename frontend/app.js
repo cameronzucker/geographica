@@ -143,6 +143,9 @@
     map.on('style.load', function () {
       addPlaceholderSources();
       syncLayerVisibility();
+      // Re-disable dragRotate after style swap — MapLibre resets it to default (enabled)
+      // See Implementation Pitfall #11: must use .disable() after init, not constructor options
+      map.dragRotate.disable();
     });
 
     map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
