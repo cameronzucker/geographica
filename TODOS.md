@@ -115,6 +115,11 @@
 - **Root cause:** Geocode timeout was 1.0s but Nominatim takes 1.3s+ for cold queries. The geocode silently failed, returning `geocode_failed` instead of a bbox. The bbox logic was already correct (uses Nominatim's boundingbox).
 - **Fix:** Raised geocode timeout to 5.0s in `services/search/geocode.py:69`. Now returns 10 results in 0.47s.
 
+### Imagery coverage visualization
+- **What:** A way to see what imagery is currently downloaded, at what zoom levels, and for what geographic areas. Either as an admin panel feature or a map toggle overlay.
+- **Why:** With multiple imagery sources (NAIP, Sentinel-2, direct scraper) at different zoom levels for different regions, it's hard to know what you have without querying MBTiles directly. Users need to see gaps, plan downloads, and verify coverage.
+- **Options:** (a) Admin panel coverage map — query MBTiles metadata/tile counts by zoom and render a coverage heatmap on the minimap, (b) Map toggle overlay — a "Coverage" checkbox that shows colored bounding boxes or tile grid shading indicating which areas have imagery at what resolution, (c) Admin panel table — zoom level × region matrix showing tile counts and estimated coverage percentage.
+
 ### Sentinel-2 imagery pipeline not working
 - **What:** `scripts/acquire_sentinel.py` was created by a parallel agent but has not been tested end-to-end. The Copernicus STAC endpoint and auth flow need validation against the live API. The admin panel has a Sentinel-2 pipeline card but it returns 422.
 - **Status:** Code exists but untested. The two working imagery modes are M2M (NAIP GeoTIFFs) and the direct tile scraper (TNMAccess).
