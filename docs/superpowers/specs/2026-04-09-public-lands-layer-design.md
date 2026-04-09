@@ -97,6 +97,7 @@ ogr2ogr -clipsrc {bbox} -t_srs EPSG:4326 -f GeoJSON clipped_classified.geojson \
 ```
 
 **Critical:** This MUST be a single ogr2ogr call reading from the GeoPackage. Do NOT split into clip + classify steps — the SQL `FROM {detected_layer}` references the GeoPackage layer name, which doesn't exist in an intermediate GeoJSON file. PAD-US is NAD83 (EPSG:4269); `-t_srs EPSG:4326` ensures WGS84 output for Tippecanoe.
+4. Verify clipped GeoJSON is non-empty (ogr2ogr silently produces empty output if layer name is wrong)
 5. Run Tippecanoe: `tippecanoe -o {output} -Z0 -z14 -l public_lands --coalesce-smallest-as-needed --simplification=10 --no-simplification-of-shared-nodes --maximum-tile-bytes=500000 clipped_classified.geojson`
 6. Verify output: check MBTiles has expected zoom levels and non-zero tile count
 7. Report: tile count, file size, categories found, total features
