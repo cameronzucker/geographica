@@ -1055,6 +1055,35 @@
       });
     }
 
+    // Drag-to-reorder listeners on waypoint container (attached ONCE, not per-row)
+    var wpContainer = document.getElementById('route-waypoints');
+    wpContainer.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      var afterElement = getDragAfterElement(wpContainer, e.clientY);
+      var dragging = wpContainer.querySelector('.dragging');
+      if (!dragging) return;
+      if (afterElement) {
+        wpContainer.insertBefore(dragging, afterElement);
+      } else {
+        wpContainer.appendChild(dragging);
+      }
+    });
+
+    wpContainer.addEventListener('drop', function (e) {
+      e.preventDefault();
+      // Read new order from DOM
+      var rows = wpContainer.querySelectorAll('.waypoint-row');
+      var newOrder = [];
+      Array.prototype.forEach.call(rows, function (r) {
+        newOrder.push(parseInt(r.dataset.wpIndex, 10));
+      });
+      var reordered = newOrder.map(function (i) { return routeWaypoints[i]; });
+      routeWaypoints = reordered;
+      rebuildWaypointUI();
+      scheduleRouteRegen();
+    });
+
     getRouteBtn.addEventListener('click', requestRoute);
     clearBtn.addEventListener('click', clearRoute);
 
@@ -1125,6 +1154,46 @@
       removeWaypoint(idx);
     });
 
+    // Drag-to-reorder support
+    row.draggable = true;
+    row.addEventListener('dragstart', function (e) {
+      e.dataTransfer.setData('text/plain', String(idx));
+      e.dataTransfer.effectAllowed = 'move';
+      row.classList.add('dragging');
+    });
+    row.addEventListener('dragend', function () {
+      row.classList.remove('dragging');
+    });
+
+    // Touch arrow buttons (shown only on coarse pointer devices via CSS)
+    var upBtn = document.createElement('button');
+    upBtn.className = 'waypoint-reorder-btn';
+    upBtn.textContent = '\u25B2';
+    upBtn.title = 'Move up';
+    upBtn.addEventListener('click', function () {
+      if (idx <= 0) return;
+      var temp = routeWaypoints[idx];
+      routeWaypoints[idx] = routeWaypoints[idx - 1];
+      routeWaypoints[idx - 1] = temp;
+      rebuildWaypointUI();
+      scheduleRouteRegen();
+    });
+
+    var downBtn = document.createElement('button');
+    downBtn.className = 'waypoint-reorder-btn';
+    downBtn.textContent = '\u25BC';
+    downBtn.title = 'Move down';
+    downBtn.addEventListener('click', function () {
+      if (idx >= routeWaypoints.length - 1) return;
+      var temp = routeWaypoints[idx];
+      routeWaypoints[idx] = routeWaypoints[idx + 1];
+      routeWaypoints[idx + 1] = temp;
+      rebuildWaypointUI();
+      scheduleRouteRegen();
+    });
+
+    row.appendChild(upBtn);
+    row.appendChild(downBtn);
     row.appendChild(input);
     row.appendChild(gpsBtn);
     row.appendChild(removeBtn);
@@ -1133,6 +1202,24 @@
     if (coords) {
       placeWaypointMarker(idx);
     }
+  }
+
+  /**
+   * Find the element after which the dragged item should be inserted.
+   */
+  function getDragAfterElement(container, y) {
+    var rows = container.querySelectorAll('.waypoint-row:not(.dragging)');
+    var closest = null;
+    var closestOffset = Number.NEGATIVE_INFINITY;
+    Array.prototype.forEach.call(rows, function (row) {
+      var box = row.getBoundingClientRect();
+      var offset = y - box.top - box.height / 2;
+      if (offset < 0 && offset > closestOffset) {
+        closestOffset = offset;
+        closest = row;
+      }
+    });
+    return closest;
   }
 
   function removeWaypoint(idx) {
