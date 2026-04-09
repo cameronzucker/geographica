@@ -94,7 +94,7 @@ def classify_sql(layer_name):
     The FROM clause references the GeoPackage layer name directly.
     """
     return (
-        "SELECT Unit_Nm AS name, Mang_Name AS agency, Des_Tp AS designation, "
+        "SELECT SHAPE, Unit_Nm AS name, Mang_Name AS agency, Des_Tp AS designation, "
         "CASE "
         "WHEN Des_Tp LIKE '%Wilderness%' THEN 'Wilderness' "
         "WHEN Mang_Name = 'BLM' THEN 'BLM' "
@@ -141,6 +141,7 @@ def build_ogr2ogr_command(gpkg_path, layer_name, bbox, output_path):
         "-f", "GeoJSON",
         output_path,
         gpkg_path,
+        "-dialect", "SQLite",
         "-sql", sql,
     ]
 
@@ -185,8 +186,8 @@ def detect_layer_name(gpkg_path):
 
     candidates = []
     for line in result.stdout.splitlines():
-        # ogrinfo output lines look like: "1: LayerName (Multi Polygon)"
-        match = re.search(r"\d+:\s+(\S+)", line)
+        # ogrinfo output: "1: LayerName (type)" for GeoPackage, "Layer: LayerName (type)" for GDB
+        match = re.search(r"(?:\d+:|Layer:)\s+(\S+)", line)
         if match:
             name = match.group(1)
             if LAYER_DETECT_PATTERN.search(name):
@@ -291,8 +292,35 @@ def download_padus(url, cache_dir):
 # Main pipeline
 # ---------------------------------------------------------------------------
 
+def classify_feature(props):
+    """Classify a PAD-US feature into a category and sort_key.
+
+    Priority: Wilderness first, then federal agencies, then state, then other.
+    """
+    des_tp = (props.get("Des_Tp") or "").strip()
+    mang_name = (props.get("Mang_Name") or "").strip()
+    mang_type = (props.get("Mang_Type") or "").strip()
+
+    # Wilderness override (highest priority)
+    if "Wilderness" in des_tp:
+        return "Wilderness", 1
+
+    agency_map = {
+        "BLM": ("BLM", 6), "USFS": ("USFS", 4), "NPS": ("NPS", 2),
+        "FWS": ("FWS", 3), "DOD": ("DOD", 5), "USBR": ("USBR", 7),
+        "TRIB": ("Tribal", 8), "BIA": ("Tribal", 8),
+    }
+    if mang_name in agency_map:
+        return agency_map[mang_name]
+
+    if mang_type == "STAT":
+        return "State", 9
+
+    return "Other", 10
+
+
 def run_pipeline(args):
-    """Execute the full pipeline: download -> classify -> tile."""
+    """Execute the full pipeline: download -> clip -> classify -> tile."""
     bbox = SAMPLE_BBOX if args.sample else args.bbox
 
     log.info("=== Public Lands Tile Pipeline ===")
@@ -301,17 +329,27 @@ def run_pipeline(args):
     log.info("Sample mode: %s", args.sample)
 
     # Step 1: Download PAD-US
-    gpkg_path = download_padus(args.padus_url, args.cache_dir)
+    gdb_path = download_padus(args.padus_url, args.cache_dir)
 
     # Step 2: Detect layer name
-    layer_name = detect_layer_name(gpkg_path)
+    layer_name = detect_layer_name(gdb_path)
 
-    # Step 3: Clip, reproject, classify (single ogr2ogr call)
     with tempfile.TemporaryDirectory() as tmpdir:
-        geojson_path = os.path.join(tmpdir, "classified.geojson")
-
-        ogr_cmd = build_ogr2ogr_command(gpkg_path, layer_name, bbox, geojson_path)
-        log.info("Running ogr2ogr ...")
+        # Step 3: Clip and reproject with ogr2ogr (no SQL — avoids dialect issues)
+        raw_geojson = os.path.join(tmpdir, "raw_clipped.geojson")
+        parts = bbox.split(",")
+        ogr_cmd = [
+            "ogr2ogr",
+            "-spat", parts[0].strip(), parts[1].strip(),
+                     parts[2].strip(), parts[3].strip(),
+            "-spat_srs", "EPSG:4326",
+            "-t_srs", "EPSG:4326",
+            "-f", "GeoJSON",
+            raw_geojson,
+            gdb_path,
+            layer_name,
+        ]
+        log.info("Running ogr2ogr (clip + reproject) ...")
         log.info("Command: %s", " ".join(ogr_cmd))
 
         result = subprocess.run(ogr_cmd, capture_output=True, text=True)
@@ -319,38 +357,58 @@ def run_pipeline(args):
             log.error("ogr2ogr stderr: %s", result.stderr)
             raise RuntimeError(f"ogr2ogr failed with exit code {result.returncode}")
 
-        # Step 4: Verify non-empty output
-        if not os.path.exists(geojson_path):
+        if not os.path.exists(raw_geojson) or os.path.getsize(raw_geojson) < 100:
             raise RuntimeError(
-                f"ogr2ogr produced no output. The layer name '{layer_name}' "
-                f"may be incorrect for this GeoPackage version."
+                f"ogr2ogr produced no/empty output. Layer '{layer_name}' may be "
+                f"wrong or no features in bbox."
             )
 
-        file_size = os.path.getsize(geojson_path)
-        if file_size < 100:
-            raise RuntimeError(
-                f"ogr2ogr output is too small ({file_size} bytes). "
-                f"No features matched the bbox or the layer name is wrong."
-            )
+        raw_size = os.path.getsize(raw_geojson)
+        log.info("Raw clipped GeoJSON: %s MB", raw_size // (1024 * 1024))
 
-        log.info("Classified GeoJSON: %s (%s MB)", geojson_path,
-                 file_size // (1024 * 1024))
-
-        # Count features and categories for reporting
+        # Step 4: Classify features in Python (streaming to avoid full memory load)
+        classified_geojson = os.path.join(tmpdir, "classified.geojson")
         categories = {}
         feature_count = 0
-        with open(geojson_path) as f:
-            data = json.load(f)
-            for feat in data.get("features", []):
-                feature_count += 1
-                cat = feat.get("properties", {}).get("category", "Unknown")
-                categories[cat] = categories.get(cat, 0) + 1
-        log.info("Features: %d", feature_count)
+
+        log.info("Classifying features ...")
+        with open(raw_geojson) as fin:
+            data = json.load(fin)
+
+        for feat in data.get("features", []):
+            props = feat.get("properties", {})
+            cat, sort_key = classify_feature(props)
+
+            # Simplify properties
+            feat["properties"] = {
+                "name": (props.get("Unit_Nm") or "").strip(),
+                "agency": (props.get("Mang_Name") or "").strip(),
+                "designation": (props.get("Des_Tp") or "").strip(),
+                "category": cat,
+                "sort_key": sort_key,
+            }
+
+            # Skip features with no geometry
+            if feat.get("geometry") is None:
+                continue
+
+            feature_count += 1
+            categories[cat] = categories.get(cat, 0) + 1
+
+        # Write classified GeoJSON (only features with geometry)
+        data["features"] = [f for f in data["features"] if f.get("geometry") is not None]
+        with open(classified_geojson, "w") as fout:
+            json.dump(data, fout)
+
+        log.info("Features with geometry: %d", feature_count)
         for cat, count in sorted(categories.items()):
             log.info("  %s: %d", cat, count)
 
+        classified_size = os.path.getsize(classified_geojson)
+        log.info("Classified GeoJSON: %s MB", classified_size // (1024 * 1024))
+
         # Step 5: Run Tippecanoe
-        tip_cmd = build_tippecanoe_command(args.output, geojson_path)
+        tip_cmd = build_tippecanoe_command(args.output, classified_geojson)
         log.info("Running Tippecanoe ...")
         log.info("Command: %s", " ".join(tip_cmd))
 

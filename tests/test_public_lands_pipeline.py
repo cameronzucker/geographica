@@ -13,6 +13,7 @@ from build_public_lands import (
     build_ogr2ogr_command,
     build_tippecanoe_command,
     classify_sql,
+    classify_feature,
 )
 
 
@@ -100,6 +101,54 @@ class TestClassifySQL:
         # Find sort_key CASE: Wilderness should be THEN 1
         assert "Wilderness" in sql
         # The first THEN in sort_key should be 1 (for Wilderness)
+
+
+class TestClassifyFeature:
+    """Test Python-based feature classification."""
+
+    def test_wilderness_overrides_usfs(self):
+        cat, key = classify_feature({"Des_Tp": "Wilderness Area", "Mang_Name": "USFS"})
+        assert cat == "Wilderness"
+        assert key == 1
+
+    def test_blm(self):
+        cat, key = classify_feature({"Mang_Name": "BLM", "Des_Tp": ""})
+        assert cat == "BLM"
+
+    def test_nps(self):
+        cat, key = classify_feature({"Mang_Name": "NPS", "Des_Tp": "National Park"})
+        assert cat == "NPS"
+        assert key == 2
+
+    def test_tribal(self):
+        cat, _ = classify_feature({"Mang_Name": "TRIB"})
+        assert cat == "Tribal"
+
+    def test_bia(self):
+        cat, _ = classify_feature({"Mang_Name": "BIA"})
+        assert cat == "Tribal"
+
+    def test_state_by_mang_type(self):
+        cat, _ = classify_feature({"Mang_Name": "SDNR", "Mang_Type": "STAT"})
+        assert cat == "State"
+
+    def test_other_federal(self):
+        cat, key = classify_feature({"Mang_Name": "OTHFED", "Mang_Type": "FED"})
+        assert cat == "Other"
+        assert key == 10
+
+    def test_empty_props(self):
+        cat, key = classify_feature({})
+        assert cat == "Other"
+        assert key == 10
+
+    def test_sort_key_ordering(self):
+        """Wilderness < NPS < FWS < USFS < DOD < BLM < USBR < Tribal < State < Other."""
+        _, w = classify_feature({"Des_Tp": "Wilderness"})
+        _, nps = classify_feature({"Mang_Name": "NPS"})
+        _, blm = classify_feature({"Mang_Name": "BLM"})
+        _, state = classify_feature({"Mang_Name": "X", "Mang_Type": "STAT"})
+        assert w < nps < blm < state
 
 
 class TestOgr2ogrCommand:
