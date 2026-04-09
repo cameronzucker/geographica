@@ -1,2 +1,20 @@
 [2026-04-08 07:28:54.636] [722232] [HailoRT] [info] [device.cpp:53] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
 [2026-04-08 09:29:33.952] [793539] [HailoRT] [info] [device.cpp:53] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-08 09:30:54.080] [794416] [HailoRT] [info] [hef.cpp:1963] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: base-whisper-decoder-10s-out-seq-64
+[2026-04-08 09:30:54.081] [794416] [HailoRT] [info] [hef.cpp:1963] [get_network_group_and_network_name] No name was given. Addressing all networks of default network_group: base-whisper-decoder-10s-out-seq-64
+[2026-04-08 09:31:55.703] [795020] [HailoRT] [info] [vdevice.cpp:227] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: ROUND_ROBIN, multi_process_service: false
+[2026-04-08 09:31:55.727] [795020] [HailoRT] [info] [device.cpp:53] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-08 09:32:19.719] [795225] [HailoRT] [info] [vdevice.cpp:227] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: ROUND_ROBIN, multi_process_service: false
+[2026-04-08 09:32:19.743] [795225] [HailoRT] [info] [device.cpp:53] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-08 09:32:38.317] [795409] [HailoRT] [info] [vdevice.cpp:227] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: ROUND_ROBIN, multi_process_service: false
+[2026-04-08 09:32:38.340] [795409] [HailoRT] [info] [device.cpp:53] [Device] OS Version: Linux 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (2026-03-11) aarch64
+[2026-04-08 09:32:38.351] [795409] [HailoRT] [info] [vdevice.cpp:227] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: ROUND_ROBIN, multi_process_service: false
+[2026-04-08 09:32:43.363] [795409] [HailoRT] [error] [vdevice_hrpc_client.cpp:70] [create_available_vdevice] Failed to create vdevice. there are not enough free devices. requested: 1, found: 0
+[2026-04-08 09:32:43.363] [795409] [HailoRT] [error] [vdevice_hrpc_client.cpp:87] [create] CHECK_SUCCESS failed with status=HAILO_OUT_OF_PHYSICAL_DEVICES(74)
+[2026-04-08 09:32:43.363] [795409] [HailoRT] [error] [vdevice.cpp:243] [create] CHECK_SUCCESS failed with status=HAILO_OUT_OF_PHYSICAL_DEVICES(74)
+[2026-04-08 09:32:43.363] [795409] [HailoRT] [error] [vdevice.cpp:255] [create_shared] CHECK_SUCCESS failed with status=HAILO_OUT_OF_PHYSICAL_DEVICES(74)
+[2026-04-08 09:32:43.375] [795409] [HailoRT] [info] [vdevice.cpp:227] [create] Creating vdevice with params: device_count: 1, scheduling_algorithm: ROUND_ROBIN, multi_process_service: false
+[2026-04-08 09:32:48.385] [795409] [HailoRT] [error] [vdevice_hrpc_client.cpp:70] [create_available_vdevice] Failed to create vdevice. there are not enough free devices. requested: 1, found: 0
+[2026-04-08 09:32:48.385] [795409] [HailoRT] [error] [vdevice_hrpc_client.cpp:87] [create] CHECK_SUCCESS failed with status=HAILO_OUT_OF_PHYSICAL_DEVICES(74)
+[2026-04-08 09:32:48.385] [795409] [HailoRT] [error] [vdevice.cpp:243] [create] CHECK_SUCCESS failed with status=HAILO_OUT_OF_PHYSICAL_DEVICES(74)
+[2026-04-08 09:32:48.385] [795409] [HailoRT] [error] [vdevice.cpp:255] [create_shared] CHECK_SUCCESS failed with status=HAILO_OUT_OF_PHYSICAL_DEVICES(74)

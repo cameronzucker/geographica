@@ -57,8 +57,12 @@
                 <option value="0-12">Standard (0-12)</option>
                 <option value="0-14">High detail (0-14)</option>
                 <option value="0-15" selected>Very high detail (0-15)</option>
-                <option value="0-16">Maximum detail (0-16)</option>
+                <option value="0-16">Maximum — direct mode (0-16)</option>
+                <option value="0-17">M2M enhanced (0-17)</option>
+                <option value="0-18">M2M high (0-18)</option>
+                <option value="0-19">M2M maximum (0-19)</option>
             </select>
+            <div class="detail" id="cfg-zoom-note"></div>
 
             <label>Download speed</label>
             <select id="cfg-concurrency">
@@ -217,10 +221,27 @@
         // Event handlers
         document.getElementById('cfg-source').addEventListener('change', function() {
             document.getElementById('cfg-m2m-section').style.display = this.value === 'm2m' ? '' : 'none';
+            // Re-trigger zoom note update
+            document.getElementById('cfg-zoom').dispatchEvent(new Event('change'));
         });
 
         document.getElementById('cfg-bbox').addEventListener('input', updateEstimate);
-        document.getElementById('cfg-zoom').addEventListener('change', updateEstimate);
+        document.getElementById('cfg-zoom').addEventListener('change', function() {
+            updateEstimate();
+            var zoom = this.value;
+            var note = document.getElementById('cfg-zoom-note');
+            var source = document.getElementById('cfg-source');
+            var maxZ = parseInt(zoom.split('-')[1]);
+            if (maxZ > 16 && source.value !== 'm2m') {
+                note.textContent = 'Zoom levels above 16 require M2M mode (NAIP GeoTIFF source).';
+                note.style.color = '#f9e2af';
+            } else if (maxZ > 16) {
+                note.textContent = 'M2M downloads native NAIP GeoTIFFs. GDAL determines actual max zoom from source resolution (~z19).';
+                note.style.color = '#7a8299';
+            } else {
+                note.textContent = '';
+            }
+        });
 
         document.getElementById('cfg-start').addEventListener('click', function() {
             var body = {
