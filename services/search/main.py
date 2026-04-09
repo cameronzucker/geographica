@@ -653,62 +653,83 @@ def _get_disk_info() -> tuple:
     return free_gb, total_gb, used_pct
 
 
-@app.get("/admin/status")
-async def admin_status():
-    """Return status of all Geographica services and long-running tasks."""
-    # --- Docker container listing (non-fatal if unavailable) ---
+def _list_docker_services() -> list[dict]:
+    """List Docker services (runs synchronously — call via to_thread)."""
     services = []
     client = _get_docker_client()
-    if client:
-        try:
-            containers = client.containers.list(all=True, filters={"name": "geographica-"})
-            for c in sorted(containers, key=lambda x: x.name):
-                svc = {
-                    "name": c.name.replace("geographica-", ""),
-                    "status": c.status,
-                    "health": "unknown",
-                    "uptime": "",
-                    "progress": {},
-                }
+    if not client:
+        return services
+    try:
+        containers = client.containers.list(all=True, filters={"name": "geographica-"})
+        for c in sorted(containers, key=lambda x: x.name):
+            svc = {
+                "name": c.name.replace("geographica-", ""),
+                "status": c.status,
+                "health": "unknown",
+                "uptime": "",
+                "progress": {},
+            }
 
-                # Health from inspect
+            # Health from inspect
+            try:
+                inspection = c.attrs
+                health_data = inspection.get("State", {}).get("Health", {})
+                svc["health"] = health_data.get("Status", "none")
+                started = inspection.get("State", {}).get("StartedAt", "")
+                if started:
+                    svc["uptime"] = started
+            except Exception:
+                pass
+
+            # Parse logs for progress on key services
+            if c.name in ("geographica-nominatim", "geographica-valhalla") and c.status == "running":
                 try:
-                    inspection = c.attrs
-                    health_data = inspection.get("State", {}).get("Health", {})
-                    svc["health"] = health_data.get("Status", "none")
-                    started = inspection.get("State", {}).get("StartedAt", "")
-                    if started:
-                        svc["uptime"] = started
+                    logs = c.logs(tail=30, timestamps=False).decode("utf-8", errors="replace")
+                    svc["progress"] = _parse_progress_from_logs(logs, c.name)
                 except Exception:
                     pass
 
-                # Parse logs for progress on key services
-                if c.name in ("geographica-nominatim", "geographica-valhalla") and c.status == "running":
-                    try:
-                        logs = c.logs(tail=30, timestamps=False).decode("utf-8", errors="replace")
-                        svc["progress"] = _parse_progress_from_logs(logs, c.name)
-                    except Exception:
-                        pass
+            services.append(svc)
+    except Exception:
+        pass
+    finally:
+        client.close()
+    return services
 
-                services.append(svc)
-        except Exception:
-            pass
-        finally:
-            client.close()
 
-    # --- Concurrent sub-queries: STT + GPS ---
-    stt_data, gps_data = await asyncio.gather(
-        _fetch_stt_status(), _fetch_gps_status(), return_exceptions=True
+@app.get("/admin/status")
+async def admin_status():
+    """Return status of all Geographica services and long-running tasks.
+
+    All blocking calls (Docker, TLS, search stats, disk) run in thread pool
+    to avoid stalling the async event loop during the 10s poll cycle.
+    """
+    # --- All sub-queries run concurrently ---
+    (services, stt_data, gps_data, tls_data, search_stats,
+     disk_info) = await asyncio.gather(
+        asyncio.to_thread(_list_docker_services),
+        _fetch_stt_status(),
+        _fetch_gps_status(),
+        asyncio.to_thread(_detect_tls_status),
+        asyncio.to_thread(_get_search_stats),
+        asyncio.to_thread(_get_disk_info),
+        return_exceptions=True,
     )
+
+    # Fallbacks for any failed sub-queries
+    if isinstance(services, Exception):
+        services = []
     if isinstance(stt_data, Exception):
         stt_data = {"status": "unreachable", "backend": None, "model": None, "npu_available": None}
     if isinstance(gps_data, Exception):
         gps_data = {"status": "unreachable", "fix": None, "accuracy_m": None}
-
-    # --- Synchronous queries: TLS, search stats, disk ---
-    tls_data = _detect_tls_status()
-    search_stats = _get_search_stats()
-    disk_free_gb, disk_total_gb, disk_used_pct = _get_disk_info()
+    if isinstance(tls_data, Exception):
+        tls_data = {"mode": "http", "hostname": None, "cert_expires": None, "cert_valid": None}
+    if isinstance(search_stats, Exception):
+        search_stats = {"gnis_count": 0, "osm_pois_count": 0, "osm_pois_loaded": False}
+    if isinstance(disk_info, Exception):
+        disk_info = (0.0, 0.0, 0)
+    disk_free_gb, disk_total_gb, disk_used_pct = disk_info
 
     # --- Data pipeline files (downloads in progress) ---
     data_tasks = []
@@ -1128,51 +1149,53 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
         except (json.JSONDecodeError, OSError):
             state_data = {"status": "unknown", "error": "Could not read state file"}
 
-    # Check container status
+    # Check container status — keep client alive through reconciliation for log capture
     client = _get_docker_client()
     container_running = False
-    if client:
-        try:
-            container_running = _is_pipeline_container_running(client)
-        except Exception:
-            pass
-        finally:
-            client.close()
-
-    # Reconcile: if state says running but container is dead, mark interrupted
-    # and capture last logs for crash diagnosis
-    if state_data.get("status") in ("running", "cancelling") and not container_running:
-        new_status = "cancelled" if state_data.get("status") == "cancelling" else "interrupted"
-        state_data["status"] = new_status
-
-        # Add completion timestamps
-        from datetime import datetime, timezone as tz
-        state_data["completed_at"] = datetime.now(tz.utc).isoformat()
-        if state_data.get("started_at"):
-            started = datetime.fromisoformat(state_data["started_at"])
-            state_data["duration_seconds"] = int((datetime.now(tz.utc) - started).total_seconds())
-
-        # Try to capture last logs from dead container (if it wasn't auto-removed)
+    try:
         if client:
             try:
-                container = client.containers.get("geographica-pipeline")
-                logs = container.logs(tail=50, timestamps=False).decode("utf-8", errors="replace")
-                state_data["last_logs"] = logs[-2000:]  # cap at 2KB
+                container_running = _is_pipeline_container_running(client)
             except Exception:
                 pass
 
-        try:
-            tmp = state_file.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(state_data, indent=2))
-            os.replace(str(tmp), str(state_file))
-        except OSError:
-            pass
+        # Reconcile: if state says running but container is dead, mark interrupted
+        # and capture last logs for crash diagnosis
+        if state_data.get("status") in ("running", "cancelling") and not container_running:
+            new_status = "cancelled" if state_data.get("status") == "cancelling" else "interrupted"
+            state_data["status"] = new_status
+
+            # Add completion timestamps
+            from datetime import datetime, timezone as tz
+            state_data["completed_at"] = datetime.now(tz.utc).isoformat()
+            if state_data.get("started_at"):
+                started = datetime.fromisoformat(state_data["started_at"])
+                state_data["duration_seconds"] = int((datetime.now(tz.utc) - started).total_seconds())
+
+            # Capture last logs from dead container (client still open)
+            if client:
+                try:
+                    container = client.containers.get("geographica-pipeline")
+                    logs = container.logs(tail=50, timestamps=False).decode("utf-8", errors="replace")
+                    state_data["last_logs"] = logs[-2000:]  # cap at 2KB
+                except Exception:
+                    pass
+
+            try:
+                tmp = state_file.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(state_data, indent=2))
+                os.replace(str(tmp), str(state_file))
+            except OSError:
+                pass
+    finally:
+        if client:
+            client.close()
 
     # Add live fields
     state_data["container_running"] = container_running
 
-    # Calculate estimated tiles if bbox/zoom available
-    if "bbox" in state_data and "zoom" in state_data:
+    # Calculate estimated tiles if bbox/zoom available (osm_poi has null bbox/zoom)
+    if state_data.get("bbox") and state_data.get("zoom"):
         try:
             bbox = _parse_bbox(state_data["bbox"])
             zoom_min, zoom_max = _parse_zoom(state_data["zoom"])
@@ -1191,9 +1214,9 @@ async def pipeline_cancel():
     async with _pipeline_lock:
         # Write "cancelling" to all possible state files immediately
         for state_file in [
-            Path("/data/.pipeline-state.json"),
-            Path("/data/.elevation-state.json"),
-            Path("/data/.osm-poi-state.json"),
+            _state_file_for_type("imagery"),
+            _state_file_for_type("elevation"),
+            _state_file_for_type("osm_poi"),
         ]:
             if state_file.exists():
                 try:
@@ -1201,7 +1224,7 @@ async def pipeline_cancel():
                     if existing.get("status") == "running":
                         existing["status"] = "cancelling"
                         tmp = state_file.with_suffix(".json.tmp")
-                        tmp.write_text(json.dumps(existing))
+                        tmp.write_text(json.dumps(existing, indent=2))
                         os.replace(str(tmp), str(state_file))
                 except Exception:
                     pass

@@ -445,7 +445,7 @@
     // -----------------------------------------------------------------------
     // Pipeline banner (shown on Dashboard tab when a pipeline is running)
     // -----------------------------------------------------------------------
-    function renderPipelineBanner(imageryData) {
+    function renderPipelineBanner(imageryData, elevData, osmData) {
         var banner = document.getElementById('pipeline-banner');
         var title = '';
         var detail = '';
@@ -458,10 +458,17 @@
             pct = Math.min(100, done / total * 100);
             var rate = imageryData.rate_per_sec ? Math.round(imageryData.rate_per_sec) + ' tiles/sec' : '';
             detail = done.toLocaleString() + ' / ' + total.toLocaleString() + (rate ? ' \u00b7 ' + rate : '');
-        } else if (_elevRunning) {
+        } else if (elevData && elevData.status === 'running') {
             title = 'Elevation download in progress';
-        } else if (_osmRunning) {
+            var eTotal = elevData.estimated_tiles || elevData.tiles_total || 1;
+            var eDone = elevData.tiles_done || 0;
+            pct = Math.min(100, eDone / eTotal * 100);
+            var eRate = elevData.rate_per_sec ? Math.round(elevData.rate_per_sec) + ' tiles/sec' : '';
+            detail = eDone.toLocaleString() + ' / ' + eTotal.toLocaleString() + (eRate ? ' \u00b7 ' + eRate : '');
+        } else if (osmData && osmData.status === 'running') {
             title = 'OSM POI extraction in progress';
+            pct = 100; // indeterminate — show full bar
+            detail = 'Extracting...';
         }
 
         if (title) {
@@ -975,6 +982,13 @@
     // Polling: fetchAll
     // -----------------------------------------------------------------------
     var _lastStatus = {};
+    var _lastImagery = null;
+    var _lastElev = null;
+    var _lastOsm = null;
+
+    function _updateBanner() {
+        renderPipelineBanner(_lastImagery, _lastElev, _lastOsm);
+    }
 
     function fetchAll() {
         cfgFetch('/admin/status').then(function(r) { return r.json(); }).then(function(d) {
@@ -986,18 +1000,23 @@
         }).catch(function() {});
 
         cfgFetch('/admin/pipeline/status?type=imagery').then(function(r) { return r.json(); }).then(function(d) {
+            _lastImagery = d;
             renderImageryProgress(d);
-            renderPipelineBanner(d);
+            _updateBanner();
             updatePipelineButtons();
         }).catch(function() {});
 
         cfgFetch('/admin/pipeline/status?type=elevation').then(function(r) { return r.json(); }).then(function(d) {
+            _lastElev = d;
             renderElevation(_lastStatus, d);
+            _updateBanner();
             updatePipelineButtons();
         }).catch(function() {});
 
         cfgFetch('/admin/pipeline/status?type=osm_poi').then(function(r) { return r.json(); }).then(function(d) {
+            _lastOsm = d;
             renderOsmPoi(_lastStatus, d);
+            _updateBanner();
             updatePipelineButtons();
         }).catch(function() {});
 
