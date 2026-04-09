@@ -66,7 +66,7 @@ async def geocode_place(
     result = None
     try:
         resp = await _http_client.get(
-            f"{_nominatim_url}/search", params=params, timeout=1.0
+            f"{_nominatim_url}/search", params=params, timeout=5.0
         )
         resp.raise_for_status()
         data = resp.json()
