@@ -876,6 +876,45 @@
     // Drop numbered pins on map
     updateSearchPins(results);
     list.classList.add('visible');
+
+    // Zoom map to fit all results
+    if (results.length > 0) {
+      var bounds = new maplibregl.LngLatBounds();
+      results.forEach(function (item) {
+        var lng = parseFloat(item.lon || item.lng || item.longitude);
+        var lat = parseFloat(item.lat || item.latitude);
+        if (!isNaN(lng) && !isNaN(lat)) bounds.extend([lng, lat]);
+      });
+      if (!bounds.isEmpty()) {
+        var isMobile = window.innerWidth < 768;
+        var sidebarW = parseInt(getComputedStyle(document.documentElement)
+          .getPropertyValue('--sidebar-width')) || 320;
+        map.fitBounds(bounds, {
+          padding: isMobile
+            ? { top: 60, bottom: 120, left: 20, right: 20 }
+            : { top: 60, bottom: 60, left: sidebarW + 20, right: 60 },
+          maxZoom: 14
+        });
+      }
+    }
+
+    // Mobile: collapse results beyond 3rd, add expander
+    var items = list.querySelectorAll('li:not(.search-intent-subtitle)');
+    if (window.innerWidth < 768 && items.length > 3) {
+      Array.prototype.forEach.call(items, function (li, i) {
+        if (i >= 3) li.classList.add('mobile-hidden');
+      });
+      var expander = document.createElement('li');
+      expander.className = 'search-results-expander';
+      expander.textContent = 'Show ' + (items.length - 3) + ' more results';
+      expander.addEventListener('click', function () {
+        Array.prototype.forEach.call(items, function (li) {
+          li.classList.remove('mobile-hidden');
+        });
+        expander.remove();
+      });
+      list.appendChild(expander);
+    }
   }
 
   function selectSearchResult(item) {

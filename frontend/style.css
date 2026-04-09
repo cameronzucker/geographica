@@ -1444,6 +1444,23 @@ h4 {
   background: #fff3cd !important;
   transition: background 0.3s;
 }
+
+.mobile-hidden {
+  display: none;
+}
+
+.search-results-expander {
+  color: var(--accent);
+  cursor: pointer;
+  text-align: center;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.search-results-expander:hover {
+  text-decoration: underline;
+}
 #search-results li {
   display: flex;
   align-items: center;
