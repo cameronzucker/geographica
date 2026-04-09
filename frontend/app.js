@@ -266,19 +266,55 @@
         data: emptyGeoJSON()
       });
     }
-    // Points
+
+    // Register default icon for imported points (pink circle matching legacy appearance)
+    if (!map.hasImage('kmz-icon-default')) {
+      var defCanvas = document.createElement('canvas');
+      defCanvas.width = 32;
+      defCanvas.height = 32;
+      var defCtx = defCanvas.getContext('2d');
+      defCtx.beginPath();
+      defCtx.arc(16, 16, 12, 0, Math.PI * 2);
+      defCtx.fillStyle = defaultColor;
+      defCtx.fill();
+      defCtx.strokeStyle = '#ffffff';
+      defCtx.lineWidth = 3;
+      defCtx.stroke();
+      var defImageData = defCtx.getImageData(0, 0, 32, 32);
+      map.addImage('kmz-icon-default', {
+        width: 32,
+        height: 32,
+        data: new Uint8Array(defImageData.data.buffer)
+      });
+    }
+
+    // Replay cached KMZ icons after style swap (setStyle destroys all images)
+    if (window._kmzImport && window._kmzImport.getIconCache) {
+      var cache = window._kmzImport.getIconCache();
+      cache.forEach(function (entry, url) {
+        if (!map.hasImage(entry.iconId)) {
+          map.addImage(entry.iconId, {
+            width: entry.imageData.width,
+            height: entry.imageData.height,
+            data: new Uint8Array(entry.imageData.data.buffer)
+          });
+        }
+      });
+    }
+
+    // Points — symbol layer with icon support (replaces legacy circle layer)
     if (!map.getLayer('imported-points')) {
       map.addLayer({
         id: 'imported-points',
-        type: 'circle',
+        type: 'symbol',
         source: 'imported',
         filter: ['==', '$type', 'Point'],
-        paint: {
-          'circle-radius': 7,
-          'circle-color': ['coalesce', ['get', 'marker-color'], ['get', 'fill'], ['get', 'stroke'], defaultColor],
-          'circle-stroke-color': '#fff',
-          'circle-stroke-width': 2,
-          'circle-opacity': ['coalesce', ['get', 'fill-opacity'], 1]
+        layout: {
+          'icon-image': ['coalesce', ['image', ['get', '_iconId']], ['image', 'kmz-icon-default']],
+          'icon-size': ['coalesce', ['get', '_iconScale'], 1],
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+          'icon-padding': 4
         }
       });
     }
@@ -434,7 +470,8 @@
           styleMapHash: 1, stroke: 1, fill: 1, 'stroke-opacity': 1,
           'fill-opacity': 1, 'stroke-width': 1, icon: 1, 'marker-color': 1,
           'marker-size': 1, 'marker-symbol': 1,
-          _importFileId: 1, _importFeatureId: 1, _folder: 1
+          _importFileId: 1, _importFeatureId: 1, _folder: 1,
+          _iconId: 1, _iconScale: 1, _iconUrl: 1
         };
         var extras = [];
         Object.keys(props).forEach(function (key) {
