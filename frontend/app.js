@@ -1092,7 +1092,8 @@
     fetch('/search/spatial', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      priority: 'high'  // prevent browser from queuing behind tile fetches
     })
       .then(function (res) {
         if (res.status === 404 || res.status === 405) {
