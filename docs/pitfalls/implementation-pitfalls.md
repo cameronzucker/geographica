@@ -81,11 +81,29 @@ window.addEventListener('mouseup', function() {
 });
 ```
 
+**The REAL fix (MapLibre v5.21+):** `dragRotate.disable()` alone is INSUFFICIENT. The internal handler pipeline still processes CTRL+mousedown even when disabled. You must surgically remove the handlers from the HandlerManager:
+
+```js
+map.dragRotate.disable();
+if (map._handlers && map._handlers._handlersById) {
+  delete map._handlers._handlersById['mouseRotate'];
+  delete map._handlers._handlersById['mousePitch'];
+  map._handlers._handlers = map._handlers._handlers.filter(function (h) {
+    return h.handlerName !== 'mouseRotate' && h.handlerName !== 'mousePitch';
+  });
+}
+```
+
+This must be done BOTH at init (in initFreeLookCamera) AND in the `map.on('style.load')` handler (MapLibre re-registers handlers on style swap).
+
+**Also:** `NavigationControl` with `showCompass: true` (default) calls `dragRotate.enable()` when added. Use `showCompass: false`.
+
 **Broken patterns (all tried and failed):**
+- `map.dragRotate.disable()` alone — handler pipeline still runs in v5.21
 - `new Map({ dragRotate: false })` — handlers still registered internally
 - `new Map({ boxZoom: false })` — CTRL+drag is dragRotate, not boxZoom
 - `canvas.addEventListener(..., true)` capture phase — MapLibre's HandlerManager bypasses DOM events
-- `stopImmediatePropagation` — MapLibre's handlers registered first, fire first
+- `stopImmediatePropagation` — both our handler and MapLibre's fire, both update camera simultaneously
 - `map.jumpTo({ center, bearing, pitch })` center compensation — wrong abstraction, not the bug
 
 ## 12. Pydantic max_length on route polylines
