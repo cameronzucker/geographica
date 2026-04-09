@@ -1244,23 +1244,9 @@
       padding: { bottom: 200, left: 0, right: 0, top: 0 }
     });
 
-    // Open popup at the pin location
-    if (searchPopup) searchPopup.remove();
-    var popupContent = document.createElement('div');
-    var h4 = document.createElement('h4');
-    h4.textContent = item.name || item.display_name || 'Result';
-    popupContent.appendChild(h4);
-    if (item.display_name && item.display_name !== item.name) {
-      var p = document.createElement('p');
-      p.textContent = item.display_name;
-      p.style.fontSize = '12px';
-      p.style.color = '#666';
-      popupContent.appendChild(p);
-    }
-    searchPopup = new maplibregl.Popup({ offset: 35, closeOnClick: true })
-      .setLngLat([lng, lat])
-      .setDOMContent(popupContent)
-      .addTo(map);
+    // Reuse the full map-click popup (coordinates, buttons, public land info)
+    var name = item.name || item.display_name || 'Result';
+    showMapClickPopup(lng, lat, name, null, 35);
   }
 
   function hideSearchResults() {
