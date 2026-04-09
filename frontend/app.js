@@ -2597,6 +2597,37 @@
               iconResult && iconResult.failed > 0 ? 'warning' : 'success'
             );
 
+            // Persist to IndexedDB (fire-and-forget — save failure does not affect import)
+            if (window._importStore && window._importStore.save) {
+              var iconEntriesToSave = [];
+              var savedIconUrls = {};
+              if (window._kmzImport && window._kmzImport.getIconCache) {
+                processedFeatures.forEach(function (f) {
+                  var url = f.properties._iconUrl;
+                  if (url && !savedIconUrls[url] && f.properties._iconId !== 'kmz-icon-default') {
+                    var cacheEntry = window._kmzImport.getIconCache().get(url);
+                    if (cacheEntry && cacheEntry.imageData) {
+                      iconEntriesToSave.push({
+                        url: url,
+                        iconId: cacheEntry.iconId,
+                        imageData: {
+                          width: cacheEntry.imageData.width,
+                          height: cacheEntry.imageData.height,
+                          data: cacheEntry.imageData.data
+                        }
+                      });
+                    }
+                    savedIconUrls[url] = true;
+                  }
+                });
+              }
+              window._importStore.save(fileId, importedFiles[fileId], iconEntriesToSave)
+                .catch(function (err) {
+                  console.warn('Import persistence failed:', err);
+                  showImportStatus('Imported but not persisted: ' + err.message, 'warning');
+                });
+            }
+
             // Release references for GC
             kmlDoc = null;
             geojson = null;
@@ -2706,6 +2737,12 @@
           });
         }
         delete importedFiles[fileId];
+        // Remove from IndexedDB persistence (fire-and-forget)
+        if (window._importStore && window._importStore.remove) {
+          window._importStore.remove(fileId).catch(function (err) {
+            console.warn('Failed to remove persisted import:', err);
+          });
+        }
         updateImportedMapData();
         buildImportLayerUI();
       });
