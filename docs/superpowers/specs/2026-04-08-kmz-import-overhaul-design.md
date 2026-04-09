@@ -45,17 +45,19 @@ Key findings:
 
 #### Icon Pipeline at Import Time
 
-After JSZip decompresses the KMZ, before feature processing:
+Runs during Stage 3 of the processing pipeline. Works for BOTH KMZ imports (with archive) and plain KML imports (no archive). `processKMLDoc()` accepts an optional third parameter `zipArchive` (the JSZip object, or `null` for plain KML). `importKMZ()` passes the zip; `importKML()` passes `null`.
 
 1. Scan the KML DOM for all unique `<Icon><href>` values via the style resolution table (see Section 3)
-2. For each unique icon URL:
-   a. Check if already registered in MapLibre's image registry → skip if so
-   b. Check if the URL is a path within the KMZ archive → extract from archive
-   c. If external URL: validate URL (see Section 5), attempt HTTP fetch with 5s timeout
-   d. Convert fetched image to `HTMLImageElement`, validate dimensions (max 256x256)
-   e. Register with `map.addImage(iconId, image)` — `HTMLImageElement` is accepted directly by MapLibre
-3. Cache loaded icons in session-scoped `Map<url, iconId>`
-4. **Concurrency guard:** Set `var importInProgress = true` at pipeline start, `false` at end. Reject new imports while in progress. Each batch checks whether the file's `fileId` still exists in `importedFiles` (user may have clicked Remove mid-import); if not, abort the pipeline.
+2. **Offline short-circuit:** If `navigator.onLine === false`, skip all external URL fetches entirely and use fallback symbols for all icons. On AREDN mesh networks there is no internet — waiting 5s per icon timeout is wasted time. Log: "Offline mode — using fallback symbols for N icons."
+3. For each unique icon URL:
+   a. Check if already registered in MapLibre's image registry (`map.hasImage(iconId)`) → skip if so
+   b. If `zipArchive` is not null: check if the href is a path within the archive (`zipArchive.file(href)`) → extract as blob, create `Image` from blob URL
+   c. If external URL: validate URL (see Section 5), then load via `new Image()` with `img.crossOrigin = 'anonymous'` and `img.src = url`. This avoids CORS issues for display (images load cross-origin freely) and `crossOrigin: 'anonymous'` enables canvas read-back for `getImageData()`. If the server doesn't send CORS headers, the image still loads but canvas read-back fails — catch this and fall back to generated symbol.
+   d. On image load: validate dimensions (`naturalWidth` and `naturalHeight` ≤ 256), draw to canvas, extract via `getImageData()`, register with `map.addImage(iconId, {width, height, data})`
+   e. On image error or CORS failure: generate fallback symbol (see Fallback section)
+4. Cache loaded icons in session-scoped `Map<url, {iconId, imageData}>` — storing `imageData` (not just the ID) enables replay on style swap (see Style Swap Survival)
+5. **Concurrency guard:** Set `var importInProgress = true` at pipeline start, `false` at end (in a `finally` block). Reject new imports while in progress. Each batch checks whether the file's `fileId` still exists in `importedFiles` (user may have clicked Remove mid-import); if not, abort the pipeline and clean up any already-registered icons that have no other references.
+6. **Error recovery:** Wrap the entire pipeline in try/finally. On error: set `importInProgress = false`, null out KML/DOM references, show error status. If partial features were processed, still call `updateImportedMapData()` with whatever was accumulated (partial import is better than no import).
 
 #### Icon ID Derivation
 
@@ -81,15 +83,33 @@ Replace the `imported-points` circle layer with a `symbol` layer:
 
 ```
 Layer: imported-points (type: symbol)
-  icon-image: ['coalesce', ['image', ['get', '_iconId']], ['image', 'kmz-icon-default']]
-  icon-size: ['coalesce', ['get', '_iconScale'], 1]
-  icon-allow-overlap: true            // preserve dense bird's-eye view
-  icon-ignore-placement: true         // don't push other symbols away
+  layout: {
+    icon-image: ['coalesce', ['image', ['get', '_iconId']], ['image', 'kmz-icon-default']]
+    icon-size: ['coalesce', ['get', '_iconScale'], 1]
+    icon-allow-overlap: true            // preserve dense bird's-eye view
+    icon-ignore-placement: true         // don't push other symbols away
+    icon-padding: 4                     // expand clickable hit area beyond icon bounds
+  }
 ```
 
-**Critical:** `['image', expr]` returns null if the image isn't registered. `['coalesce', ...]` falls through to the default. Without this, features with unregistered icons are silently invisible. The `kmz-icon-default` image MUST be registered before any features are added to the source. `icon-size` similarly needs a coalesce — null `_iconScale` would hide the icon.
+**Critical notes:**
+- `['image', expr]` returns null if the image isn't registered. `['coalesce', ...]` falls through to the default. Without this, features with unregistered icons are silently invisible.
+- The `kmz-icon-default` image MUST be registered before any features are added to the source.
+- `icon-size` needs coalesce — null `_iconScale` would hide the icon.
+- `icon-size` and `icon-image` are **layout** properties (NOT paint). Placing them in `paint` silently fails in MapLibre and defaults to `icon-size: 1`, masking the bug during testing.
+- `icon-padding: 4` expands the clickable hit area. Symbol layers have smaller hit targets than the previous 7px-radius circle layer — without padding, clicking individual features on mobile would be significantly harder.
 
 Features without icons get `_iconId: 'kmz-icon-default'` — a 32x32 canvas-rendered pink circle matching current appearance.
+
+#### Style Swap Survival
+
+**Critical:** `map.setStyle()` (basemap switch) destroys ALL registered images in MapLibre's texture atlas. After a style swap, the `imported-points` symbol layer references icon IDs that no longer exist.
+
+The session-scoped icon cache (`Map<url, {iconId, imageData}>`) must store the actual image data (not just the ID), and the `addPlaceholderSources()` handler (called on `style.load`) must replay all cached icons via `map.addImage()` before re-adding the imported-points layer. Additionally, `map.removeImage(iconId)` in the cleanup path must be guarded with `map.hasImage(iconId)` to avoid throwing after a style swap.
+
+#### Popup Icon Removal
+
+After the overhaul, icons display directly on the map. The existing popup code (line 338-348) that renders `properties.icon` as a 32x32 `<img>` tag becomes redundant for features with `_iconId` set. **Remove the popup icon image for features where `_iconId !== 'kmz-icon-default'`.** Retain it only for the fallback case where the icon couldn't be loaded (the popup can show what the icon *should* have looked like if it were reachable).
 
 Line and polygon layers remain unchanged (already working correctly with data-driven colors).
 
@@ -110,9 +130,9 @@ function yieldToMain() {
 ```
 Note: use `function` expression, not arrow function — codebase uses `var`/`function` exclusively.
 
-**Stage 1 — DOM Parse** (~100ms even for 28MB):
-- `new DOMParser().parseFromString(kmlText, 'text/xml')`
-- Single synchronous step (fast enough to not need yielding)
+**Stage 1 — Accept Pre-Parsed DOM:**
+- Both `importKML()` and `importKMZ()` already parse the KML text into a DOM before calling `processKMLDoc()`. The function signature becomes `processKMLDoc(kmlDoc, filename, zipArchive)` where `kmlDoc` is the already-parsed DOM and `zipArchive` is the JSZip object (or `null` for plain KML).
+- No parsing needed in this stage — just validate the DOM isn't empty/error.
 
 **Stage 2 — Style Resolution Table** (see Section 3):
 - Walk `<Style>` and `<StyleMap>` elements
@@ -233,9 +253,13 @@ Multiple imports stack: 3 large files ≈ 36MB steady state. Acceptable within P
 Track icon reference counts:
 - `iconRefCounts[iconId]++` on import
 - `iconRefCounts[iconId]--` on remove
-- `map.removeImage(iconId)` when count reaches 0
+- `if (map.hasImage(iconId)) map.removeImage(iconId)` when count reaches 0 — the `hasImage` guard prevents throwing after a style swap where MapLibre already cleared the image
 
 Prevents texture atlas bloat from repeated import/remove cycles.
+
+#### `buildImportLayerUI` Swatch Update
+
+The existing color swatch logic reads `marker-color`/`stroke`/`fill` properties. With the icon-based rendering, the swatch becomes misleading for icon features (shows a color that isn't rendered). Update `buildImportLayerUI()`: for features where `_iconId !== 'kmz-icon-default'`, show a small icon thumbnail (using the cached `imageData`) or a neutral gray (`#999`) swatch. Retain color swatches for non-icon features and fallback features.
 
 #### What We DON'T Add
 
@@ -301,7 +325,9 @@ A formal security review (CSO skill) must run against this spec before implement
 | `frontend/index.html` | No changes expected (existing drop zone and file input sufficient) |
 | `frontend/vendor/togeojson.js` | No changes (post-processing approach avoids forking) |
 
-**Caller updates required:** `processKMLDoc()` becomes async (returns a Promise). Both `importKML()` (synchronous `reader.onload`) and `importKMZ()` (Promise `.then()` chain) must be updated to handle the returned Promise with `.catch()` for error handling. `importKML`'s `reader.onload` should call `processKMLDoc(...).catch(showImportError)`. `importKMZ`'s `.then()` chain should chain the returned Promise.
+**Caller updates required:** `processKMLDoc()` becomes async with signature `processKMLDoc(kmlDoc, filename, zipArchive)`. Both callers must be updated:
+- `importKML()`: `reader.onload` calls `processKMLDoc(kmlDoc, file.name, null).catch(showImportError)` — passes `null` for zipArchive since plain KML has no archive
+- `importKMZ()`: `.then()` chain calls `return processKMLDoc(kmlDoc, file.name, zip).catch(showImportError)` — passes the JSZip object for archive icon extraction
 
 ## Testing Strategy
 

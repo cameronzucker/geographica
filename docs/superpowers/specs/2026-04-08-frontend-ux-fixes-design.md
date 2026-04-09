@@ -64,9 +64,9 @@ Added at the top of the `map.on('click')` handler, before the `queryRenderedFeat
 
 **Guard 2 — Drag suppression flag:**
 Add a module-level `var wasDragging = false;` variable.
-- In `initFreeLookCamera()` **mousemove** handler: set `wasDragging = true` when actual mouse movement occurs during free-look or orbit (NOT on mousedown — a CTRL+click without drag should still allow the click to proceed)
-- In the generic click handler: check `if (wasDragging) { wasDragging = false; return; }`
-- Auto-clear safety: after setting `wasDragging = true` in mouseup, also schedule `setTimeout(function() { wasDragging = false; }, 0)` — if the click event doesn't fire (e.g., user dragged off-canvas), the flag auto-clears on the next event loop tick rather than staying stuck
+- **Set in mousemove:** In `initFreeLookCamera()` **mousemove** handler, set `wasDragging = true` when actual mouse movement occurs during free-look or orbit. NOT on mousedown — a CTRL+click without drag should still allow the click to proceed.
+- **Check in click:** In the generic click handler: `if (wasDragging) { wasDragging = false; return; }`
+- **Auto-clear in mouseup:** In the mouseup handler (where the gesture ends), schedule `setTimeout(function() { wasDragging = false; }, 0)`. The click event fires synchronously after mouseup — if it fires, the click handler clears the flag. If it doesn't fire (user dragged off-canvas), the setTimeout clears it on the next event loop tick. Do NOT set `wasDragging = true` in mouseup — it's already set from mousemove.
 
 **Why both guards:** Guard 1 catches the case where user clicks (not drags) with CTRL/SHIFT held. Guard 2 catches the case where user CTRL-drags and releases — the click event fires without modifier keys still down if the user releases CTRL before the mouse button. Setting `wasDragging` only on mousemove (not mousedown) preserves intentional CTRL+click behavior.
 
@@ -93,45 +93,53 @@ Add a module-level `var wasDragging = false;` variable.
 After `updateSearchPins(results)` (line 766), compute bounding box from all result coordinates and call `map.fitBounds()`:
 
 ```js
-if (results.length > 1) {
+if (results.length > 0) {
   var bounds = new maplibregl.LngLatBounds();
   results.forEach(function(item) {
     var lng = parseFloat(item.lon || item.lng || item.longitude);
     var lat = parseFloat(item.lat || item.latitude);
     if (!isNaN(lng) && !isNaN(lat)) bounds.extend([lng, lat]);
   });
-  if (!bounds.isEmpty()) {
+  if (bounds._sw && bounds._ne) {  // MapLibre LngLatBounds emptiness check
     var isMobile = window.innerWidth < 768;
+    var sidebarW = parseInt(getComputedStyle(document.documentElement)
+      .getPropertyValue('--sidebar-width')) || 320;
     map.fitBounds(bounds, {
       padding: isMobile
         ? { top: 60, bottom: 120, left: 20, right: 20 }
-        : { top: 60, bottom: 60, left: 320, right: 60 },
+        : { top: 60, bottom: 60, left: sidebarW + 20, right: 60 },
       maxZoom: 14
     });
   }
 }
 ```
 
-Desktop padding includes 320px left to account for sidebar width. Mobile padding includes more bottom for the collapsed result list. `maxZoom: 14` prevents over-zooming when results are clustered.
+Desktop left padding reads `--sidebar-width` CSS variable (not hardcoded). Mobile padding includes more bottom for the collapsed result list. `maxZoom: 14` prevents over-zooming when results are clustered. Zoom-to-fit now applies for single results too (changed from `> 1` to `> 0`).
 
 **B) Collapsed results list on mobile:**
 
 On mobile (`window.innerWidth < 768`), after rendering the full list, hide all `<li>` elements beyond the first 3. Append a "Show N more results" button that removes the limit when tapped. This keeps the map visible while still providing access to all results.
 
 ```js
+// Collect rendered <li> elements after the results.forEach loop:
+var items = list.querySelectorAll('li:not(.search-intent-subtitle)');
 if (window.innerWidth < 768 && items.length > 3) {
-  items.forEach(function(li, i) { if (i >= 3) li.classList.add('mobile-hidden'); });
-  // Append "Show N more" expander
+  Array.prototype.forEach.call(items, function(li, i) {
+    if (i >= 3) li.classList.add('mobile-hidden');
+  });
   var expander = document.createElement('li');
   expander.className = 'search-results-expander';
   expander.textContent = 'Show ' + (items.length - 3) + ' more results';
   expander.addEventListener('click', function() {
-    items.forEach(function(li) { li.classList.remove('mobile-hidden'); });
+    Array.prototype.forEach.call(items, function(li) {
+      li.classList.remove('mobile-hidden');
+    });
     expander.remove();
   });
   list.appendChild(expander);
 }
 ```
+Note: `items` is a NodeList from `querySelectorAll`, not an Array — use `Array.prototype.forEach.call()` for iteration (consistent with codebase's ES5 style).
 
 ### Files Modified
 - `frontend/app.js`: `renderSearchResults()` function (lines 700-768)
@@ -226,16 +234,29 @@ if (distanceFrom) {
 
 **D) "Route to here" button:**
 
+The popup creation closure captures `resultCoords`, `resultName`, and the popup reference. The button handler calls `setRouteEnd` then closes the popup:
+
 ```js
 var routeBtn = document.createElement('button');
 routeBtn.textContent = 'Route to here';
 routeBtn.addEventListener('click', function() {
   setRouteEnd(resultCoords, resultName);
-  popup.remove();
+  popup.remove();  // popup is the local variable from the closure
 });
 ```
 
-Where `setRouteEnd()` populates the route end input field and coordinates, then auto-generates route if start is already set.
+**`setRouteEnd()` implementation** (new helper, placed near `geocodeForRoute`):
+```js
+function setRouteEnd(coords, name) {
+  routeEndCoords = coords;                              // a. Store coordinates
+  document.getElementById('route-end').value = name;    // b. Update input field
+  placeRouteMarker('end', coords);                      // c. Place map marker
+  if (routeStartCoords) {                               // d. Auto-generate if start exists
+    requestRoute();
+  }
+}
+```
+When route start is NOT set, `setRouteEnd` still stores the end coords and places the marker — the user can set the start later and click "Get Route". It does NOT prompt or alert.
 
 **E) Store search results for reference:**
 
@@ -264,13 +285,15 @@ Make fitBounds padding responsive to viewport size:
 
 ```js
 var isMobile = window.innerWidth < 768;
+var sidebarW = parseInt(getComputedStyle(document.documentElement)
+  .getPropertyValue('--sidebar-width')) || 320;
 var padding = isMobile
   ? { top: 40, bottom: 100, left: 20, right: 20 }
-  : { top: 60, bottom: 60, left: 340, right: 60 };
+  : { top: 60, bottom: 60, left: sidebarW + 20, right: 60 };
 map.fitBounds(bounds, { padding: padding });
 ```
 
-Desktop left padding accounts for the ~320px sidebar (var `--sidebar-width`). Mobile bottom padding accounts for the bottom control bar.
+Desktop left padding reads `--sidebar-width` CSS variable (not hardcoded). Mobile bottom padding accounts for the bottom control bar.
 
 Additionally, on mobile, close/collapse the sidebar after route generation so the full map viewport is available for the route display. The user can reopen it to see directions.
 
@@ -354,7 +377,7 @@ row.addEventListener('dragend', function() {
 });
 ```
 
-The waypoint container gets:
+The waypoint container gets these listeners **once in `initRoutingPanel()`** (NOT inside `addWaypointRow()` — adding them per-row would duplicate handlers on each `rebuildWaypointUI()` call):
 ```js
 container.addEventListener('dragover', function(e) {
   e.preventDefault();
