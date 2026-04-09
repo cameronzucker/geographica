@@ -165,7 +165,7 @@
         "visibility": "visible"
       },
       "paint": {
-        "line-color": "rgba(255,255,255,0.25)",
+        "line-color": "rgba(255,255,255,0.3)",
         "line-dasharray": [
           1.5,
           1.5
@@ -175,25 +175,25 @@
           "base": 1.0,
           "stops": [
             [
-              14,
-              0.4
+              13,
+              0.6
             ],
             [
               15,
-              0.8
+              1.2
             ],
             [
               17,
-              1.5
+              2
             ],
             [
               18,
-              2.5
+              3
             ]
           ]
         }
       },
-      "minzoom": 14
+      "minzoom": 13
     },
     {
       "id": "highway_minor",
@@ -203,7 +203,7 @@
       },
       "source": "openmaptiles",
       "source-layer": "transportation",
-      "minzoom": 14,
+      "minzoom": 13,
       "filter": [
         "all",
         [
@@ -225,26 +225,26 @@
         "visibility": "visible"
       },
       "paint": {
-        "line-color": "rgba(255,255,255,0.3)",
+        "line-color": "rgba(255,255,255,0.35)",
         "line-opacity": 1,
         "line-width": {
           "base": 1.0,
           "stops": [
             [
-              14,
-              0.5
+              13,
+              0.8
             ],
             [
               15,
-              1.0
+              1.5
             ],
             [
               17,
-              1.8
+              2.5
             ],
             [
               18,
-              3
+              4
             ]
           ]
         }
@@ -964,7 +964,7 @@
           0
         ]
       },
-      "minzoom": 14
+      "minzoom": 15
     },
     {
       "id": "highway_name_motorway",
