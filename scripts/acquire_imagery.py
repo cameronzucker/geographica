@@ -698,16 +698,20 @@ async def _m2m_request_and_poll_urls(
         if urls and not requested:
             break
 
-        # If both empty, USGS may still be staging — retry a few times
+        # If both empty, USGS may still be staging — retry patiently
+        # (USGS queue backlog can cause significant staging delays)
         if not available and not requested:
             empty_count += 1
-            if empty_count <= 6:
-                log.info("  Waiting for USGS to stage downloads (attempt %d)...",
-                         empty_count)
+            queue_size = data.get("queueSize", 0)
+            if empty_count <= 18:  # up to 3 minutes of staging patience
+                log.info("  Waiting for USGS to stage downloads "
+                         "(attempt %d, queue size %d)...",
+                         empty_count, queue_size)
                 await asyncio.sleep(M2M_POLL_INTERVAL)
                 continue
             else:
-                log.warning("  No downloads surfaced after %d empty polls", empty_count)
+                log.warning("  No downloads surfaced after %d empty polls "
+                            "(queue size %d)", empty_count, queue_size)
                 break
 
         empty_count = 0  # reset on any non-empty response
