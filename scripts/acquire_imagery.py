@@ -30,6 +30,7 @@ from pathlib import Path
 import aiohttp
 import aiosqlite
 from tqdm import tqdm
+from pipeline_progress import update_progress as _generic_progress
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -74,21 +75,23 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 def write_pipeline_state(output_path: Path, state: dict):
     """Atomically merge pipeline state JSON for the admin monitor.
 
-    Merges new fields into existing state to preserve API metadata
-    (bbox, zoom, type, estimated_tiles) written by the search service.
+    Thin backward-compat wrapper: merges the given state dict into the
+    existing .pipeline-state.json atomically.  New code should prefer
+    calling update_progress() or _generic_progress() directly.
     """
-    state_path = output_path.parent / ".pipeline-state.json"
+    state_path = Path(output_path).parent / ".pipeline-state.json"
     tmp_path = state_path.with_suffix(".json.tmp")
     try:
-        existing = {}
+        existing: dict = {}
         if state_path.exists():
             try:
                 existing = json.loads(state_path.read_text())
             except (json.JSONDecodeError, OSError):
                 pass
         existing.update(state)
-        tmp_path.write_text(json.dumps(existing))
-        with open(tmp_path) as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(existing, f)
+            f.flush()
             os.fsync(f.fileno())
         os.replace(str(tmp_path), str(state_path))
     except Exception as exc:
@@ -109,35 +112,91 @@ def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
     For direct mode: tiles_done/tiles_total/rate are the primary fields.
     For M2M mode: phase + geotiffs fields are primary during downloading;
     tiles_done/tiles_total during converting phase.
+
+    Delegates to the shared pipeline_progress module for the atomic write,
+    then enriches the state file with backward-compat fields so that both
+    old and new frontend/backend consumers can render progress correctly.
     """
-    import datetime
-    state = {
-        "status": status,
-        "mode": mode,
-        "bbox": bbox,
-        "zoom": zoom,
-        "tiles_done": tiles_done,
-        "tiles_total": tiles_total,
-        "rate_per_sec": round(rate, 1),
-        "started_at": getattr(update_progress, '_started_at', None),
-        "last_updated": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "error": error,
-    }
+    state_path = Path(output_path).parent / ".pipeline-state.json"
+
+    # Map old params to generic format.
+    # During M2M downloading phase, geotiffs are the primary unit of work.
+    if phase == "downloading" and geotiffs_total is not None:
+        items_done_val = geotiffs_downloaded or 0
+        items_total_val = geotiffs_total or 0
+        item_unit_val = "geotiffs"
+    else:
+        items_done_val = tiles_done
+        items_total_val = tiles_total
+        item_unit_val = "tiles"
+
+    # Build a human-readable detail string from available context.
     if phase is not None:
-        state["phase"] = phase
-    if scenes_total is not None:
-        state["scenes_total"] = scenes_total
+        if phase == "downloading" and geotiffs_total is not None:
+            detail = (
+                f"{phase}: {geotiffs_downloaded or 0}/{geotiffs_total} geotiffs"
+                + (f" (batch {current_batch}/{total_batches})" if current_batch is not None else "")
+            )
+        else:
+            detail = f"{phase}: {tiles_done}/{tiles_total} tiles"
+    elif status == "completed":
+        detail = f"completed: {tiles_done}/{tiles_total} tiles"
+    elif status == "error":
+        detail = f"error: {error or 'unknown'}"
+    elif status == "cancelled":
+        detail = f"cancelled after {tiles_done} tiles"
+    else:
+        detail = f"{tiles_done}/{tiles_total} tiles at {round(rate, 1)}/s"
+
+    # Determine source from mode
+    source = mode if mode else "imagery"
+
+    # Step 1: call shared module for the canonical atomic write
+    _generic_progress(
+        state_path,
+        source=source,
+        status=status,
+        phase=phase,
+        items_done=items_done_val,
+        items_total=items_total_val,
+        item_unit=item_unit_val,
+        detail=detail,
+        error=error,
+        bbox=bbox,
+        zoom=zoom if zoom != "n/a" else None,
+    )
+
+    # Step 2: re-read the written state and add backward-compat fields
+    try:
+        enriched: dict = json.loads(state_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        enriched = {}
+
+    enriched["mode"] = mode
+    enriched["tiles_done"] = tiles_done
+    enriched["tiles_total"] = tiles_total
+    enriched["rate_per_sec"] = round(rate, 1)
+    if getattr(update_progress, '_started_at', None) is not None:
+        enriched.setdefault("started_at", update_progress._started_at)
+    if error is None:
+        enriched.pop("error", None)
+    else:
+        enriched["error"] = error
     if geotiffs_downloaded is not None:
-        state["geotiffs_downloaded"] = geotiffs_downloaded
+        enriched["geotiffs_downloaded"] = geotiffs_downloaded
     if geotiffs_total is not None:
-        state["geotiffs_total"] = geotiffs_total
+        enriched["geotiffs_total"] = geotiffs_total
     if geotiffs_bytes is not None:
-        state["geotiffs_bytes"] = geotiffs_bytes
+        enriched["geotiffs_bytes"] = geotiffs_bytes
     if current_batch is not None:
-        state["current_batch"] = current_batch
+        enriched["current_batch"] = current_batch
     if total_batches is not None:
-        state["total_batches"] = total_batches
-    write_pipeline_state(output_path, state)
+        enriched["total_batches"] = total_batches
+    if scenes_total is not None:
+        enriched["scenes_total"] = scenes_total
+
+    # Step 3: write enriched state back atomically
+    write_pipeline_state(output_path, enriched)
 
 
 # ---------------------------------------------------------------------------

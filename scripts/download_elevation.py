@@ -21,6 +21,7 @@ from pathlib import Path
 import aiohttp
 import aiosqlite
 from tqdm import tqdm
+from pipeline_progress import update_progress as _generic_progress
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -59,22 +60,57 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 def write_pipeline_state(output_path, state: dict):
     """Atomically merge pipeline state JSON for the admin monitor.
 
-    Merges new fields into existing state to preserve API metadata
-    (bbox, zoom, type, estimated_tiles) written by the search service.
+    Delegates to the shared pipeline_progress module for the generic fields,
+    then enriches the .elevation-state.json with all backward-compat fields
+    (tiles_done, tiles_total, rate_per_sec, etc.) so that both old and new
+    frontend/backend consumers can render progress correctly.
     """
-    from pathlib import Path
     state_path = Path(output_path).parent / ".elevation-state.json"
     tmp_path = state_path.with_suffix(".json.tmp")
+
+    # Map old-format state dict fields to generic params
+    tiles_done = state.get("tiles_done", 0)
+    tiles_total = state.get("tiles_total", 0)
+    status = state.get("status", "running")
+    rate = state.get("rate_per_sec", 0)
+    error = state.get("error")
+
+    if status == "completed":
+        detail = f"completed: {tiles_done}/{tiles_total} tiles"
+    elif status == "cancelled":
+        detail = f"cancelled after {tiles_done} tiles"
+    elif status == "error":
+        detail = f"error: {error or 'unknown'}"
+    else:
+        detail = f"{tiles_done}/{tiles_total} tiles at {rate}/s"
+
+    # Step 1: call shared module to write canonical fields to the elevation state path
+    _generic_progress(
+        state_path,
+        source="elevation",
+        status=status,
+        items_done=tiles_done,
+        items_total=tiles_total,
+        item_unit="tiles",
+        detail=detail,
+        error=error,
+    )
+
+    # Step 2: re-read written state and add backward-compat fields from original state dict
     try:
-        existing = {}
-        if state_path.exists():
-            try:
-                existing = json.loads(state_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                pass
-        existing.update(state)
-        tmp_path.write_text(json.dumps(existing))
-        with open(tmp_path) as f:
+        enriched: dict = json.loads(state_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        enriched = {}
+
+    # Overlay all original state fields (preserves API metadata like bbox, zoom,
+    # estimated_tiles, type written by the search service before pipeline start)
+    enriched.update(state)
+
+    # Step 3: write enriched state back atomically
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(enriched, f)
+            f.flush()
             os.fsync(f.fileno())
         os.replace(str(tmp_path), str(state_path))
     except Exception as exc:
