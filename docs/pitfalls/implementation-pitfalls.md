@@ -41,3 +41,49 @@ When multiple processes read/write the same SQLite database (e.g., pipeline writ
 ## 10. Config panel is localhost-only
 
 The config panel on port 8097 is bound to 127.0.0.1. Admin endpoints require the `X-Config-Source: internal` header (set by NGINX). Direct API calls from external clients will be rejected.
+
+## 11. MapLibre dragRotate: use .disable()/.enable() AFTER init, NOT constructor options
+
+**Critical:** To override MapLibre's CTRL+drag rotation behavior (e.g., for custom free-look camera), call `map.dragRotate.disable()` in a setup function AFTER the map is created. Do NOT use `dragRotate: false` in the `new maplibregl.Map()` constructor options.
+
+**Why:** Constructor-level `dragRotate: false` prevents the initial `.enable()` call but the internal handler objects (mouseRotate, mousePitch, mouseRoll) are still registered in MapLibre's HandlerManager. The `.disable()` / `.enable()` toggle pattern after init correctly gates these handlers. Constructor options do not.
+
+**Working pattern (from commit 3be5183):**
+```js
+// In initFreeLookCamera(), called on map.on('load'):
+map.dragRotate.disable();  // Disable built-in CTRL+drag rotation
+
+// CTRL+left drag: custom free-look via jumpTo
+canvas.addEventListener('mousedown', function(e) {
+  if (e.ctrlKey && e.button === 0) {
+    e.preventDefault();
+    e.stopPropagation();
+    freeLookActive = true;
+    map.dragPan.disable();
+    // ... capture start state
+  }
+});
+
+// SHIFT/right-click: temporarily re-enable MapLibre's orbit
+canvas.addEventListener('mousedown', function(e) {
+  if (e.shiftKey && e.button === 0) {
+    orbitActive = true;
+    map.dragRotate.enable();  // Temporarily re-enable for orbit
+  }
+});
+
+// Mouseup: re-disable dragRotate so next CTRL+drag gets free-look
+window.addEventListener('mouseup', function() {
+  if (orbitActive) {
+    orbitActive = false;
+    map.dragRotate.disable();  // MUST re-disable
+  }
+});
+```
+
+**Broken patterns (all tried and failed):**
+- `new Map({ dragRotate: false })` — handlers still registered internally
+- `new Map({ boxZoom: false })` — CTRL+drag is dragRotate, not boxZoom
+- `canvas.addEventListener(..., true)` capture phase — MapLibre's HandlerManager bypasses DOM events
+- `stopImmediatePropagation` — MapLibre's handlers registered first, fire first
+- `map.jumpTo({ center, bearing, pitch })` center compensation — wrong abstraction, not the bug
