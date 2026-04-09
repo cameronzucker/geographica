@@ -3473,8 +3473,9 @@
 
     var canvas = map.getCanvas();
 
-    // Disable MapLibre's built-in Ctrl+drag rotation so we can override it
+    // Disable MapLibre's built-in Ctrl+drag handlers so we can override them
     map.dragRotate.disable();
+    map.boxZoom.disable();  // CTRL+drag defaults to box-zoom in MapLibre — must disable for free-look
 
     // Right-click drag: ground-orbit (MapLibre default behavior)
     map.on('mousedown', function (e) {
@@ -3484,11 +3485,11 @@
       }
     });
 
-    // CTRL+left click: free-look mode
+    // CTRL+left click: free-look mode (drone-like sky-point rotation)
     canvas.addEventListener('mousedown', function (e) {
       if (e.ctrlKey && e.button === 0) {
         e.preventDefault();
-        e.stopPropagation();
+        e.stopImmediatePropagation();  // prevent MapLibre's own handlers on same element
         freeLookActive = true;
         startX = e.clientX;
         startY = e.clientY;
