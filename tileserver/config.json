@@ -17,6 +17,9 @@
     },
     "imagery": {
       "mbtiles": "/srv/data/imagery.mbtiles"
+    },
+    "publiclands": {
+      "mbtiles": "/srv/data/public-lands.mbtiles"
     }
   },
   "styles": {
