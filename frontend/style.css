@@ -983,8 +983,22 @@ h4 {
   margin: 0;
 }
 
+.import-folder-toggle {
+  font-size: 8px;
+  color: #585e70;
+  flex-shrink: 0;
+  width: 10px;
+  text-align: center;
+  user-select: none;
+  transition: transform 0.15s ease;
+}
+
 .import-feature-list {
   margin-left: 20px;
+}
+
+.import-feature-list.collapsed {
+  display: none;
 }
 
 .import-feature-item {

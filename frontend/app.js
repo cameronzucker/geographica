@@ -898,48 +898,10 @@
         setTimeout(function () { items[idx].classList.remove('search-result-active'); }, 2000);
       }
 
-      // Build popup content
-      var popupDiv = document.createElement('div');
+      // Show the same full popup as a basemap click (coordinates, route buttons, copy)
       var resultItem = lastSearchResults[idx];
       var resultName = (resultItem && (resultItem.name || resultItem.display_name)) || feat.properties.name || 'Unknown';
-
-      var nameEl = document.createElement('strong');
-      nameEl.textContent = resultName;
-      popupDiv.appendChild(nameEl);
-
-      // Distance from GPS or route start
-      var distanceFrom = null;
-      var distanceLabel = '';
-      if (routeStartCoords) {
-        distanceFrom = routeStartCoords;
-        distanceLabel = 'from start';
-      } else if (gpsLastPos && !gpsStale) {
-        distanceFrom = gpsLastPos;
-        distanceLabel = 'from GPS';
-      }
-      if (distanceFrom) {
-        var d = haversineDistance(distanceFrom, resultCoords);
-        var distP = document.createElement('p');
-        distP.style.fontSize = '12px';
-        distP.style.color = '#666';
-        distP.style.margin = '4px 0';
-        distP.textContent = formatRouteDistance(d) + ' ' + distanceLabel;
-        popupDiv.appendChild(distP);
-      }
-
-      // "Route to here" button
-      var routeBtn = document.createElement('button');
-      routeBtn.textContent = 'Route to here';
-      routeBtn.style.cssText = 'font-size:12px;padding:4px 10px;border:1px solid var(--accent);border-radius:4px;background:var(--accent);color:#fff;cursor:pointer;margin-top:4px;';
-      var popup = new maplibregl.Popup({ offset: 25, closeOnClick: true })
-        .setLngLat(resultCoords)
-        .setDOMContent(popupDiv)
-        .addTo(map);
-      routeBtn.addEventListener('click', function () {
-        setRouteEnd(resultCoords, resultName);
-        popup.remove();
-      });
-      popupDiv.appendChild(routeBtn);
+      showMapClickPopup(resultCoords[0], resultCoords[1], resultName, null);
     });
     map.on('mouseenter', 'search-result-circles', function () {
       map.getCanvas().style.cursor = 'pointer';
@@ -2768,6 +2730,12 @@
           var folderHeader = document.createElement('div');
           folderHeader.className = 'import-folder-header';
 
+          // Disclosure triangle (collapsed by default)
+          var folderToggle = document.createElement('span');
+          folderToggle.className = 'import-folder-toggle collapsed';
+          folderToggle.textContent = '\u25B6';
+          folderHeader.appendChild(folderToggle);
+
           var folderCb = document.createElement('input');
           folderCb.type = 'checkbox';
           folderCb.checked = entry.folders[folderName];
@@ -2790,9 +2758,12 @@
           folderGroup.appendChild(folderHeader);
         }
 
-        // Individual features
+        // Individual features — collapsed by default when folders exist
         var featureList = document.createElement('div');
         featureList.className = 'import-feature-list';
+        if (hasFolders) {
+          featureList.classList.add('collapsed');
+        }
 
         folderFeatures.forEach(function (f) {
           var fId = f.properties._importFeatureId;
@@ -2848,6 +2819,29 @@
         });
 
         folderGroup.appendChild(featureList);
+
+        // Toggle collapse on folder header click (but not on checkbox)
+        if (hasFolders) {
+          (function (toggle, list) {
+            var folderHdr = folderGroup.querySelector('.import-folder-header');
+            if (folderHdr) {
+              folderHdr.addEventListener('click', function (ev) {
+                if (ev.target.tagName === 'INPUT') return; // don't toggle on checkbox click
+                var isCollapsed = list.classList.contains('collapsed');
+                if (isCollapsed) {
+                  list.classList.remove('collapsed');
+                  toggle.classList.remove('collapsed');
+                  toggle.textContent = '\u25BC';
+                } else {
+                  list.classList.add('collapsed');
+                  toggle.classList.add('collapsed');
+                  toggle.textContent = '\u25B6';
+                }
+              });
+            }
+          })(folderGroup.querySelector('.import-folder-toggle'), featureList);
+        }
+
         group.appendChild(folderGroup);
       });
 
