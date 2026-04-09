@@ -147,6 +147,16 @@ Add state variable:
 var previousStyle = 'positron'; // style to restore when imagery is toggled off
 ```
 
+**Persistent style.load handler (register ONCE at init, not per-toggle):**
+```js
+// In initMap() or initLayerControls() — register a single persistent handler
+map.on('style.load', function () {
+  addPlaceholderSources();
+  syncLayerVisibility();
+});
+```
+This replaces ALL scattered `map.once('style.load')` calls. Every `setStyle()` triggers it automatically. No race conditions from multiple `once()` registrations.
+
 Modify imagery checkbox handler:
 ```js
 imageryCheckbox.addEventListener('change', function () {
@@ -155,14 +165,15 @@ imageryCheckbox.addEventListener('change', function () {
     currentStyle = 'hybrid';
     map.setStyle(STYLES.hybrid);
   } else {
+    if (previousStyle === 'hybrid') previousStyle = 'positron'; // defensive guard
     currentStyle = previousStyle;
     map.setStyle(STYLES[currentStyle]);
   }
-  map.once('style.load', function () {
-    addPlaceholderSources();
-    syncLayerVisibility();
-  });
+  // style.load handler fires automatically — no map.once needed
   opacityRow.classList.toggle('visible', this.checked);
+  // Hide NAIP/Sentinel toggles in hybrid mode
+  var imageryToggles = document.getElementById('imagery-toggles');
+  if (imageryToggles) imageryToggles.style.display = this.checked ? 'none' : '';
 });
 ```
 
@@ -172,15 +183,14 @@ radio.addEventListener('change', function () {
   var imageryCheckbox = document.getElementById('toggle-imagery');
   if (imageryCheckbox && imageryCheckbox.checked) {
     imageryCheckbox.checked = false;
-    // opacity row and state cleanup
+    opacityRow.classList.remove('visible');
+    var imageryToggles = document.getElementById('imagery-toggles');
+    if (imageryToggles) imageryToggles.style.display = '';
   }
   previousStyle = this.value;
   currentStyle = this.value;
   map.setStyle(STYLES[currentStyle]);
-  map.once('style.load', function () {
-    addPlaceholderSources();
-    syncLayerVisibility();
-  });
+  // style.load handler fires automatically — no map.once needed
 });
 ```
 
@@ -297,6 +307,8 @@ Add `if (previousStyle === 'hybrid') previousStyle = 'positron';` before restori
 
 **Critical (adversarial review finding):** TileServer GL resolves `mbtiles://{name}` against its `config.json` data section for both vector AND raster sources. Do NOT use `local://`, `tiles:[]`, or `tileSize` — TileServer reads tileSize/maxzoom from MBTiles metadata automatically. The `{imagery}` name matches the data entry in config.json.
 
+**NGINX note (adversarial review):** The existing NGINX `sub_filter` rules at `/tiles/styles/` handle hybrid URL rewriting automatically — the general `/tiles/` location block proxies all style requests and rewrites `tileserver:8080` to the external host. No additional NGINX location blocks are needed for the hybrid style.
+
 ### Sprites and glyphs
 
 Same as positron/darkmatter:
@@ -339,7 +351,7 @@ After style is authored:
 6. Switch to positron with imagery OFF — clean transition back?
 
 **Layer stack in hybrid mode (bottom to top):**
-imagery → public lands fill → public lands outline → route → imports → search pins → GPS
+imagery → public lands fill/outline → [hybrid road/label layers] → route → imports → search pins → GPS
 
 ## Files Modified
 
