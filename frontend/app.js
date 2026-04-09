@@ -1062,7 +1062,11 @@
 
     if (!results || results.length === 0) {
       var emptyLi = document.createElement('li');
-      if (metadata && metadata.original_intent !== 'plain' && metadata.fallback_reason) {
+      if (metadata && metadata.fallback_reason === 'geocode_failed' && metadata.place_name) {
+        emptyLi.textContent = "Couldn't find '" + metadata.place_name + "' \u2014 check spelling?";
+      } else if (metadata && metadata.fallback_reason === 'city_not_on_route' && metadata.place_name) {
+        emptyLi.textContent = "'" + metadata.place_name + "' doesn't appear to be along your route";
+      } else if (metadata && metadata.original_intent !== 'plain' && metadata.fallback_reason) {
         emptyLi.textContent = metadata.fallback_reason === 'no_position'
           ? 'Enable GPS for proximity search'
           : metadata.fallback_reason === 'no_route'
@@ -1079,13 +1083,27 @@
     }
 
     // Intent subtitle for spatial queries
-    if (metadata && metadata.intent !== 'plain' && metadata.category) {
+    if (metadata && metadata.intent !== 'plain') {
       var subtitleLi = document.createElement('li');
       subtitleLi.className = 'search-intent-subtitle';
-      subtitleLi.textContent = metadata.intent === 'route_corridor'
-        ? metadata.category.charAt(0).toUpperCase() + metadata.category.slice(1) + ' along route'
-        : 'Nearest ' + metadata.category;
-      list.appendChild(subtitleLi);
+      if (metadata.intent === 'city_proximity' && metadata.place_name) {
+        var cat = metadata.category
+          ? metadata.category.charAt(0).toUpperCase() + metadata.category.slice(1)
+          : 'Results';
+        subtitleLi.textContent = cat + ' in ' + metadata.place_name;
+      } else if (metadata.intent === 'city_corridor' && metadata.place_name) {
+        var cat2 = metadata.category
+          ? metadata.category.charAt(0).toUpperCase() + metadata.category.slice(1)
+          : 'Results';
+        subtitleLi.textContent = cat2 + ' in ' + metadata.place_name + ' along route';
+      } else if (metadata.intent === 'route_corridor' && metadata.category) {
+        subtitleLi.textContent = metadata.category.charAt(0).toUpperCase() + metadata.category.slice(1) + ' along route';
+      } else if (metadata.category) {
+        subtitleLi.textContent = 'Nearest ' + metadata.category;
+      } else {
+        subtitleLi = null;
+      }
+      if (subtitleLi) list.appendChild(subtitleLi);
     }
 
     results.forEach(function (item, idx) {
