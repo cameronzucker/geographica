@@ -99,3 +99,8 @@
 ### AREDN TLS 1.2 published-key mode
 - **What:** TLS 1.2 with non-PFS ciphers and published private key for Part 97 compliance.
 - **Status:** Deferred — regulatory landscape is ambiguous. HTTP works fine for AREDN.
+
+### Public lands tile build on Pi 5 8GB
+- **What:** The public lands tile pipeline (`scripts/build_public_lands.py`) requires stopping Docker services and needs ~6-9GB free RAM for ogr2ogr + Tippecanoe. On the 16GB Pi 5 this works (stop services, build, restart). On an 8GB Pi 5 (which the README lists as compatible), it would OOM even with services stopped.
+- **Why:** README claims Pi 5 8GB compatibility. The pipeline needs to work there too.
+- **Options to investigate:** (a) Process in geographic chunks (tile by state, then tile-join), (b) Use ogr2ogr `-limit` batching with append mode, (c) Reduce Tippecanoe memory via `-z12` instead of `-z14`, (d) Build on x86 and copy MBTiles to Pi, (e) Streaming GeoJSON processing to avoid loading entire 674MB file into memory.
