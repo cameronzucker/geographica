@@ -107,6 +107,7 @@
   var importCounter = 0;        // unique ID counter for imported files
   var importInProgress = false;  // concurrency guard — reject new imports while processing
   var wasDragging = false;       // set by camera mousemove, checked by click handler
+  var lastSearchResults = [];    // populated in renderSearchResults for pin click handler
 
   var gpsMarker  = null;       // MapLibre marker for GPS position
   var gpsWs      = null;       // WebSocket connection
@@ -736,16 +737,63 @@
       }
     });
 
-    // Search pin click handler — highlight corresponding list item
+    // Search pin click handler — popup with name, distance, route button
     map.on('click', 'search-result-circles', function (e) {
       if (!e.features || !e.features.length) return;
-      var idx = parseInt(e.features[0].properties.index, 10) - 1;
+      var feat = e.features[0];
+      var idx = parseInt(feat.properties.index, 10) - 1;
+      var resultCoords = feat.geometry.coordinates;
+
+      // Still highlight list item
       var items = document.querySelectorAll('#search-results li:not(.search-intent-subtitle)');
       if (items[idx]) {
         items[idx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         items[idx].classList.add('search-result-active');
         setTimeout(function () { items[idx].classList.remove('search-result-active'); }, 2000);
       }
+
+      // Build popup content
+      var popupDiv = document.createElement('div');
+      var resultItem = lastSearchResults[idx];
+      var resultName = (resultItem && (resultItem.name || resultItem.display_name)) || feat.properties.name || 'Unknown';
+
+      var nameEl = document.createElement('strong');
+      nameEl.textContent = resultName;
+      popupDiv.appendChild(nameEl);
+
+      // Distance from GPS or route start
+      var distanceFrom = null;
+      var distanceLabel = '';
+      if (routeStartCoords) {
+        distanceFrom = routeStartCoords;
+        distanceLabel = 'from start';
+      } else if (gpsLastPos && !gpsStale) {
+        distanceFrom = gpsLastPos;
+        distanceLabel = 'from GPS';
+      }
+      if (distanceFrom) {
+        var d = haversineDistance(distanceFrom, resultCoords);
+        var distP = document.createElement('p');
+        distP.style.fontSize = '12px';
+        distP.style.color = '#666';
+        distP.style.margin = '4px 0';
+        distP.textContent = formatRouteDistance(d) + ' ' + distanceLabel;
+        popupDiv.appendChild(distP);
+      }
+
+      // "Route to here" button
+      var routeBtn = document.createElement('button');
+      routeBtn.textContent = 'Route to here';
+      routeBtn.style.cssText = 'font-size:12px;padding:4px 10px;border:1px solid var(--accent);border-radius:4px;background:var(--accent);color:#fff;cursor:pointer;margin-top:4px;';
+      var popup = new maplibregl.Popup({ offset: 25, closeOnClick: true })
+        .setLngLat(resultCoords)
+        .setDOMContent(popupDiv)
+        .addTo(map);
+      routeBtn.addEventListener('click', function () {
+        setRouteEnd(resultCoords, resultName);
+        popup.remove();
+      });
+      popupDiv.appendChild(routeBtn);
     });
     map.on('mouseenter', 'search-result-circles', function () {
       map.getCanvas().style.cursor = 'pointer';
@@ -809,6 +857,7 @@
   }
 
   function renderSearchResults(results, metadata) {
+    lastSearchResults = results || [];
     var list = document.getElementById('search-results');
     while (list.firstChild) list.removeChild(list.firstChild);
     clearSearchPins();
@@ -1192,6 +1241,36 @@
       .setLngLat([lng, lat])
       .setDOMContent(content)
       .addTo(map);
+  }
+
+  /**
+   * Haversine distance between two [lng, lat] coordinate pairs.
+   * @returns {number} distance in meters
+   */
+  function haversineDistance(a, b) {
+    var R = 6371000;
+    var dLat = (b[1] - a[1]) * Math.PI / 180;
+    var dLng = (b[0] - a[0]) * Math.PI / 180;
+    var lat1 = a[1] * Math.PI / 180;
+    var lat2 = b[1] * Math.PI / 180;
+    var sinDLat = Math.sin(dLat / 2);
+    var sinDLng = Math.sin(dLng / 2);
+    var h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+
+  /**
+   * Set the route end point from a search result or other source.
+   * @param {Array} coords - [lng, lat]
+   * @param {string} name - display name
+   */
+  function setRouteEnd(coords, name) {
+    routeEndCoords = coords;
+    document.getElementById('route-end').value = name;
+    placeRouteMarker('end', coords);
+    if (routeStartCoords) {
+      requestRoute();
+    }
   }
 
   /**
