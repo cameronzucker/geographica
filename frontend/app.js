@@ -3542,6 +3542,93 @@
       initStatusBar();
       initPositionDetail();
 
+      // Restore persisted imports from IndexedDB
+      if (window._importStore && window._importStore.init) {
+        var dropZoneRestore = document.getElementById('drop-zone');
+        var fileInputRestore = document.getElementById('file-input');
+        if (dropZoneRestore) dropZoneRestore.classList.add('import-ui-restoring');
+        if (fileInputRestore) fileInputRestore.disabled = true;
+
+        window._importStore.init(function (restoredEntries) {
+          var restoredCount = 0;
+          var failedIds = [];
+          var maxIdx = 0;
+
+          for (var ri = 0; ri < restoredEntries.length; ri++) {
+            var entry = restoredEntries[ri];
+            try {
+              importedFiles[entry.fileId] = {
+                name: entry.filename,
+                geojson: entry.geojson,
+                visible: entry.visible !== false,
+                folders: entry.folders || {},
+                features: entry.features || {}
+              };
+
+              if (entry.iconEntries && window._kmzImport) {
+                for (var ii = 0; ii < entry.iconEntries.length; ii++) {
+                  var iconEntry = entry.iconEntries[ii];
+                  try {
+                    var imgData = {
+                      width: iconEntry.imageData.width,
+                      height: iconEntry.imageData.height,
+                      data: new Uint8Array(iconEntry.imageData.data)
+                    };
+                    window._kmzImport.getIconCache().set(iconEntry.url, {
+                      iconId: iconEntry.iconId,
+                      imageData: imgData
+                    });
+                    if (!map.hasImage(iconEntry.iconId)) {
+                      map.addImage(iconEntry.iconId, imgData);
+                    }
+                  } catch (iconErr) {
+                    console.warn('Failed to restore icon ' + iconEntry.iconId + ':', iconErr);
+                  }
+                }
+              }
+
+              if (entry.geojson && entry.geojson.features && window._kmzImport) {
+                entry.geojson.features.forEach(function (f) {
+                  var fIconId = f.properties && f.properties._iconId;
+                  if (fIconId && fIconId !== 'kmz-icon-default') {
+                    window._kmzImport.incrementIconRef(fIconId);
+                  }
+                });
+              }
+
+              var parts = entry.fileId.split('_');
+              var idx = parseInt(parts[1], 10);
+              if (!isNaN(idx) && idx > maxIdx) maxIdx = idx;
+
+              restoredCount++;
+            } catch (restoreErr) {
+              console.warn('Failed to restore import ' + entry.fileId + ':', restoreErr);
+              failedIds.push(entry.fileId);
+              delete importedFiles[entry.fileId];
+            }
+          }
+
+          if (failedIds.length > 0 && window._importStore && window._importStore.remove) {
+            failedIds.forEach(function (fid) {
+              window._importStore.remove(fid).catch(function () {});
+            });
+          }
+
+          importCounter = Math.max(importCounter, maxIdx);
+
+          try {
+            if (restoredCount > 0) {
+              updateImportedMapData();
+              buildImportLayerUI();
+              showImportStatus('Restored ' + restoredCount + ' file(s) from this session', 'success');
+            }
+          } finally {
+            if (dropZoneRestore) dropZoneRestore.classList.remove('import-ui-restoring');
+            if (fileInputRestore) fileInputRestore.disabled = false;
+          }
+        });
+      }
+
       // Initialize voice search (STT)
       if (typeof initSTT === 'function') {
         initSTT(function (text) {
