@@ -52,7 +52,10 @@ Runs during Stage 3 of the processing pipeline. Works for BOTH KMZ imports (with
 3. For each unique icon URL:
    a. Check if already registered in MapLibre's image registry (`map.hasImage(iconId)`) → skip if so
    b. If `zipArchive` is not null: check if the href is a path within the archive (`zipArchive.file(href)`) → extract as blob, create `Image` from blob URL
-   c. If external URL: validate URL (see Section 5), then load via `new Image()` with `img.crossOrigin = 'anonymous'` and `img.src = url`. This avoids CORS issues for display (images load cross-origin freely) and `crossOrigin: 'anonymous'` enables canvas read-back for `getImageData()`. If the server doesn't send CORS headers, the image still loads but canvas read-back fails — catch this and fall back to generated symbol.
+   c. If external URL: validate URL string (see Section 5), then use a two-step load pattern:
+      - **Step 1 (security):** `fetch(url, { redirect: 'error' })` — validates the URL doesn't redirect to a private IP. If fetch succeeds, create a blob URL from the response: `URL.createObjectURL(await response.blob())`. If fetch fails (CORS, redirect, timeout), fall back to generated symbol.
+      - **Step 2 (display):** Load the blob URL via `new Image()` with `img.src = blobUrl`. Blob URLs are same-origin, so canvas read-back via `getImageData()` always works. Revoke the blob URL after image loads.
+      - This reconciles the redirect-blocking security requirement (`fetch` with `redirect: 'error'`) with the canvas pixel extraction requirement (`new Image()` + `getImageData()`). Using `fetch` first also provides Content-Type validation before image decode.
    d. On image load: validate dimensions (`naturalWidth` and `naturalHeight` ≤ 256), draw to canvas, extract via `getImageData()`, register with `map.addImage(iconId, {width, height, data})`
    e. On image error or CORS failure: generate fallback symbol (see Fallback section)
 4. Cache loaded icons in session-scoped `Map<url, {iconId, imageData}>` — storing `imageData` (not just the ID) enables replay on style swap (see Style Swap Survival)
@@ -194,6 +197,7 @@ Before calling toGeoJSON, walk the KML DOM:
 ```
 styleTable = {}      // styleId → { iconUrl, scale }
 styleMapTable = {}   // styleMapId → { normal: styleId, highlight: styleId }
+urlToScale = {}      // iconUrl → scale (reverse lookup built from styleTable)
 ```
 
 For each `<Style id="X">`: extract `<IconStyle>` → `<Icon>` → `<href>` and `<scale>`.
@@ -209,7 +213,7 @@ After `toGeoJSON.kml()` produces GeoJSON, during **Stage 5** batched processing:
 
 1. If feature has `properties.icon` (toGeoJSON resolved the icon URL):
    - Use `properties.icon` as `iconUrl`
-   - Look up the icon URL in `styleTable` (keyed by URL) to get `scale`; default 1.0 if not found
+   - Look up the icon URL in `urlToScale` (reverse lookup built during Stage 2) to get `scale`; default 1.0 if not found
 2. Else if feature has `properties.styleUrl` (toGeoJSON preserved the reference but didn't resolve it):
    - Strip `#` prefix
    - Look up in `styleMapTable` → get normal style ID

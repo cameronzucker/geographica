@@ -100,7 +100,7 @@ if (results.length > 0) {
     var lat = parseFloat(item.lat || item.latitude);
     if (!isNaN(lng) && !isNaN(lat)) bounds.extend([lng, lat]);
   });
-  if (bounds._sw && bounds._ne) {  // MapLibre LngLatBounds emptiness check
+  if (!bounds.isEmpty()) {  // Use public MapLibre API, consistent with rest of codebase
     var isMobile = window.innerWidth < 768;
     var sidebarW = parseInt(getComputedStyle(document.documentElement)
       .getPropertyValue('--sidebar-width')) || 320;
@@ -148,8 +148,8 @@ Note: `items` is a NodeList from `querySelectorAll`, not an Array — use `Array
 ### Testing
 - Desktop: search results zoom map to show all pins with sidebar clearance
 - Mobile: search results zoom map, list collapsed to 3 items with expander
-- Single result: no fitBounds (current flyTo behavior in selectSearchResult preserved)
-- No results: no fitBounds attempted
+- Single result: fitBounds zooms to that point (maxZoom: 14 prevents over-zoom)
+- No results: no fitBounds attempted (bounds would be empty)
 
 ---
 
