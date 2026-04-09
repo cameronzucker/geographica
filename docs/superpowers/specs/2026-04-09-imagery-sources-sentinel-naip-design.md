@@ -50,8 +50,9 @@ Admin Console                    Backend (search service)              Pipeline 
 - **Separate MBTiles files** — `imagery_sentinel.mbtiles` and `imagery_naip.mbtiles`, not merged. TileServer serves them as separate raster sources.
 - **Independent frontend layer toggles** — "NAIP Aerial" and "Sentinel-2" as separate checkboxes in the layer switcher. Both only visible when their respective MBTiles file exists.
 - **Existing modes preserved** — `direct` and `m2m` remain as "USGS Legacy" in the admin console. Not removed.
-- **No hardcoded maxzoom in the frontend** — each layer reads `maxzoom` from TileServer's TileJSON response dynamically. This prevents a repeat of bug B1 where hardcoded `maxzoom: 14` blocked display of higher-resolution tiles that had been downloaded. The MBTiles metadata is the single source of truth for zoom limits.
-- **Generalized progress model** — all pipeline scripts use a shared progress module with generic `items_done/items_total/item_unit` fields instead of source-specific fields.
+- **No hardcoded maxzoom in the frontend** — each layer reads `maxzoom` from TileServer's TileJSON response dynamically. This prevents a repeat of bug B1 where hardcoded `maxzoom: 14` blocked display of higher-resolution tiles that had been downloaded. The MBTiles metadata is the single source of truth for zoom limits. **Implementation requirement:** All new raster sources MUST use MapLibre's TileJSON URL form: `map.addSource('imagery-naip', { type: 'raster', url: '/tiles/data/imagery_naip.json' })`. Do NOT manually specify `tiles`, `maxzoom`, `bounds`, or `tileSize` — let MapLibre parse them from TileJSON. An acceptance test must verify that no imagery source in `app.js` contains a numeric `maxzoom` literal. The existing legacy `imagery` source should also be migrated to this pattern as part of this work.
+- **Generalized progress model** — all pipeline scripts use a shared progress module with generic `items_done/items_total/item_unit` fields instead of source-specific fields. **Status values must match existing convention:** use `"completed"` (not `"complete"`), `"running"`, `"error"`, `"cancelled"` to avoid breaking existing frontend/backend consumers.
+- **Single pipeline execution slot** — all pipeline types (sentinel, naip, imagery, elevation, osm_poi) share a single execution mutex. Only one pipeline can run at a time. The admin UI greys out all other Start buttons when any pipeline is active, with a tooltip explaining why.
 
 ## Sentinel-2 Pipeline
 
@@ -105,6 +106,18 @@ The admin console Settings tab gets a new "Copernicus" credentials section.
 
 MBTiles metadata includes `maxzoom` as determined by GDAL from the source resolution (expected: 14 for 10m data). The frontend reads this from TileJSON — never hardcoded.
 
+### OAuth2 token refresh
+
+Copernicus OAuth2 tokens expire after 10 minutes. The script must implement token refresh:
+- Store the refresh token from initial authentication
+- Before each download batch, check token expiry (with 60s buffer)
+- If expired or near-expiry, refresh using the refresh token
+- If refresh fails, re-authenticate from scratch
+
+### Search checkpoint
+
+After the STAC query completes, write `searched_scenes.json` to the staging directory with the full list of scene URLs and metadata. On resume (after interruption), load this file and skip the search phase. If the file exists but is older than 24 hours, re-search to pick up any newly available scenes.
+
 ### Zoom behavior
 
 10m resolution naturally supports z0-z14. Beyond z14 the pixels are visible. MapLibre upscales z14 tiles at higher zooms (blurry but present). If future Sentinel products provide higher resolution, the only change needed is in the MBTiles metadata — the frontend adapts automatically via TileJSON.
@@ -121,6 +134,13 @@ MBTiles metadata includes `maxzoom` as determined by GDAL from the source resolu
 - County mosaics organized by state FIPS + county FIPS + year
 - Files are compressed (MrSID `.sid` or JPEG2000 `.jp2`)
 - Direct HTTP download, resumable
+
+**URL discovery (not construction):** The USDA Gateway endpoint is an ASPX web page, not a documented machine API. Do NOT construct download URLs from inferred path templates. Instead, the `discovering` phase must:
+1. Query the USDA Gateway page for each county/state/year combination
+2. Parse the response to extract actual download links
+3. Validate each link with a HEAD request (check `Content-Type`, `Content-Length`, byte-range support)
+4. Prefer JP2 links; skip MrSID-only counties with a warning
+5. Cache discovered URLs in a `discovered_urls.json` checkpoint for resume
 
 ### Bbox → county resolution
 
@@ -163,10 +183,48 @@ This is implemented as a two-step API flow with inline UI (not a modal):
 
 USDA Gateway provides county mosaics in MrSID (`.sid`) or JPEG2000 (`.jp2`) format.
 
-- **JPEG2000** — GDAL handles natively via OpenJPEG. Preferred.
-- **MrSID** — requires proprietary GDAL MrSID driver (Extensis/Ceridian SDK). The script prefers JP2 downloads when available and falls back to MrSID only if JP2 is not offered.
+- **JPEG2000** — GDAL handles natively via OpenJPEG. This is the ONLY supported format.
+- **MrSID** — requires proprietary Extensis SDK which has NO ARM64 Linux build. MrSID is **not supported** on Pi 5. Counties that only offer MrSID are **skipped with a clear warning** logged and shown in the progress detail: "Skipped: {county_name} (MrSID only, unsupported on ARM64)". Skipped counties are tracked in the state file as `skipped_counties: [{fips, name, reason}]`.
 
-The pipeline container's GDAL installation must include OpenJPEG support (`--with-openjpeg` or equivalent).
+The pipeline container's GDAL installation must include OpenJPEG support (`--with-openjpeg` or equivalent). A startup self-check validates `JP2OpenJPEG` is in `gdalinfo --formats` output and refuses NAIP jobs if missing.
+
+### Processing strategy (memory + disk safety)
+
+**CRITICAL CONSTRAINT:** The pipeline container has a 2 GB memory limit. The Pi 5 has 657 GB free disk but staging files can easily exceed this if held simultaneously. The processing strategy MUST prevent both OOM and disk fill.
+
+**NAIP: per-county streaming conversion**
+
+Do NOT download all counties, then convert all, then merge. Instead, process one county at a time:
+
+1. Download county mosaic (JP2) to staging
+2. Convert JP2 → GeoTIFF via `gdal_translate`
+3. Convert GeoTIFF → append tiles to MBTiles via `gdal_translate -of MBTiles` (or merge into running VRT)
+4. **Delete the JP2 and intermediate GeoTIFF immediately**
+5. Move to next county
+
+Peak disk usage = one county's raw + converted size (~5-15 GB) + growing MBTiles output. This keeps disk usage bounded.
+
+For the final MBTiles with overview pyramids: run `gdaladdo` on the already-populated MBTiles after all counties are appended. Use `GDAL_CACHEMAX=256` (not 1024) to stay within the 2 GB container.
+
+**Sentinel-2: spatial chunking**
+
+For large bboxes, do NOT composite all scenes at once. Break into spatial chunks (e.g., 2x2 degree tiles):
+
+1. For each chunk: download overlapping scenes, composite with `gdalbuildvrt` + `gdal_translate`
+2. Merge chunk MBTiles into final output
+3. Delete chunk staging after merge
+
+Use `GDAL_CACHEMAX=256` and `GDAL_NUM_THREADS=2` to limit resource usage.
+
+**Memory budget for pipeline container:**
+- `GDAL_CACHEMAX=256` (256 MB, not 1024)
+- `GDAL_NUM_THREADS=2` (leave 2 cores for other services)
+- No parallel county conversion (sequential only)
+- Process priority: `nice -n 19` and `ionice -c2 -n7` on the pipeline process
+
+**Disk space checks:**
+- Pre-flight: reject if `available_space < estimated_total * 0.3` (staging headroom)
+- Per-county: check free space before each download; pause with error if < 10 GB free
 
 ### Checkpoint/resume
 
@@ -249,18 +307,20 @@ Replaces the inline `update_progress()` in `acquire_imagery.py` and `write_pipel
 ```python
 def update_progress(state_path: Path, *,
                     source: str,         # "direct", "m2m", "sentinel", "naip", "elevation"
-                    status: str,         # "running", "complete", "error", "cancelled"
+                    status: str,         # "running", "completed", "error", "cancelled"
                     phase: str = None,   # source-specific phase name
                     items_done: int = 0,
                     items_total: int = 0,
                     item_unit: str = "", # "tiles", "scenes", "counties", "geotiffs"
                     bytes_done: int = 0,
                     bytes_total: int = 0,
-                    detail: str = "",    # human-readable, e.g. "batch 2/21" or "Maricopa County, AZ"
+                    detail: str,         # REQUIRED. Human-readable context for current operation.
                     error: str = None,
                     bbox: str = None,
                     zoom: str = None):
 ```
+
+**Note:** `status` uses `"completed"` (not `"complete"`) to match existing frontend/backend consumers. The `detail` field is **required** (not optional) — every progress update must include human-readable context. Examples: "Maricopa County, AZ (2.1 GB)", "batch 2/21", "scene S2B_MSIL2A_20260401 (340 MB)".
 
 ### State file format
 
@@ -284,19 +344,25 @@ def update_progress(state_path: Path, *,
 
 ### Frontend rendering (generic)
 
-The progress renderer reads `items_done`, `items_total`, `item_unit`, `bytes_done`, and `phase` to construct the display. No source-specific rendering logic needed:
+The progress renderer reads `source`, `items_done`, `items_total`, `item_unit`, `bytes_done`, `phase`, and `detail` to construct the display. No source-specific rendering logic needed:
 
 ```
+Title:         "{SOURCE_LABEL}: {phase}"
 Progress bar:  items_done / items_total (percentage)
-Detail line:   "{phase}: {items_done}/{items_total} {item_unit} — {bytes_formatted}"
+Detail line:   "{items_done}/{items_total} {item_unit} — {bytes_formatted}"
+Context line:  "{detail}"
 ```
+
+Source labels: `{"sentinel": "Sentinel-2", "naip": "NAIP", "direct": "USGS Direct", "m2m": "USGS M2M", "elevation": "Elevation"}`.
 
 Examples:
-- "Downloading: 142/347 counties — 64.0 GB"
-- "Downloading: 12/45 scenes — 3.2 GB"
-- "Downloading: 1,240,000/2,590,000 tiles — 23.5 GB"
-- "Compositing: processing cloud-free mosaic..."
-- "Converting: building MBTiles pyramids..."
+- "NAIP: Downloading — 142/347 counties — 64.0 GB" + detail: "Maricopa County, AZ (2.1 GB)"
+- "Sentinel-2: Downloading — 12/45 scenes — 3.2 GB" + detail: "scene S2B_MSIL2A_20260401"
+- "USGS Direct: Downloading — 1,240,000/2,590,000 tiles — 23.5 GB"
+- "Sentinel-2: Compositing" + detail: "building cloud-free mosaic (chunk 3/8)"
+- "NAIP: Converting" + detail: "building MBTiles pyramids"
+
+**Dashboard banner** also uses the `source` field to prefix the pipeline name, e.g., "NAIP: Downloading 142/347 counties".
 
 ### Backward compatibility
 
@@ -307,22 +373,74 @@ During migration, the frontend checks for `items_done` (new format). If absent, 
 - `acquire_imagery.py` — replace inline `update_progress()` with `from pipeline_progress import update_progress`. Map existing fields: `tiles_done` → `items_done`, `tiles_total` → `items_total`, `geotiffs_downloaded` → `items_done` (during M2M downloading phase), etc.
 - `download_elevation.py` — replace inline `write_pipeline_state()` with shared `update_progress()`.
 
+## Backend Route Additions
+
+### New helper function mappings
+
+The following helper functions in `services/search/main.py` must be updated to handle the new types:
+
+| Function | `type="sentinel"` | `type="naip"` |
+|----------|-------------------|---------------|
+| `_state_file_for_type()` | `.sentinel-state.json` | `.naip-state.json` |
+| `_mbtiles_path_for_type()` | `imagery_sentinel.mbtiles` | `imagery_naip.mbtiles` |
+| `_script_for_type()` | `/scripts/acquire_sentinel.py` | `/scripts/acquire_naip.py` |
+
+The type validation at `pipeline_start()` line 941 must be updated: `type not in ("imagery", "elevation", "osm_poi", "sentinel", "naip")`.
+
+The `pipeline_cancel()` function must include `"sentinel"` and `"naip"` in its state file iteration loop.
+
+### Copernicus credential validation
+
+`pipeline_start(type="sentinel")` checks that `credentials.json` contains `copernicus_username` and `copernicus_password` keys (fast, local check). Actual OAuth2 validation happens in the pipeline script's `authenticating` phase. If auth fails, the state file is written with `status: "error"` and `error: "Invalid Copernicus credentials — check Settings tab"`.
+
+### County lookup endpoint
+
+`GET /admin/pipeline/naip/counties?bbox=...` — queries `counties.sqlite`, returns:
+```json
+{
+  "counties": [{"fips": "04013", "name": "Maricopa", "state": "AZ", "area_sq_km": 23828}],
+  "total_counties": 347,
+  "states": ["AZ", "CA", "CO", ...],
+  "estimated_gb": 142.3
+}
+```
+
+### Sentinel-2 pre-download estimation
+
+`GET /admin/pipeline/sentinel/estimate?bbox=...&start_date=...&end_date=...&max_cloud=20` — queries STAC API (or returns cached results), returns:
+```json
+{
+  "scenes": 45,
+  "estimated_gb": 8.2,
+  "date_range": "2026-01-01 to 2026-04-09",
+  "cloud_filter": "≤20%"
+}
+```
+
+This provides the same pre-download confirmation UX as NAIP. The admin sees scene count and estimated size before committing.
+
 ## Admin Console Changes
 
 ### Pipeline tab layout
 
-Four pipeline cards, each independently startable/cancellable:
+Four pipeline cards. **Cards collapsed by default** showing only header + one-line status (e.g., "NAIP Aerial — not configured"). Click to expand. When any pipeline is running, all other Start buttons are greyed out with tooltip: "Another pipeline is running."
+
+Brief header text at top: "Pipelines run one at a time. Recommended order: imagery first, then elevation, then OSM POIs."
 
 1. **Sentinel-2 Imagery (ESA)** — "10m resolution, global, updated every 5 days, free"
    - Bbox (shared minimap)
-   - Date range pickers (default: last 6 months)
-   - Cloud cover slider (default: 20%)
-   - Composite/Single toggle (default: composite)
-   - Copernicus credentials required (link to Settings tab if not configured)
+   - **Progressive disclosure:** Default view shows only bbox + "Download Sentinel-2 Imagery" button with smart defaults. "Show advanced options" toggle reveals:
+     - Date range pickers (default: last 6 months)
+     - Cloud cover slider (default: 20%) with inline help: "Lower = clearer images but fewer scenes"
+     - Composite/Single toggle (default: composite) with help: "Composite merges multiple scenes to remove clouds"
+   - Copernicus credentials required — inline link: "Requires free Copernicus account. [Register at dataspace.copernicus.eu →]"
+   - Pre-download estimation: shows scene count + estimated size before starting (via `/admin/pipeline/sentinel/estimate`)
 
 2. **NAIP Aerial Imagery (USDA)** — "0.6-1m resolution, US only, county mosaics, free"
    - Bbox (shared minimap)
-   - Pre-download confirmation: county list + estimated size
+   - Pre-download confirmation: county list grouped by state, collapsible per-state with "select all / deselect all"
+   - Max-height 300px with overflow-y scroll. Summary always visible above list: "347 counties, ~142 GB — [Start Download]"
+   - If > 500 counties, show warning: "Large area — consider a smaller bounding box"
    - No credentials needed
 
 3. **USGS Imagery (Legacy)** — "Direct tile scraping or M2M API"
@@ -336,6 +454,7 @@ New "Copernicus Credentials" section alongside existing M2M credentials:
 - Username field
 - Password field
 - Test Connection button
+- Direct link: "Register for free at [dataspace.copernicus.eu](https://dataspace.copernicus.eu/)"
 
 ### Dashboard banner
 
@@ -354,13 +473,15 @@ Both read `maxzoom` from TileJSON. No hardcoded zoom limits.
 
 ### Layer switcher
 
-Two new checkboxes in the layer control panel:
-- "NAIP Aerial" — toggles `imagery-naip` source visibility
-- "Sentinel-2" — toggles `imagery-sentinel` source visibility
+Two new checkboxes in the layer control panel, with sublabels for disambiguation:
+- "NAIP Aerial" + sublabel "(0.6m, US)" — toggles `imagery-naip` source visibility
+- "Sentinel-2" + sublabel "(10m, global)" — toggles `imagery-sentinel` source visibility
 
-Each checkbox is only rendered if the corresponding TileJSON endpoint returns a valid response (i.e., the MBTiles file exists and TileServer is serving it).
+Each checkbox is only rendered if the corresponding TileJSON endpoint returns a valid response (i.e., the MBTiles file exists and TileServer is serving it). The frontend polls TileJSON endpoints every 30 seconds (or on pipeline state change) to detect newly available sources after pipeline completion.
 
-Existing "Aerial Imagery" toggle for USGS legacy source remains.
+Existing "Aerial Imagery" toggle renamed to "USGS Legacy" + sublabel "(varies)" for clarity.
+
+**Performance note:** If multiple imagery layers are enabled simultaneously, show a subtle one-line note: "Multiple imagery layers active. Toggle off unused layers for better performance."
 
 ### Layer stacking order (bottom to top)
 
@@ -376,20 +497,34 @@ NAIP on top of Sentinel-2 ensures the higher-resolution source takes priority wh
 
 ## TileServer Configuration
 
-Add to `tileserver/config.json` data sources:
+Add to `tileserver/config.json` data sources. **IMPORTANT:** Use the correct container mount path (`/srv/data/`, not `/data/` — the TileServer container mounts `./data` to `/srv/data/`):
 
 ```json
 {
   "imagery_naip": {
-    "mbtiles": "/data/imagery_naip.mbtiles"
+    "mbtiles": "/srv/data/imagery_naip.mbtiles"
   },
   "imagery_sentinel": {
-    "mbtiles": "/data/imagery_sentinel.mbtiles"
+    "mbtiles": "/srv/data/imagery_sentinel.mbtiles"
   }
 }
 ```
 
 TileServer GL auto-generates TileJSON endpoints for each, including `maxzoom` from MBTiles metadata.
+
+### Handling missing MBTiles at startup
+
+TileServer GL may fail to start if configured MBTiles files don't exist. Since the new MBTiles are only created after running the pipeline, we need a safe approach:
+
+**Solution:** Do NOT add the entries to `tileserver/config.json` at deployment time. Instead, after a pipeline completes successfully, the search service:
+1. Reads the current `config.json`
+2. Adds the new data source entry if not already present
+3. Writes the updated config
+4. Restarts the tileserver container via Docker API: `client.containers.get("geographica-tileserver").restart()`
+
+This ensures TileServer only references MBTiles files that actually exist. The frontend's TileJSON fetch will get 404 for sources not yet in config (layer toggle hidden), and 200 once the pipeline has completed and TileServer has been restarted.
+
+**Cold-start safety:** A fresh deployment with no pipeline outputs will have only the original config entries (openmaptiles, imagery, elevation). The new entries are added dynamically. An integration test must verify: `docker compose up` with no `imagery_naip.mbtiles` or `imagery_sentinel.mbtiles` → TileServer starts healthy.
 
 ## NGINX Configuration
 
@@ -458,10 +593,19 @@ TileServer service needs read access to the two new MBTiles files. These are alr
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| USDA Gateway changes URL structure | NAIP pipeline breaks | URL construction is isolated in `acquire_naip.py`; easy to update |
-| Copernicus API changes or adds rate limits | Sentinel-2 pipeline breaks or slows | Token bucket rate limiter, same pattern as existing pipelines |
-| MrSID files offered without JP2 alternative | Need proprietary GDAL driver | Script prefers JP2; if only MrSID, log clear error with instructions |
-| County bbox over-matching downloads extra data | Wasted bandwidth/storage | Acceptable trade-off; admin sees confirmation with county list before starting |
-| NAIP county mosaics are very large (GB each) | Long download times, disk pressure | Checkpoint/resume per county; disk space check before starting |
-| Sentinel-2 composite processing is CPU-intensive | Slow on Pi 5 | Pi 5 has 4 cores; GDAL VRT + median composite is not worse than existing GDAL operations |
-| Frontend hardcodes maxzoom for new layers | Blocks future higher-res data display | Explicitly prevented: maxzoom always read from TileJSON, never hardcoded |
+| USDA Gateway changes URL structure | NAIP pipeline breaks | Discovery phase parses actual responses, not inferred URL templates. `discovered_urls.json` checkpoint. |
+| Copernicus API changes or adds rate limits | Sentinel-2 pipeline breaks or slows | Token bucket rate limiter, exponential backoff + retry on 429/503, STAC version check |
+| MrSID files offered without JP2 alternative | Counties skipped | MrSID is unsupported on ARM64. JP2-only. MrSID counties skipped with clear warning in progress detail. |
+| County bbox over-matching downloads extra data | Wasted bandwidth/storage | Acceptable trade-off; admin sees county list + state-grouped confirmation before starting |
+| NAIP county mosaics are very large (GB each) | Long download times, disk pressure | Per-county streaming: download → convert → append → delete staging. Disk check before each county. |
+| Sentinel-2 composite exceeds 2GB container memory | OOM crash | Spatial chunking (2x2 degree), `GDAL_CACHEMAX=256`, sequential processing |
+| NAIP merge exceeds disk space | Disk fill crashes entire system | Per-county streaming conversion avoids holding all staging simultaneously. Pre-flight + per-county disk checks. |
+| CPU thermal throttling during multi-day GDAL operations | Degraded service performance | `nice -n 19`, `ionice -c2 -n7`, `GDAL_NUM_THREADS=2`, documented expected processing times in admin UI |
+| Frontend hardcodes maxzoom for new layers | Blocks future higher-res data display | Mandated: use `map.addSource(..., { url: tilejson_url })`. Acceptance test: no numeric `maxzoom` in any imagery source. Existing legacy source migrated too. |
+| Copernicus OAuth2 token expires mid-download | 401 errors during download | Token refresh before each batch; re-authenticate if refresh fails |
+| TileServer crash with missing MBTiles at startup | Stack boot failure | Dynamic config: entries added only after pipeline completion + TileServer restart via Docker API |
+| Backend helpers route new types to wrong files | Data corruption | Explicit mapping table for state files, mbtiles paths, and scripts per type |
+
+## Adversarial review notes
+
+This spec was reviewed by 5 independent adversarial agents (Haiku, 2x Opus, Codex/GPT-5.4, and a UX specialist). All CRITICAL and HIGH findings have been addressed in this revision. Key finding that all 5 reviewers flagged: **the maxzoom hardcoding risk requires a concrete implementation pattern (TileJSON URL form), not just a policy statement.** The spec now mandates the specific MapLibre addSource pattern and requires an acceptance test.
