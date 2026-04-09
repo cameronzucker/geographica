@@ -1226,11 +1226,6 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
     # Add live fields
     state_data["container_running"] = container_running
 
-    # Fix stale status: if state says interrupted/completed but a container is running,
-    # the state file is stale from a previous reconciliation — correct it
-    if container_running and state_data.get("status") in ("interrupted", "completed", "cancelled"):
-        state_data["status"] = "running"
-
     # Calculate estimated tiles if bbox/zoom available (skip for osm_poi/M2M)
     if (state_data.get("bbox") and state_data.get("zoom")
             and state_data.get("zoom") != "n/a"):
