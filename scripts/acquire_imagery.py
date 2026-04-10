@@ -326,26 +326,33 @@ async def query_tnm_products(bbox: str, dataset: str, max_per_page: int = 100):
 
 
 async def download_geotiffs(urls: list[str], staging: Path, checkpoint_path: Path,
-                            concurrency: int = 5):
+                            concurrency: int = 5, on_file_complete=None):
     """Download GeoTIFFs to *staging*, skipping already-downloaded ones."""
     # Load checkpoint
     done: dict[str, str] = {}
     if checkpoint_path.exists():
         done = json.loads(checkpoint_path.read_text())
     sem = asyncio.Semaphore(concurrency)
+    files_completed = 0
 
     async def _get_one(session: aiohttp.ClientSession, url: str):
+        nonlocal files_completed
         fname = hashlib.sha256(url.encode()).hexdigest()[:16] + ".tif"
         dest = staging / fname
         if url in done and dest.exists():
+            files_completed += 1
             return
         async with sem:
             data = await fetch_with_retry(session, url)
         if data is None:
+            files_completed += 1
             return
         dest.write_bytes(data)
         done[url] = str(dest)
         checkpoint_path.write_text(json.dumps(done, indent=2))
+        files_completed += 1
+        if on_file_complete:
+            on_file_complete(files_completed, len(urls))
 
     async with aiohttp.ClientSession() as session:
         tasks = [_get_one(session, u) for u in urls]
@@ -953,9 +960,21 @@ async def m2m_download_batched(
             log.info("Batch %d: waiting for previous conversion to finish...", batch_num)
             await pending_conversion
 
-        # --- Download this batch's files ---
+        # --- Download this batch's files (with per-file progress updates) ---
+        def _on_file(files_done, files_in_batch):
+            # Update state file so admin panel shows live progress
+            if on_batch_complete:
+                on_batch_complete(
+                    geotiffs_downloaded=total_downloaded + files_done,
+                    geotiffs_total=total_scenes,
+                    geotiffs_bytes=0,  # not tracked per-file
+                    current_batch=batch_num,
+                    total_batches=total_batches,
+                )
+
         batch_paths = await download_geotiffs(
-            new_urls, staging, checkpoint_path, concurrency=concurrency
+            new_urls, staging, checkpoint_path, concurrency=concurrency,
+            on_file_complete=_on_file
         )
 
         # Reload checkpoint after download
