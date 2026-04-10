@@ -12,6 +12,9 @@ Offline-first GIS platform for AREDN mesh networks, running on Raspberry Pi 5.
 - `frontend/` — Vanilla JS + MapLibre GL JS single-page app
 - `nginx/` — Reverse proxy config with sub_filter URL rewriting
 - `tileserver/` — TileServer GL config and styles (positron, darkmatter, hybrid)
+- `setup/` — Browser-based setup wizard (FastAPI on localhost:8099, dark mode, 5-step guided deployment)
+- `bootstrap.sh` — System prerequisites script (sudo): apt install, docker group, data directory
+- `setup.sh` — Wizard launcher: creates venv, installs deps, starts FastAPI server
 - `data/` — Symlink to /srv/geographica/data/ (gitignored) MBTiles, PBF, SQLite databases
 
 ## Commands

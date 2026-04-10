@@ -126,7 +126,7 @@ sudo apt install -y \
   python3 python3-venv python3-pip \
   gdal-bin osmium-tool \
   gpsd gpsd-clients \
-  git npm wget curl unzip
+  git wget curl unzip
 ```
 
 Add your user to the `docker` group:
@@ -306,29 +306,21 @@ rm -rf darkmatter-tmp
 cd ../..
 ```
 
-### 9. Install frontend vendor libraries
+### 9. Frontend vendor libraries
 
-```bash
-cd frontend/vendor
+Vendor libraries (MapLibre GL JS, togeojson, jszip, DOMPurify) are committed to
+the repo in `frontend/vendor/`. No installation step is needed.
 
-npm pack maplibre-gl@5.21.1
-tar -xf maplibre-gl-*.tgz
-cp package/dist/maplibre-gl.js .
-cp package/dist/maplibre-gl.css .
-rm -rf package maplibre-gl-*.tgz
-
-npm pack @mapbox/togeojson@0.16.2
-tar -xf mapbox-togeojson-*.tgz
-cp package/togeojson.js .
-rm -rf package mapbox-togeojson-*.tgz
-
-npm pack jszip@3.10.1
-tar -xf jszip-*.tgz
-cp package/dist/jszip.min.js .
-rm -rf package jszip-*.tgz
-
-cd ../..
-```
+> **Note:** If you need to update vendor library versions, download the new
+> tarballs directly from the npm registry and extract the dist files:
+> ```bash
+> cd frontend/vendor
+> wget https://registry.npmjs.org/maplibre-gl/-/maplibre-gl-5.21.1.tgz
+> tar -xf maplibre-gl-5.21.1.tgz
+> cp package/dist/maplibre-gl.js . && cp package/dist/maplibre-gl.css .
+> rm -rf package maplibre-gl-5.21.1.tgz
+> cd ../..
+> ```
 
 ### 10. Configure GPS (optional)
 
@@ -536,6 +528,7 @@ To cover a different region, adjust these values consistently:
 | 8095 | GPS | WebSocket GPS relay |
 | 8096 | Search | Unified search API |
 | 8098 | STT | Speech-to-text (Whisper) |
+| 8099 | Setup wizard | Browser-based setup (localhost only, ephemeral) |
 | — | Pipeline (on-demand) | Imagery/elevation/OSM POI pipeline container |
 
 All services are proxied through NGINX on port 8093. The config panel on port
@@ -596,8 +589,16 @@ heaviest consumer — check its limit first.
 
 ```
 geographica/
+├── bootstrap.sh                # System prerequisites (sudo): apt, docker group, data dir
+├── setup.sh                    # Setup wizard launcher (creates venv, starts FastAPI on :8099)
 ├── docker-compose.yml          # 7 persistent services + on-demand pipeline, with memory limits
 ├── .env.example                # Environment variable template
+├── setup/
+│   ├── main.py                 # FastAPI wizard: CSRF, WebSocket progress, API routes
+│   ├── config.py               # System detection, .env generation, RAM profiles, bbox validation
+│   ├── runner.py               # Async subprocess executor, checkpoint management
+│   ├── requirements.txt        # fastapi, uvicorn, httpx
+│   └── static/                 # Wizard frontend (HTML/JS/CSS, dark mode, MapLibre map picker)
 ├── nginx/
 │   └── nginx.conf              # Reverse proxy with URL rewriting
 ├── frontend/
@@ -652,6 +653,7 @@ geographica/
 │   ├── acquire_naip.py         # USGS NAIP county mosaic downloader
 │   ├── acquire_sentinel.py     # Copernicus Sentinel-2 imagery downloader
 │   ├── pipeline_progress.py    # Shared progress reporting module
+│   ├── pipeline_security.py    # Pipeline input validation and security checks
 │   ├── provision_tailscale_tls.sh  # Tailscale TLS cert provisioning
 │   └── generate_tls.sh         # Self-signed TLS cert generation
 ├── tests/                      # Top-level test suite (331 tests)
