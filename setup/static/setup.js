@@ -665,6 +665,32 @@
   // Step 5: Health
   // ---------------------------------------------------------------------------
   function startHealthPolling() {
+    // First, launch (or detect existing stack)
+    var statusEl = $('#launch-status');
+    if (statusEl) statusEl.textContent = 'Checking stack status...';
+
+    api('POST', '/api/launch').then(function (data) {
+      if (statusEl) {
+        if (data.state === 'already_healthy') {
+          statusEl.textContent = 'Existing stack detected — all ' + data.existing_count + ' services already running and healthy.';
+          statusEl.className = 'launch-status detected';
+        } else if (data.state === 'restarted') {
+          statusEl.textContent = 'Existing stack detected (' + data.existing_count + ' services). Restarted — waiting for health checks...';
+          statusEl.className = 'launch-status restarted';
+        } else {
+          statusEl.textContent = 'Stack launched — waiting for health checks...';
+          statusEl.className = 'launch-status started';
+        }
+      }
+      // Hide the manual launch button since we auto-launched
+      if ($('#launch-actions')) $('#launch-actions').style.display = 'none';
+    }).catch(function (err) {
+      if (statusEl) {
+        statusEl.textContent = 'Failed to launch stack: ' + err.message;
+        statusEl.className = 'launch-status error';
+      }
+    });
+
     pollHealth();
     if (healthTimer) clearInterval(healthTimer);
     healthTimer = setInterval(pollHealth, 5000);

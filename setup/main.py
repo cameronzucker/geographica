@@ -399,19 +399,59 @@ async def _run_pipeline(config: StartRequest):
 # ---------------------------------------------------------------------------
 @app.post("/api/launch")
 async def post_launch():
-    """Launch Docker Compose stack."""
+    """Launch Docker Compose stack. Detects existing containers."""
     cwd = str(Path(__file__).parent.parent)
+
+    # Check if containers are already running
+    pre_check = await asyncio.create_subprocess_exec(
+        "docker", "compose", "ps", "--format", "json",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        cwd=cwd,
+    )
+    pre_stdout, _ = await pre_check.communicate()
+    pre_text = pre_stdout.decode("utf-8", errors="replace").strip()
+
+    existing_services = []
+    if pre_text:
+        for line in pre_text.splitlines():
+            try:
+                svc = json.loads(line)
+                existing_services.append(svc)
+            except json.JSONDecodeError:
+                continue
+
+    already_running = len(existing_services) > 0
+    all_healthy = all(
+        "healthy" in (s.get("Health", "") or s.get("Status", ""))
+        for s in existing_services
+    ) if existing_services else False
+
+    # Run docker compose up -d
     output_lines: list[str] = []
 
-    def on_output(source: str, data: bytes):
-        output_lines.append(data.decode("utf-8", errors="replace"))
+    def on_output(source: str, data: str):
+        output_lines.append(data)
 
     exit_code = await run_command(
         args=["docker", "compose", "-f", "docker-compose.yml", "up", "-d"],
         cwd=cwd,
         on_output=on_output,
     )
-    return {"exit_code": exit_code, "output": "".join(output_lines)}
+
+    # Determine launch state
+    if already_running and all_healthy:
+        state = "already_healthy"
+    elif already_running:
+        state = "restarted"
+    else:
+        state = "started"
+
+    return {
+        "exit_code": exit_code,
+        "output": "".join(output_lines),
+        "state": state,
+        "existing_count": len(existing_services),
+    }
 
 
 # ---------------------------------------------------------------------------

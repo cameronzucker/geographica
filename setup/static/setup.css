@@ -613,6 +613,48 @@ select:focus {
   color: var(--text-secondary);
 }
 
+/* Launch status banner */
+.launch-status {
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  margin-bottom: 16px;
+  background: var(--surface-alt, #f0f0f0);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.launch-status.detected {
+  background: #e8f5e9;
+  border-color: #4caf50;
+  color: #2e7d32;
+}
+
+.launch-status.started {
+  background: #e3f2fd;
+  border-color: #2196f3;
+  color: #1565c0;
+}
+
+.launch-status.restarted {
+  background: #fff3e0;
+  border-color: #ff9800;
+  color: #e65100;
+}
+
+.launch-status.error {
+  background: #ffebee;
+  border-color: #f44336;
+  color: #c62828;
+}
+
+@media (prefers-color-scheme: dark) {
+  .launch-status.detected { background: #1b3d1f; border-color: #3fb950; color: #3fb950; }
+  .launch-status.started { background: #0d2744; border-color: #58a6ff; color: #58a6ff; }
+  .launch-status.restarted { background: #2a1a08; border-color: #d29922; color: #d29922; }
+  .launch-status.error { background: #3d1014; border-color: #f85149; color: #f85149; }
+}
+
 /* Completion box */
 .completion-box {
   background: var(--completion-bg);
