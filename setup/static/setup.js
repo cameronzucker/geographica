@@ -167,6 +167,16 @@
       // Save config + credentials
       saveConfig();
       saveCredentials();
+
+      // If all layers skipped, jump directly to Launch (skip Download step)
+      var allSkipped = config.layers.basemap === 'skip' &&
+                       config.layers.base_imagery === 'skip' &&
+                       config.layers.detail_imagery === 'skip' &&
+                       config.layers.elevation === 'skip';
+      if (allSkipped) {
+        showStep(5);
+        return;
+      }
     }
 
     if (currentStep === 4) {
