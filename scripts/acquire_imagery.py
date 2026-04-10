@@ -857,6 +857,30 @@ async def m2m_download_batched(
 
     product_names_logged = False
 
+    # Pipelined batch processing: download batch N+1 while converting batch N.
+    # A semaphore ensures only one conversion runs at a time (memory-bounded).
+    # At most 2 batches of GeoTIFFs exist on disk simultaneously.
+    convert_sem = asyncio.Semaphore(1)
+    pending_conversion = None  # Task for the currently-running background conversion
+
+    async def _convert_and_cleanup(paths, batch_label):
+        """Convert GeoTIFFs to MBTiles and delete originals. Runs in thread."""
+        async with convert_sem:
+            log.info("%s: converting %d GeoTIFFs to MBTiles...",
+                     batch_label, len(paths))
+            try:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, convert_geotiffs_to_mbtiles, paths, output_path
+                )
+                for tif_path in paths:
+                    if tif_path.exists():
+                        tif_path.unlink()
+                log.info("%s: converted and cleaned up %d GeoTIFFs",
+                         batch_label, len(paths))
+            except Exception as exc:
+                log.warning("%s: conversion failed (%s) — keeping raw files",
+                            batch_label, exc)
+
     for batch_start in range(0, total_scenes, M2M_BATCH_SIZE):
         if _cancel_requested:
             log.info("Cancellation requested between batches")
@@ -889,8 +913,6 @@ async def m2m_download_batched(
             continue
 
         # Skip products whose entity was already downloaded
-        # (checkpoint tracks by URL, but we can also skip if the entity
-        # already has a file in staging)
         new_products = []
         for p in products:
             staging_files = list(staging.glob(f"*{p['entityId']}*"))
@@ -925,7 +947,13 @@ async def m2m_download_batched(
         if not new_urls:
             continue
 
-        # --- Download this batch's files immediately ---
+        # --- Wait for previous conversion to finish before downloading ---
+        # This ensures at most 2 batches of GeoTIFFs on disk (one converting, one downloading)
+        if pending_conversion and not pending_conversion.done():
+            log.info("Batch %d: waiting for previous conversion to finish...", batch_num)
+            await pending_conversion
+
+        # --- Download this batch's files ---
         batch_paths = await download_geotiffs(
             new_urls, staging, checkpoint_path, concurrency=concurrency
         )
@@ -939,22 +967,11 @@ async def m2m_download_batched(
         log.info("Batch %d complete: %d files this batch, %d total downloaded",
                  batch_num, len(batch_paths), total_downloaded)
 
-        # --- Convert this batch immediately and clean up raw GeoTIFFs ---
+        # --- Start conversion in background (next batch downloads while this converts) ---
         if batch_paths and output_path:
-            log.info("Batch %d: converting %d GeoTIFFs to MBTiles...",
-                     batch_num, len(batch_paths))
-            try:
-                convert_geotiffs_to_mbtiles(batch_paths, output_path)
-                # Delete raw GeoTIFFs after successful conversion
-                for tif_path in batch_paths:
-                    if tif_path.exists():
-                        tif_path.unlink()
-                        log.debug("Deleted converted GeoTIFF: %s", tif_path.name)
-                log.info("Batch %d: converted and cleaned up %d GeoTIFFs",
-                         batch_num, len(batch_paths))
-            except Exception as exc:
-                log.warning("Batch %d: conversion failed (%s) — keeping raw files",
-                            batch_num, exc)
+            pending_conversion = asyncio.create_task(
+                _convert_and_cleanup(batch_paths, f"Batch {batch_num}")
+            )
 
         if on_batch_complete:
             total_bytes = sum(
@@ -968,7 +985,12 @@ async def m2m_download_batched(
                 total_batches=total_batches,
             )
 
-    # Return all downloaded files (most will be deleted after conversion)
+    # Wait for final conversion to complete
+    if pending_conversion and not pending_conversion.done():
+        log.info("Waiting for final conversion to complete...")
+        await pending_conversion
+
+    # Return any remaining unconverted files
     all_paths = [Path(p) for p in done.values() if Path(p).exists()]
     log.info("M2M batched download complete: %d batches processed, %d files remaining",
              (total_scenes + M2M_BATCH_SIZE - 1) // M2M_BATCH_SIZE, len(all_paths))
