@@ -120,7 +120,13 @@
 - **Why:** With multiple imagery sources (NAIP, Sentinel-2, direct scraper) at different zoom levels for different regions, it's hard to know what you have without querying MBTiles directly. Users need to see gaps, plan downloads, and verify coverage.
 - **Options:** (a) Admin panel coverage map — query MBTiles metadata/tile counts by zoom and render a coverage heatmap on the minimap, (b) Map toggle overlay — a "Coverage" checkbox that shows colored bounding boxes or tile grid shading indicating which areas have imagery at what resolution, (c) Admin panel table — zoom level × region matrix showing tile counts and estimated coverage percentage.
 
+### M2M pipeline should run in Docker with memory limits
+- **What:** The M2M imagery pipeline currently runs on the host via nohup with no memory limits. The GDAL conversion step can spike to several GB per batch. The Docker pipeline container has a 2G limit and GDAL_CACHEMAX=1024, but host-based runs bypass these.
+- **Why:** An unconstrained GDAL process processing a large GeoTIFF could OOM the Pi 5 and kill other services.
+- **Fix:** Run M2M downloads via `docker compose run pipeline` instead of direct host execution. The pipeline Dockerfile already has the right limits. Alternatively, wrap host-based runs with `systemd-run --scope -p MemoryMax=4G` or set `GDAL_CACHEMAX=1024` in the runner script.
+
 ### Clean up raw GeoTIFF staging files after M2M conversion
+- **Status: FIXED** — per-batch conversion and cleanup implemented in acquire_imagery.py. Each batch of 50 GeoTIFFs is converted then deleted before the next batch downloads.
 - **What:** M2M downloads store raw GeoTIFFs in staging directories (`m2m_staging_az/`, `m2m_staging_maricopa/`, `m2m_staging_phoenix/`). After GDAL converts them to MBTiles, the raw files persist and consume hundreds of GB.
 - **Why:** 201 GB of old staging files were found on disk from previous M2M runs. Raw GeoTIFFs are ~150MB each and there can be thousands.
 - **Fix:** Either (a) add a `--cleanup` flag to `acquire_imagery.py` that deletes each batch's GeoTIFFs after conversion, (b) add a post-pipeline cleanup step that removes the staging directory, or (c) document manual cleanup: `rm -rf /srv/geographica/data/m2m_staging_*`
