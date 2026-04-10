@@ -80,6 +80,11 @@
 
 ## Low Priority / Deferred
 
+### Remove npm prerequisite
+- **What:** Replace `npm pack` in README step 9 with direct `wget` from npm registry CDN. Eliminates npm as a system prerequisite entirely.
+- **Why:** npm is only used as a download tool for 3 pinned tarballs (maplibre-gl, togeojson, jszip). Direct wget achieves the same result: `wget https://registry.npmjs.org/maplibre-gl/-/maplibre-gl-5.21.1.tgz`. No node_modules, no dependency tree, no install scripts.
+- **Depends on:** Setup wizard (can handle this automatically in the Download step).
+
 ### Search debounce/abort pattern
 - **What:** 300ms debounce + AbortController for search input.
 - **Why:** Rapid typing could queue queries. Deferred because Pi 5 Nominatim is fast.
