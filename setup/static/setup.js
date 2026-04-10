@@ -766,7 +766,8 @@
       // Build app link
       var proto = config.tls_mode === 'http' ? 'http' : 'https';
       var host = config.host_ip || location.hostname;
-      $('#app-link').href = proto + '://' + host;
+      var port = (config.tls_mode === 'http') ? ':8093' : '';  // HTTPS on 443 (default), HTTP on 8093
+      $('#app-link').href = proto + '://' + host + port;
     }
   }
 
