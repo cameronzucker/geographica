@@ -7,7 +7,7 @@ Offline-first GIS platform for AREDN mesh networks, running on Raspberry Pi 5.
 - `docker-compose.yml` — 7 persistent services + on-demand pipeline (tileserver, valhalla, nominatim, gps, search, stt, frontend)
 - `services/gps/` — FastAPI GPS WebSocket service (reads gpsd)
 - `services/search/` — FastAPI unified search (Nominatim + SQLite FTS5 POI + city-aware spatial search + geocode)
-- `services/stt/` — FastAPI speech-to-text service (Whisper on Hailo NPU)
+- `services/stt/` — FastAPI speech-to-text service (Whisper, CPU + NPU backends)
 - `scripts/` — Offline data pipeline (imagery acquisition, POI indexer, elevation, public lands, county index)
 - `frontend/` — Vanilla JS + MapLibre GL JS single-page app
 - `nginx/` — Reverse proxy config with sub_filter URL rewriting

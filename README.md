@@ -97,6 +97,7 @@ For a guided setup experience, use the setup wizard:
 git clone https://github.com/cdzucker/geographica.git
 cd geographica
 sudo ./bootstrap.sh    # Install system prerequisites
+# Log out and back in so the docker group takes effect, then:
 ./setup.sh             # Launch browser-based setup wizard
 ```
 
@@ -520,8 +521,9 @@ To cover a different region, adjust these values consistently:
 
 | Port | Service | Purpose |
 |------|---------|---------|
-| **8093** | **NGINX (frontend)** | **Main entry point — UI + API proxy** |
-| **8097** | **NGINX (config)** | **Config panel — localhost only** |
+| **8093** | **NGINX (frontend)** | **Main entry point — UI + API proxy (HTTP)** |
+| **443** | **NGINX (frontend)** | **HTTPS — when TLS is configured** |
+| **8097** | **NGINX (config)** | **Config panel — localhost only (127.0.0.1)** |
 | 8090 | TileServer GL | Vector and raster tile API |
 | 8092 | Nominatim | Geocoding and reverse geocoding |
 | 8094 | Valhalla | Routing engine |
@@ -613,7 +615,7 @@ geographica/
 │   ├── style.css               # UI styles
 │   ├── config/
 │   │   └── index.html          # Admin config panel (3-tab: Dashboard/Pipelines/Settings)
-│   └── vendor/                 # Vendored JS/CSS (gitignored, see step 9)
+│   └── vendor/                 # Vendored JS/CSS (maplibre-gl, togeojson, jszip, dompurify)
 ├── tileserver/
 │   ├── config.json             # TileServer GL data source config (basemap, elevation, imagery, public lands)
 │   ├── styles/                 # Map styles
@@ -622,8 +624,7 @@ geographica/
 │   │   └── hybrid/style.local.json   # Imagery base + roads/labels overlay
 │   ├── fonts-served/           # PBF glyph ranges (gitignored, see step 8)
 │   ├── sources/                # Natural Earth shapefiles (gitignored)
-│   ├── southwest5.mbtiles      # Vector basemap (gitignored, ~2.4 GB)
-│   └── elevation.mbtiles       # Terrain tiles (gitignored, ~70 GB)
+│   └── southwest5.mbtiles      # Vector basemap (gitignored, ~2.4 GB)
 ├── services/
 │   ├── gps/                    # FastAPI GPS WebSocket service
 │   │   ├── Dockerfile
@@ -671,6 +672,7 @@ geographica/
     ├── nominatim/region.osm.pbf
     ├── valhalla/               # PBF + generated routing graph
     ├── poi.sqlite              # FTS5 search database
+    ├── elevation.mbtiles       # Terrain-RGB tiles (~70 GB, gitignored)
     └── public-lands.mbtiles    # PAD-US public lands vector tiles
 ```
 
