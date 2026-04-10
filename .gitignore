@@ -6,9 +6,6 @@ __pycache__/
 .env
 node_modules/
 
-# Runtime/deploy assets — vendored at deploy time, not checked in
-frontend/vendor/*.js
-frontend/vendor/*.css
 tileserver/fonts-served/
 # Cloned style repos — ignore upstream clutter, keep sprites + style.local.json
 tileserver/styles/positron/.git/
