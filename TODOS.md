@@ -43,10 +43,16 @@
 - **Cons:** More complex NGINX config with multiple location blocks.
 - **Depends on:** NGINX config stable (it is now).
 
-### Setup CLI tool
-- **What:** A `geographica-setup` command that detects the network environment, generates TLS certs if needed, writes `.env`, and restarts the frontend container.
-- **Why:** Current setup requires editing .env, running provision scripts, and restarting containers separately.
-- **Depends on:** TLS implementation (done).
+### Setup wizard (GUI)
+- **What:** Browser-based setup wizard (`./setup`) that replaces manual README steps 2-12 with a guided 5-step flow: Network config, Region/data selection, Credentials, Download with progress, Launch + verify. Preceded by `sudo ./bootstrap.sh` for system prerequisites.
+- **Why:** README validation testing (2026-04-09) showed intermediate Linux skill required. The wizard automates .env generation, bbox selection (map-based), data downloads, Docker builds, and health checks.
+- **Status:** Design in progress. Localhost-only (security), dark mode support, skip-all option for networking-only deployments.
+- **Depends on:** TLS implementation (done), credential management.
+
+### Credential management overhaul
+- **What:** Unify credential storage. Currently M2M/Copernicus credentials live in `/srv/geographica/data/credentials.json` (written by admin panel). The setup wizard will also write to this file. Eventually should migrate to `.env` or a proper secret store so there's one source of truth.
+- **Why:** Two code paths (admin panel + setup wizard) writing the same JSON file is fragile. The eventual overhaul should pick one canonical location.
+- **Depends on:** Setup wizard (above).
 
 ### GPS track recording
 - **What:** Record GPS tracks and export as GPX/KML. Design doc specifies this as a Phase 1 feature.
