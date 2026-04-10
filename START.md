@@ -11,7 +11,9 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## Critical context — read before making any changes
 
-1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs, user preferences, and project decisions. Read `handoff_20260410.md` for the most recent session context (setup wizard, LXD validation, docs overhaul).
+1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs. Read BOTH:
+   - `handoff_20260410.md` — setup wizard, LXD validation, docs overhaul (parallel agent)
+   - `handoff_20260409f.md` — public lands, hybrid imagery, camera fix, M2M pipeline improvements, style tuning (this agent's mega session — 120+ commits)
 
 2. **Read CLAUDE.md** in the repo root — it has the project structure, commands, hardware specs, and skill routing rules.
 
@@ -48,12 +50,22 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 - Spec: `docs/superpowers/specs/2026-04-09-readme-validation-harness-design.md`
 - Reports: `docs/validation/2026-04-09-quick-report.md`, `docs/validation/2026-04-10-quick-report.md`
 
-### Data — all complete
-- **Elevation z0-14**: 1,474,959 tiles
-- **Imagery z0-16**: 2,588,818 tiles
-- **Public lands**: 1,077,968 tiles (412MB, PAD-US 4.1 + AIANNH tribal)
+### Active imagery downloads (started 2026-04-09)
+**M2M sequential pipeline running in Docker** (check: `tail -5 /tmp/m2m-sequential.log`):
+- Stage 1: Arizona z0-z16 — IN PROGRESS (~16,442 scenes, pipelined batch download+conversion)
+- Stage 2: Maricopa z17 — queued (starts after Arizona)
+- Stage 3: Phoenix metro z18-z19 — queued (starts after Maricopa)
+- Tile scraper z0-z14 Western US — COMPLETE (25 GB, `/srv/geographica/data/imagery.mbtiles`)
+- Output files: `imagery.mbtiles` (scraper), `imagery_az.mbtiles`, `imagery_maricopa.mbtiles`, `imagery_phoenix.mbtiles`
+- **After all complete:** merge with `tile-join -o imagery_merged.mbtiles imagery.mbtiles imagery_az.mbtiles imagery_maricopa.mbtiles imagery_phoenix.mbtiles`
+- Per-file progress visible in admin panel. Pipeline converts+deletes GeoTIFFs per batch (~15 GB staging max).
+
+### Data
+- **Elevation z0-14**: 1,474,959 tiles (~120 GB)
+- **Imagery z0-14**: 25 GB tile scraper (z15+ downloading via M2M — see above)
+- **Public lands**: 1,077,968 tiles (412MB, PAD-US 4.1 + AIANNH tribal, 365 tribal boundaries)
 - **POI index**: 304,094 GNIS features + OSM amenities
-- **Vector basemap**: 2.4GB (southwest5.mbtiles)
+- **Vector basemap**: 2.4GB (southwest5.mbtiles — needs regeneration for minor road visibility, see TODOS)
 
 ### TLS
 - **Tailscale HTTPS active**: `https://pandora.twin-bramble.ts.net` (Let's Encrypt)
@@ -120,11 +132,25 @@ See TODOS.md for the full backlog. Top priorities:
 
 7. **GPS /status endpoint omits coordinates.** Security invariant: lat/lon never in admin responses.
 
-8. **Hybrid imagery mode uses map.setStyle().** Must re-disable dragRotate after style swap (Pitfall #11).
+8. **Hybrid imagery mode uses map.setStyle().** Toggling imagery ON swaps to `STYLES.hybrid`, OFF restores `previousStyle`. The persistent `map.on('style.load')` handler replays all overlays AND removes mouseRotate/mousePitch handlers from MapLibre's internal `_handlers._handlersById` (Pitfall #11). `NavigationControl` uses `showCompass: false`. NAIP/Sentinel toggles hidden in hybrid mode.
 
-9. **Public lands uses 3 fill layers.** Non-tribal solid, tribal striped pattern, outline.
+9. **MapLibre dragRotate: disable() is INSUFFICIENT in v5.21.** Must surgically delete `mouseRotate` and `mousePitch` from `map._handlers._handlersById` and filter from `_handlers` array. Done in BOTH `initFreeLookCamera()` AND the `style.load` handler. See Pitfall #11 for 7 documented failed approaches.
 
-10. **NGINX bind mount footgun:** Git operations create new file inodes — Docker serves stale config. Always `--force-recreate frontend` after editing NGINX config.
+10. **M2M pipeline: pipelined batch processing.** Downloads batch N+1 while converting batch N. Per-file progress updates to state file for admin panel. Raw GeoTIFFs deleted after each batch conversion (~15-30 GB staging max). Runs in Docker with `GDAL_CACHEMAX=1024`.
+
+11. **Docker cgroup memory limits NOT enforced** on default Pi OS. Add `cgroup_enable=memory cgroup_memory=1` to `/boot/firmware/cmdline.txt` and reboot. Without this ALL Docker `memory:` limits are silently ignored.
+
+12. **HTTP/2 enabled on HTTPS** (`listen 443 ssl http2` in `nginx/tls-include.conf`). Required to prevent browser connection pool contention (search requests queued behind tile fetches on HTTP/1.1).
+
+13. **Geocode timeout is 5 seconds** (`services/search/geocode.py:69`). Was 1s, causing all city-aware searches to fail (Nominatim cold queries take 1.3s+).
+
+14. **Sentinel-2 pipeline exists but is UNTESTED.** Only M2M and direct tile scraper are confirmed working imagery modes.
+
+15. **Public lands uses 3 fill layers.** Non-tribal solid (`public-lands-fill`), tribal striped pattern (`public-lands-fill-tribal`), outline. All toggle together. In hybrid mode, z-order anchor finds first `transportation` source-layer to insert below roads.
+
+16. **Public lands pipeline runs on HOST, not Docker.** Requires Tippecanoe (built from source on ARM64) + ogr2ogr. PAD-US download needs browser CAPTCHA. Census AIANNH is direct download (~9 MB). Stop Docker services for full build (~6-9 GB RAM).
+
+17. **NGINX bind mount footgun:** Git operations create new file inodes — Docker serves stale config. Always `--force-recreate frontend` after editing NGINX config.
 
 ## Cameron's preferences (from memory)
 - Prioritizes correctness and completeness over speed
