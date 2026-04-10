@@ -89,7 +89,29 @@ TileServer GL style/TileJSON endpoints.
 
 ---
 
-## Setup guide
+## Quick Start
+
+For a guided setup experience, use the setup wizard:
+
+```bash
+git clone https://github.com/cdzucker/geographica.git
+cd geographica
+sudo ./bootstrap.sh    # Install system prerequisites
+./setup.sh             # Launch browser-based setup wizard
+```
+
+Then open http://localhost:8099 in your browser. The wizard will guide you through
+region selection, data downloads, and stack deployment.
+
+> **Headless access:** If accessing the Pi remotely via SSH, use a VNC session
+> or SSH tunnel: `ssh -L 8099:localhost:8099 user@your-pi-ip`, then open
+> http://localhost:8099 locally.
+
+The manual setup steps below are still available for advanced users or automation.
+
+---
+
+## Manual setup guide
 
 This guide walks through a complete deployment from a fresh Pi. The process has
 two phases: **data acquisition** (requires internet, takes several hours) and

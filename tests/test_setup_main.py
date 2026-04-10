@@ -5,9 +5,9 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "setup"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from main import app, CSRF_TOKEN, CREDENTIALS_PATH, current_state
+from setup.main import app, CSRF_TOKEN, CREDENTIALS_PATH, current_state
 from fastapi.testclient import TestClient
 
 
@@ -120,7 +120,7 @@ class TestConfigEndpoint:
 
     def test_config_writes_env(self, tmp_path, monkeypatch):
         env_path = tmp_path / ".env"
-        monkeypatch.setattr("main.ENV_PATH", str(env_path))
+        monkeypatch.setattr("setup.main.ENV_PATH", str(env_path))
         resp = self.client.post("/api/config", json={
             "host_ip": "10.0.0.1",
             "tls_mode": "none",
@@ -135,7 +135,7 @@ class TestConfigEndpoint:
 
     def test_config_rejects_invalid_bbox(self, tmp_path, monkeypatch):
         env_path = tmp_path / ".env"
-        monkeypatch.setattr("main.ENV_PATH", str(env_path))
+        monkeypatch.setattr("setup.main.ENV_PATH", str(env_path))
         resp = self.client.post("/api/config", json={
             "host_ip": "10.0.0.1",
             "tls_mode": "none",
@@ -156,7 +156,7 @@ class TestCredentialsEndpoint:
 
     def test_credentials_writes_file(self, tmp_path, monkeypatch):
         cred_path = tmp_path / "credentials.json"
-        monkeypatch.setattr("main.CREDENTIALS_PATH", str(cred_path))
+        monkeypatch.setattr("setup.main.CREDENTIALS_PATH", str(cred_path))
         resp = self.client.post("/api/credentials", json={
             "m2m_username": "user",
             "m2m_token": "tok",
@@ -208,7 +208,7 @@ class TestIndexRoute:
         static_dir.mkdir()
         index = static_dir / "index.html"
         index.write_text('<html><meta name="csrf-token" content="PLACEHOLDER"></html>')
-        monkeypatch.setattr("main.STATIC_DIR", str(static_dir))
+        monkeypatch.setattr("setup.main.STATIC_DIR", str(static_dir))
         resp = self.client.get("/")
         assert resp.status_code == 200
         assert "text/html" in resp.headers["content-type"]
