@@ -54,6 +54,17 @@
 - **Why:** Two code paths (admin panel + setup wizard) writing the same JSON file is fragile. The eventual overhaul should pick one canonical location.
 - **Depends on:** Setup wizard (above).
 
+### USB GPS support (in addition to HAT)
+- **What:** Support USB GPS receivers (e.g., u-blox USB dongles, BU-353S4) alongside the current Waveshare LC2H GPS HAT. The GPS service currently assumes `/dev/ttyAMA0` (UART HAT). USB GPS devices appear as `/dev/ttyUSB0` or `/dev/ttyACM0`.
+- **Why:** The HAT requirement limits hardware flexibility. Many users already have USB GPS receivers, and they're cheaper/easier to connect than a HAT (no soldering, no GPIO conflicts).
+- **Implementation:**
+  - Auto-detect GPS device: scan `/dev/ttyUSB*`, `/dev/ttyACM*`, `/dev/ttyAMA*` for NMEA output
+  - Update `services/gps/main.py` to accept a configurable device path (env var `GPS_DEVICE` with auto-detect fallback)
+  - Update `docker-compose.yml` to pass the detected device into the GPS container
+  - Add to setup wizard: GPS device detection step that tests each candidate port for NMEA sentences and lets the user confirm
+  - Document supported USB GPS receivers in README
+- **Depends on:** GPS service (done), setup wizard (in progress)
+
 ### GPS track recording
 - **What:** Record GPS tracks and export as GPX/KML. Design doc specifies this as a Phase 1 feature.
 - **Why:** Users on field deployments need track logs for after-action reports.
