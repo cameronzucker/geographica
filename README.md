@@ -270,7 +270,7 @@ Downloads GNIS gazetteer data from USGS via S3
 (`prd-tnm.s3.amazonaws.com/StagedProducts/GeographicNames/DomesticNames/`).
 Free, no API key required. Produces a small SQLite FTS5 database.
 
-### 7b. Extract OSM amenities and public land
+### 7b. Extract OSM amenities and public land boundaries
 
 ```bash
 python scripts/build_osm_pois.py \
@@ -282,6 +282,33 @@ python scripts/build_osm_pois.py \
 Extracts named amenities (fuel, food, lodging, etc.) and public land boundaries
 (BLM, USFS, NPS) from the OSM PBF into the same SQLite database. Requires
 `osmium` and `shapely` (`pip install shapely`). Takes ~10 minutes.
+
+### 7c. Build public lands vector tiles (optional)
+
+Requires Tippecanoe (built from source on ARM64) and GDAL:
+
+```bash
+# Install Tippecanoe (if not already installed)
+sudo apt install -y build-essential libsqlite3-dev zlib1g-dev
+git clone https://github.com/felt/tippecanoe.git /tmp/tippecanoe
+cd /tmp/tippecanoe && make -j4 && sudo make install
+
+# Build public lands tiles (downloads PAD-US ~1.5 GB, requires CAPTCHA in browser)
+# First: download PAD-US GeoPackage manually from
+#   https://www.sciencebase.gov/catalog/item/652d4fc5d34e44db0e2ee45e
+# Save as /srv/geographica/data/padus_cache/padus.zip
+
+# Then run the pipeline (stop Docker services first on 8 GB Pi):
+python scripts/build_public_lands.py \
+  --output /srv/geographica/data/public-lands.mbtiles \
+  --cache-dir /srv/geographica/data/padus_cache/
+```
+
+Generates ~400 MB of vector tiles covering BLM, National Forest, National Park,
+Fish & Wildlife, Military, Bureau of Reclamation, Tribal (from Census AIANNH),
+State Trust, and Wilderness boundaries. The pipeline runs on the **host** (not
+Docker) because Tippecanoe is a compiled binary. Needs ~6-9 GB free RAM for
+the full Western US; on 8 GB Pi 5, stop Docker services first.
 
 ### 8. Set up TileServer GL styles and fonts
 

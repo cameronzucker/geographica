@@ -28,3 +28,5 @@ tileserver/tmp/
 START.md
 .claude/worktrees/
 .superpowers/
+.codex
+.playwright-mcp/
