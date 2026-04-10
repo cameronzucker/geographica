@@ -189,6 +189,11 @@ These are non-obvious implementation details a new agent must understand (accumu
 - `app.js` is ~2800 lines — approaching the threshold where extraction to separate modules should be considered
 - STT service needs internet during Docker build to download the ~140MB Whisper model
 - Total Docker memory allocation is ~15GB on 16GB hardware — tight but functional
+- **Docker cgroup memory limits NOT enforced** on default Pi OS. Add `cgroup_enable=memory cgroup_memory=1` to `/boot/firmware/cmdline.txt` and reboot. Until then, ALL Docker `memory:` limits are silently ignored.
+- **HTTP/2 enabled on HTTPS** (`listen 443 ssl http2` in `nginx/tls-include.conf`). Without this, browser queues search requests behind tile fetches (6-connection HTTP/1.1 limit).
+- **M2M pipeline processes batches of 50 GeoTIFFs** with pipelined download+conversion. Batch N+1 downloads while batch N converts. Raw GeoTIFFs deleted after each batch conversion. Staging needs ~15-30 GB temporary.
+- **Geocode timeout is 5 seconds** (was 1s, caused city-aware search to fail for all cities). Set in `services/search/geocode.py:69`.
+- **Sentinel-2 pipeline exists but is untested.** Only M2M and direct tile scraper are confirmed working imagery acquisition modes.
 - **NGINX bind mount footgun:** `nginx/nginx.conf` is file-mounted into the frontend container. Git operations (commit, checkout, rebase) create a new file inode — Docker tracks the old inode, so the container silently serves stale config. Always run `docker compose up -d --force-recreate frontend` after editing NGINX config files.
 - **Vector basemap missing minor roads at low zoom.** BLM/Forest Service roads don't appear in `southwest5.mbtiles` until z14-15 because Planetiler drops them. Needs regeneration with custom profile. See TODOS.md.
 - **Firefox WebGL performance.** Hybrid + terrain + public lands is hitchy in Firefox, smooth in Chromium. Browser-specific limitation.

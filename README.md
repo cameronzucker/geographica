@@ -11,7 +11,7 @@ isolated LAN or standalone device.
 ## Features
 
 - **Vector basemaps** with three themes (Positron light, Dark Matter dark, Hybrid imagery+roads) and house number labels
-- **Aerial imagery** overlay — USGS NAIP (0.6m, US), Sentinel-2 (10m, global) with per-source toggles and opacity slider
+- **Aerial imagery** overlay — USGS NAIP (0.6m, US) via M2M API or tile scraper. Sentinel-2 pipeline code exists but is untested. Per-source toggles and opacity slider.
 - **Public lands layer** — BLM, National Forest, National Park, Fish & Wildlife, Military, Bureau of Reclamation, Tribal, State Trust, and Wilderness boundaries with agency-colored fills and legend. Tribal boundaries rendered with diagonal stripe pattern.
 - **3D terrain** with hillshade and adjustable exaggeration slider (z0-14 elevation data)
 - **Free-look camera** for 3D terrain exploration (pitch/bearing control)
@@ -40,7 +40,7 @@ isolated LAN or standalone device.
 |-----------|---------|-------------|
 | Board | Raspberry Pi 5, 8 GB | Raspberry Pi 5, 16 GB |
 | Storage | 256 GB SSD (single-state coverage) | 1 TB SSD (multi-state coverage) |
-| GPS | — | Waveshare LC29H GPS HAT or similar gpsd-compatible receiver |
+| GPS | — | Any gpsd-compatible receiver: Waveshare LC29H HAT, USB GPS dongle (u-blox, BU-353S4), etc. |
 | NPU | — | Hailo 10H (for future NPU-accelerated STT) |
 
 **Tested on:** Pi 5 16 GB, Debian Trixie (bookworm also works), Intel D3-S4610
@@ -50,16 +50,21 @@ isolated LAN or standalone device.
 
 | Dataset | Size |
 |---------|------|
-| Vector basemap (OpenMapTiles) | ~2.4 GB |
-| Elevation tiles (zoom 0-14) | ~70 GB |
-| Aerial imagery — NAIP (USGS, zoom 0-15) | ~30+ GB |
-| Aerial imagery — Sentinel-2 (Copernicus, 10m) | varies by area |
-| Public lands (PAD-US vector tiles) | ~1-2 GB |
+| Vector basemap (OpenMapTiles via Planetiler) | ~2.4 GB |
+| Elevation tiles (zoom 0-14) | ~70-120 GB |
+| Aerial imagery — scraper z0-z14 (USGS tile cache) | ~25 GB |
+| Aerial imagery — NAIP z15-z19 (USGS M2M, per region) | ~30-270 GB |
+| Public lands (PAD-US + Census AIANNH tribal) | ~0.4 GB |
 | OSM extracts (merged PBF) | ~3.1 GB |
 | Valhalla routing graph | ~4.3 GB |
 | Nominatim geocoding DB | ~30-40 GB |
-| POI index | ~80 MB |
-| **Total** | **~150+ GB** |
+| POI index (GNIS + OSM) | ~80 MB |
+| **Total** | **~170-470 GB** |
+
+Imagery size varies by region and max zoom. z0-z14 scraper covers the full
+region at ~25 GB. Each additional zoom level roughly quadruples tile count.
+Arizona at z16 adds ~23 GB, at z17 adds ~91 GB. NAIP GeoTIFFs are downloaded
+in batches and deleted after conversion — staging requires ~15 GB temporary.
 
 POI index includes GNIS geographic features + OSM commercial amenities + public land boundaries.
 
@@ -549,10 +554,12 @@ Normal. Graph building takes 1-2 hours. Watch with
 `docker compose logs -f valhalla`.
 
 **Container killed by OOM**
-Check with `docker inspect <container> --format='{{.State.OOMKilled}}'`. The
-per-container memory limits prevent system-wide OOM — only the offending
-container restarts. If a service consistently OOMs, increase its limit in the
-`deploy.resources.limits` section of `docker-compose.yml`.
+Check with `docker inspect <container> --format='{{.State.OOMKilled}}'`.
+**Important:** Docker memory limits require kernel cgroup support. On Raspberry Pi OS,
+this is NOT enabled by default. Run `docker info | grep "memory limit"` — if it says
+"No memory limit support," add `cgroup_enable=memory cgroup_memory=1` to
+`/boot/firmware/cmdline.txt` and reboot. Until then, the per-container `memory:` limits
+in `docker-compose.yml` are silently ignored.
 
 **GPS service can't connect to gpsd**
 gpsd defaults to listening on localhost only. Docker containers can't reach
@@ -582,10 +589,34 @@ that replace `nginx/nginx.conf` leave the container serving the old version.
 Fix: `docker compose up -d --force-recreate frontend`.
 
 **System crashed / OOM during first run**
-If you see a hard crash (kernel OOM killer), the per-container memory limits in
-`docker-compose.yml` should prevent this. If you modified the limits, ensure
-they total less than your available RAM minus 2 GB for the OS. Nominatim is the
-heaviest consumer — check its limit first.
+Ensure cgroup memory limits are enabled (see above). The M2M imagery pipeline
+is the most memory-intensive process — it holds all scene metadata in memory
+(~1.5 GB for Arizona's 16,000+ scenes). On 8 GB Pi 5, stop Docker services
+before running large M2M downloads: `docker compose stop`.
+
+**Slow spatial search (5+ seconds)**
+If spatial search is slow only in the browser (curl is fast), enable HTTP/2 on
+NGINX: change `listen 443 ssl;` to `listen 443 ssl http2;` in
+`nginx/tls-include.conf`. Without HTTP/2, the browser queues search requests
+behind dozens of concurrent tile fetches (6-connection limit on HTTP/1.1).
+
+**Free-look camera (CTRL+drag) does ground orbit instead of sky rotation**
+MapLibre's internal `dragRotate` handler intercepts CTRL+drag even when
+disabled via the public API. The fix is to remove `mouseRotate` and
+`mousePitch` from MapLibre's internal `_handlers._handlersById`. This is done
+in `initFreeLookCamera()` and the `style.load` handler. If broken after code
+changes, see `docs/pitfalls/implementation-pitfalls.md` Pitfall #11.
+
+**Imagery appears blurry in hybrid mode**
+The hybrid style's imagery source needs `"tileSize": 256`. Without it, MapLibre
+defaults to 512 and requests tiles one zoom level too low. Check
+`tileserver/styles/hybrid/style.local.json` sources section.
+
+**M2M pipeline fills disk**
+The pipeline downloads GeoTIFFs in batches of 50, converts each batch to
+MBTiles, then deletes the raw files. If disk fills, the per-batch cleanup may
+have failed — check staging directories: `du -sh data/m2m_staging_*`. Clean
+with `sudo rm -rf data/m2m_staging_*`.
 
 ## Project structure
 
