@@ -65,11 +65,21 @@
     }
     return fetch(path, opts).then(function (r) {
       if (!r.ok) {
-        return r.json().then(function (err) {
-          throw new Error(err.detail || 'Request failed');
+        return r.text().then(function (text) {
+          try {
+            var err = JSON.parse(text);
+            throw new Error(err.detail || 'Request failed (' + r.status + ')');
+          } catch (e) {
+            if (e.message && e.message.indexOf('Request failed') === 0) throw e;
+            throw new Error('Request failed (' + r.status + '): ' + text.substring(0, 200));
+          }
         });
       }
-      return r.json();
+      return r.text().then(function (text) {
+        if (!text) return {};
+        try { return JSON.parse(text); }
+        catch (e) { throw new Error('Invalid JSON response: ' + text.substring(0, 200)); }
+      });
     });
   }
 

@@ -346,10 +346,10 @@ select:focus {
   border-color: transparent;
 }
 
-.source-btn.active.green { background: var(--accent-green); }
-.source-btn.active.blue { background: var(--accent-blue); }
-.source-btn.active.purple { background: var(--accent-purple); }
-.source-btn.active.orange { background: var(--accent-orange); }
+.layer.green .source-btn.active { background: var(--accent-green); }
+.layer.blue .source-btn.active { background: var(--accent-blue); }
+.layer.purple .source-btn.active { background: var(--accent-purple); }
+.layer.orange .source-btn.active { background: var(--accent-orange); }
 
 /* Zoom slider */
 .zoom-row {
