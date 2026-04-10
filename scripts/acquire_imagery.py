@@ -831,6 +831,7 @@ async def m2m_download_batched(
     staging: Path, checkpoint_path: Path,
     concurrency: int = 3,
     on_batch_complete=None,
+    output_path: Path = None,
 ) -> list[Path]:
     """Download scenes in batches: options → request → poll → download per chunk.
 
@@ -938,6 +939,23 @@ async def m2m_download_batched(
         log.info("Batch %d complete: %d files this batch, %d total downloaded",
                  batch_num, len(batch_paths), total_downloaded)
 
+        # --- Convert this batch immediately and clean up raw GeoTIFFs ---
+        if batch_paths and output_path:
+            log.info("Batch %d: converting %d GeoTIFFs to MBTiles...",
+                     batch_num, len(batch_paths))
+            try:
+                convert_geotiffs_to_mbtiles(batch_paths, output_path)
+                # Delete raw GeoTIFFs after successful conversion
+                for tif_path in batch_paths:
+                    if tif_path.exists():
+                        tif_path.unlink()
+                        log.debug("Deleted converted GeoTIFF: %s", tif_path.name)
+                log.info("Batch %d: converted and cleaned up %d GeoTIFFs",
+                         batch_num, len(batch_paths))
+            except Exception as exc:
+                log.warning("Batch %d: conversion failed (%s) — keeping raw files",
+                            batch_num, exc)
+
         if on_batch_complete:
             total_bytes = sum(
                 Path(p).stat().st_size for p in done.values() if Path(p).exists()
@@ -950,9 +968,10 @@ async def m2m_download_batched(
                 total_batches=total_batches,
             )
 
-    # Return all downloaded files
+    # Return all downloaded files (most will be deleted after conversion)
     all_paths = [Path(p) for p in done.values() if Path(p).exists()]
-    log.info("M2M batched download complete: %d files total", len(all_paths))
+    log.info("M2M batched download complete: %d batches processed, %d files remaining",
+             (total_scenes + M2M_BATCH_SIZE - 1) // M2M_BATCH_SIZE, len(all_paths))
     return all_paths
 
 
@@ -1058,6 +1077,7 @@ async def run_m2m(args):
                 session, api_key, dataset_alias, scenes,
                 staging, checkpoint, concurrency=m2m_concurrency,
                 on_batch_complete=_on_batch,
+                output_path=output,
             )
 
         finally:
@@ -1078,26 +1098,32 @@ async def run_m2m(args):
                         error="All GeoTIFF downloads failed")
         sys.exit(1)
 
-    # --- Convert to MBTiles ---
-    update_progress(output, "m2m", args.bbox, "n/a",
-                    0, 0, phase="converting",
-                    scenes_total=len(scenes),
-                    geotiffs_downloaded=len(tif_paths), geotiffs_total=len(scenes))
-
-    try:
-        convert_geotiffs_to_mbtiles(tif_paths, output)
-    except Exception as exc:
-        log.error("GDAL conversion failed: %s", exc)
+    # Conversion now happens per-batch inside m2m_download_batched.
+    # Any remaining unconverted files (from failed batch conversions) get a final pass.
+    remaining_tifs = [p for p in tif_paths if p.exists()]
+    if remaining_tifs:
+        log.info("Final conversion pass for %d remaining GeoTIFFs", len(remaining_tifs))
         update_progress(output, "m2m", args.bbox, "n/a",
-                        0, 0, status="error", phase="error",
-                        error=f"GDAL conversion failed: {exc}")
-        sys.exit(1)
+                        0, 0, phase="converting",
+                        scenes_total=len(scenes),
+                        geotiffs_downloaded=len(tif_paths), geotiffs_total=len(scenes))
+        try:
+            convert_geotiffs_to_mbtiles(remaining_tifs, output)
+            for p in remaining_tifs:
+                if p.exists():
+                    p.unlink()
+        except Exception as exc:
+            log.error("Final GDAL conversion failed: %s", exc)
+            update_progress(output, "m2m", args.bbox, "n/a",
+                            0, 0, status="error", phase="error",
+                            error=f"GDAL conversion failed: {exc}")
+            sys.exit(1)
 
     update_progress(output, "m2m", args.bbox, "n/a",
                     0, len(scenes), status="completed", phase="complete",
                     scenes_total=len(scenes),
                     geotiffs_downloaded=len(tif_paths), geotiffs_total=len(scenes))
-    log.info("M2M pipeline complete: %d files → %s", len(tif_paths), output)
+    log.info("M2M pipeline complete: %d scenes → %s", len(scenes), output)
 
 
 # ---------------------------------------------------------------------------
