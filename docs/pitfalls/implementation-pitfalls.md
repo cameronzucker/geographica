@@ -42,7 +42,7 @@ When multiple processes read/write the same SQLite database (e.g., pipeline writ
 
 The config panel on port 8097 is bound to 127.0.0.1. Admin endpoints require the `X-Config-Source: internal` header (set by NGINX). Direct API calls from external clients will be rejected.
 
-## 11. MapLibre dragRotate: use .disable()/.enable() AFTER init, NOT constructor options
+## 11. MapLibre dragRotate: must DELETE handlers from _handlersById (disable() alone is insufficient in v5.21+)
 
 **Critical:** To override MapLibre's CTRL+drag rotation behavior (e.g., for custom free-look camera), call `map.dragRotate.disable()` in a setup function AFTER the map is created. Do NOT use `dragRotate: false` in the `new maplibregl.Map()` constructor options.
 

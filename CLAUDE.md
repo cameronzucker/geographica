@@ -23,7 +23,7 @@ Offline-first GIS platform for AREDN mesh networks, running on Raspberry Pi 5.
 # Data pipeline (run once during setup, requires internet)
 pip install -r scripts/requirements.txt
 python scripts/build_poi_index.py --bbox "-124.8,31.3,-102.0,49.0" --states "AZ,CA,CO,ID,MT,NV,NM,OR,UT,WA,WY" --output /srv/geographica/data/poi.sqlite
-python scripts/download_elevation.py --bbox "-124.8,31.3,-102.0,49.0" --zoom 0-12 --output tileserver/elevation.mbtiles
+python scripts/download_elevation.py --bbox "-124.8,31.3,-102.0,49.0" --zoom 0-14 --output /srv/geographica/data/elevation.mbtiles
 python scripts/acquire_imagery.py --mode tnmaccess --bbox "-124.8,31.3,-102.0,49.0" --output /srv/geographica/data/imagery.mbtiles
 
 # OSM POI extraction (run once, requires osmium)
@@ -44,7 +44,7 @@ docker compose down          # stop everything
 
 - Raspberry Pi 5, 16 GB RAM
 - Intel D3-S4610 896 GB SATA SSD (~400 MB/s, boot + data drive)
-- Waveshare LC2H GPS hat (gpsd on /dev/ttyAMA0)
+- Waveshare LC29H GPS hat (gpsd on /dev/ttyAMA0) or USB GPS dongle
 - Hailo 10H NPU (Phase 2, AI voice commands)
 
 ## Testing

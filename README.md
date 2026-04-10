@@ -128,7 +128,7 @@ two phases: **data acquisition** (requires internet, takes several hours) and
 ```bash
 sudo apt update
 sudo apt install -y \
-  docker.io docker-compose \
+  docker.io docker-compose-plugin \
   python3 python3-venv python3-pip \
   gdal-bin osmium-tool \
   gpsd gpsd-clients \
