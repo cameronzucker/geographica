@@ -429,8 +429,8 @@ async def post_launch():
     # Run docker compose up -d
     output_lines: list[str] = []
 
-    def on_output(source: str, data: str):
-        output_lines.append(data)
+    def on_output(source: str, data: bytes):
+        output_lines.append(data.decode("utf-8", errors="replace"))
 
     exit_code = await run_command(
         args=["docker", "compose", "-f", "docker-compose.yml", "up", "-d"],
