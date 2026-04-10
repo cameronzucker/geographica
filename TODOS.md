@@ -120,10 +120,11 @@
 - **Why:** With multiple imagery sources (NAIP, Sentinel-2, direct scraper) at different zoom levels for different regions, it's hard to know what you have without querying MBTiles directly. Users need to see gaps, plan downloads, and verify coverage.
 - **Options:** (a) Admin panel coverage map — query MBTiles metadata/tile counts by zoom and render a coverage heatmap on the minimap, (b) Map toggle overlay — a "Coverage" checkbox that shows colored bounding boxes or tile grid shading indicating which areas have imagery at what resolution, (c) Admin panel table — zoom level × region matrix showing tile counts and estimated coverage percentage.
 
-### M2M pipeline should run in Docker with memory limits
-- **What:** The M2M imagery pipeline currently runs on the host via nohup with no memory limits. The GDAL conversion step can spike to several GB per batch. The Docker pipeline container has a 2G limit and GDAL_CACHEMAX=1024, but host-based runs bypass these.
-- **Why:** An unconstrained GDAL process processing a large GeoTIFF could OOM the Pi 5 and kill other services.
-- **Fix:** Run M2M downloads via `docker compose run pipeline` instead of direct host execution. The pipeline Dockerfile already has the right limits. Alternatively, wrap host-based runs with `systemd-run --scope -p MemoryMax=4G` or set `GDAL_CACHEMAX=1024` in the runner script.
+### Enable cgroup memory limits on Pi 5
+- **What:** Docker memory limits (`memory: 2G` etc.) are silently ignored because the Pi OS kernel doesn't have cgroup memory controller enabled. `docker info` shows "WARNING: No memory limit support".
+- **Why:** ALL Docker memory limits in docker-compose.yml (tileserver 1G, valhalla 4G, nominatim 8G, pipeline 2G) have been doing nothing. Any container can OOM the entire system.
+- **Fix:** Add `cgroup_enable=memory cgroup_memory=1` to `/boot/firmware/cmdline.txt` and reboot. This is a one-line append to the existing kernel parameters. Requires reboot.
+- **Current workaround:** M2M pipeline now runs via `docker compose run` with `GDAL_CACHEMAX=1024` env var. Memory limit is set but unenforced until cgroup fix is applied.
 
 ### Clean up raw GeoTIFF staging files after M2M conversion
 - **Status: FIXED** — per-batch conversion and cleanup implemented in acquire_imagery.py. Each batch of 50 GeoTIFFs is converted then deleted before the next batch downloads.
