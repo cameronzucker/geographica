@@ -149,6 +149,22 @@ docker run --rm hello-world
 docker compose version   # needs v2.x+
 ```
 
+**Enable Docker memory limits** (Raspberry Pi OS only — without this, all
+`memory:` limits in docker-compose.yml are silently ignored):
+
+```bash
+# Check: does Docker support memory limits?
+docker info 2>&1 | grep "memory limit"
+# If it says "No memory limit support", fix with:
+sudo sed -i 's/$/ cgroup_enable=memory cgroup_memory=1/' /boot/firmware/cmdline.txt
+sudo reboot
+```
+
+**Optional: USGS M2M credentials** (for high-resolution NAIP aerial imagery):
+Register at https://ers.cr.usgs.gov/register and generate an API token at
+https://ers.cr.usgs.gov/profile/access. Enter credentials in the admin panel
+(Settings tab) after the stack is running.
+
 ### 1. Clone the repo
 
 ```bash
