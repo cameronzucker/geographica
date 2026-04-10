@@ -120,6 +120,20 @@
 - **Why:** With multiple imagery sources (NAIP, Sentinel-2, direct scraper) at different zoom levels for different regions, it's hard to know what you have without querying MBTiles directly. Users need to see gaps, plan downloads, and verify coverage.
 - **Options:** (a) Admin panel coverage map — query MBTiles metadata/tile counts by zoom and render a coverage heatmap on the minimap, (b) Map toggle overlay — a "Coverage" checkbox that shows colored bounding boxes or tile grid shading indicating which areas have imagery at what resolution, (c) Admin panel table — zoom level × region matrix showing tile counts and estimated coverage percentage.
 
+### M2M pipeline memory tuning for Pi 5 8GB
+- **What:** The M2M pipeline uses 1.5 GB during scene search (13,500 scenes loaded) and 2.2+ GB during batch downloads (50 concurrent, growing). GDAL conversion adds GDAL_CACHEMAX on top. On a 16 GB Pi 5 with services running (~6 GB), this is fine. On an 8 GB Pi 5 (~5-6 GB used by services), it would OOM.
+- **Measured memory profile (Arizona, 13,500 scenes):**
+  - Scene search: 1,246 → 1,506 MB (all scene metadata in memory)
+  - Batch download (50 files, concurrency 3): 2,218 MB and growing
+  - GDAL conversion: TBD (adds GDAL_CACHEMAX on top)
+- **8 GB Pi 5 recommendations:**
+  - Reduce `M2M_BATCH_SIZE` from 50 to 20 (fewer URLs held in memory)
+  - Reduce `--concurrency` from 3 to 1 (one download at a time)
+  - Set `GDAL_CACHEMAX=256` instead of 1024
+  - Process smaller bboxes (county-by-county instead of full state)
+  - Consider streaming scene search results instead of loading all into memory
+- **Implementation:** Add a `--low-memory` flag to `acquire_imagery.py` that sets these conservative defaults automatically. Detect available RAM at startup and warn if below threshold.
+
 ### Enable cgroup memory limits on Pi 5
 - **What:** Docker memory limits (`memory: 2G` etc.) are silently ignored because the Pi OS kernel doesn't have cgroup memory controller enabled. `docker info` shows "WARNING: No memory limit support".
 - **Why:** ALL Docker memory limits in docker-compose.yml (tileserver 1G, valhalla 4G, nominatim 8G, pipeline 2G) have been doing nothing. Any container can OOM the entire system.
