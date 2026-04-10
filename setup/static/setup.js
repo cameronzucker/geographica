@@ -140,18 +140,25 @@
     }
 
     if (currentStep === 2) {
+      // Check if all layers are skipped — bbox is not needed
+      var allSkipped = config.layers.basemap === 'skip' &&
+                       config.layers.base_imagery === 'skip' &&
+                       config.layers.detail_imagery === 'skip' &&
+                       config.layers.elevation === 'skip';
       config.bbox = $('#bbox-input').value.trim();
-      if (!config.bbox) {
-        $('#bbox-hint').textContent = 'Required';
-        $('#bbox-hint').className = 'field-hint error';
-        return;
-      }
-      // Validate bbox format
-      var parts = config.bbox.split(',');
-      if (parts.length !== 4 || parts.some(function (p) { return isNaN(parseFloat(p)); })) {
-        $('#bbox-hint').textContent = 'Must be west,south,east,north';
-        $('#bbox-hint').className = 'field-hint error';
-        return;
+      if (!allSkipped) {
+        if (!config.bbox) {
+          $('#bbox-hint').textContent = 'Required (or skip all data layers)';
+          $('#bbox-hint').className = 'field-hint error';
+          return;
+        }
+        // Validate bbox format
+        var parts = config.bbox.split(',');
+        if (parts.length !== 4 || parts.some(function (p) { return isNaN(parseFloat(p)); })) {
+          $('#bbox-hint').textContent = 'Must be west,south,east,north';
+          $('#bbox-hint').className = 'field-hint error';
+          return;
+        }
       }
       config.base_imagery_zoom = parseInt($('#base-imagery-zoom').value, 10);
     }
