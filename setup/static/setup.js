@@ -115,6 +115,10 @@
       btnNext.style.display = '';
     } else if (n === 5) {
       btnNext.style.display = 'none';
+    } else if (n === 2) {
+      // Button text hints at skip-all behavior
+      btnNext.textContent = isAllSkipped() ? 'Skip to Launch' : 'Next';
+      btnNext.style.display = '';
     } else {
       btnNext.textContent = 'Next';
       btnNext.style.display = '';
@@ -140,11 +144,7 @@
     }
 
     if (currentStep === 2) {
-      // Check if all layers are skipped — bbox is not needed
-      var allSkipped = config.layers.basemap === 'skip' &&
-                       config.layers.base_imagery === 'skip' &&
-                       config.layers.detail_imagery === 'skip' &&
-                       config.layers.elevation === 'skip';
+      var allSkipped = isAllSkipped();
       config.bbox = $('#bbox-input').value.trim();
       if (!allSkipped) {
         if (!config.bbox) {
@@ -152,7 +152,6 @@
           $('#bbox-hint').className = 'field-hint error';
           return;
         }
-        // Validate bbox format
         var parts = config.bbox.split(',');
         if (parts.length !== 4 || parts.some(function (p) { return isNaN(parseFloat(p)); })) {
           $('#bbox-hint').textContent = 'Must be west,south,east,north';
@@ -161,22 +160,18 @@
         }
       }
       config.base_imagery_zoom = parseInt($('#base-imagery-zoom').value, 10);
-    }
 
-    if (currentStep === 3) {
-      // Save config + credentials
-      saveConfig();
-      saveCredentials();
-
-      // If all layers skipped, jump directly to Launch (skip Download step)
-      var allSkipped = config.layers.basemap === 'skip' &&
-                       config.layers.base_imagery === 'skip' &&
-                       config.layers.detail_imagery === 'skip' &&
-                       config.layers.elevation === 'skip';
+      // All skipped: save config now and jump straight to Launch
       if (allSkipped) {
+        saveConfig();
         showStep(5);
         return;
       }
+    }
+
+    if (currentStep === 3) {
+      saveConfig();
+      saveCredentials();
     }
 
     if (currentStep === 4) {
@@ -187,10 +182,21 @@
     showStep(currentStep + 1);
   }
 
+  function isAllSkipped() {
+    return config.layers.basemap === 'skip' &&
+           config.layers.base_imagery === 'skip' &&
+           config.layers.detail_imagery === 'skip' &&
+           config.layers.elevation === 'skip';
+  }
+
   function prevStep() {
-    if (currentStep > 1) {
-      showStep(currentStep - 1);
+    if (currentStep <= 1) return;
+    // If on Launch (5) and all data was skipped, go back to Region (2) not Download (4)
+    if (currentStep === 5 && isAllSkipped()) {
+      showStep(2);
+      return;
     }
+    showStep(currentStep - 1);
   }
 
   // ---------------------------------------------------------------------------
@@ -449,11 +455,12 @@
   }
 
   function updateSkipAllWarning() {
-    var allSkipped = config.layers.basemap === 'skip' &&
-                     config.layers.base_imagery === 'skip' &&
-                     config.layers.detail_imagery === 'skip' &&
-                     config.layers.elevation === 'skip';
-    $('#skip-all-box').style.display = allSkipped ? '' : 'none';
+    var skipped = isAllSkipped();
+    $('#skip-all-box').style.display = skipped ? '' : 'none';
+    // Update Next button text dynamically on Step 2
+    if (currentStep === 2) {
+      $('#btn-next').textContent = skipped ? 'Skip to Launch' : 'Next';
+    }
   }
 
   // ---------------------------------------------------------------------------
