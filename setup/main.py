@@ -19,11 +19,11 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from config import (
+from setup.config import (
     validate_bbox, get_ram_profile, detect_host_ip,
     detect_ram_mb, detect_storage, generate_env, REGION_PRESETS,
 )
-from runner import Checkpoint, run_command, shutdown_children
+from setup.runner import Checkpoint, run_command, shutdown_children
 
 # ---------------------------------------------------------------------------
 # Constants
