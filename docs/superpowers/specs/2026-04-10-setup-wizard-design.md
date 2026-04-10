@@ -1,7 +1,7 @@
 # Setup Wizard
 
 **Date:** 2026-04-10
-**Status:** Draft
+**Status:** Approved (revised after 5-round adversarial review: Opus, Haiku, Codex)
 **Replaces:** Manual README steps 2-12
 
 ## Problem
@@ -366,8 +366,59 @@ python3 -m uvicorn setup.main:app --host 127.0.0.1 --port 8099
 - GPS hardware configuration (gpsd socket override) — manual, optional
 - Hailo NPU setup — future, requires hardware
 
+## Adversarial Review Findings (incorporated)
+
+These findings from 5-round adversarial review (Opus, Haiku, Codex) are incorporated into the design:
+
+### Cut from v1 (YAGNI)
+
+- **ACME/CA polling** — complex, adds SSRF risk, not needed when HTTP + self-signed + existing cert covers all practical cases. Removed from TLS configuration options.
+- **Certificate discovery of /etc/ssl/certs/** — scans CA roots, not server certs. Confuses users. Limit discovery to: `/etc/letsencrypt/live/*/`, `/srv/geographica/tls/`, and user-specified paths only. Never read private key file contents — only check existence.
+
+### Security requirements
+
+- **CSRF protection:** Generate a random token at wizard startup, embed in served HTML, validate on all mutating API endpoints. Set `Access-Control-Allow-Origin` to reject non-localhost origins.
+- **Bbox validation:** All bbox coordinates must be parsed as floats and validated (`-180 <= lon <= 180`, `-90 <= lat <= 90`, `west < east`, `south < north`) before being passed to any subprocess.
+- **Credential path hardcoded:** The credentials output path (`/srv/geographica/data/credentials.json`) is hardcoded in the backend. Never accept a file path from the client for credential storage.
+- **bootstrap.sh safety:** Refuse to run if the repo directory is world-writable. Print warning directing users to clone into their home directory.
+
+### Process lifecycle
+
+- **Subprocess tracking:** Track all child PIDs. On WebSocket disconnect, let running subprocesses finish (don't kill mid-write). On server shutdown (SIGTERM), send SIGTERM to child process group and wait for graceful exit.
+- **Inactivity timer:** "Activity" is defined as: subprocess running OR WebSocket connected OR HTTP request within 30 minutes. Long downloads keep the server alive.
+- **WebSocket reconnect:** Server maintains a ring buffer of recent progress events + current state summary. On WebSocket connect, send full current state before streaming live updates.
+- **Subprocess pipe management:** Spawn with both stdout/stderr pipes, consume concurrently with separate asyncio tasks. Use chunk-based streaming (not strictly line-by-line) to handle tqdm progress bars and Docker build output. Force `PYTHONUNBUFFERED=1` for Python child scripts.
+
+### Resume and idempotency
+
+- **Checkpoint file:** Wizard writes `.wizard_checkpoint.json` tracking completed substeps (osm_downloaded, planetiler_done, elevation_done, etc.). On re-run, skip completed steps and offer "Resume from step X" or "Start over."
+- **Existing .env detection:** If `.env` exists on wizard startup, parse it and pre-populate wizard fields with existing values. Warn: "Previous configuration detected."
+- **Storage path changes:** If user selects a different storage path than the current symlink target, warn that data at the old path will be orphaned. Offer to move it or leave it.
+
+### Compose override strategy
+
+- **Dedicated file:** Use `docker-compose.wizard.yml` (not `docker-compose.override.yml`) to avoid clobbering user customizations. Pass via `docker compose -f docker-compose.yml -f docker-compose.wizard.yml up -d`. Remove the wizard file after all services are healthy.
+
+### UI corrections
+
+- **Skip-all warning text:** Corrected to: "Geocoding, routing, and spatial search will not function until data is downloaded. The admin panel supports imagery downloads only. To download basemap, elevation, or POI data later, re-run `./setup`."
+- **Region presets:** Include international regions (Europe, Asia-Pacific, Africa, South America) in addition to US regions. Label US presets as optimized. Custom bbox always available.
+- **Disk estimates:** Show ranges, not fixed numbers. Update dynamically based on selected region. Add note: "Estimates based on historical downloads, may vary ±15%."
+- **Disk monitoring:** Periodic disk space check during Step 4. Warn if <10 GB remaining, abort if <5 GB.
+
+### Dependency management
+
+- **Venv isolation:** Wizard uses `setup/.venv` (separate from project `.venv` used by pipeline scripts). No conflict.
+- **Vendor JS files:** Commit `frontend/vendor/*.js` and `*.css` to the repo (they're small, pinned versions). Eliminates npm AND wget-from-registry during setup. The setup wizard no longer needs to download vendor libs — they're already in the repo.
+- **FastAPI startup time:** Accept the pip install cost for v1. Document expected time (~1-2 min on Pi 5). Consider vendoring wheels in a future release.
+
+### Planetiler image pull
+
+- **Pre-pull in Step 4:** Before running Planetiler, explicitly `docker pull ghcr.io/onthegomap/planetiler:0.10.2` as a visible substep with progress indicator. Don't let it happen silently inside `docker run`.
+
 ## Testing
 
 - Unit tests for config generation (.env output, RAM profile selection, bbox validation)
 - Integration test: run wizard in LXD container (reuse existing validation harness)
 - No Playwright tests for the wizard UI itself (vanilla JS, manual verification)
+- Security: test CSRF token validation, bbox injection attempts, credential path hardcoding
