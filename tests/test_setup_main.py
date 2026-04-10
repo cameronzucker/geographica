@@ -1,0 +1,237 @@
+"""Tests for setup/main.py — FastAPI setup wizard with CSRF protection."""
+import sys
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "setup"))
+
+from main import app, CSRF_TOKEN, CREDENTIALS_PATH, current_state
+from fastapi.testclient import TestClient
+
+
+class TestCSRFProtection:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = TestClient(app)
+
+    def test_post_without_csrf_returns_403(self):
+        resp = self.client.post("/api/validate-bbox",
+            json={"bbox": "-114.8,31.3,-109.0,37.0"})
+        assert resp.status_code == 403
+
+    def test_post_with_wrong_csrf_returns_403(self):
+        resp = self.client.post("/api/validate-bbox",
+            json={"bbox": "-114.8,31.3,-109.0,37.0"},
+            headers={"X-CSRF-Token": "wrong"})
+        assert resp.status_code == 403
+
+    def test_post_with_correct_csrf_succeeds(self):
+        resp = self.client.post("/api/validate-bbox",
+            json={"bbox": "-114.8,31.3,-109.0,37.0"},
+            headers={"X-CSRF-Token": CSRF_TOKEN})
+        assert resp.status_code == 200
+
+    def test_get_does_not_require_csrf(self):
+        resp = self.client.get("/api/system")
+        assert resp.status_code == 200
+
+    def test_csrf_token_is_64_hex_chars(self):
+        assert len(CSRF_TOKEN) == 64
+        assert all(c in "0123456789abcdef" for c in CSRF_TOKEN)
+
+
+class TestSystemEndpoint:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = TestClient(app)
+
+    def test_system_returns_json(self):
+        resp = self.client.get("/api/system")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "host_ip" in data
+        assert "ram_mb" in data
+        assert "storage" in data
+        assert "existing_env" in data
+
+    def test_ram_mb_is_positive(self):
+        resp = self.client.get("/api/system")
+        assert resp.json()["ram_mb"] > 0
+
+    def test_ram_profile_included(self):
+        resp = self.client.get("/api/system")
+        data = resp.json()
+        assert "ram_profile" in data
+        assert "nominatim_memory" in data["ram_profile"]
+
+
+class TestPresetsEndpoint:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = TestClient(app)
+
+    def test_returns_presets(self):
+        resp = self.client.get("/api/presets")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "western_us" in data
+        assert "arizona" in data
+
+    def test_presets_have_bbox(self):
+        resp = self.client.get("/api/presets")
+        data = resp.json()
+        for name, preset in data.items():
+            assert "bbox" in preset, f"Preset {name} missing bbox"
+
+
+class TestBboxValidation:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = TestClient(app)
+        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+    def test_valid_bbox(self):
+        resp = self.client.post("/api/validate-bbox",
+            json={"bbox": "-114.8,31.3,-109.0,37.0"},
+            headers=self.headers)
+        assert resp.json()["valid"] is True
+
+    def test_invalid_bbox(self):
+        resp = self.client.post("/api/validate-bbox",
+            json={"bbox": "abc,31.3,-102.0,49.0"},
+            headers=self.headers)
+        assert resp.json()["valid"] is False
+
+    def test_empty_bbox(self):
+        resp = self.client.post("/api/validate-bbox",
+            json={"bbox": ""},
+            headers=self.headers)
+        assert resp.json()["valid"] is False
+
+
+class TestConfigEndpoint:
+    @pytest.fixture(autouse=True)
+    def setup(self, tmp_path):
+        self.client = TestClient(app)
+        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+        self.env_file = tmp_path / ".env"
+
+    def test_config_writes_env(self, tmp_path, monkeypatch):
+        env_path = tmp_path / ".env"
+        monkeypatch.setattr("main.ENV_PATH", str(env_path))
+        resp = self.client.post("/api/config", json={
+            "host_ip": "10.0.0.1",
+            "tls_mode": "none",
+            "bbox": "-114.8,31.3,-109.0,37.0",
+            "data_path": "/srv/geographica/data",
+        }, headers=self.headers)
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert env_path.exists()
+        content = env_path.read_text()
+        assert "HOST_IP=10.0.0.1" in content
+
+    def test_config_rejects_invalid_bbox(self, tmp_path, monkeypatch):
+        env_path = tmp_path / ".env"
+        monkeypatch.setattr("main.ENV_PATH", str(env_path))
+        resp = self.client.post("/api/config", json={
+            "host_ip": "10.0.0.1",
+            "tls_mode": "none",
+            "bbox": "not-a-bbox",
+            "data_path": "/srv/geographica/data",
+        }, headers=self.headers)
+        assert resp.status_code == 400
+
+
+class TestCredentialsEndpoint:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = TestClient(app)
+        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+    def test_credentials_path_is_hardcoded(self):
+        assert CREDENTIALS_PATH == "/srv/geographica/data/credentials.json"
+
+    def test_credentials_writes_file(self, tmp_path, monkeypatch):
+        cred_path = tmp_path / "credentials.json"
+        monkeypatch.setattr("main.CREDENTIALS_PATH", str(cred_path))
+        resp = self.client.post("/api/credentials", json={
+            "m2m_username": "user",
+            "m2m_token": "tok",
+            "copernicus_client_id": "cid",
+            "copernicus_client_secret": "csec",
+        }, headers=self.headers)
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        import json
+        data = json.loads(cred_path.read_text())
+        assert data["m2m_username"] == "user"
+
+    def test_credentials_requires_csrf(self):
+        resp = self.client.post("/api/credentials", json={
+            "m2m_username": "user",
+            "m2m_token": "tok",
+            "copernicus_client_id": "cid",
+            "copernicus_client_secret": "csec",
+        })
+        assert resp.status_code == 403
+
+
+class TestStatusEndpoint:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = TestClient(app)
+
+    def test_returns_state(self):
+        resp = self.client.get("/api/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "step" in data
+        assert "running" in data
+
+    def test_initial_state_is_idle(self):
+        resp = self.client.get("/api/status")
+        data = resp.json()
+        assert data["step"] == "idle"
+        assert data["running"] is False
+
+
+class TestIndexRoute:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = TestClient(app)
+
+    def test_index_returns_html(self, tmp_path, monkeypatch):
+        static_dir = tmp_path / "static"
+        static_dir.mkdir()
+        index = static_dir / "index.html"
+        index.write_text('<html><meta name="csrf-token" content="PLACEHOLDER"></html>')
+        monkeypatch.setattr("main.STATIC_DIR", str(static_dir))
+        resp = self.client.get("/")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        assert CSRF_TOKEN in resp.text
+        assert "PLACEHOLDER" not in resp.text
+
+
+class TestCORSHeaders:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = TestClient(app)
+
+    def test_cors_allows_localhost_8099(self):
+        resp = self.client.options("/api/system", headers={
+            "Origin": "http://localhost:8099",
+            "Access-Control-Request-Method": "GET",
+        })
+        assert resp.headers.get("access-control-allow-origin") == "http://localhost:8099"
+
+    def test_cors_rejects_other_origin(self):
+        resp = self.client.options("/api/system", headers={
+            "Origin": "http://evil.com",
+            "Access-Control-Request-Method": "GET",
+        })
+        # Should not include the evil origin
+        assert resp.headers.get("access-control-allow-origin") != "http://evil.com"
