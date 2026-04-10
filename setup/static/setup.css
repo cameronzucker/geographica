@@ -350,6 +350,7 @@ select:focus {
 .layer.blue .source-btn.active { background: var(--accent-blue); }
 .layer.purple .source-btn.active { background: var(--accent-purple); }
 .layer.orange .source-btn.active { background: var(--accent-orange); }
+.source-btn.active[data-value="skip"] { background: var(--accent-red); }
 
 /* Zoom slider */
 .zoom-row {
