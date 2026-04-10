@@ -70,11 +70,26 @@ setup/
 | Total RAM | `/proc/meminfo` | — (display only) |
 | Available disk | `shutil.disk_usage()` on data path | — (display only) |
 
-**TLS mode selector:**
-- HTTP (default) — no certs needed
-- HTTPS (custom certificate) — user provides cert/key file paths. Wizard validates files exist and are PEM-formatted. Runs `scripts/generate_tls.sh` for self-signed option.
+**TLS configuration:**
 
-No Tailscale-specific option. Users who want Tailscale TLS follow the existing manual Tailscale setup docs after the wizard completes.
+| Option | What happens | When to use |
+|--------|-------------|-------------|
+| **HTTP only** (default) | No TLS. NGINX serves port 80 only. | LAN-only deployments, AREDN mesh |
+| **Generate self-signed** | Wizard runs `generate_tls.sh`, NGINX serves on 443. Browser shows cert warning. | Quick HTTPS for testing, local development |
+| **Use existing certificate** | User provides cert + key file paths, OR browses detected certs. Wizard validates PEM format. | User has a cert from a CA, corporate PKI, etc. |
+| **External proxy / tunnel** | NGINX stays on HTTP. TLS is terminated by an external service. | Cloudflare Tunnel, Tailscale Funnel, reverse proxy |
+
+**Certificate discovery:** The wizard scans common cert locations and presents any found certificates:
+- `/etc/ssl/certs/` and `/etc/ssl/private/`
+- `/etc/letsencrypt/live/*/`
+- `/srv/geographica/tls/` and `/srv/geographica/tls/tailscale/`
+- User-specified custom path
+
+For each found cert, show: filename, subject CN, issuer, expiration date. User selects one or enters a custom path.
+
+**ACME / CA polling (optional):** User can specify an ACME directory URL (e.g., Let's Encrypt, ZeroSSL, internal CA). Wizard uses a lightweight ACME client to request a cert for the configured hostname. This is how Tailscale's `tailscale cert` works under the hood — but generalized. If the user has Tailscale installed, the wizard can detect it and offer to run `provision_tailscale_tls.sh` automatically.
+
+**"External proxy" option explained:** When the user selects this, the wizard explains: "Your reverse proxy (Cloudflare, Tailscale Funnel, etc.) handles TLS termination. NGINX will serve HTTP only. Your proxy forwards traffic to this Pi's HTTP port (8093). No certificate configuration needed here."
 
 **RAM profile:**
 
