@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="PLACEHOLDER">
+  <title>Geographica Setup</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="/static/setup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Geographica Setup</h1>
+
+    <!-- Step indicators -->
+    <div class="wizard-tabs">
+      <div class="wizard-tab active" data-step="1">1. Network</div>
+      <div class="wizard-tab" data-step="2">2. Region</div>
+      <div class="wizard-tab" data-step="3">3. Credentials</div>
+      <div class="wizard-tab" data-step="4">4. Download</div>
+      <div class="wizard-tab" data-step="5">5. Launch</div>
+    </div>
+
+    <!-- Step 1: Network & System -->
+    <div class="step" id="step-1">
+      <h2>Network &amp; System</h2>
+      <p class="subtitle">Auto-detected system configuration. Override values if needed.</p>
+
+      <div class="field-group">
+        <label for="host-ip">Host IP Address</label>
+        <div class="field-row">
+          <input type="text" id="host-ip" placeholder="Detecting...">
+          <span class="field-hint" id="host-ip-hint">Auto-detected</span>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <label for="tls-mode">TLS Mode</label>
+        <select id="tls-mode">
+          <option value="http">HTTP (no encryption)</option>
+          <option value="self-signed">Self-signed certificate</option>
+          <option value="existing">Existing certificate</option>
+          <option value="external">External proxy (Tailscale, etc.)</option>
+        </select>
+        <span class="field-hint" id="tls-hint"></span>
+      </div>
+
+      <div class="field-group" id="tls-cert-group" style="display:none">
+        <label>Available Certificates</label>
+        <div id="tls-cert-list" class="cert-list">
+          <span class="field-hint">Scanning...</span>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <label>RAM Profile</label>
+        <div class="ram-display">
+          <span id="ram-amount">Detecting...</span>
+          <span class="field-hint" id="ram-profile-hint"></span>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <label for="data-path">Data Storage Path</label>
+        <select id="data-path">
+          <option value="/srv/geographica/data">/srv/geographica/data (default)</option>
+        </select>
+        <div id="storage-info" class="storage-info"></div>
+      </div>
+    </div>
+
+    <!-- Step 2: Region & Data -->
+    <div class="step" id="step-2" style="display:none">
+      <h2>Region &amp; Data</h2>
+      <p class="subtitle">Each layer has independent coverage. Configure from broadest to most detailed.</p>
+
+      <div class="field-group">
+        <label for="preset-select">Region Preset</label>
+        <select id="preset-select">
+          <option value="">-- Select a preset --</option>
+        </select>
+      </div>
+
+      <div class="field-group">
+        <label for="bbox-input">Bounding Box (west,south,east,north)</label>
+        <input type="text" id="bbox-input" placeholder="-124.8,31.3,-102.0,49.0">
+        <span class="field-hint" id="bbox-hint"></span>
+      </div>
+
+      <div id="region-map" class="map-container"></div>
+
+      <!-- Layer 1: Basemap -->
+      <div class="layer green">
+        <div class="layer-header">
+          <div><strong>1. Basemap Coverage</strong> <span class="layer-desc">Vector tiles + geocoding + routing</span></div>
+          <span class="badge">Broadest area</span>
+        </div>
+        <div class="layer-body">
+          <div class="layer-info">
+            <p class="layer-note">Uses the bounding box selected above. Includes OSM data, Planetiler basemap, Valhalla routing, and Nominatim geocoding.</p>
+            <div class="source-btns">
+              <button class="source-btn active green" data-layer="basemap" data-value="download">Download</button>
+              <button class="source-btn" data-layer="basemap" data-value="skip">Skip</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Layer 2: Base Imagery -->
+      <div class="layer blue">
+        <div class="layer-header">
+          <div><strong>2. Base Imagery</strong> <span class="layer-desc">Satellite/aerial background</span></div>
+          <span class="badge">Medium area</span>
+        </div>
+        <div class="layer-body">
+          <div class="layer-info">
+            <div class="layer-label">Source:</div>
+            <div class="source-btns">
+              <button class="source-btn active blue" data-layer="base_imagery" data-value="naip">NAIP (0.6m, US)</button>
+              <button class="source-btn" data-layer="base_imagery" data-value="sentinel">Sentinel-2 (10m, global)</button>
+              <button class="source-btn" data-layer="base_imagery" data-value="skip">Skip</button>
+            </div>
+            <div class="layer-label">Zoom level:</div>
+            <div class="zoom-row">
+              <input type="range" id="base-imagery-zoom" min="10" max="17" value="15">
+              <span class="zoom-val" id="base-imagery-zoom-val">z15</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Layer 3: Detail Imagery -->
+      <div class="layer purple">
+        <div class="layer-header">
+          <div><strong>3. Detail Imagery</strong> <span class="layer-desc">High-res via M2M or Copernicus</span></div>
+          <span class="badge">Smallest area</span>
+        </div>
+        <div class="layer-body">
+          <div class="layer-info">
+            <div class="layer-label">Source:</div>
+            <div class="source-btns">
+              <button class="source-btn active purple" data-layer="detail_imagery" data-value="m2m">USGS M2M API</button>
+              <button class="source-btn" data-layer="detail_imagery" data-value="copernicus">Copernicus</button>
+              <button class="source-btn" data-layer="detail_imagery" data-value="skip">Skip</button>
+            </div>
+            <div class="warning-note" id="detail-cred-warning">Requires API credentials (configured in next step)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Layer 4: Elevation -->
+      <div class="layer orange">
+        <div class="layer-header">
+          <div><strong>4. Elevation Data</strong> <span class="layer-desc">Terrain-RGB for 3D + hillshade</span></div>
+          <span class="badge">Same as basemap</span>
+        </div>
+        <div class="layer-body">
+          <div class="layer-info">
+            <div class="source-btns">
+              <button class="source-btn active orange" data-layer="elevation" data-value="download">Download (z0-14)</button>
+              <button class="source-btn" data-layer="elevation" data-value="skip">Skip</button>
+            </div>
+            <p class="compact-note">Coverage matches basemap bbox. Source: AWS Terrain Tiles (free). Without elevation, 3D terrain and hillshade will be unavailable.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Skip all warning -->
+      <div class="skip-box" id="skip-all-box" style="display:none">
+        <div class="skip-icon">&#x26A0;</div>
+        <div>
+          <div class="skip-title">All data layers skipped</div>
+          <div class="skip-desc">Geocoding, routing, and spatial search will not function until data is downloaded. The admin panel supports imagery downloads only. To download basemap, elevation, or POI data later, re-run ./setup.sh.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: Credentials -->
+    <div class="step" id="step-3" style="display:none">
+      <h2>API Credentials</h2>
+      <p class="subtitle">Enter credentials for selected imagery sources. You can skip this if you chose to skip imagery layers.</p>
+
+      <div id="cred-m2m-group" class="cred-group">
+        <h3>USGS M2M API</h3>
+        <div class="field-group">
+          <label for="m2m-username">Username</label>
+          <input type="text" id="m2m-username" placeholder="USGS EarthExplorer username">
+        </div>
+        <div class="field-group">
+          <label for="m2m-token">API Token</label>
+          <input type="password" id="m2m-token" placeholder="M2M API token">
+        </div>
+      </div>
+
+      <div id="cred-copernicus-group" class="cred-group" style="display:none">
+        <h3>Copernicus Data Space</h3>
+        <div class="field-group">
+          <label for="copernicus-client-id">Client ID</label>
+          <input type="text" id="copernicus-client-id" placeholder="OAuth2 Client ID">
+        </div>
+        <div class="field-group">
+          <label for="copernicus-client-secret">Client Secret</label>
+          <input type="password" id="copernicus-client-secret" placeholder="OAuth2 Client Secret">
+        </div>
+      </div>
+
+      <div id="cred-none-msg" style="display:none">
+        <p class="field-hint">No imagery sources requiring credentials were selected. You can proceed to the next step.</p>
+      </div>
+
+      <button class="btn btn-secondary" id="btn-skip-creds">Skip credentials</button>
+    </div>
+
+    <!-- Step 4: Download & Build -->
+    <div class="step" id="step-4" style="display:none">
+      <h2>Download &amp; Build</h2>
+      <p class="subtitle">Pipeline progress. This may take several hours depending on region size.</p>
+
+      <div class="progress-overview">
+        <div class="progress-bar-container">
+          <div class="progress-bar" id="pipeline-progress" style="width:0%"></div>
+        </div>
+        <span class="progress-pct" id="pipeline-pct">0%</span>
+      </div>
+
+      <div class="substep-list" id="substep-list"></div>
+
+      <div class="log-viewer-toggle">
+        <button class="btn btn-secondary btn-small" id="btn-toggle-log">Show log</button>
+      </div>
+      <div class="log-viewer" id="log-viewer" style="display:none">
+        <pre id="log-output"></pre>
+      </div>
+    </div>
+
+    <!-- Step 5: Launch & Verify -->
+    <div class="step" id="step-5" style="display:none">
+      <h2>Launch &amp; Verify</h2>
+      <p class="subtitle">Docker Compose stack health status.</p>
+
+      <div id="service-health" class="service-health"></div>
+
+      <div id="launch-actions">
+        <button class="btn btn-primary" id="btn-launch">Launch Stack</button>
+      </div>
+
+      <div id="completion-msg" style="display:none">
+        <div class="completion-box">
+          <h3>Setup Complete</h3>
+          <p>All services are running. Open the main application:</p>
+          <a id="app-link" class="btn btn-primary" href="/" target="_blank">Open Geographica</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navigation buttons -->
+    <div class="nav-buttons">
+      <button class="btn btn-secondary" id="btn-back" style="display:none">Back</button>
+      <button class="btn btn-primary" id="btn-next">Next</button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="/static/setup.js"></script>
+</body>
+</html>
