@@ -95,7 +95,7 @@ def filter_tiles_by_bbox(
             "ogr2ogr", "-f", "CSV", "/dev/stdout",
             str(shapefile_path),
             "-spat", str(west), str(south), str(east), str(north),
-            "-geom=NO",
+            "-select", "filename",
         ],
         capture_output=True, text=True, timeout=60,
     )
@@ -107,24 +107,12 @@ def filter_tiles_by_bbox(
     if len(lines) <= 1:
         return []
 
-    # Find the FileName column index (NOAA shapefiles use various column names)
-    headers = lines[0].split(",")
-    try:
-        fname_idx = next(
-            i for i, h in enumerate(headers)
-            if h.strip().strip('"').lower() in ("filename", "name", "url", "location")
-        )
-    except StopIteration:
-        log.error("ogr2ogr CSV has no FileName column. Headers: %s", headers)
-        return []
-
+    # With -select filename, output is: "filename\nfile1.tif\nfile2.tif\n..."
     filenames = []
     for line in lines[1:]:
-        cols = line.split(",")
-        if len(cols) > fname_idx:
-            fname = cols[fname_idx].strip().strip('"')
-            if fname.endswith(".tif"):
-                filenames.append(fname)
+        fname = line.strip().strip('"')
+        if fname.endswith(".tif"):
+            filenames.append(fname)
     return filenames
 
 
