@@ -355,10 +355,11 @@ async def download_scene(session: aiohttp.ClientSession, scene: dict,
         raise RuntimeError("Insufficient disk space")
 
     async with semaphore:
-        token = await auth.ensure_valid_token(session)
-        headers = {"Authorization": f"Bearer {token}"}
-
         for attempt in range(MAX_RETRIES):
+            # Refresh token before each attempt (B5 fix: token may expire during retries)
+            token = await auth.ensure_valid_token(session)
+            headers = {"Authorization": f"Bearer {token}"}
+
             try:
                 # SECURITY: Never set ssl=False or verify_ssl=False
                 async with session.get(url, headers=headers,
@@ -528,28 +529,45 @@ async def run_pipeline(args):
         update_progress(output, "downloading", items_total=len(scenes), bbox=args.bbox)
         semaphore = asyncio.Semaphore(args.concurrency)
         downloaded_files = []
+        download_errors: list[str] = []
+        completed_count = 0
 
-        for i, scene in enumerate(scenes):
+        async def _download_one(scene: dict, index: int) -> Path | None:
+            """Download a single scene, respecting cancellation."""
+            nonlocal completed_count
             if _cancel_requested:
-                update_progress(output, "downloading", status="cancelled",
-                                items_done=len(downloaded_files), items_total=len(scenes),
-                                bbox=args.bbox)
-                return
-
+                return None
             try:
                 result = await download_scene(session, scene, staging, auth, semaphore)
-                if result:
-                    downloaded_files.append(result)
+                completed_count += 1
+                update_progress(output, "downloading",
+                                items_done=completed_count, items_total=len(scenes),
+                                detail=f"downloading: {completed_count}/{len(scenes)} scenes",
+                                bbox=args.bbox)
+                return result
             except RuntimeError as exc:
-                log.error("Download aborted: %s", exc)
+                download_errors.append(str(exc))
+                return None
+
+        results = await asyncio.gather(
+            *[_download_one(scene, i) for i, scene in enumerate(scenes)],
+            return_exceptions=False,
+        )
+
+        downloaded_files = [r for r in results if r is not None]
+
+        if download_errors:
+            log.error("Download errors: %s", "; ".join(download_errors))
+            if not downloaded_files:
                 update_progress(output, "downloading", status="error",
-                                error=str(exc), bbox=args.bbox)
+                                error=download_errors[0], bbox=args.bbox)
                 return
 
-            update_progress(output, "downloading", items_done=i + 1,
-                            items_total=len(scenes),
-                            detail=f"downloading: {i+1}/{len(scenes)} scenes",
+        if _cancel_requested:
+            update_progress(output, "downloading", status="cancelled",
+                            items_done=len(downloaded_files), items_total=len(scenes),
                             bbox=args.bbox)
+            return
 
     if not downloaded_files:
         log.warning("No files downloaded successfully")
