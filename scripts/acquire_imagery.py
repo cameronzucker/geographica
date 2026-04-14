@@ -1679,23 +1679,32 @@ async def run_noaa(args):
 
         from pipeline_security import validate_file_header
 
-        # Pipelined processing: download tile N+1 while reprojecting+converting tile N.
-        # This overlaps ~100s of GDAL work with the next ~150s download, ~40% faster.
-        # At most 2 raw tiles on disk simultaneously (~1 GB peak staging).
+        # Concurrent pipeline: up to DOWNLOAD_CONCURRENCY tiles downloading
+        # simultaneously, feeding a processing queue. GDAL processing runs
+        # in a thread pool (one at a time — MBTiles merge is not thread-safe).
+        # Pi 5 has 4 cores and 8+ GB free RAM; 3 concurrent downloads keep
+        # the network saturated while CPU stays busy with reproject+convert.
+        DOWNLOAD_CONCURRENCY = 3  # tiles downloading simultaneously
+        download_sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
+        process_queue = asyncio.Queue(maxsize=DOWNLOAD_CONCURRENCY)
+        loop = asyncio.get_event_loop()
 
         async def _download_tile(tile_fname):
-            """Download and validate a single tile. Returns raw_path or None."""
+            """Download and validate a single tile. Returns (fname, path) or (fname, None)."""
             url = f"{blob_base}/{tile_fname}"
             dest = staging / tile_fname
-            ok = await fetch_to_file(session, url, dest, timeout_s=3600,
-                                     max_size=NOAA_MAX_GEOTIFF_SIZE)
+            async with download_sem:
+                if _cancel_requested:
+                    return (tile_fname, None)
+                ok = await fetch_to_file(session, url, dest, timeout_s=3600,
+                                         max_size=NOAA_MAX_GEOTIFF_SIZE)
             if not ok:
-                return None
+                return (tile_fname, None)
             if not validate_file_header(dest, "geotiff"):
                 log.error("Invalid GeoTIFF header for %s — removing", tile_fname)
                 dest.unlink(missing_ok=True)
-                return None
-            return dest
+                return (tile_fname, None)
+            return (tile_fname, dest)
 
         def _process_tile(raw_path, tile_fname, idx):
             """Reproject + convert a downloaded tile. Returns True on success."""
@@ -1716,90 +1725,98 @@ async def run_noaa(args):
 
             raw_path.unlink(missing_ok=True)
 
+            # MBTiles merge is not thread-safe — must be serialized
             ok = convert_batch_to_mbtiles([warped_path], output, f"noaa_tile_{idx}")
             warped_path.unlink(missing_ok=True)
             return ok
 
-        # Start first download
-        pending_download = None
-        if tile_filenames:
-            log.info("[1/%d] Downloading %s (~%d MB)",
-                     total_tiles, tile_filenames[0], NOAA_TILE_SIZE_MB)
-            update_progress(output, "noaa", args.bbox, "n/a",
-                            0, total_tiles, phase="downloading",
-                            geotiffs_downloaded=0, geotiffs_total=total_tiles)
-            pending_download = asyncio.ensure_future(
-                _download_tile(tile_filenames[0])
-            )
+        async def _producer():
+            """Download tiles concurrently and feed into the process queue."""
+            download_tasks = []
+            for idx, fname in enumerate(tile_filenames):
+                if _cancel_requested:
+                    break
+                log.info("[%d/%d] Downloading %s (~%d MB)",
+                         idx + 1, total_tiles, fname, NOAA_TILE_SIZE_MB)
+                task = asyncio.ensure_future(_download_tile(fname))
+                download_tasks.append((idx, fname, task))
 
-        for idx, tile_filename in enumerate(tile_filenames):
-            if _cancel_requested:
-                if pending_download and not pending_download.done():
-                    pending_download.cancel()
-                log.info("Cancellation requested after %d/%d tiles", tiles_done, total_tiles)
+                # When we have DOWNLOAD_CONCURRENCY tasks in flight, wait for
+                # the oldest to finish and push it to the process queue
+                if len(download_tasks) >= DOWNLOAD_CONCURRENCY:
+                    oldest_idx, oldest_fname, oldest_task = download_tasks.pop(0)
+                    dl_fname, dl_path = await oldest_task
+                    await process_queue.put((oldest_idx, dl_fname, dl_path))
+
+            # Drain remaining downloads
+            for idx, fname, task in download_tasks:
+                if _cancel_requested:
+                    task.cancel()
+                    continue
+                dl_fname, dl_path = await task
+                await process_queue.put((idx, dl_fname, dl_path))
+
+            # Signal end of downloads
+            await process_queue.put(None)
+
+        async def _consumer():
+            """Process downloaded tiles sequentially (MBTiles merge not thread-safe)."""
+            nonlocal tiles_done, tiles_failed
+            while True:
+                item = await process_queue.get()
+                if item is None:
+                    break
+                idx, tile_fname, raw_path = item
+
+                if _cancel_requested or raw_path is None:
+                    if raw_path:
+                        raw_path.unlink(missing_ok=True)
+                    if raw_path is None:
+                        tiles_failed += 1
+                    continue
+
+                log.info("[%d/%d] Reprojecting + converting %s",
+                         idx + 1, total_tiles, tile_fname)
                 update_progress(output, "noaa", args.bbox, "n/a",
-                                tiles_done, total_tiles, status="cancelled",
-                                phase="cancelled",
+                                tiles_done, total_tiles, phase="converting",
                                 geotiffs_downloaded=tiles_done,
                                 geotiffs_total=total_tiles)
-                return
 
-            # Wait for this tile's download to complete
-            raw_path = await pending_download
-            pending_download = None
-
-            # Start downloading NEXT tile in background (pipeline overlap)
-            next_idx = idx + 1
-            if next_idx < len(tile_filenames) and not _cancel_requested:
-                next_fname = tile_filenames[next_idx]
-                log.info("[%d/%d] Downloading %s (~%d MB) [pipelined]",
-                         next_idx + 1, total_tiles, next_fname, NOAA_TILE_SIZE_MB)
-                pending_download = asyncio.ensure_future(
-                    _download_tile(next_fname)
+                convert_ok = await loop.run_in_executor(
+                    None, _process_tile, raw_path, tile_fname, idx
                 )
 
-            if raw_path is None:
-                log.warning("Failed to download %s, skipping", tile_filename)
-                tiles_failed += 1
-                continue
+                if convert_ok:
+                    tiles_done += 1
+                    log.info("[%d/%d] Tile %s done (%d/%d complete)",
+                             idx + 1, total_tiles, tile_fname,
+                             tiles_done, total_tiles)
+                    update_progress(output, "noaa", args.bbox, "n/a",
+                                    tiles_done, total_tiles, phase="downloading",
+                                    geotiffs_downloaded=tiles_done,
+                                    geotiffs_total=total_tiles)
+                else:
+                    tiles_failed += 1
+                    if _cancel_requested:
+                        break
+                    log.warning("[%d/%d] Conversion failed for %s",
+                                idx + 1, total_tiles, tile_fname)
 
-            if _cancel_requested:
-                raw_path.unlink(missing_ok=True)
-                if pending_download and not pending_download.done():
-                    pending_download.cancel()
-                update_progress(output, "noaa", args.bbox, "n/a",
-                                tiles_done, total_tiles, status="cancelled",
-                                phase="cancelled")
-                return
+        # Run producer and consumer concurrently
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        0, total_tiles, phase="downloading",
+                        geotiffs_downloaded=0, geotiffs_total=total_tiles)
+        log.info("Starting concurrent pipeline: %d downloads, sequential processing",
+                 DOWNLOAD_CONCURRENCY)
+        await asyncio.gather(_producer(), _consumer())
 
-            # Reproject + convert (blocking — runs while next tile downloads)
-            log.info("[%d/%d] Reprojecting + converting %s",
-                     idx + 1, total_tiles, tile_filename)
+        if _cancel_requested:
             update_progress(output, "noaa", args.bbox, "n/a",
-                            tiles_done, total_tiles, phase="converting",
+                            tiles_done, total_tiles, status="cancelled",
+                            phase="cancelled",
                             geotiffs_downloaded=tiles_done,
                             geotiffs_total=total_tiles)
-
-            # Run GDAL in a thread so the event loop stays alive for the pipelined download
-            convert_ok = await asyncio.get_event_loop().run_in_executor(
-                None, _process_tile, raw_path, tile_filename, idx
-            )
-
-            if convert_ok:
-                tiles_done += 1
-                log.info("[%d/%d] Tile %s processed successfully",
-                         idx + 1, total_tiles, tile_filename)
-            else:
-                tiles_failed += 1
-                if _cancel_requested:
-                    if pending_download and not pending_download.done():
-                        pending_download.cancel()
-                    update_progress(output, "noaa", args.bbox, "n/a",
-                                    tiles_done, total_tiles, status="cancelled",
-                                    phase="cancelled")
-                    return
-                log.warning("[%d/%d] Conversion failed for %s",
-                            idx + 1, total_tiles, tile_filename)
+            return
 
     # Phase 5: Build overview pyramids
     if output.exists() and tiles_done > 0:
