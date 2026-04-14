@@ -661,7 +661,9 @@ async def tile_already_done(db: aiosqlite.Connection, z: int, x: int, y: int) ->
     return (await cur.fetchone()) is not None
 
 
-async def run_direct(args):
+async def run_direct(args, url_fn=None):
+    if url_fn is None:
+        url_fn = lambda z, x, y: USGS_TILE_URL.format(z=z, x=x, y=y)
     bbox = parse_bbox(args.bbox)
     z_min, z_max = parse_zoom(args.zoom)
     output = Path(args.output)
@@ -699,7 +701,7 @@ async def run_direct(args):
 
     async def _fetch_tile(session: aiohttp.ClientSession, db: aiosqlite.Connection,
                           z: int, x: int, y: int):
-        url = USGS_TILE_URL.format(z=z, x=x, y=y)
+        url = url_fn(z, x, y)
         async with sem:
             data = await fetch_with_retry(session, url)
         if data is None:
@@ -733,7 +735,7 @@ async def run_direct(args):
                 if _cancel_requested:
                     log.info("Cancellation requested — stopping after %d tiles",
                              done_before + i)
-                    update_progress(output, "direct", args.bbox, args.zoom,
+                    update_progress(output, args.mode, args.bbox, args.zoom,
                                     done_before + i, total_tiles,
                                     status="cancelled")
                     pbar.close()
@@ -748,11 +750,11 @@ async def run_direct(args):
                 tiles_done = done_before + i + len(batch)
                 elapsed = time.time() - batch_start_time
                 rate = (i + len(batch)) / elapsed if elapsed > 0 else 0
-                update_progress(output, "direct", args.bbox, args.zoom,
+                update_progress(output, args.mode, args.bbox, args.zoom,
                                 tiles_done, total_tiles, rate)
 
     pbar.close()
-    update_progress(output, "direct", args.bbox, args.zoom,
+    update_progress(output, args.mode, args.bbox, args.zoom,
                     total_tiles, total_tiles, status="completed")
     log.info("MBTiles written to %s", output)
 
