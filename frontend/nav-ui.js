@@ -148,6 +148,7 @@
     nav.start(routeData);
 
     active = true;
+    document.body.classList.add('nav-active');
 
     // Prime speech audio on user gesture
     primeSpeech();
@@ -185,6 +186,7 @@
     if (nav && nav.stop) nav.stop();
     nav = null;
     active = false;
+    document.body.classList.remove('nav-active');
 
     // Cancel any pending speech
     if (speechAvailable) speechSynthesis.cancel();
@@ -437,6 +439,8 @@
     } else {
       hideBanner();
     }
+
+    document.documentElement.style.setProperty('--nav-overlay-height', overlay.offsetHeight + 'px');
   }
 
   function onVoice(text) {
