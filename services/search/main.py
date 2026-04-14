@@ -1451,12 +1451,15 @@ async def pipeline_cancel():
             containers = client.containers.list(
                 all=False, filters={"name": "geographica-pipeline"}
             )
+            log.info("Cancel: found %d pipeline containers", len(containers))
             for container in containers:
+                log.info("Cancel: container %s status=%s", container.name, container.status)
                 if container.status == "running":
                     log.info("Stopping pipeline container: %s", container.name)
                     container.stop(timeout=60)
-        except Exception:
-            pass
+                    log.info("Pipeline container stopped: %s", container.name)
+        except Exception as exc:
+            log.error("Cancel: failed to stop pipeline container: %s", exc)
         finally:
             client.close()
 
