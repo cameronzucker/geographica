@@ -163,10 +163,19 @@
                 <option value="direct">USGS Direct (no auth needed)</option>
                 <option value="m2m">USGS M2M API (requires credentials)</option>
                 <option value="nationalmap">National Map NAIP (0.6m, no auth)</option>
+                <option value="noaa">NOAA NAIP (0.6m, free, GeoTIFF)</option>
             </select>
 
             <div id="m2m-warning" class="inline-warn" style="display:none">
                 M2M credentials not configured. <a id="m2m-warning-link">Go to Settings</a> to add them.
+            </div>
+
+            <div id="noaa-state-container" style="display:none">
+                <label>State</label>
+                <select id="noaa-state">
+                    <option value="AZ">Arizona (2021)</option>
+                </select>
+                <div class="detail">NOAA downloads full-resolution 0.6m GeoTIFFs (~486 MB each). Only tiles in your bbox are downloaded.</div>
             </div>
 
             <div id="minimap-container">
@@ -333,6 +342,36 @@
                 </div>
                 <div id="naip-completed" class="status status-ok" style="display:none"></div>
             </div>
+        </div>
+
+        <!-- Custom Imagery Import -->
+        <div class="section" id="import-section">
+            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">Import Custom Imagery</h2>
+            <div class="detail" style="margin-bottom:8px">
+                Place GeoTIFF (.tif) files in <code style="background:#313244;padding:2px 4px;border-radius:3px">/srv/geographica/data/import/</code> and click Import.
+                Subdirectories (one level) are scanned. Files are reprojected to Web Mercator and converted to MBTiles.
+            </div>
+
+            <div id="import-scan-result" class="detail" style="margin-bottom:8px">Scanning...</div>
+
+            <label>Layer name <span class="detail">(optional — leave blank for default)</span></label>
+            <input type="text" id="import-layer-name" class="mono" placeholder="e.g., phoenix_drone_2026">
+
+            <label class="checkbox-label">
+                <input type="checkbox" id="import-delete-after">
+                Delete source files after successful import
+            </label>
+
+            <div style="margin-top:12px">
+                <button type="button" class="btn-secondary" id="import-refresh">Refresh</button>
+                <button type="button" class="btn-primary" id="import-start" disabled>Import</button>
+            </div>
+
+            <div id="import-progress" style="display:none">
+                <div class="progress-bar"><div class="progress-fill" id="import-progress-fill"></div></div>
+                <div id="import-progress-detail" class="detail"></div>
+            </div>
+            <div id="import-completed" class="status status-ok" style="display:none"></div>
         </div>
     </div>
 
@@ -1062,6 +1101,8 @@
         direct: 'USGS Direct',
         m2m: 'USGS M2M',
         nationalmap: 'National Map NAIP',
+        noaa: 'NOAA NAIP',
+        import: 'Custom Import',
         elevation: 'Elevation'
     };
 
@@ -1285,10 +1326,12 @@
         var val = this.value;
         var isM2M = val === 'm2m';
         var isNM = val === 'nationalmap';
+        var isNOAA = val === 'noaa';
+        document.getElementById('noaa-state-container').style.display = isNOAA ? '' : 'none';
         var zoomEl = document.getElementById('cfg-zoom');
         var estimateEl = document.getElementById('cfg-estimate');
 
-        zoomEl.disabled = isM2M;
+        zoomEl.disabled = isM2M || isNOAA;
         if (isM2M) {
             estimateEl.textContent = 'M2M: download size depends on source imagery coverage';
             estimateEl.style.color = '#7a8299';
@@ -1303,6 +1346,11 @@
             }
             estimateEl.style.color = '';
             updateEstimate();
+        }
+
+        if (isNOAA) {
+            estimateEl.textContent = 'NOAA: draw bbox and click Start to see tile count';
+            estimateEl.style.color = '#7a8299';
         }
 
         updateConcurrencyOptions();
@@ -1376,9 +1424,16 @@
             body.zoom = document.getElementById('cfg-zoom').value;
         }
 
+        if (source === 'noaa') {
+            body.state = document.getElementById('noaa-state').value;
+            body.year = 2021;
+        }
+
         var confirmMsg;
         if (isM2M) {
             confirmMsg = 'Start M2M download for ' + body.bbox + '?';
+        } else if (source === 'noaa') {
+            confirmMsg = 'Start NOAA download for ' + (body.state || 'AZ') + '? Large GeoTIFF tiles (~486 MB each) will be downloaded and converted.';
         } else {
             var tileCount = estimateTiles(body.bbox, document.getElementById('cfg-zoom').value);
             var label = source === 'nationalmap' ? 'National Map NAIP' : 'USGS Direct';
@@ -1537,6 +1592,53 @@
         cfgFetch('/admin/pipeline/cancel', {method: 'POST'})
             .then(function() { fetchAll(); });
     });
+
+    // -----------------------------------------------------------------------
+    // BYO Import
+    // -----------------------------------------------------------------------
+    function scanImportDir() {
+        var scanEl = document.getElementById('import-scan-result');
+        scanEl.textContent = 'Scanning...';
+        document.getElementById('import-start').disabled = true;
+
+        cfgFetch('/admin/pipeline/import/scan')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.error || d.detail) {
+                    scanEl.textContent = 'Error: ' + (d.error || d.detail);
+                    return;
+                }
+                var tifCount = d.tif_count || 0;
+                var totalMB = ((d.total_bytes || 0) / 1e6).toFixed(0);
+                var msg = tifCount + ' GeoTIFFs (' + totalMB + ' MB)';
+                if (d.other_geo_count > 0) {
+                    msg += ' \u2022 ' + d.other_geo_count + ' unsupported geo files found';
+                }
+                scanEl.textContent = msg;
+                document.getElementById('import-start').disabled = tifCount === 0 || _anyPipelineRunning;
+            })
+            .catch(function() { scanEl.textContent = 'Scan failed (API offline?)'; });
+    }
+
+    document.getElementById('import-refresh').addEventListener('click', scanImportDir);
+
+    document.getElementById('import-start').addEventListener('click', function() {
+        var name = document.getElementById('import-layer-name').value.trim();
+        var deleteAfter = document.getElementById('import-delete-after').checked;
+        var qs = '?delete_after=' + deleteAfter;
+        if (name) qs += '&layer_name=' + encodeURIComponent(name);
+
+        if (!confirm('Start import? GeoTIFFs will be reprojected and converted to MBTiles.')) return;
+
+        cfgFetch('/admin/pipeline/import' + qs, { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.error || d.detail) alert(d.error || d.detail);
+                fetchAll();
+            });
+    });
+
+    scanImportDir();
 
     // Pipeline banner click -> switch to pipelines tab
     document.getElementById('pipeline-banner').addEventListener('click', function() {
@@ -1700,6 +1802,18 @@
 
         cfgFetch('/admin/pipeline/status?type=naip').then(function(r) { return r.json(); }).then(function(d) {
             renderNaip(d);
+            updatePipelineButtons();
+        }).catch(function() {});
+
+        cfgFetch('/admin/pipeline/status?type=import').then(function(r) { return r.json(); }).then(function(d) {
+            renderGenericProgress(Object.assign({source: 'import'}, d), {
+                startBtn: 'import-start',
+                cancelBtn: null,
+                progressDiv: 'import-progress',
+                progressFill: 'import-progress-fill',
+                progressDetail: 'import-progress-detail',
+                completedEl: 'import-completed'
+            });
             updatePipelineButtons();
         }).catch(function() {});
 
