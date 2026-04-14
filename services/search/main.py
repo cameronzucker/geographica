@@ -85,6 +85,7 @@ class PipelineStartBody(BaseModel):
     zoom: Optional[str] = None  # "min-max" (required for imagery/elevation)
     concurrency: int = 20
     update: bool = True
+    counties: Optional[str] = None  # comma-separated FIPS codes (for NAIP — overrides bbox county lookup)
 
 
 # ---------------------------------------------------------------------------
@@ -1064,7 +1065,7 @@ async def pipeline_start(body: PipelineStartBody):
             raise HTTPException(status_code=422, detail="bbox is required for naip")
 
     if body.type in ("imagery", "elevation"):
-        if not body.mode or body.mode not in ("direct", "m2m"):
+        if not body.mode or body.mode not in ("direct", "m2m", "nationalmap"):
             raise HTTPException(status_code=422, detail="mode must be 'direct' or 'm2m'")
         if not body.bbox:
             raise HTTPException(status_code=422, detail="bbox is required for imagery/elevation")
@@ -1183,6 +1184,17 @@ async def pipeline_start(body: PipelineStartBody):
                         "--output", f"/data/{mbtiles_path.name}",
                         "--staging", "/data/naip_staging",
                         "--counties-db", "/data/counties.sqlite",
+                    ]
+                    if body.counties:
+                        command.append(f"--counties={body.counties}")
+                elif body.mode == "nationalmap":
+                    command = [
+                        "python3", "/scripts/acquire_imagery.py",
+                        "--mode", "nationalmap",
+                        f"--bbox={body.bbox}",
+                        f"--zoom={body.zoom or '15-18'}",
+                        "--concurrency", str(min(body.concurrency, 20)),
+                        "--output", "/data/imagery_naip.mbtiles",
                     ]
                 else:
                     # Build command -- imagery and elevation scripts have different args
@@ -1307,10 +1319,10 @@ async def pipeline_start(body: PipelineStartBody):
 
 
 @app.get("/admin/pipeline/status")
-async def pipeline_status(type: str = Query("imagery", description="Pipeline type: imagery, elevation, or osm_poi")):
+async def pipeline_status(type: str = Query("imagery", description="Pipeline type: imagery, elevation, osm_poi, sentinel, or naip")):
     """Get current pipeline job status (no auth required)."""
-    if type not in ("imagery", "elevation", "osm_poi"):
-        raise HTTPException(status_code=422, detail="type must be 'imagery', 'elevation', or 'osm_poi'")
+    if type not in ("imagery", "elevation", "osm_poi", "sentinel", "naip"):
+        raise HTTPException(status_code=422, detail="type must be 'imagery', 'elevation', 'osm_poi', 'sentinel', or 'naip'")
 
     state_file = _state_file_for_type(type)
     state_data = {}
@@ -1343,9 +1355,12 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
             # Capture last logs from dead container (client still open)
             if client:
                 try:
-                    container = client.containers.get("geographica-pipeline")
-                    logs = container.logs(tail=50, timestamps=False).decode("utf-8", errors="replace")
-                    state_data["last_logs"] = logs[-2000:]  # cap at 2KB
+                    containers = client.containers.list(
+                        all=True, filters={"name": "geographica-pipeline"}
+                    )
+                    if containers:
+                        logs = containers[0].logs(tail=50, timestamps=False).decode("utf-8", errors="replace")
+                        state_data["last_logs"] = logs[-2000:]  # cap at 2KB
                 except Exception:
                     pass
 
@@ -1414,8 +1429,13 @@ async def pipeline_cancel():
             raise HTTPException(status_code=503, detail="Docker socket not available")
 
         try:
-            container = client.containers.get("geographica-pipeline")
-            container.stop(timeout=30)
+            containers = client.containers.list(
+                all=False, filters={"name": "geographica-pipeline"}
+            )
+            for container in containers:
+                if container.status == "running":
+                    log.info("Stopping pipeline container: %s", container.name)
+                    container.stop(timeout=30)
         except Exception:
             pass
         finally:
