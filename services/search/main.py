@@ -1454,7 +1454,7 @@ async def pipeline_cancel():
             for container in containers:
                 if container.status == "running":
                     log.info("Stopping pipeline container: %s", container.name)
-                    container.stop(timeout=30)
+                    container.stop(timeout=60)
         except Exception:
             pass
         finally:

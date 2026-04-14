@@ -140,13 +140,25 @@ RETRY_BACKOFF = 2  # seconds, doubled each attempt
 # Cancellation + Structured Progress
 # ---------------------------------------------------------------------------
 _cancel_requested = False
+_child_pid = None  # Track subprocess PID for immediate cancellation
 
 
 def _handle_sigterm(signum, frame):
-    """Handle SIGTERM for graceful shutdown (docker stop)."""
+    """Handle SIGTERM for graceful shutdown (docker stop).
+
+    Kills any running child subprocess immediately so we don't have to
+    wait for a 60-90s GDAL operation to finish before the signal handler
+    can run.
+    """
     global _cancel_requested
-    log.info("SIGTERM received — finishing current batch and shutting down")
+    log.info("SIGTERM received — cancelling immediately")
     _cancel_requested = True
+    # Kill the child process if one is running
+    if _child_pid:
+        try:
+            os.killpg(os.getpgid(_child_pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
 
 
 signal.signal(signal.SIGTERM, _handle_sigterm)
@@ -574,6 +586,9 @@ def run_gdal_subprocess(cmd: list[str], timeout: int = 7200,
                         cancel_check=None) -> subprocess.CompletedProcess:
     """Run a GDAL CLI command with nice priority and optional cancel check.
 
+    Uses Popen with a process group so SIGTERM can kill the child
+    immediately (without waiting for it to finish).
+
     Args:
         cmd: Command and arguments (e.g., ["gdalbuildvrt", ...])
         timeout: Max seconds before killing the process.
@@ -583,17 +598,32 @@ def run_gdal_subprocess(cmd: list[str], timeout: int = 7200,
         CompletedProcess on success.
 
     Raises:
-        subprocess.CalledProcessError: If command fails.
+        subprocess.CalledProcessError: If command fails or is cancelled.
         subprocess.TimeoutExpired: If timeout exceeded.
     """
+    global _child_pid
     if cancel_check and cancel_check():
         raise subprocess.CalledProcessError(1, cmd, stderr="Cancelled before start")
     full_cmd = ["nice", "-n", "19"] + cmd
-    return subprocess.run(
-        full_cmd, check=True, capture_output=True, text=True,
-        timeout=timeout,
-        env={**os.environ, "GDAL_CACHEMAX": os.environ.get("GDAL_CACHEMAX", "1024")},
+    gdal_env = {**os.environ, "GDAL_CACHEMAX": os.environ.get("GDAL_CACHEMAX", "1024")}
+    proc = subprocess.Popen(
+        full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, env=gdal_env,
+        preexec_fn=os.setsid,  # new process group so we can kill it
     )
+    _child_pid = proc.pid
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        proc.wait()
+        _child_pid = None
+        raise
+    _child_pid = None
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, full_cmd,
+                                            output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(full_cmd, proc.returncode, stdout, stderr)
 
 
 def convert_batch_to_mbtiles(tif_paths: list[Path], output: Path,
@@ -1709,9 +1739,8 @@ async def run_noaa(args):
                             geotiffs_total=total_tiles)
 
             try:
-                subprocess.run(
+                run_gdal_subprocess(
                     [
-                        "nice", "-n", "19",
                         "gdalwarp",
                         "-t_srs", "EPSG:3857",
                         "-r", "lanczos",
@@ -1719,10 +1748,18 @@ async def run_noaa(args):
                         "-co", "COMPRESS=DEFLATE",
                         str(raw_path), str(warped_path),
                     ],
-                    check=True, capture_output=True, text=True,
-                    env=_NOAA_GDAL_ENV, timeout=3600,
+                    timeout=3600,
+                    cancel_check=lambda: _cancel_requested,
                 )
             except subprocess.CalledProcessError as exc:
+                if _cancel_requested:
+                    raw_path.unlink(missing_ok=True)
+                    warped_path.unlink(missing_ok=True)
+                    log.info("Cancellation requested during reprojection")
+                    update_progress(output, "noaa", args.bbox, "n/a",
+                                    tiles_done, total_tiles, status="cancelled",
+                                    phase="cancelled")
+                    return
                 log.error("gdalwarp failed for %s: %s", tile_filename,
                           exc.stderr if exc.stderr else str(exc))
                 raw_path.unlink(missing_ok=True)
