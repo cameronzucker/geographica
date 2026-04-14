@@ -227,18 +227,24 @@
     var allManeuvers = [];
     var shapeOffset = 0;
 
-    trip.legs.forEach(function (leg) {
+    trip.legs.forEach(function (leg, i) {
       var coords = decodePolyline(leg.shape);
+      var indexAdjust = 0;
+      // Skip first point of subsequent legs (shared with previous leg's last point)
+      if (i > 0 && coords.length > 0) {
+        coords = coords.slice(1);
+        indexAdjust = 1; // Valhalla indices are 1 too high for the sliced array
+      }
       if (leg.maneuvers) {
         leg.maneuvers.forEach(function (m) {
           var mc = Object.assign({}, m);
-          mc.begin_shape_index = (mc.begin_shape_index || 0) + shapeOffset;
-          mc.end_shape_index = (mc.end_shape_index || 0) + shapeOffset;
+          mc.begin_shape_index = (mc.begin_shape_index || 0) - indexAdjust + shapeOffset;
+          mc.end_shape_index = (mc.end_shape_index || 0) - indexAdjust + shapeOffset;
           allManeuvers.push(mc);
         });
       }
       allCoords = allCoords.concat(coords);
-      shapeOffset += coords.length;
+      shapeOffset += coords.length; // Use sliced length
     });
 
     var summary = trip.summary || {};
