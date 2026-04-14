@@ -53,6 +53,29 @@ USGS_TILE_URL = (
     "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/"
     "MapServer/tile/{z}/{y}/{x}"
 )
+NATIONALMAP_EXPORT_URL = (
+    "https://imagery.nationalmap.gov/arcgis/rest/services/USGSNAIPPlus/"
+    "ImageServer/exportImage"
+)
+
+
+def nationalmap_tile_url(z: int, x: int, y: int) -> str:
+    """Convert z/x/y tile coordinates to an ImageServer exportImage URL.
+
+    Computes the WGS84 bounding box for the given web mercator tile and
+    returns a URL that requests a 256x256 JPEG from the USGS NAIP ImageServer.
+    """
+    n = 2 ** z
+    west = x / n * 360 - 180
+    east = (x + 1) / n * 360 - 180
+    north = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / n))))
+    south = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y + 1) / n))))
+    return (
+        f"{NATIONALMAP_EXPORT_URL}?bbox={west},{south},{east},{north}"
+        f"&bboxSR=4326&size=256,256&imageSR=4326&format=jpgpng&f=image"
+    )
+
+
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2  # seconds, doubled each attempt
 
