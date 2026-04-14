@@ -24,6 +24,7 @@
   var OFF_ROUTE_WINDOW = 5;           // rolling window size
   var OFF_ROUTE_MIN_COUNT = 3;        // minimum off-route ticks in window to trigger
   var REROUTE_COOLDOWN = 15000;       // ms between reroute triggers
+  var REROUTE_TIMEOUT = 10000;        // ms -- max time to wait for reroute response
   var JOIN_TOLERANCE = 200;           // meters — give up joining if exceeded for 15s
   var JOIN_THRESHOLD = 50;            // meters — close enough to join route
   var ARRIVAL_GEOFENCE = 30;          // meters from destination
@@ -133,6 +134,7 @@
   var inOffRouteState = false;
   var lastRerouteTime = 0;
   var rerouteSeq = 0;         // monotonic counter for aborting stale reroutes
+  var rerouteTimeoutId = null;
   var joinStartTime = 0;      // timestamp when JOINING began
 
   // GPS state
@@ -618,6 +620,13 @@
     lastRerouteTime = now;
     state = "rerouting";
     rerouteSeq++;
+    rerouteTimeoutId = setTimeout(function () {
+      if (state === "rerouting") {
+        state = "navigating";
+        offRouteHistory = [];
+        inOffRouteState = false;
+      }
+    }, REROUTE_TIMEOUT);
 
     if (onRerouteCb) {
       onRerouteCb({
@@ -693,6 +702,7 @@
     speedHistory = [];
     segmentDistances = null;
     cumulativeDistances = null;
+    if (rerouteTimeoutId) { clearTimeout(rerouteTimeoutId); rerouteTimeoutId = null; }
     stopStaleChecker();
   }
 
@@ -763,6 +773,7 @@
     applyReroute: function (routeData, seq) {
       // Ignore stale reroute responses
       if (seq !== rerouteSeq) return;
+      if (rerouteTimeoutId) { clearTimeout(rerouteTimeoutId); rerouteTimeoutId = null; }
 
       route = routeData;
       lastIndex = 0;

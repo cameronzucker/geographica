@@ -27,6 +27,8 @@
 
   var AUTO_CENTER_PAUSE_MS = 10000;
   var GPS_HEARTBEAT_MS = 3000;
+  var rerouteRetries = 0;
+  var MAX_REROUTE_RETRIES = 3;
 
   // =====================================================================
   //  DOM REFS
@@ -453,6 +455,11 @@
 
     var seq = info._seq;
 
+    rerouteRetries = 0;
+    attemptReroute(body, seq);
+  }
+
+  function attemptReroute(body, seq) {
     fetch('/valhalla/route', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -463,6 +470,7 @@
       if (data.trip && nav) {
         var newRouteData = buildRouteData(data.trip);
         if (newRouteData) {
+          rerouteRetries = 0;
           nav.applyReroute(newRouteData, seq);
           hideBanner();
         }
@@ -470,7 +478,18 @@
     })
     .catch(function (err) {
       console.error('Reroute failed:', err);
-      // Banner stays visible; engine will retry after cooldown
+      rerouteRetries++;
+      if (rerouteRetries <= MAX_REROUTE_RETRIES) {
+        var delay = Math.pow(2, rerouteRetries) * 1000; // 2s, 4s, 8s
+        setTimeout(function () {
+          attemptReroute(body, seq);
+        }, delay);
+      } else {
+        rerouteRetries = 0;
+        showBanner('Reroute failed \u2014 using current route', 'reroute-failed');
+        setTimeout(hideBanner, 5000);
+        // Engine timeout will handle state recovery
+      }
     });
   }
 
