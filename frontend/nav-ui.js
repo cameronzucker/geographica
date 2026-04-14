@@ -27,6 +27,8 @@
 
   var AUTO_CENTER_PAUSE_MS = 10000;
   var GPS_HEARTBEAT_MS = 3000;
+  var lastNavPaddingTop = 0;
+  var PADDING_RECALC_THRESHOLD = 5; // px -- ignore changes smaller than this
   var rerouteRetries = 0;
   var MAX_REROUTE_RETRIES = 3;
 
@@ -170,7 +172,8 @@
           zoom: 17,
           pitch: 60,
           bearing: gps.heading || 0,
-          duration: 800
+          duration: 800,
+          padding: getNavPadding()
         });
       }
     }
@@ -208,6 +211,7 @@
     if (gpsFeedInterval) clearInterval(gpsFeedInterval);
     gpsFeedInterval = null;
     autoCenterPaused = false;
+    lastNavPaddingTop = 0;
   }
 
   // =====================================================================
@@ -340,7 +344,8 @@
         bearing: bearing,
         zoom: zoom,
         pitch: 60,
-        duration: 500
+        duration: 500,
+        padding: getNavPadding()
       });
     }
   }
@@ -721,6 +726,15 @@
 
   function clamp(val, min, max) {
     return Math.max(min, Math.min(max, val));
+  }
+
+  function getNavPadding() {
+    if (!overlay || overlay.classList.contains('hidden')) return {};
+    var measured = overlay.offsetHeight + 20;
+    if (Math.abs(measured - lastNavPaddingTop) > PADDING_RECALC_THRESHOLD) {
+      lastNavPaddingTop = measured;
+    }
+    return { top: lastNavPaddingTop };
   }
 
   // =====================================================================
