@@ -32,6 +32,7 @@
   var rerouteRetries = 0;
   var MAX_REROUTE_RETRIES = 3;
   var lastNavState = null;  // latest state from engine callback
+  var lastGPSSignature = null;
 
   // =====================================================================
   //  DOM REFS
@@ -214,6 +215,7 @@
     autoCenterPaused = false;
     lastNavPaddingTop = 0;
     lastNavState = null;
+    lastGPSSignature = null;
   }
 
   // =====================================================================
@@ -334,11 +336,15 @@
       });
     }
 
-    // GPS heartbeat -- reset timer
-    clearTimeout(gpsHeartbeatTimer);
-    gpsHeartbeatTimer = setTimeout(function () {
-      showBanner('GPS signal delayed', 'gps-stale');
-    }, GPS_HEARTBEAT_MS);
+    // GPS heartbeat -- only reset timer when position actually changes
+    var sig = lat + ',' + lng;
+    if (sig !== lastGPSSignature) {
+      lastGPSSignature = sig;
+      clearTimeout(gpsHeartbeatTimer);
+      gpsHeartbeatTimer = setTimeout(function () {
+        showBanner('GPS signal delayed', 'gps-stale');
+      }, GPS_HEARTBEAT_MS);
+    }
 
     // Auto-center map if not paused
     if (!autoCenterPaused) {
