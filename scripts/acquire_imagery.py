@@ -263,6 +263,58 @@ async def fetch_with_retry(session: aiohttp.ClientSession, url: str,
     return None
 
 
+async def fetch_to_file(session: aiohttp.ClientSession, url: str,
+                        dest: Path, *,
+                        retries: int = MAX_RETRIES,
+                        timeout_s: int = 1200,
+                        max_size: int = 0) -> bool:
+    """Stream-download url to dest file with retry. Returns True on success.
+
+    Unlike fetch_with_retry, this streams to disk via iter_chunked() to
+    avoid loading large files into memory (B3 OOM fix).
+
+    Args:
+        session: aiohttp client session.
+        url: URL to download.
+        dest: Destination file path.
+        retries: Max retry attempts.
+        timeout_s: Total timeout per attempt in seconds.
+        max_size: Maximum file size in bytes (0 = unlimited).
+    """
+    for attempt in range(retries):
+        try:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=timeout_s)
+            ) as resp:
+                if resp.status == 200:
+                    total = 0
+                    with open(dest, "wb") as f:
+                        async for chunk in resp.content.iter_chunked(64 * 1024):
+                            total += len(chunk)
+                            if max_size and total > max_size:
+                                log.error("Download exceeded %d bytes for %s -- aborting",
+                                          max_size, url)
+                                f.close()
+                                dest.unlink(missing_ok=True)
+                                return False
+                            f.write(chunk)
+                    return True
+                if resp.status in (429, 500, 502, 503, 504):
+                    wait = RETRY_BACKOFF * (2 ** attempt)
+                    log.warning("HTTP %s for %s -- retrying in %ss",
+                                resp.status, url, wait)
+                    await asyncio.sleep(wait)
+                    continue
+                log.error("HTTP %s for %s -- skipping", resp.status, url)
+                return False
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            wait = RETRY_BACKOFF * (2 ** attempt)
+            log.warning("%s for %s -- retrying in %ss", exc, url, wait)
+            await asyncio.sleep(wait)
+    log.error("All retries exhausted for %s", url)
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Token-bucket rate limiter
 # ---------------------------------------------------------------------------
@@ -343,11 +395,10 @@ async def download_geotiffs(urls: list[str], staging: Path, checkpoint_path: Pat
             files_completed += 1
             return
         async with sem:
-            data = await fetch_with_retry(session, url)
-        if data is None:
+            success = await fetch_to_file(session, url, dest)
+        if not success:
             files_completed += 1
             return
-        dest.write_bytes(data)
         done[url] = str(dest)
         checkpoint_path.write_text(json.dumps(done, indent=2))
         files_completed += 1

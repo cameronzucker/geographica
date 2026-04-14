@@ -154,6 +154,50 @@ async def fetch_with_retry(session: aiohttp.ClientSession, url: str,
     return None
 
 
+async def fetch_to_file(session: aiohttp.ClientSession, url: str,
+                        dest: Path, *,
+                        retries: int = MAX_RETRIES,
+                        timeout_s: int = 1200,
+                        max_size: int = MAX_JP2_SIZE_BYTES) -> bool:
+    """Stream-download url to dest file with retry. Returns True on success.
+
+    Streams to disk via iter_chunked() to avoid loading large JP2 files
+    (up to 30GB) into memory (B3 OOM fix).
+    """
+    for attempt in range(retries):
+        try:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=timeout_s)
+            ) as resp:
+                if resp.status == 200:
+                    total = 0
+                    with open(dest, "wb") as f:
+                        async for chunk in resp.content.iter_chunked(64 * 1024):
+                            total += len(chunk)
+                            if max_size and total > max_size:
+                                log.error("Download exceeded %d bytes for %s -- aborting",
+                                          max_size, url)
+                                f.close()
+                                dest.unlink(missing_ok=True)
+                                return False
+                            f.write(chunk)
+                    return True
+                if resp.status in (429, 500, 502, 503, 504):
+                    wait = RETRY_BACKOFF * (2 ** attempt)
+                    log.warning("HTTP %s for %s -- retrying in %ss",
+                                resp.status, url, wait)
+                    await asyncio.sleep(wait)
+                    continue
+                log.error("HTTP %s for %s -- skipping", resp.status, url)
+                return False
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            wait = RETRY_BACKOFF * (2 ** attempt)
+            log.warning("%s for %s -- retrying in %ss", exc, url, wait)
+            await asyncio.sleep(wait)
+    log.error("All retries exhausted for %s", url)
+    return False
+
+
 def extract_download_urls(html: str) -> list[dict]:
     """Parse USDA Gateway HTML to extract download links.
 
@@ -348,11 +392,10 @@ async def download_county(
         return dest
 
     log.info("Downloading %s -> %s", url_info["url"], dest)
-    data = await fetch_with_retry(session, url_info["url"])
-    if data is None:
+    success = await fetch_to_file(session, url_info["url"], dest)
+    if not success:
         return None
 
-    dest.write_bytes(data)
     return dest
 
 
