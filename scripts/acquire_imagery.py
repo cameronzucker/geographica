@@ -1486,13 +1486,17 @@ async def _noaa_fetch_tile_index(
     blob_base: str,
     cache_dir: Path,
 ) -> Path | None:
-    """Fetch and cache the NOAA tile index shapefile (.shp + sidecar files).
+    """Fetch and cache the NOAA tile index shapefile.
 
-    Parses the blob's index.html to find the shapefile components,
-    then downloads .shp, .shx, and .dbf files to cache_dir.
+    NOAA distributes the tile index as a ZIP archive (e.g., tileindex_AZ_NAIP_2021.zip)
+    containing .shp, .shx, .dbf, .prj files. This function finds the ZIP link in
+    index.html, downloads it, extracts the shapefile components, and caches them.
 
     Returns the path to the .shp file, or None on failure.
     """
+    import re
+    import zipfile
+
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # Check if already cached
@@ -1501,7 +1505,7 @@ async def _noaa_fetch_tile_index(
         log.info("Using cached tile index: %s", shp_files[0])
         return shp_files[0]
 
-    # Fetch index.html from the blob container to discover shapefile links
+    # Fetch index.html to find the tile index ZIP link
     index_url = f"{blob_base}/index.html"
     log.info("Fetching NOAA tile index listing from %s", index_url)
     index_data = await fetch_with_retry(session, index_url, timeout_s=60)
@@ -1511,39 +1515,48 @@ async def _noaa_fetch_tile_index(
 
     html = index_data.decode("utf-8", errors="replace")
 
-    # Parse out shapefile component links (.shp, .shx, .dbf, .prj)
-    import re
-    shp_extensions = {".shp", ".shx", ".dbf", ".prj"}
-    href_pattern = re.compile(r'href=["\']([^"\']*\.(shp|shx|dbf|prj))["\']', re.IGNORECASE)
-    found_files: dict[str, str] = {}  # extension -> url
-    for match in href_pattern.finditer(html):
-        href = match.group(1)
-        ext = "." + match.group(2).lower()
-        # Build absolute URL if needed
-        if href.startswith("http"):
-            full_url = href
-        else:
-            full_url = f"{blob_base}/{href.lstrip('/')}"
-        found_files[ext] = full_url
-
-    if ".shp" not in found_files:
-        log.error("No .shp file found in NOAA blob listing at %s", index_url)
+    # Find the tile index ZIP link (pattern: tileindex_*.zip)
+    zip_pattern = re.compile(r'href=["\']([^"\']*tileindex[^"\']*\.zip)["\']', re.IGNORECASE)
+    zip_match = zip_pattern.search(html)
+    if not zip_match:
+        log.error("No tileindex ZIP found in NOAA blob listing at %s", index_url)
         return None
 
-    # Download each component
-    shp_path = None
-    for ext, url in found_files.items():
-        filename = url.rsplit("/", 1)[-1]
-        dest = cache_dir / filename
-        log.info("Downloading tile index component: %s", filename)
-        success = await fetch_to_file(session, url, dest, timeout_s=120)
-        if not success:
-            log.error("Failed to download %s", url)
-            return None
-        if ext == ".shp":
-            shp_path = dest
+    zip_href = zip_match.group(1)
+    if zip_href.startswith("http"):
+        zip_url = zip_href
+    else:
+        zip_url = f"{blob_base}/{zip_href.lstrip('/')}"
 
-    return shp_path
+    # Download the ZIP
+    zip_dest = cache_dir / "tileindex.zip"
+    log.info("Downloading tile index: %s", zip_url)
+    success = await fetch_to_file(session, zip_url, zip_dest, timeout_s=120)
+    if not success:
+        log.error("Failed to download tile index ZIP from %s", zip_url)
+        return None
+
+    # Extract shapefile components
+    try:
+        with zipfile.ZipFile(str(zip_dest)) as zf:
+            zf.extractall(str(cache_dir))
+            log.info("Extracted tile index: %s", [n for n in zf.namelist()])
+    except (zipfile.BadZipFile, OSError) as exc:
+        log.error("Failed to extract tile index ZIP: %s", exc)
+        zip_dest.unlink(missing_ok=True)
+        return None
+
+    # Clean up ZIP
+    zip_dest.unlink(missing_ok=True)
+
+    # Find the extracted .shp file
+    shp_files = list(cache_dir.glob("*.shp"))
+    if not shp_files:
+        log.error("No .shp file found after extracting tile index ZIP")
+        return None
+
+    log.info("Tile index ready: %s", shp_files[0])
+    return shp_files[0]
 
 
 async def run_noaa(args):
