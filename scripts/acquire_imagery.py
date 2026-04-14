@@ -582,6 +582,32 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
         dst.close()
 
 
+def run_gdal_subprocess(cmd: list[str], timeout: int = 7200,
+                        cancel_check=None) -> subprocess.CompletedProcess:
+    """Run a GDAL CLI command with nice priority and optional cancel check.
+
+    Args:
+        cmd: Command and arguments (e.g., ["gdalbuildvrt", ...])
+        timeout: Max seconds before killing the process.
+        cancel_check: Optional callable returning True if cancellation requested.
+
+    Returns:
+        CompletedProcess on success.
+
+    Raises:
+        subprocess.CalledProcessError: If command fails.
+        subprocess.TimeoutExpired: If timeout exceeded.
+    """
+    if cancel_check and cancel_check():
+        raise subprocess.CalledProcessError(1, cmd, stderr="Cancelled before start")
+    full_cmd = ["nice", "-n", "19"] + cmd
+    return subprocess.run(
+        full_cmd, check=True, capture_output=True, text=True,
+        timeout=timeout,
+        env={**os.environ, "GDAL_CACHEMAX": os.environ.get("GDAL_CACHEMAX", "1024")},
+    )
+
+
 def convert_batch_to_mbtiles(tif_paths: list[Path], output: Path,
                              batch_label: str = "batch") -> bool:
     """Convert a batch of GeoTIFFs to a temp MBTiles, then merge into output.
@@ -1441,6 +1467,355 @@ async def run_m2m(args):
     log.info("M2M pipeline complete: %d scenes → %s", len(scenes), output)
 
 
+# ===================================================================
+# MODE 4 – NOAA Digital Coast NAIP
+# ===================================================================
+
+NOAA_MAX_GEOTIFF_SIZE = 600 * 1024 * 1024  # 600 MB safety limit per tile
+
+# GDAL environment for memory-safe operation on Pi 5
+_NOAA_GDAL_ENV = {
+    **os.environ,
+    "GDAL_CACHEMAX": "256",
+    "GDAL_NUM_THREADS": "2",
+}
+
+
+async def _noaa_fetch_tile_index(
+    session: aiohttp.ClientSession,
+    blob_base: str,
+    cache_dir: Path,
+) -> Path | None:
+    """Fetch and cache the NOAA tile index shapefile (.shp + sidecar files).
+
+    Parses the blob's index.html to find the shapefile components,
+    then downloads .shp, .shx, and .dbf files to cache_dir.
+
+    Returns the path to the .shp file, or None on failure.
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check if already cached
+    shp_files = list(cache_dir.glob("*.shp"))
+    if shp_files:
+        log.info("Using cached tile index: %s", shp_files[0])
+        return shp_files[0]
+
+    # Fetch index.html from the blob container to discover shapefile links
+    index_url = f"{blob_base}/index.html"
+    log.info("Fetching NOAA tile index listing from %s", index_url)
+    index_data = await fetch_with_retry(session, index_url, timeout_s=60)
+    if index_data is None:
+        log.error("Failed to fetch NOAA blob listing from %s", index_url)
+        return None
+
+    html = index_data.decode("utf-8", errors="replace")
+
+    # Parse out shapefile component links (.shp, .shx, .dbf, .prj)
+    import re
+    shp_extensions = {".shp", ".shx", ".dbf", ".prj"}
+    href_pattern = re.compile(r'href=["\']([^"\']*\.(shp|shx|dbf|prj))["\']', re.IGNORECASE)
+    found_files: dict[str, str] = {}  # extension -> url
+    for match in href_pattern.finditer(html):
+        href = match.group(1)
+        ext = "." + match.group(2).lower()
+        # Build absolute URL if needed
+        if href.startswith("http"):
+            full_url = href
+        else:
+            full_url = f"{blob_base}/{href.lstrip('/')}"
+        found_files[ext] = full_url
+
+    if ".shp" not in found_files:
+        log.error("No .shp file found in NOAA blob listing at %s", index_url)
+        return None
+
+    # Download each component
+    shp_path = None
+    for ext, url in found_files.items():
+        filename = url.rsplit("/", 1)[-1]
+        dest = cache_dir / filename
+        log.info("Downloading tile index component: %s", filename)
+        success = await fetch_to_file(session, url, dest, timeout_s=120)
+        if not success:
+            log.error("Failed to download %s", url)
+            return None
+        if ext == ".shp":
+            shp_path = dest
+
+    return shp_path
+
+
+async def run_noaa(args):
+    """Run the NOAA Digital Coast NAIP download pipeline.
+
+    Downloads GeoTIFF tiles ONE AT A TIME from NOAA Azure blob storage,
+    reprojects each to EPSG:3857, converts to MBTiles, then cleans up.
+    """
+    global _cancel_requested
+
+    state = args.state
+    year = args.year
+    bbox = parse_bbox(args.bbox)
+    west, south, east, north = bbox
+    output = Path(args.output)
+    data_dir = output.parent
+
+    import datetime
+    update_progress._started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    # Validate catalog entry
+    if (state, year) not in NOAA_NAIP_CATALOG:
+        log.error("No NOAA catalog entry for state=%s year=%d", state, year)
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        0, 0, status="error", phase="error",
+                        error=f"No NOAA catalog entry for {state} {year}")
+        sys.exit(1)
+
+    blob_base = noaa_blob_base_url(state, year)
+    cache_dir = noaa_cache_dir(data_dir, state, year)
+    staging = cache_dir / "staging"
+    staging.mkdir(parents=True, exist_ok=True)
+
+    log.info("NOAA NAIP pipeline: state=%s year=%d blob=%s", state, year, blob_base)
+
+    # Phase 1: Validate blob URL with HEAD request
+    update_progress(output, "noaa", args.bbox, "n/a",
+                    0, 0, phase="validating")
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.head(
+                blob_base + "/index.html",
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status >= 400:
+                    log.error("NOAA blob HEAD returned HTTP %s for %s", resp.status, blob_base)
+                    update_progress(output, "noaa", args.bbox, "n/a",
+                                    0, 0, status="error", phase="error",
+                                    error=f"NOAA blob not accessible (HTTP {resp.status})")
+                    sys.exit(1)
+                log.info("NOAA blob validated (HTTP %s)", resp.status)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            log.error("Failed to validate NOAA blob URL: %s", exc)
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            0, 0, status="error", phase="error",
+                            error=f"NOAA blob not accessible: {exc}")
+            sys.exit(1)
+
+        if _cancel_requested:
+            log.info("Cancellation requested after validation")
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            0, 0, status="cancelled", phase="cancelled")
+            return
+
+        # Phase 2: Fetch and cache tile index shapefile
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        0, 0, phase="indexing")
+
+        shp_path = await _noaa_fetch_tile_index(session, blob_base, cache_dir)
+        if shp_path is None:
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            0, 0, status="error", phase="error",
+                            error="Failed to fetch NOAA tile index shapefile")
+            sys.exit(1)
+
+        if _cancel_requested:
+            log.info("Cancellation requested after tile index fetch")
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            0, 0, status="cancelled", phase="cancelled")
+            return
+
+        # Phase 3: Spatially filter tiles by bbox
+        tile_filenames = filter_tiles_by_bbox(shp_path, west, south, east, north)
+        if not tile_filenames:
+            log.error("No NOAA tiles intersect bbox %s", args.bbox)
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            0, 0, status="error", phase="error",
+                            error=f"No NOAA tiles intersect bbox {args.bbox}")
+            return
+
+        total_tiles = len(tile_filenames)
+        log.info("Found %d NOAA tiles intersecting bbox", total_tiles)
+
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        0, total_tiles, phase="downloading",
+                        geotiffs_downloaded=0, geotiffs_total=total_tiles)
+
+        # Phase 4: Download, reproject, and convert ONE AT A TIME
+        tiles_done = 0
+        tiles_failed = 0
+
+        from pipeline_security import validate_file_header
+
+        for idx, tile_filename in enumerate(tile_filenames):
+            if _cancel_requested:
+                log.info("Cancellation requested after %d/%d tiles", tiles_done, total_tiles)
+                update_progress(output, "noaa", args.bbox, "n/a",
+                                tiles_done, total_tiles, status="cancelled",
+                                phase="cancelled",
+                                geotiffs_downloaded=tiles_done,
+                                geotiffs_total=total_tiles)
+                return
+
+            tile_url = f"{blob_base}/{tile_filename}"
+            raw_path = staging / tile_filename
+            warped_name = f"warped_{tile_filename}"
+            warped_path = staging / warped_name
+
+            log.info("[%d/%d] Downloading %s (~%d MB)",
+                     idx + 1, total_tiles, tile_filename, NOAA_TILE_SIZE_MB)
+
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            tiles_done, total_tiles, phase="downloading",
+                            geotiffs_downloaded=tiles_done,
+                            geotiffs_total=total_tiles)
+
+            # Download with streaming (486 MB files)
+            success = await fetch_to_file(
+                session, tile_url, raw_path,
+                timeout_s=3600,  # 1 hour for ~486 MB
+                max_size=NOAA_MAX_GEOTIFF_SIZE,
+            )
+
+            if not success:
+                log.warning("Failed to download %s, skipping", tile_filename)
+                tiles_failed += 1
+                continue
+
+            # Validate GeoTIFF header
+            if not validate_file_header(raw_path, "geotiff"):
+                log.error("Invalid GeoTIFF header for %s — removing", tile_filename)
+                raw_path.unlink(missing_ok=True)
+                tiles_failed += 1
+                continue
+
+            if _cancel_requested:
+                raw_path.unlink(missing_ok=True)
+                log.info("Cancellation requested during tile processing")
+                update_progress(output, "noaa", args.bbox, "n/a",
+                                tiles_done, total_tiles, status="cancelled",
+                                phase="cancelled")
+                return
+
+            # Reproject to EPSG:3857
+            log.info("[%d/%d] Reprojecting %s to EPSG:3857",
+                     idx + 1, total_tiles, tile_filename)
+
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            tiles_done, total_tiles, phase="reprojecting",
+                            geotiffs_downloaded=tiles_done,
+                            geotiffs_total=total_tiles)
+
+            try:
+                subprocess.run(
+                    [
+                        "nice", "-n", "19",
+                        "gdalwarp",
+                        "-t_srs", "EPSG:3857",
+                        "-r", "lanczos",
+                        "-co", "TILED=YES",
+                        "-co", "COMPRESS=DEFLATE",
+                        str(raw_path), str(warped_path),
+                    ],
+                    check=True, capture_output=True, text=True,
+                    env=_NOAA_GDAL_ENV, timeout=3600,
+                )
+            except subprocess.CalledProcessError as exc:
+                log.error("gdalwarp failed for %s: %s", tile_filename,
+                          exc.stderr if exc.stderr else str(exc))
+                raw_path.unlink(missing_ok=True)
+                warped_path.unlink(missing_ok=True)
+                tiles_failed += 1
+                continue
+            except subprocess.TimeoutExpired:
+                log.error("gdalwarp timed out for %s", tile_filename)
+                raw_path.unlink(missing_ok=True)
+                warped_path.unlink(missing_ok=True)
+                tiles_failed += 1
+                continue
+
+            # Delete raw file immediately after reprojection
+            raw_path.unlink(missing_ok=True)
+            log.info("[%d/%d] Deleted raw tile: %s", idx + 1, total_tiles, tile_filename)
+
+            # Convert to MBTiles using existing helper
+            log.info("[%d/%d] Converting %s to MBTiles",
+                     idx + 1, total_tiles, warped_name)
+
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            tiles_done, total_tiles, phase="converting",
+                            geotiffs_downloaded=tiles_done,
+                            geotiffs_total=total_tiles)
+
+            convert_ok = convert_batch_to_mbtiles(
+                [warped_path], output, f"noaa_tile_{idx}"
+            )
+
+            # Delete warped file after conversion
+            warped_path.unlink(missing_ok=True)
+
+            if convert_ok:
+                tiles_done += 1
+                log.info("[%d/%d] Tile %s processed successfully",
+                         idx + 1, total_tiles, tile_filename)
+            else:
+                tiles_failed += 1
+                log.warning("[%d/%d] Conversion failed for %s",
+                            idx + 1, total_tiles, tile_filename)
+
+    # Phase 5: Build overview pyramids
+    if output.exists() and tiles_done > 0:
+        log.info("Building overview pyramids for %s", output)
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        tiles_done, total_tiles, phase="overviews",
+                        geotiffs_downloaded=tiles_done,
+                        geotiffs_total=total_tiles)
+        try:
+            subprocess.run(
+                ["nice", "-n", "19", "gdaladdo", "-r", "average",
+                 str(output), "2", "4", "8", "16"],
+                check=True, capture_output=True, text=True,
+                env=_NOAA_GDAL_ENV, timeout=3600,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            log.warning("Overview generation failed: %s — output is still usable", exc)
+
+    # Phase 6: Update TileServer config if path is provided via env
+    ts_config_path = os.environ.get("TILESERVER_CONFIG")
+    if output.exists() and tiles_done > 0 and ts_config_path:
+        ts_config = Path(ts_config_path)
+        if ts_config.exists():
+            try:
+                from tileserver_config import add_mbtiles_to_config
+                added = add_mbtiles_to_config(
+                    ts_config, "imagery_noaa", f"/srv/data/{output.name}"
+                )
+                if added:
+                    log.info("Added imagery_noaa to TileServer config.json")
+                else:
+                    log.info("imagery_noaa already in TileServer config")
+            except Exception as exc:
+                log.warning("Failed to update TileServer config (non-fatal): %s", exc)
+        else:
+            log.warning("TileServer config not found at %s", ts_config_path)
+
+    # Final status
+    if tiles_done == 0:
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        0, total_tiles, status="error", phase="error",
+                        error=f"All {total_tiles} tiles failed to process")
+        log.error("NOAA pipeline failed: 0/%d tiles processed", total_tiles)
+    else:
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        tiles_done, total_tiles, status="completed",
+                        phase="complete",
+                        geotiffs_downloaded=tiles_done,
+                        geotiffs_total=total_tiles)
+        log.info("NOAA pipeline complete: %d/%d tiles processed (%d failed) → %s",
+                 tiles_done, total_tiles, tiles_failed, output)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1450,7 +1825,8 @@ def main():
         description="Download USGS orthoimagery and convert to MBTiles"
     )
     parser.add_argument(
-        "--mode", choices=["tnmaccess", "direct", "m2m", "nationalmap"], default="tnmaccess",
+        "--mode", choices=["tnmaccess", "direct", "m2m", "nationalmap", "noaa"],
+        default="tnmaccess",
         help="Download mode (default: tnmaccess)",
     )
     parser.add_argument(
@@ -1487,10 +1863,23 @@ def main():
         default=os.environ.get("USGS_M2M_TOKEN"),
         help="USGS M2M API token (default: USGS_M2M_TOKEN env var)",
     )
+    parser.add_argument(
+        "--state",
+        help="State abbreviation for NOAA mode (e.g. AZ, CA)",
+    )
+    parser.add_argument(
+        "--year", type=int, default=2021,
+        help="NAIP year for NOAA mode (default: %(default)s)",
+    )
 
     args = parser.parse_args()
 
-    if args.mode == "tnmaccess":
+    if args.mode == "noaa":
+        if not args.state:
+            log.error("NOAA mode requires --state (e.g. --state AZ)")
+            sys.exit(1)
+        asyncio.run(run_noaa(args))
+    elif args.mode == "tnmaccess":
         asyncio.run(run_tnmaccess(args))
     elif args.mode == "m2m":
         asyncio.run(run_m2m(args))
