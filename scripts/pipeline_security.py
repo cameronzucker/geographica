@@ -93,6 +93,38 @@ def sanitize_scene_id(scene_id: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]", "_", scene_id).strip("_")
 
 
+def sanitize_layer_name(name: str) -> str:
+    """Sanitize a user-provided layer name for use as an MBTiles filename.
+
+    Lowercases, strips non-alphanumeric characters (except underscore),
+    truncates to 32 chars. Rejects path traversal attempts.
+
+    Args:
+        name: User-provided layer name.
+
+    Returns:
+        Safe string containing only ``[a-z0-9_]``, max 32 chars.
+
+    Raises:
+        ValueError: On path traversal attempts, null bytes, or empty result.
+    """
+    if "\x00" in name:
+        raise ValueError("path traversal: null bytes in name")
+    if "/" in name or "\\" in name:
+        raise ValueError("path traversal: path separator in name")
+    if ".." in name:
+        raise ValueError("path traversal: '..' in name")
+
+    result = re.sub(r"[^a-z0-9_]", "_", name.lower()).strip("_")
+    result = re.sub(r"_+", "_", result)
+    result = result[:32].rstrip("_")
+
+    if not result:
+        raise ValueError("layer name empty after sanitization")
+
+    return result
+
+
 def sanitize_fips(fips: str) -> str:
     """Validate and return a 5-digit FIPS county code.
 

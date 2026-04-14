@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from tileserver_config import add_mbtiles_to_config
+from pipeline_security import sanitize_layer_name
 
 
 SAMPLE_CONFIG = {
@@ -58,3 +59,37 @@ class TestAddMbtilesToConfig:
         config_path.write_text(json.dumps(SAMPLE_CONFIG, indent=2))
         add_mbtiles_to_config(config_path, "test", "/srv/data/test.mbtiles")
         assert not list(tmp_path.glob("*.tmp"))
+
+
+class TestSanitizeLayerName:
+    def test_simple_name(self):
+        assert sanitize_layer_name("phoenix drone") == "phoenix_drone"
+
+    def test_uppercase_lowered(self):
+        assert sanitize_layer_name("Phoenix 2024") == "phoenix_2024"
+
+    def test_special_chars_stripped(self):
+        assert sanitize_layer_name("my-layer (v2)!") == "my_layer_v2"
+
+    def test_path_traversal_rejected(self):
+        with pytest.raises(ValueError, match="path traversal"):
+            sanitize_layer_name("../../etc/passwd")
+
+    def test_slash_rejected(self):
+        with pytest.raises(ValueError, match="path traversal"):
+            sanitize_layer_name("foo/bar")
+
+    def test_null_byte_rejected(self):
+        with pytest.raises(ValueError, match="path traversal"):
+            sanitize_layer_name("foo\x00bar")
+
+    def test_max_length_32(self):
+        result = sanitize_layer_name("a" * 50)
+        assert len(result) <= 32
+
+    def test_empty_after_sanitize_rejected(self):
+        with pytest.raises(ValueError, match="empty"):
+            sanitize_layer_name("!!!")
+
+    def test_leading_trailing_underscores_stripped(self):
+        assert sanitize_layer_name("__test__") == "test"
