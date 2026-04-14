@@ -98,6 +98,16 @@ def write_pipeline_state(output_path: Path, state: dict):
         log.warning("Failed to write pipeline state: %s", exc)
 
 
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON atomically via tmp + fsync + rename."""
+    tmp = path.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(str(tmp), str(path))
+
+
 def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
                     tiles_done: int, tiles_total: int, rate: float = 0,
                     status: str = "running", error: str = None,
@@ -400,7 +410,7 @@ async def download_geotiffs(urls: list[str], staging: Path, checkpoint_path: Pat
             files_completed += 1
             return
         done[url] = str(dest)
-        checkpoint_path.write_text(json.dumps(done, indent=2))
+        _atomic_write_json(checkpoint_path, done)
         files_completed += 1
         if on_file_complete:
             on_file_complete(files_completed, len(urls))
@@ -728,7 +738,7 @@ async def run_direct(args):
 # MODE 3 – USGS M2M API
 # ===================================================================
 
-M2M_POLL_INTERVAL = 10  # seconds between download-retrieve polls
+M2M_POLL_INTERVAL = 30  # seconds between download-retrieve polls (USGS guidance)
 M2M_POLL_MAX_ATTEMPTS = 360  # ~1 hour max wait
 
 
@@ -931,7 +941,7 @@ async def _m2m_request_and_poll_urls(
                  len(urls), len(preparing))
 
         for attempt in range(M2M_POLL_MAX_ATTEMPTS):
-            await asyncio.sleep(30)  # USGS example uses 30s between polls
+            await asyncio.sleep(M2M_POLL_INTERVAL)
 
             retrieve = await m2m_request(session, "download-retrieve", {
                 "label": batch_label,
@@ -959,12 +969,12 @@ async def _m2m_request_and_poll_urls(
                         urls.append(url)
                         seen_ids.add(did)
 
-            remaining = requested_count - len(failed) - len(seen_ids)
+            remaining = requested_count - len(seen_ids)
             if remaining <= 0:
                 break
 
-            log.info("  %d/%d downloads ready, %d remaining — waiting 30s",
-                     len(seen_ids), requested_count, remaining)
+            log.info("  %d/%d downloads ready, %d remaining -- waiting %ds",
+                     len(seen_ids), requested_count, remaining, M2M_POLL_INTERVAL)
         else:
             log.warning("Timed out waiting for downloads (label: %s). "
                         "Got %d/%d URLs.", batch_label, len(urls), requested_count)
@@ -1248,6 +1258,7 @@ async def run_m2m(args):
 
             # --- Batched download: options → request → poll → download per chunk ---
             log.info("Starting batched download for %d scenes", len(scenes))
+            tif_paths = []  # B4 fix: initialize before try so finally can't cause UnboundLocalError
 
             def _on_batch(geotiffs_downloaded, geotiffs_total, geotiffs_bytes,
                           current_batch, total_batches):
