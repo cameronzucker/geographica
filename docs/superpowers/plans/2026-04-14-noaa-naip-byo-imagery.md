@@ -12,6 +12,10 @@
 
 **Deferred to follow-up:** Multi-state bbox support (spec decision #10) — when a bbox spans two states, only the selected state's tiles are downloaded. This requires fetching and merging tile indices from multiple states, which adds complexity. For v1, the user selects one state at a time. Multi-state can be added as a follow-up task.
 
+**Plan review notes (3 rounds):**
+1. Task 4: use `fetch_to_file()` (streaming) instead of `fetch_with_retry()` (loads 486 MB into memory). `fetch_to_file` exists in `acquire_naip.py` — import it or copy the pattern.
+2. Task 7 Step 8 modifies `main.py` — should logically be part of Task 6. If running tasks sequentially, this is fine. If parallelizing, move Step 8 to Task 6.
+
 ---
 
 ## File Map
