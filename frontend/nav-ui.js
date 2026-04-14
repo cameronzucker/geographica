@@ -97,6 +97,16 @@
     // Listen for manual pan during navigation
     map.on('dragstart', onManualPan);
     map.on('wheel', onManualPan);
+
+    // Compass click pauses auto-center during navigation
+    var compassBtn = document.getElementById('compass-north-btn');
+    if (compassBtn) {
+      compassBtn.addEventListener('click', function () {
+        if (active) {
+          onManualPan();  // pause auto-center for 10 seconds
+        }
+      });
+    }
   }
 
   function syncUnits() {

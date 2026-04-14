@@ -158,6 +158,62 @@
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
     // NavigationControl with showCompass:true calls dragRotate.enable() internally.
     // Disable compass to prevent it from re-enabling dragRotate (Pitfall #11).
+
+    // Custom compass button (avoids Pitfall #11 -- NavigationControl compass re-enables dragRotate)
+    var compassBtn = document.createElement('button');
+    compassBtn.id = 'compass-north-btn';
+    compassBtn.className = 'map-btn';
+    compassBtn.title = 'Reset to north';
+    // Build SVG compass icon via DOM API (no innerHTML)
+    var compassNS = 'http://www.w3.org/2000/svg';
+    var compassSvg = document.createElementNS(compassNS, 'svg');
+    compassSvg.setAttribute('viewBox', '0 0 24 24');
+    compassSvg.setAttribute('width', '20');
+    compassSvg.setAttribute('height', '20');
+    compassSvg.setAttribute('fill', 'none');
+    compassSvg.setAttribute('stroke', 'currentColor');
+    compassSvg.setAttribute('stroke-width', '2');
+    compassSvg.setAttribute('stroke-linecap', 'round');
+    compassSvg.setAttribute('stroke-linejoin', 'round');
+    // North arrow
+    var compassArrow = document.createElementNS(compassNS, 'polygon');
+    compassArrow.setAttribute('points', '12,2 15,10 12,8 9,10');
+    compassArrow.setAttribute('fill', '#f38ba8');
+    compassArrow.setAttribute('stroke', '#f38ba8');
+    compassSvg.appendChild(compassArrow);
+    // South arrow
+    var compassSouth = document.createElementNS(compassNS, 'polygon');
+    compassSouth.setAttribute('points', '12,22 9,14 12,16 15,14');
+    compassSouth.setAttribute('fill', 'currentColor');
+    compassSouth.setAttribute('stroke', 'currentColor');
+    compassSvg.appendChild(compassSouth);
+    // Circle
+    var compassCircle = document.createElementNS(compassNS, 'circle');
+    compassCircle.setAttribute('cx', '12');
+    compassCircle.setAttribute('cy', '12');
+    compassCircle.setAttribute('r', '10');
+    compassSvg.appendChild(compassCircle);
+    // N label
+    var compassN = document.createElementNS(compassNS, 'text');
+    compassN.setAttribute('x', '12');
+    compassN.setAttribute('y', '6');
+    compassN.setAttribute('text-anchor', 'middle');
+    compassN.setAttribute('font-size', '5');
+    compassN.setAttribute('fill', '#f38ba8');
+    compassN.setAttribute('stroke', 'none');
+    compassN.textContent = 'N';
+    compassSvg.appendChild(compassN);
+    compassBtn.appendChild(compassSvg);
+    compassBtn.addEventListener('click', function () {
+      map.easeTo({ bearing: 0, duration: 500 });
+    });
+    document.getElementById('map').appendChild(compassBtn);
+
+    // Rotate the button to show current bearing
+    map.on('rotate', function () {
+      compassBtn.style.transform = 'rotate(' + (-map.getBearing()) + 'deg)';
+    });
+
     var scaleUnit = useImperial ? 'imperial' : 'metric';
     map._scaleControl = new maplibregl.ScaleControl({ unit: scaleUnit });
     map.addControl(map._scaleControl, 'bottom-right');
