@@ -174,11 +174,15 @@ def run_import(
             if wp.exists():
                 wp.unlink()
 
-        if delete_after and warped_paths:
+        if delete_after:
+            # Only delete source files whose reprojection succeeded
             for tif in batch:
-                if tif.exists():
-                    tif.unlink()
-                    log.info("Deleted source: %s", tif)
+                warped = staging_dir / f"warped_{tif.name}"
+                # If the warped file was in our success list, the source is safe to delete
+                if any(wp.name == f"warped_{tif.name}" for wp in warped_paths):
+                    if tif.exists():
+                        tif.unlink()
+                        log.info("Deleted source: %s", tif)
 
         completed += len(batch)
 
