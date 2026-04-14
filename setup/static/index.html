@@ -216,14 +216,34 @@
       <h2>Download &amp; Build</h2>
       <p class="subtitle">Pipeline progress. This may take several hours depending on region size.</p>
 
-      <div class="progress-overview">
-        <div class="progress-bar-container">
-          <div class="progress-bar" id="pipeline-progress" style="width:0%"></div>
+      <!-- Preflight checks -->
+      <div id="preflight-section">
+        <h3>Preflight Checks</h3>
+        <p class="preflight-desc">Verifying system dependencies before starting the pipeline.</p>
+        <div id="preflight-list" class="preflight-list"></div>
+        <div id="preflight-actions" style="display:none">
+          <button class="btn btn-secondary btn-small" id="btn-recheck">Re-check</button>
         </div>
-        <span class="progress-pct" id="pipeline-pct">0%</span>
       </div>
 
-      <div class="substep-list" id="substep-list"></div>
+      <!-- Pipeline progress (hidden until preflight passes) -->
+      <div id="pipeline-section" style="display:none">
+        <div class="progress-overview">
+          <div class="progress-bar-container">
+            <div class="progress-bar" id="pipeline-progress" style="width:0%"></div>
+          </div>
+          <span class="progress-pct" id="pipeline-pct">0%</span>
+        </div>
+
+        <div class="substep-list" id="substep-list"></div>
+
+        <!-- Error action bar (hidden until error) -->
+        <div id="error-actions" class="error-actions" style="display:none">
+          <span id="error-step-name" class="error-step-name"></span>
+          <button class="btn btn-secondary btn-small" id="btn-retry-step">Retry</button>
+          <button class="btn btn-secondary btn-small" id="btn-skip-step">Skip</button>
+        </div>
+      </div>
 
       <div class="log-viewer-toggle">
         <button class="btn btn-secondary btn-small" id="btn-toggle-log">Show log</button>

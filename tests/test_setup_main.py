@@ -235,3 +235,121 @@ class TestCORSHeaders:
         })
         # Should not include the evil origin
         assert resp.headers.get("access-control-allow-origin") != "http://evil.com"
+
+
+class TestValidatePathEndpoint:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = TestClient(app)
+        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+    def test_valid_path(self):
+        resp = self.client.post("/api/validate-path",
+            json={"path": "/srv/geographica/data"},
+            headers=self.headers)
+        assert resp.status_code == 200
+        assert resp.json()["valid"] is True
+
+    def test_invalid_path(self):
+        resp = self.client.post("/api/validate-path",
+            json={"path": "/etc/passwd"},
+            headers=self.headers)
+        assert resp.status_code == 200
+        assert resp.json()["valid"] is False
+
+    def test_requires_csrf(self):
+        resp = self.client.post("/api/validate-path",
+            json={"path": "/srv/geographica/data"})
+        assert resp.status_code == 403
+
+    def test_path_traversal_rejected(self):
+        resp = self.client.post("/api/validate-path",
+            json={"path": "/srv/../etc/passwd"},
+            headers=self.headers)
+        assert resp.status_code == 200
+        assert resp.json()["valid"] is False
+
+    def test_empty_path_rejected(self):
+        resp = self.client.post("/api/validate-path",
+            json={"path": ""},
+            headers=self.headers)
+        assert resp.status_code == 200
+        assert resp.json()["valid"] is False
+
+
+class TestPreflightEndpoint:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = TestClient(app)
+
+    def test_preflight_returns_checks(self):
+        resp = self.client.get("/api/preflight")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "checks" in data
+        assert isinstance(data["checks"], list)
+        assert len(data["checks"]) > 0
+
+    def test_preflight_checks_have_required_fields(self):
+        resp = self.client.get("/api/preflight")
+        data = resp.json()
+        for check in data["checks"]:
+            assert "name" in check
+            assert "status" in check
+            assert check["status"] in ("ok", "missing", "error")
+
+
+class TestFixDependencyEndpoint:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = TestClient(app)
+        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+    def test_requires_csrf(self):
+        resp = self.client.post("/api/fix-dependency",
+            json={"dependency": "docker"})
+        assert resp.status_code == 403
+
+    def test_rejects_unknown_dependency(self):
+        resp = self.client.post("/api/fix-dependency",
+            json={"dependency": "rm -rf /"},
+            headers=self.headers)
+        assert resp.status_code == 400
+
+    def test_rejects_shell_injection(self):
+        resp = self.client.post("/api/fix-dependency",
+            json={"dependency": "docker; rm -rf /"},
+            headers=self.headers)
+        assert resp.status_code == 400
+
+
+class TestCreateDirectoryEndpoint:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.client = TestClient(app)
+        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+    def test_requires_csrf(self):
+        resp = self.client.post("/api/create-directory",
+            json={"path": "/srv/geographica/data"})
+        assert resp.status_code == 403
+
+    def test_rejects_disallowed_path(self):
+        resp = self.client.post("/api/create-directory",
+            json={"path": "/etc/evil"},
+            headers=self.headers)
+        assert resp.status_code == 400
+
+    def test_creates_directory_in_allowed_path(self, tmp_path, monkeypatch):
+        # Monkeypatch the ALLOWED_PATH_PREFIXES to include tmp_path
+        import setup.config as config_mod
+        original = config_mod.ALLOWED_PATH_PREFIXES
+        monkeypatch.setattr(config_mod, "ALLOWED_PATH_PREFIXES", original + (str(tmp_path),))
+
+        test_dir = tmp_path / "test_create" / "subdir"
+        resp = self.client.post("/api/create-directory",
+            json={"path": str(test_dir)},
+            headers=self.headers)
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert test_dir.exists()

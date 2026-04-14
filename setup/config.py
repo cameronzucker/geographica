@@ -5,6 +5,13 @@ import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Path validation — ALLOWLIST only, never blocklist
+# ---------------------------------------------------------------------------
+ALLOWED_PATH_PREFIXES: tuple[str, ...] = ("/srv", "/mnt", "/media", "/home")
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +248,73 @@ def detect_storage() -> list[dict]:
 
     results.sort(key=lambda x: x["free_gb"], reverse=True)
     return results
+
+
+# ---------------------------------------------------------------------------
+# Path validation
+# ---------------------------------------------------------------------------
+def validate_path(path_str: str) -> dict:
+    """Validate a filesystem path against the ALLOWLIST.
+
+    Returns a dict with 'valid' (bool) and optionally 'reason' (str),
+    'free_gb' (float), and 'total_gb' (float).
+
+    Security rules:
+    - Path must be absolute
+    - Path must start with an allowed prefix (ALLOWLIST)
+    - No null bytes
+    - No path traversal (resolved path must still be under allowed prefix)
+    - Reject symlinks (any component that is a symlink)
+    """
+    if not path_str or not isinstance(path_str, str):
+        return {"valid": False, "reason": "Path is empty"}
+
+    # Reject null bytes
+    if "\x00" in path_str:
+        return {"valid": False, "reason": "Path contains null bytes"}
+
+    # Must be absolute
+    if not path_str.startswith("/"):
+        return {"valid": False, "reason": "Path must be absolute (start with /)"}
+
+    # Resolve to catch traversal (.. components)
+    try:
+        resolved = str(Path(path_str).resolve())
+    except (OSError, ValueError):
+        return {"valid": False, "reason": "Invalid path"}
+
+    # Check against allowlist AFTER resolving
+    if not any(resolved.startswith(prefix) for prefix in ALLOWED_PATH_PREFIXES):
+        return {"valid": False, "reason": f"Path not in allowed prefixes: {', '.join(ALLOWED_PATH_PREFIXES)}"}
+
+    # Also check the original path before resolution — catches /srv/../etc
+    if not any(path_str.startswith(prefix) for prefix in ALLOWED_PATH_PREFIXES):
+        return {"valid": False, "reason": f"Path not in allowed prefixes: {', '.join(ALLOWED_PATH_PREFIXES)}"}
+
+    # Reject symlinks — check each existing component
+    check_path = Path(resolved)
+    while str(check_path) != check_path.root:
+        if check_path.exists() and check_path.is_symlink():
+            return {"valid": False, "reason": "Path contains a symlink, which is not allowed"}
+        check_path = check_path.parent
+
+    # Get disk space info if the path or its parent exists
+    result: dict = {"valid": True}
+    try:
+        # Walk up to find an existing ancestor
+        check = Path(resolved)
+        while not check.exists() and str(check) != check.root:
+            check = check.parent
+        if check.exists():
+            usage = shutil.disk_usage(str(check))
+            result["free_gb"] = round(usage.free / (1024 ** 3), 1)
+            result["total_gb"] = round(usage.total / (1024 ** 3), 1)
+            if result["free_gb"] < 20:
+                result["warning"] = f"Low disk space: {result['free_gb']} GB free"
+    except OSError:
+        pass
+
+    return result
 
 
 # ---------------------------------------------------------------------------

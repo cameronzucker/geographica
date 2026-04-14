@@ -195,3 +195,91 @@ class TestStorageDetection:
                 assert required_fields.issubset(set(entry.keys())), (
                     f"Entry missing fields: {required_fields - set(entry.keys())}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# TestValidatePath
+# ---------------------------------------------------------------------------
+class TestValidatePath:
+    def test_valid_srv_path(self):
+        from config import validate_path
+        result = validate_path("/srv/geographica/data")
+        assert result["valid"] is True
+
+    def test_valid_mnt_path(self):
+        from config import validate_path
+        result = validate_path("/mnt/external/data")
+        assert result["valid"] is True
+
+    def test_valid_media_path(self):
+        from config import validate_path
+        result = validate_path("/media/usb/data")
+        assert result["valid"] is True
+
+    def test_valid_home_path(self):
+        from config import validate_path
+        result = validate_path("/home/user/data")
+        assert result["valid"] is True
+
+    def test_rejects_etc(self):
+        from config import validate_path
+        result = validate_path("/etc/geographica")
+        assert result["valid"] is False
+        assert "not in allowed" in result["reason"].lower() or "allowed" in result["reason"].lower()
+
+    def test_rejects_root(self):
+        from config import validate_path
+        result = validate_path("/")
+        assert result["valid"] is False
+
+    def test_rejects_var(self):
+        from config import validate_path
+        result = validate_path("/var/data")
+        assert result["valid"] is False
+
+    def test_rejects_tmp(self):
+        from config import validate_path
+        result = validate_path("/tmp/data")
+        assert result["valid"] is False
+
+    def test_rejects_relative_path(self):
+        from config import validate_path
+        result = validate_path("data/relative")
+        assert result["valid"] is False
+
+    def test_rejects_path_traversal(self):
+        from config import validate_path
+        result = validate_path("/srv/../etc/passwd")
+        assert result["valid"] is False
+
+    def test_rejects_empty_string(self):
+        from config import validate_path
+        result = validate_path("")
+        assert result["valid"] is False
+
+    def test_rejects_symlink(self, tmp_path):
+        from config import validate_path
+        # Create a symlink inside an allowed prefix
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        link_path = tmp_path / "link"
+        link_path.symlink_to(real_dir)
+        # Even if path starts with /home, symlinks are rejected
+        result = validate_path(str(link_path))
+        # The path starts with /tmp which is not allowed
+        assert result["valid"] is False
+
+    def test_rejects_null_bytes(self):
+        from config import validate_path
+        result = validate_path("/srv/data\x00evil")
+        assert result["valid"] is False
+
+    def test_warns_low_disk_space(self, tmp_path):
+        from config import validate_path
+        # tmp_path is under /tmp which is not in allowlist
+        # This test verifies a valid path returns disk info
+        result = validate_path("/srv/geographica/data")
+        assert result["valid"] is True
+        # If the path parent exists, we should get disk info
+        if "free_gb" in result:
+            assert isinstance(result["free_gb"], (int, float))

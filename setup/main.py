@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from setup.config import (
     validate_bbox, get_ram_profile, detect_host_ip,
     detect_ram_mb, detect_storage, generate_env, REGION_PRESETS,
+    validate_path, ALLOWED_PATH_PREFIXES,
 )
 from setup.runner import Checkpoint, run_command, shutdown_children
 
@@ -31,6 +32,34 @@ from setup.runner import Checkpoint, run_command, shutdown_children
 
 # CSRF token — generated once at startup
 CSRF_TOKEN = secrets.token_hex(32)
+
+# FIX_REGISTRY — ONLY these dependencies can be "fixed" via the API.
+# Each entry maps a dependency name to the exact command (as a list of strings)
+# that will be executed. NEVER shell=True, NEVER accept user strings.
+FIX_REGISTRY: dict[str, list[str]] = {
+    "docker": ["sudo", "apt", "install", "-y", "docker.io"],
+    "docker-compose": ["sudo", "apt", "install", "-y", "docker-compose"],
+    "python3-venv": ["sudo", "apt", "install", "-y", "python3-venv"],
+    "gdal-bin": ["sudo", "apt", "install", "-y", "gdal-bin"],
+    "osmium-tool": ["sudo", "apt", "install", "-y", "osmium-tool"],
+    "gpsd": ["sudo", "apt", "install", "-y", "gpsd", "gpsd-clients"],
+    "wget": ["sudo", "apt", "install", "-y", "wget"],
+    "curl": ["sudo", "apt", "install", "-y", "curl"],
+    "unzip": ["sudo", "apt", "install", "-y", "unzip"],
+}
+
+# Preflight dependency checks — command to run and what constitutes success
+PREFLIGHT_CHECKS: list[dict] = [
+    {"name": "docker", "check_cmd": ["docker", "--version"], "label": "Docker"},
+    {"name": "docker-compose", "check_cmd": ["docker", "compose", "version"], "label": "Docker Compose"},
+    {"name": "python3", "check_cmd": ["python3", "--version"], "label": "Python 3"},
+    {"name": "gdal-bin", "check_cmd": ["gdalinfo", "--version"], "label": "GDAL"},
+    {"name": "osmium-tool", "check_cmd": ["osmium", "--version"], "label": "Osmium Tool"},
+    {"name": "gpsd", "check_cmd": ["gpsd", "-V"], "label": "GPSD"},
+    {"name": "wget", "check_cmd": ["wget", "--version"], "label": "wget"},
+    {"name": "curl", "check_cmd": ["curl", "--version"], "label": "curl"},
+    {"name": "git", "check_cmd": ["git", "--version"], "label": "Git"},
+]
 
 # Credential storage path — HARDCODED, never from client
 CREDENTIALS_PATH = "/srv/geographica/data/credentials.json"
@@ -111,6 +140,18 @@ class CredentialsRequest(BaseModel):
     copernicus_client_secret: str
 
 
+class PathRequest(BaseModel):
+    path: str
+
+
+class FixDependencyRequest(BaseModel):
+    dependency: str
+
+
+class CreateDirectoryRequest(BaseModel):
+    path: str
+
+
 class StartRequest(BaseModel):
     bbox: str
     layers: list[str] = []
@@ -154,6 +195,90 @@ async def get_presets():
 async def post_validate_bbox(body: BboxRequest):
     """Validate a bounding box string."""
     return {"valid": validate_bbox(body.bbox)}
+
+
+@app.post("/api/validate-path")
+async def post_validate_path(body: PathRequest):
+    """Validate a filesystem path against the ALLOWLIST."""
+    return validate_path(body.path)
+
+
+@app.get("/api/preflight")
+async def get_preflight():
+    """Run preflight dependency checks."""
+    checks = []
+    for entry in PREFLIGHT_CHECKS:
+        check_result = {"name": entry["name"], "label": entry["label"]}
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *entry["check_cmd"],
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            if proc.returncode == 0:
+                version_text = stdout.decode("utf-8", errors="replace").strip()
+                if not version_text:
+                    version_text = stderr.decode("utf-8", errors="replace").strip()
+                version_line = version_text.split("\n")[0] if version_text else ""
+                check_result["status"] = "ok"
+                check_result["version"] = version_line
+            else:
+                check_result["status"] = "error"
+                check_result["message"] = "Command returned non-zero exit code"
+        except FileNotFoundError:
+            check_result["status"] = "missing"
+            check_result["message"] = f"{entry['name']} is not installed"
+        except Exception as e:
+            check_result["status"] = "error"
+            check_result["message"] = str(e)
+        checks.append(check_result)
+    return {"checks": checks}
+
+
+@app.post("/api/fix-dependency")
+async def post_fix_dependency(body: FixDependencyRequest):
+    """Install a missing dependency using the FIX_REGISTRY.
+
+    SECURITY: Only dependencies in FIX_REGISTRY can be installed.
+    Uses create_subprocess_exec with argument lists, never shell=True.
+    """
+    dep = body.dependency
+    if dep not in FIX_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Unknown dependency: {dep}")
+
+    cmd = FIX_REGISTRY[dep]
+    output_lines: list[str] = []
+
+    def on_output(source: str, data: bytes):
+        output_lines.append(data.decode("utf-8", errors="replace"))
+
+    exit_code = await run_command(
+        args=cmd,
+        cwd="/tmp",
+        on_output=on_output,
+    )
+    return {"ok": exit_code == 0, "exit_code": exit_code, "output": "".join(output_lines)}
+
+
+@app.post("/api/create-directory")
+async def post_create_directory(body: CreateDirectoryRequest):
+    """Create a directory at the specified path.
+
+    SECURITY: Path must pass validate_path (ALLOWLIST check).
+    """
+    validation = validate_path(body.path)
+    if not validation.get("valid"):
+        raise HTTPException(
+            status_code=400,
+            detail=validation.get("reason", "Invalid path"),
+        )
+
+    try:
+        Path(body.path).mkdir(parents=True, exist_ok=True)
+        return {"ok": True, "path": body.path}
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=f"Cannot create directory: {e}")
 
 
 @app.post("/api/config")

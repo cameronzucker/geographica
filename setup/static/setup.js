@@ -121,7 +121,7 @@
     btnBack.style.display = (n > 1) ? '' : 'none';
 
     if (n === 4) {
-      btnNext.textContent = 'Start Pipeline';
+      btnNext.textContent = preflightPassed ? 'Start Pipeline' : 'Run Checks';
       btnNext.style.display = '';
     } else if (n === 5) {
       btnNext.style.display = 'none';
@@ -138,6 +138,16 @@
     if (n === 1) loadSystemInfo();
     if (n === 2) initRegionStep();
     if (n === 3) loadCredentials();
+    if (n === 4) {
+      if (!preflightPassed) {
+        $('#preflight-section').style.display = '';
+        $('#pipeline-section').style.display = 'none';
+        runPreflightChecks();
+      } else {
+        $('#preflight-section').style.display = 'none';
+        $('#pipeline-section').style.display = '';
+      }
+    }
     if (n === 5) startHealthPolling();
   }
 
@@ -518,9 +528,101 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Step 4: Preflight checks
+  // ---------------------------------------------------------------------------
+  var preflightPassed = false;
+  var failedStep = null;
+
+  function runPreflightChecks() {
+    var list = $('#preflight-list');
+    list.textContent = '';
+    preflightPassed = false;
+
+    // Show loading state
+    var loadingItem = createEl('div', 'preflight-item');
+    var loadingDot = createEl('div', 'preflight-dot checking');
+    loadingItem.appendChild(loadingDot);
+    loadingItem.appendChild(createEl('span', 'preflight-name', 'Checking dependencies...'));
+    list.appendChild(loadingItem);
+
+    api('GET', '/api/preflight').then(function (data) {
+      list.textContent = '';
+      var allOk = true;
+
+      data.checks.forEach(function (check) {
+        var item = createEl('div', 'preflight-item');
+        var dot = createEl('div', 'preflight-dot ' + check.status);
+        item.appendChild(dot);
+        item.appendChild(createEl('span', 'preflight-name', check.label || check.name));
+
+        if (check.status === 'ok') {
+          item.appendChild(createEl('span', 'preflight-version', check.version || ''));
+        } else {
+          allOk = false;
+          item.appendChild(createEl('span', 'preflight-version', check.message || 'Not available'));
+          // Add fix button if dependency is fixable
+          var actionDiv = createEl('div', 'preflight-action');
+          var fixBtn = document.createElement('button');
+          fixBtn.className = 'btn-fix';
+          fixBtn.textContent = 'Install';
+          fixBtn.setAttribute('data-dep', check.name);
+          fixBtn.addEventListener('click', function () {
+            fixDependency(check.name, fixBtn);
+          });
+          actionDiv.appendChild(fixBtn);
+          item.appendChild(actionDiv);
+        }
+        list.appendChild(item);
+      });
+
+      var actionsEl = $('#preflight-actions');
+      actionsEl.style.display = '';
+
+      if (allOk) {
+        preflightPassed = true;
+        $('#preflight-section').style.display = 'none';
+        $('#pipeline-section').style.display = '';
+      }
+    }).catch(function (err) {
+      list.textContent = '';
+      var errItem = createEl('div', 'preflight-item');
+      var errDot = createEl('div', 'preflight-dot error');
+      errItem.appendChild(errDot);
+      errItem.appendChild(createEl('span', 'preflight-name', 'Preflight check failed: ' + err.message));
+      list.appendChild(errItem);
+      $('#preflight-actions').style.display = '';
+    });
+  }
+
+  function fixDependency(depName, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Installing...';
+
+    api('POST', '/api/fix-dependency', { dependency: depName }).then(function (data) {
+      if (data.ok) {
+        btn.textContent = 'Installed';
+        // Re-run preflight after a short delay
+        setTimeout(runPreflightChecks, 500);
+      } else {
+        btn.textContent = 'Failed';
+        btn.disabled = false;
+      }
+    }).catch(function () {
+      btn.textContent = 'Failed';
+      btn.disabled = false;
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Step 4: Pipeline
   // ---------------------------------------------------------------------------
   function startPipeline() {
+    // Run preflight first if not already passed
+    if (!preflightPassed) {
+      runPreflightChecks();
+      return;
+    }
+
     // Build layer list from config
     var layers = [];
     Object.keys(config.layers).forEach(function (key) {
@@ -536,6 +638,10 @@
     $('#btn-next').disabled = true;
     $('#btn-next').textContent = 'Running...';
 
+    // Hide error actions from any previous run
+    $('#error-actions').style.display = 'none';
+    failedStep = null;
+
     api('POST', '/api/start', {
       bbox: config.bbox,
       layers: layers,
@@ -543,10 +649,18 @@
     }).then(function () {
       connectProgress();
     }).catch(function (err) {
-      alert('Failed to start pipeline: ' + err.message);
+      showPipelineError('Pipeline start', err.message);
       $('#btn-next').disabled = false;
       $('#btn-next').textContent = 'Retry';
     });
+  }
+
+  function showPipelineError(stepName, message) {
+    var errorActions = $('#error-actions');
+    errorActions.style.display = '';
+    $('#error-step-name').textContent = 'Failed: ' + stepName;
+    failedStep = stepName;
+    appendLog('[ERROR] ' + stepName + ': ' + message + '\n');
   }
 
   function renderSubsteps() {
@@ -629,8 +743,10 @@
         if (el) {
           el.className = 'substep-item error';
         }
+        showPipelineError(STEP_LABELS[event.step] || event.step, event.message || 'Unknown error');
+      } else {
+        appendLog('[ERROR] ' + (event.message || 'Unknown error') + '\n');
       }
-      appendLog('[ERROR] ' + event.message);
       $('#btn-next').disabled = false;
       $('#btn-next').textContent = 'Retry';
     }
@@ -876,6 +992,22 @@
     $('#btn-launch').addEventListener('click', launchStack);
     $('#btn-skip-creds').addEventListener('click', function () {
       showStep(currentStep + 1);
+    });
+
+    // Preflight recheck
+    $('#btn-recheck').addEventListener('click', runPreflightChecks);
+
+    // Pipeline error retry/skip
+    $('#btn-retry-step').addEventListener('click', function () {
+      $('#error-actions').style.display = 'none';
+      startPipeline();
+    });
+    $('#btn-skip-step').addEventListener('click', function () {
+      $('#error-actions').style.display = 'none';
+      appendLog('[SKIP] Skipped failed step\n');
+      // Re-enable next button
+      $('#btn-next').disabled = false;
+      $('#btn-next').textContent = 'Next';
     });
 
     // TLS mode change
