@@ -31,6 +31,7 @@
   var PADDING_RECALC_THRESHOLD = 5; // px -- ignore changes smaller than this
   var rerouteRetries = 0;
   var MAX_REROUTE_RETRIES = 3;
+  var lastNavState = null;  // latest state from engine callback
 
   // =====================================================================
   //  DOM REFS
@@ -212,6 +213,7 @@
     gpsFeedInterval = null;
     autoCenterPaused = false;
     lastNavPaddingTop = 0;
+    lastNavState = null;
   }
 
   // =====================================================================
@@ -313,7 +315,6 @@
 
     var heading = data.heading != null ? data.heading : (data.bearing != null ? data.bearing : 0);
     var speed = data.speed || 0; // m/s
-    var headingValid = heading !== 0 || speed > 1;
 
     // Feed to engine
     if (nav && nav.updateGPS) {
@@ -337,11 +338,16 @@
     if (!autoCenterPaused) {
       var speedMps = speed || 0;
       var zoom = clamp(18 - speedMps * 0.15, 14, 18);
-      var bearing = headingValid ? heading : map.getBearing();
+      var navBearing;
+      if (lastNavState && lastNavState.headingValid) {
+        navBearing = lastNavState.heading;
+      } else {
+        navBearing = map.getBearing();  // freeze at current bearing
+      }
 
       map.easeTo({
         center: [lng, lat],
-        bearing: bearing,
+        bearing: navBearing,
         zoom: zoom,
         pitch: 60,
         duration: 500,
@@ -356,6 +362,7 @@
 
   function onNavUpdate(state) {
     if (!active) return;
+    lastNavState = state;
 
     // Read from engine's state object structure:
     // state.nextManeuver: { instruction, type, distanceTo, lanes }
