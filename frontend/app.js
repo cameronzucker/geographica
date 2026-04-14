@@ -1848,6 +1848,7 @@
         if (data.trip) {
           lastRouteTrip = data.trip;
           window._geographicaLastTrip = data.trip;
+          window._geographicaLastTrip._costing = costing;
           renderRoute(data.trip);
           document.getElementById('export-route-btn').classList.remove('hidden');
         } else if (data.error) {

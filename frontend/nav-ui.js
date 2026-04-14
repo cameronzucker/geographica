@@ -251,7 +251,7 @@
       summary: summary,
       totalDistance: distMeters,
       totalTime: summary.time || 0,
-      costing: trip.legs && trip.legs[0] ? (trip.legs[0].summary || {}).costing || 'auto' : 'auto',
+      costing: trip._costing || 'auto',
       remainingWaypoints: []
     };
   }
