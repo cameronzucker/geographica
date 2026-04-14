@@ -33,3 +33,15 @@ WAV files must be exactly 16kHz, mono, 16-bit PCM, little-endian. Tests that gen
 ## 8. Environment variable pollution
 
 Tests that modify environment variables (`STT_BACKEND`, `MODEL_PATH`) must restore the original values after the test. Use `monkeypatch` fixture, not `os.environ` directly.
+
+## 9. Unrecoverable async state
+
+When an async operation (fetch, WebSocket, timer) can fail, the state machine MUST have a recovery path. Test the failure case explicitly: trigger the async operation, force it to fail, and assert the system recovers to a valid state within a bounded time. The bug pattern: state transitions to "waiting" before the async call, the call fails, and nothing transitions back. The state machine is permanently stuck.
+
+## 10. JS truthiness for numeric zero
+
+`value || fallback` skips zero because `0` is falsy in JavaScript. When testing code that handles numeric values (headings, coordinates, indices, counts), always include a test case with the value `0`. Use explicit null checks (`value != null ? value : fallback`) instead of `||` for nullable numbers.
+
+## 11. Duplicated logic across modules
+
+When two modules independently compute the same derived value (e.g., "is GPS heading valid?"), they will drift over time. Tests should verify that both modules produce the same result for the same inputs, or better yet, the code should be refactored so only one module computes the value and the other consumes it.
