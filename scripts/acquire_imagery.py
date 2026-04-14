@@ -58,6 +58,75 @@ NATIONALMAP_EXPORT_URL = (
     "ImageServer/exportImage"
 )
 
+# ---------------------------------------------------------------------------
+# NOAA Digital Coast NAIP — catalog and helpers
+# ---------------------------------------------------------------------------
+NOAA_BLOB_BASE = "https://coastalimagery.blob.core.windows.net/digitalcoast"
+
+NOAA_NAIP_CATALOG = {
+    ("AZ", 2021): "AZ_NAIP_2021_9596",
+    # Additional states to be populated via NOAA Data Access Viewer
+}
+
+NOAA_TILE_SIZE_MB = 486  # approximate size of each NAIP quad GeoTIFF
+
+
+def noaa_blob_base_url(state: str, year: int) -> str:
+    """Return the Azure blob base URL for a state/year NAIP dataset."""
+    dir_name = NOAA_NAIP_CATALOG[(state, year)]
+    return f"{NOAA_BLOB_BASE}/{dir_name}"
+
+
+def noaa_cache_dir(data_dir: Path, state: str, year: int) -> Path:
+    """Return the local cache directory for NOAA shapefiles."""
+    return data_dir / "noaa_cache" / f"{state}_{year}"
+
+
+def filter_tiles_by_bbox(
+    shapefile_path: Path,
+    west: float, south: float, east: float, north: float,
+) -> list[str]:
+    """Use ogr2ogr to spatially filter a tile index shapefile.
+
+    Returns list of GeoTIFF filenames whose footprints intersect the bbox.
+    """
+    result = subprocess.run(
+        [
+            "ogr2ogr", "-f", "CSV", "/dev/stdout",
+            str(shapefile_path),
+            "-spat", str(west), str(south), str(east), str(north),
+            "-geom=NO",
+        ],
+        capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode != 0:
+        log.error("ogr2ogr spatial filter failed: %s", result.stderr)
+        return []
+
+    lines = result.stdout.strip().split("\n")
+    if len(lines) <= 1:
+        return []
+
+    # Find the FileName column index (NOAA shapefiles use various column names)
+    headers = lines[0].split(",")
+    try:
+        fname_idx = next(
+            i for i, h in enumerate(headers)
+            if h.strip().strip('"').lower() in ("filename", "name", "url", "location")
+        )
+    except StopIteration:
+        log.error("ogr2ogr CSV has no FileName column. Headers: %s", headers)
+        return []
+
+    filenames = []
+    for line in lines[1:]:
+        cols = line.split(",")
+        if len(cols) > fname_idx:
+            fname = cols[fname_idx].strip().strip('"')
+            if fname.endswith(".tif"):
+                filenames.append(fname)
+    return filenames
+
 
 def nationalmap_tile_url(z: int, x: int, y: int) -> str:
     """Convert z/x/y tile coordinates to an ImageServer exportImage URL.
