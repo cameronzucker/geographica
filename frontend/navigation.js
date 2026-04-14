@@ -488,7 +488,7 @@
       distanceRemaining: distRemain,
       timeRemaining: timeRemain,
       eta: eta,
-      heading: headingValid ? lastValidHeading : lastValidHeading,
+      heading: headingValid ? lastValidHeading : null,
       headingValid: headingValid,
       speed: lastSpeed,
       estimated: !!estimated,
@@ -683,28 +683,34 @@
      * If GPS is >50m from route start, enters JOINING state.
      */
     start: function (routeData) {
+      var savedGPS = window._geographicaGPSData;
       reset();
       route = routeData;
       precomputeDistances();
       startStaleChecker();
 
-      // Determine initial state based on last known GPS
-      if (lastGPS) {
-        var snap = snapToRoute(lastGPS.longitude, lastGPS.latitude, null);
-        lastSnap = snap;
-        if (snap.distanceFromRoute > JOIN_THRESHOLD) {
-          state = "joining";
-          joinStartTime = Date.now();
-        } else {
-          state = "navigating";
+      if (savedGPS) {
+        var lng = parseFloat(savedGPS.lon || savedGPS.lng || savedGPS.longitude);
+        var lat = parseFloat(savedGPS.lat || savedGPS.latitude);
+        if (!isNaN(lng) && !isNaN(lat)) {
+          var snap = snapToRoute(lng, lat, null);
+          lastSnap = snap;
+          lastGPS = { latitude: lat, longitude: lng, heading: savedGPS.heading || 0, speed: savedGPS.speed || 0 };
+          lastGPSTime = Date.now();
+          if (snap.distanceFromRoute > JOIN_THRESHOLD) {
+            state = "joining";
+            joinStartTime = Date.now();
+          } else {
+            state = "navigating";
+          }
+          emitUpdate(buildState(snap, false));
+          return;
         }
-      } else {
-        // No GPS yet — enter joining and wait
-        state = "joining";
-        joinStartTime = Date.now();
       }
 
-      emitUpdate(buildState(lastSnap || {
+      state = "joining";
+      joinStartTime = Date.now();
+      emitUpdate(buildState({
         segmentIndex: 0, snappedLng: route.coords[0][0],
         snappedLat: route.coords[0][1], distanceFromRoute: 0,
         alongRouteDistance: 0, t: 0

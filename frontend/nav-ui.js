@@ -305,7 +305,7 @@
     var lat = parseFloat(data.lat || data.latitude);
     if (isNaN(lng) || isNaN(lat)) return;
 
-    var heading = data.heading || data.bearing || 0;
+    var heading = data.heading != null ? data.heading : (data.bearing != null ? data.bearing : 0);
     var speed = data.speed || 0; // m/s
     var headingValid = heading !== 0 || speed > 1;
 
