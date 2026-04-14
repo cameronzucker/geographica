@@ -45,3 +45,7 @@ When an async operation (fetch, WebSocket, timer) can fail, the state machine MU
 ## 11. Duplicated logic across modules
 
 When two modules independently compute the same derived value (e.g., "is GPS heading valid?"), they will drift over time. Tests should verify that both modules produce the same result for the same inputs, or better yet, the code should be refactored so only one module computes the value and the other consumes it.
+
+## 12. subprocess.run blocks signal handlers
+
+`subprocess.run()` blocks the Python thread. If you register a SIGTERM handler that sets a flag, the flag is set but Python never returns from `subprocess.run()` to check it. For interruptible subprocesses, use `subprocess.Popen` with process group management (`preexec_fn=os.setsid`) and forward signals via `os.killpg()`. Test the signal path: mock a long-running subprocess, send SIGTERM, assert termination within a bounded time.
