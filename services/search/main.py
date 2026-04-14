@@ -86,6 +86,8 @@ class PipelineStartBody(BaseModel):
     concurrency: int = 20
     update: bool = True
     counties: Optional[str] = None  # comma-separated FIPS codes (for NAIP — overrides bbox county lookup)
+    state: Optional[str] = None   # for NOAA mode
+    year: Optional[int] = None    # for NOAA mode
 
 
 # ---------------------------------------------------------------------------
@@ -985,6 +987,8 @@ def _state_file_for_type(pipeline_type: str) -> Path:
         return DATA_DIR / ".sentinel-state.json"
     if pipeline_type == "naip":
         return DATA_DIR / ".naip-state.json"
+    if pipeline_type == "import":
+        return DATA_DIR / ".import-state.json"
     return DATA_DIR / ".pipeline-state.json"
 
 
@@ -1065,7 +1069,7 @@ async def pipeline_start(body: PipelineStartBody):
             raise HTTPException(status_code=422, detail="bbox is required for naip")
 
     if body.type in ("imagery", "elevation"):
-        if not body.mode or body.mode not in ("direct", "m2m", "nationalmap"):
+        if not body.mode or body.mode not in ("direct", "m2m", "nationalmap", "noaa"):
             raise HTTPException(status_code=422, detail="mode must be 'direct' or 'm2m'")
         if not body.bbox:
             raise HTTPException(status_code=422, detail="bbox is required for imagery/elevation")
@@ -1196,6 +1200,15 @@ async def pipeline_start(body: PipelineStartBody):
                         "--concurrency", str(min(body.concurrency, 20)),
                         "--output", "/data/imagery_naip.mbtiles",
                     ]
+                elif body.mode == "noaa":
+                    command = [
+                        "python3", "/scripts/acquire_imagery.py",
+                        "--mode", "noaa",
+                        f"--bbox={body.bbox}",
+                        f"--state={body.state or 'AZ'}",
+                        f"--year={body.year or 2021}",
+                        "--output", "/data/imagery_noaa.mbtiles",
+                    ]
                 else:
                     # Build command -- imagery and elevation scripts have different args
                     script = _script_for_type(body.type)
@@ -1319,10 +1332,10 @@ async def pipeline_start(body: PipelineStartBody):
 
 
 @app.get("/admin/pipeline/status")
-async def pipeline_status(type: str = Query("imagery", description="Pipeline type: imagery, elevation, osm_poi, sentinel, or naip")):
+async def pipeline_status(type: str = Query("imagery", description="Pipeline type: imagery, elevation, osm_poi, sentinel, naip, or import")):
     """Get current pipeline job status (no auth required)."""
-    if type not in ("imagery", "elevation", "osm_poi", "sentinel", "naip"):
-        raise HTTPException(status_code=422, detail="type must be 'imagery', 'elevation', 'osm_poi', 'sentinel', or 'naip'")
+    if type not in ("imagery", "elevation", "osm_poi", "sentinel", "naip", "import"):
+        raise HTTPException(status_code=422, detail="type must be 'imagery', 'elevation', 'osm_poi', 'sentinel', 'naip', or 'import'")
 
     state_file = _state_file_for_type(type)
     state_data = {}
@@ -1442,6 +1455,151 @@ async def pipeline_cancel():
             client.close()
 
     return {"status": "cancelling"}
+
+
+@app.get("/admin/pipeline/import/scan", dependencies=[Depends(require_config_source)])
+async def import_scan():
+    """Scan import directory for GeoTIFF files."""
+    import_dir = DATA_DIR / "import"
+    if not import_dir.exists():
+        import_dir.mkdir(parents=True)
+        return {"tif_count": 0, "total_bytes": 0, "other_geo_count": 0}
+
+    tif_files = []
+    other_geo = []
+    total_bytes = 0
+    other_extensions = {".jp2", ".sid", ".img", ".ecw"}
+
+    dirs = [import_dir]
+    for item in import_dir.iterdir():
+        if item.is_dir() and not item.is_symlink():
+            dirs.append(item)
+
+    for d in dirs:
+        for f in d.iterdir():
+            if f.is_symlink() or not f.is_file():
+                continue
+            ext = f.suffix.lower()
+            if ext in (".tif", ".tiff"):
+                tif_files.append(f)
+                total_bytes += f.stat().st_size
+            elif ext in other_extensions:
+                other_geo.append(f)
+
+    return {
+        "tif_count": len(tif_files),
+        "total_bytes": total_bytes,
+        "other_geo_count": len(other_geo),
+    }
+
+
+@app.post("/admin/pipeline/import", dependencies=[Depends(require_config_source)])
+async def pipeline_import(
+    layer_name: Optional[str] = Query(None),
+    delete_after: bool = Query(False),
+):
+    """Start a BYO GeoTIFF import pipeline."""
+    import_dir = DATA_DIR / "import"
+    if not import_dir.exists():
+        import_dir.mkdir(parents=True)
+
+    # Quick scan to verify files exist
+    tif_count = sum(
+        1 for d in [import_dir] + [x for x in import_dir.iterdir() if x.is_dir() and not x.is_symlink()]
+        for f in d.iterdir()
+        if f.is_file() and not f.is_symlink() and f.suffix.lower() in (".tif", ".tiff")
+    )
+    if tif_count == 0:
+        raise HTTPException(status_code=422, detail="No GeoTIFF files found in import directory")
+
+    async with _pipeline_lock:
+        client = _get_docker_client()
+        if not client:
+            raise HTTPException(status_code=503, detail="Docker socket not available")
+
+        try:
+            if _is_pipeline_container_running(client):
+                raise HTTPException(status_code=409, detail="A pipeline job is already running")
+
+            command = [
+                "python3", "/scripts/import_imagery.py",
+                "--input", "/data/import",
+                "--output-dir", "/data",
+            ]
+            if layer_name:
+                command.extend(["--name", layer_name])
+            if delete_after:
+                command.append("--delete-after")
+
+            host_data_path = os.environ.get("DATA_HOST_PATH", "")
+            host_scripts_path = os.environ.get("SCRIPTS_HOST_PATH", "")
+
+            if not host_data_path:
+                try:
+                    search_container = client.containers.get("geographica-search")
+                    mounts = search_container.attrs.get("Mounts", [])
+                    for mount in mounts:
+                        if mount.get("Destination") == "/data":
+                            host_data_path = mount.get("Source", "")
+                            host_base = os.path.dirname(host_data_path)
+                            if not host_scripts_path:
+                                host_scripts_path = os.path.join(host_base, "scripts")
+                            break
+                except Exception:
+                    pass
+
+            if not host_data_path:
+                raise HTTPException(status_code=500, detail="Cannot determine host data path")
+
+            volumes = {host_data_path: {"bind": "/data", "mode": "rw"}}
+            if host_scripts_path:
+                volumes[host_scripts_path] = {"bind": "/scripts", "mode": "ro"}
+
+            try:
+                old = client.containers.get("geographica-pipeline")
+                old.remove(force=True)
+            except Exception:
+                pass
+
+            env = {"GDAL_CACHEMAX": "512", "PYTHONUNBUFFERED": "1"}
+
+            try:
+                networks = client.networks.list(names=["geographica_default"])
+                network = networks[0].name if networks else "bridge"
+            except Exception:
+                network = "bridge"
+
+            container = client.containers.run(
+                "geographica-pipeline",
+                command=command,
+                name="geographica-pipeline",
+                detach=True,
+                remove=False,
+                volumes=volumes,
+                environment=env,
+                network=network,
+                mem_limit="2g",
+            )
+
+            from datetime import datetime, timezone as tz
+            state_data = {
+                "status": "running",
+                "type": "import",
+                "source": "import",
+                "container_id": container.id,
+                "started_at": datetime.now(tz.utc).isoformat(),
+            }
+            state_file = DATA_DIR / ".import-state.json"
+            state_file.write_text(json.dumps(state_data, indent=2))
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to start import: {e}")
+        finally:
+            client.close()
+
+    return {"status": "started", "files": tif_count}
 
 
 @app.get("/admin/pipeline/naip/counties", dependencies=[Depends(require_config_source)])
