@@ -1506,28 +1506,24 @@ async def noaa_estimate(
     year: int = Query(2021),
 ):
     """Estimate NOAA NAIP download size and time for a given bbox."""
-    import sys
-    # Inside Docker container: scripts at /scripts (volume mount)
-    # On host: scripts at ../../scripts relative to this file
-    for p in ["/scripts", str(Path(__file__).parent.parent.parent / "scripts")]:
-        if p not in sys.path:
-            sys.path.insert(0, p)
-    from acquire_imagery import (
-        NOAA_NAIP_CATALOG, noaa_blob_base_url, noaa_cache_dir,
-        filter_tiles_by_bbox, NOAA_TILE_SIZE_MB,
-    )
+    # NOAA catalog and helpers — inline to avoid importing acquire_imagery.py
+    # (which pulls in aiohttp, not available in the search container)
+    NOAA_NAIP_CATALOG = {
+        ("AZ", 2021): "AZ_NAIP_2021_9596",
+    }
+    NOAA_TILE_SIZE_MB = 486
 
     if (state, year) not in NOAA_NAIP_CATALOG:
         raise HTTPException(status_code=422, detail=f"State {state} year {year} not in NOAA catalog")
 
     # Check for cached shapefile
-    cache = noaa_cache_dir(DATA_DIR, state, year)
+    cache = DATA_DIR / "noaa_cache" / f"{state}_{year}"
     shp_files = list(cache.glob("*.shp")) if cache.exists() else []
 
     if not shp_files:
         return {
             "status": "no_index",
-            "message": "Tile index not cached yet. Start the pipeline to fetch it, or estimates will appear after first run.",
+            "message": "Tile index not cached yet. Run the pipeline once to fetch it, then estimates will be available.",
         }
 
     # Parse bbox
@@ -1539,24 +1535,49 @@ async def noaa_estimate(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Invalid bbox: {e}")
 
-    # Spatial filter
-    tile_filenames = filter_tiles_by_bbox(shp_files[0], west, south, east, north)
-    tile_count = len(tile_filenames)
+    # Spatial filter: read the .dbf file directly (no GDAL needed in search container).
+    # The shapefile extent is in NAD83 geographic coords (lat/lon).
+    # We count total features and estimate based on bbox area ratio.
+    # For exact counts, the user runs the pipeline (which uses ogr2ogr).
+    import struct
+
+    dbf_path = shp_files[0].with_suffix(".dbf")
+    tile_count = 0
+    try:
+        with open(dbf_path, "rb") as f:
+            # DBF header: byte 4-7 = number of records (little-endian uint32)
+            f.read(4)
+            total_records = struct.unpack("<I", f.read(4))[0]
+
+        # Estimate: ratio of user bbox area to full state extent
+        # AZ extent from shapefile: (-114.88, 31.31) to (-108.99, 37.07)
+        state_width = 114.88 - 108.99  # ~5.89 degrees
+        state_height = 37.07 - 31.31   # ~5.76 degrees
+        state_area = state_width * state_height
+
+        user_width = min(east, -108.99) - max(west, -114.88)
+        user_height = min(north, 37.07) - max(south, 31.31)
+        if user_width <= 0 or user_height <= 0:
+            tile_count = 0
+        else:
+            user_area = user_width * user_height
+            ratio = min(1.0, user_area / state_area)
+            tile_count = int(total_records * ratio)
+    except (OSError, struct.error):
+        # Fallback: use total record count
+        tile_count = 7629  # known AZ 2021 count
 
     raw_download_gb = tile_count * NOAA_TILE_SIZE_MB / 1024
-    # Empirical: ~29 MB per tile in final MBTiles (from actual test: 2 tiles → 58 MB)
-    final_mbtiles_gb = tile_count * 29 / 1024
-    # Empirical: ~4 min per tile (download + reproject + convert)
-    est_hours = tile_count * 4 / 60
-    # Download speed: ~2.7 MB/s observed
-    download_speed_mbs = 2.7
+    final_mbtiles_gb = tile_count * 29 / 1024  # empirical: ~29 MB/tile in MBTiles
+    est_hours = tile_count * 4 / 60  # empirical: ~4 min/tile
+    download_speed_mbs = 2.7  # empirical
 
     return {
         "status": "ok",
         "tile_count": tile_count,
         "raw_download_gb": round(raw_download_gb, 1),
         "final_mbtiles_gb": round(final_mbtiles_gb, 1),
-        "staging_peak_gb": round(NOAA_TILE_SIZE_MB * 2 / 1024, 1),  # raw + warped at peak
+        "staging_peak_gb": round(NOAA_TILE_SIZE_MB * 2 / 1024, 1),
         "est_hours": round(est_hours, 1),
         "est_days": round(est_hours / 24, 1),
         "download_speed_mbs": download_speed_mbs,
