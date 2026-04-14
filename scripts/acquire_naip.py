@@ -587,16 +587,12 @@ async def run_pipeline(
             if fips not in completed
         ]
 
-        for idx, (fips, url_info) in enumerate(downloadable):
+        download_sem = asyncio.Semaphore(concurrency)
+
+        async def _process_county(fips: str, url_info: dict) -> Path | None:
+            """Download, validate, and convert a single county."""
             if _cancel_requested:
-                update_progress(
-                    state_path, phase="downloading", status="cancelled",
-                    items_done=len(completed), items_total=len(discovered),
-                    detail="Cancelled by user",
-                    bbox=bbox_str,
-                )
-                log.info("Cancelled after %d counties", len(completed))
-                return
+                return None
 
             county_name = next(
                 (f"{name}, {st}" for f, name, st, _ in counties if f == fips),
@@ -606,33 +602,37 @@ async def run_pipeline(
             # Check disk space before download
             check_disk_space(staging_dir)
 
-            # Download
-            update_progress(
-                state_path, phase="downloading",
-                items_done=len(completed), items_total=len(discovered),
-                detail=f"Downloading {county_name}",
-                bbox=bbox_str,
-            )
+            async with download_sem:
+                if _cancel_requested:
+                    return None
 
-            jp2_path = await download_county(session, fips, url_info, staging_dir)
+                update_progress(
+                    state_path, phase="downloading",
+                    items_done=len(completed), items_total=len(discovered),
+                    detail=f"Downloading {county_name}",
+                    bbox=bbox_str,
+                )
+
+                jp2_path = await download_county(session, fips, url_info, staging_dir)
+
             if jp2_path is None:
                 log.warning("Failed to download %s, skipping", county_name)
-                continue
+                return None
 
             # Validate JP2 magic bytes
             if not validate_file_header(jp2_path, "jp2"):
                 log.error("Invalid JP2 file for %s - removing", county_name)
                 jp2_path.unlink()
-                continue
+                return None
 
             # Validate file size
             if jp2_path.stat().st_size > MAX_JP2_SIZE_BYTES:
                 log.error("JP2 too large for %s (%d bytes) - removing",
                           county_name, jp2_path.stat().st_size)
                 jp2_path.unlink()
-                continue
+                return None
 
-            # Convert JP2 -> GeoTIFF
+            # Convert JP2 -> GeoTIFF (runs outside semaphore, one at a time)
             update_progress(
                 state_path, phase="converting",
                 items_done=len(completed), items_total=len(discovered),
@@ -649,14 +649,31 @@ async def run_pipeline(
 
             if tif_path is None:
                 log.warning("Failed to convert %s, skipping", county_name)
-                continue
+                return None
 
-            geotiff_paths.append(tif_path)
-            completed.add(fips)
+            return tif_path
 
-            # Update checkpoint
-            checkpoint["completed_counties"] = list(completed)
-            save_checkpoint(staging_dir, checkpoint)
+        # Process counties with bounded concurrency
+        for idx, (fips, url_info) in enumerate(downloadable):
+            if _cancel_requested:
+                update_progress(
+                    state_path, phase="downloading", status="cancelled",
+                    items_done=len(completed), items_total=len(discovered),
+                    detail="Cancelled by user",
+                    bbox=bbox_str,
+                )
+                log.info("Cancelled after %d counties", len(completed))
+                return
+
+            tif_path = await _process_county(fips, url_info)
+
+            if tif_path is not None:
+                geotiff_paths.append(tif_path)
+                completed.add(fips)
+
+                # Update checkpoint
+                checkpoint["completed_counties"] = list(completed)
+                save_checkpoint(staging_dir, checkpoint)
 
     # --- Phase: merging ---
     if not geotiff_paths:
