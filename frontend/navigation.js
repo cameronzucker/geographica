@@ -46,6 +46,9 @@
   };
 
   var NEXT_AFTER_NEXT_DISTANCE = 500; // meters
+  var VOICE_COOLDOWN = 5000;       // ms minimum between announcements
+  var VOICE_SPEED_GATE = 2;        // m/s -- suppress below this
+  var VOICE_NEAR_ANNOUNCE_DISTANCE = 50; // meters -- always announce within this distance
 
   // ─── Geo math helpers ────────────────────────────────────────────────
 
@@ -151,6 +154,7 @@
   // Voice
   var muted = false;
   var announcedSet = {};      // key: "maneuverIdx-threshold" -> true
+  var lastAnnouncementTime = 0;
 
   // Speed history for ETA adjustment: [{time, actual, expected}]
   var speedHistory = [];
@@ -320,9 +324,14 @@
 
   // ─── Voice announcements ────────────────────────────────────────────
 
-  function announce(text) {
-    if (muted || !text || !onVoiceCb) return;
+  function announce(text, key) {
+    if (muted || !text || !onVoiceCb) return false;
+    var now = Date.now();
+    if (now - lastAnnouncementTime < VOICE_COOLDOWN) return false;
+    lastAnnouncementTime = now;
+    if (key) announcedSet[key] = true;
     onVoiceCb(text);
+    return true;
   }
 
   /**
@@ -331,6 +340,17 @@
    */
   function checkVoice(snap) {
     if (!route || !route.maneuvers) return;
+
+    // Speed gate: suppress below 2 m/s UNLESS within 50m of next maneuver
+    if (lastSpeed < VOICE_SPEED_GATE) {
+      var nextCheckIdx = currentManeuverIdx + 1;
+      if (nextCheckIdx < route.maneuvers.length) {
+        var distCheck = distanceToManeuver(snap, nextCheckIdx);
+        if (distCheck > VOICE_NEAR_ANNOUNCE_DISTANCE) return;
+      } else {
+        return;
+      }
+    }
 
     var thresholds = VOICE_THRESHOLDS[route.costing] || VOICE_THRESHOLDS.auto;
     var nextIdx = currentManeuverIdx + 1;
@@ -344,8 +364,6 @@
       if (announcedSet[key]) continue;
 
       if (distToNext <= thresholds[ti]) {
-        announcedSet[key] = true;
-
         var text;
         if (ti < 2) {
           // Far or medium: use alert instruction
@@ -367,8 +385,7 @@
           }
         }
 
-        announce(text);
-        break; // Only one announcement per tick
+        if (!announce(text, key)) break;
       }
     }
   }
@@ -699,6 +716,7 @@
     lastSnap = null;
     drActive = false;
     announcedSet = {};
+    lastAnnouncementTime = 0;
     speedHistory = [];
     segmentDistances = null;
     cumulativeDistances = null;
@@ -780,7 +798,15 @@
       currentManeuverIdx = 0;
       offRouteHistory = [];
       inOffRouteState = false;
-      announcedSet = {};
+      // Clear only forward maneuvers' thresholds
+      var newSet = {};
+      for (var key in announcedSet) {
+        var idx = parseInt(key.split('-')[0]);
+        if (idx <= currentManeuverIdx) {
+          newSet[key] = true;
+        }
+      }
+      announcedSet = newSet;
       speedHistory = [];
       precomputeDistances();
 

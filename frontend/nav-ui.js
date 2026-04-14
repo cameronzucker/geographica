@@ -624,6 +624,7 @@
 
   function toggleMute() {
     muted = !muted;
+    if (nav && nav.setMuted) nav.setMuted(muted);
     localStorage.setItem('nav-muted', muted ? 'true' : 'false');
     muteBtn.title = muted ? 'Unmute voice' : 'Mute voice';
     muteBtn.classList.toggle('muted', muted);
