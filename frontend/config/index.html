@@ -176,6 +176,10 @@
                     <option value="AZ">Arizona (2021)</option>
                 </select>
                 <div class="detail">NOAA downloads full-resolution 0.6m GeoTIFFs (~486 MB each). Only tiles in your bbox are downloaded.</div>
+                <div style="margin-top:8px">
+                    <button type="button" class="btn-secondary" id="noaa-estimate-btn">Estimate Download</button>
+                </div>
+                <div id="noaa-estimate-result" class="detail" style="margin-top:6px;display:none"></div>
             </div>
 
             <div id="minimap-container">
@@ -1433,7 +1437,9 @@
         if (isM2M) {
             confirmMsg = 'Start M2M download for ' + body.bbox + '?';
         } else if (source === 'noaa') {
-            confirmMsg = 'Start NOAA download for ' + (body.state || 'AZ') + '? Large GeoTIFF tiles (~486 MB each) will be downloaded and converted.';
+            var estEl = document.getElementById('noaa-estimate-result');
+            var estText = estEl && estEl.style.display !== 'none' ? '\n\n' + estEl.textContent : '';
+            confirmMsg = 'Start NOAA download for ' + (body.state || 'AZ') + '?' + estText;
         } else {
             var tileCount = estimateTiles(body.bbox, document.getElementById('cfg-zoom').value);
             var label = source === 'nationalmap' ? 'National Map NAIP' : 'USGS Direct';
@@ -1639,6 +1645,56 @@
     });
 
     scanImportDir();
+
+    // -----------------------------------------------------------------------
+    // NOAA Estimate
+    // -----------------------------------------------------------------------
+    document.getElementById('noaa-estimate-btn').addEventListener('click', function() {
+        var bbox = document.getElementById('cfg-bbox').value;
+        var state = document.getElementById('noaa-state').value;
+        var resultEl = document.getElementById('noaa-estimate-result');
+        resultEl.style.display = '';
+        resultEl.textContent = 'Estimating...';
+        resultEl.style.color = '#7a8299';
+
+        cfgFetch('/admin/pipeline/noaa/estimate?bbox=' + encodeURIComponent(bbox) + '&state=' + state)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.error || d.detail) {
+                    resultEl.textContent = 'Error: ' + (d.error || d.detail);
+                    resultEl.style.color = '#f38ba8';
+                    return;
+                }
+                if (d.status === 'no_index') {
+                    resultEl.textContent = d.message;
+                    resultEl.style.color = '#f9e2af';
+                    return;
+                }
+                // Build estimate display using safe DOM methods
+                resultEl.textContent = '';
+                resultEl.style.color = '#a6e3a1';
+                var lines = [
+                    d.tile_count.toLocaleString() + ' tiles intersect your bbox',
+                    'Download: ~' + d.raw_download_gb + ' GB raw (' + d.tile_count + ' \u00d7 486 MB)',
+                    'Final MBTiles: ~' + d.final_mbtiles_gb + ' GB (after reprojection + JPEG compression)',
+                    'Staging peak: ~' + d.staging_peak_gb + ' GB (1 tile at a time)',
+                    'Disk free: ' + d.disk_free_gb + ' GB',
+                    'Estimated time: ~' + d.est_hours + ' hours (' + d.est_days + ' days) at ~' + d.download_speed_mbs + ' MB/s'
+                ];
+                if (d.final_mbtiles_gb > d.disk_free_gb * 0.8) {
+                    lines.push('\u26a0 Final output may exceed available disk space!');
+                    resultEl.style.color = '#f38ba8';
+                }
+                lines.forEach(function(line, i) {
+                    if (i > 0) resultEl.appendChild(document.createElement('br'));
+                    resultEl.appendChild(document.createTextNode(line));
+                });
+            })
+            .catch(function() {
+                resultEl.textContent = 'Estimate failed (API offline?)';
+                resultEl.style.color = '#f38ba8';
+            });
+    });
 
     // Pipeline banner click -> switch to pipelines tab
     document.getElementById('pipeline-banner').addEventListener('click', function() {

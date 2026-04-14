@@ -1499,6 +1499,71 @@ async def import_scan():
     }
 
 
+@app.get("/admin/pipeline/noaa/estimate", dependencies=[Depends(require_config_source)])
+async def noaa_estimate(
+    bbox: str = Query(..., description="west,south,east,north"),
+    state: str = Query("AZ"),
+    year: int = Query(2021),
+):
+    """Estimate NOAA NAIP download size and time for a given bbox."""
+    import sys
+    # Inside Docker container: scripts at /scripts (volume mount)
+    # On host: scripts at ../../scripts relative to this file
+    for p in ["/scripts", str(Path(__file__).parent.parent.parent / "scripts")]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    from acquire_imagery import (
+        NOAA_NAIP_CATALOG, noaa_blob_base_url, noaa_cache_dir,
+        filter_tiles_by_bbox, NOAA_TILE_SIZE_MB,
+    )
+
+    if (state, year) not in NOAA_NAIP_CATALOG:
+        raise HTTPException(status_code=422, detail=f"State {state} year {year} not in NOAA catalog")
+
+    # Check for cached shapefile
+    cache = noaa_cache_dir(DATA_DIR, state, year)
+    shp_files = list(cache.glob("*.shp")) if cache.exists() else []
+
+    if not shp_files:
+        return {
+            "status": "no_index",
+            "message": "Tile index not cached yet. Start the pipeline to fetch it, or estimates will appear after first run.",
+        }
+
+    # Parse bbox
+    try:
+        parts = [float(x.strip()) for x in bbox.split(",")]
+        if len(parts) != 4:
+            raise ValueError("need 4 values")
+        west, south, east, north = parts
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid bbox: {e}")
+
+    # Spatial filter
+    tile_filenames = filter_tiles_by_bbox(shp_files[0], west, south, east, north)
+    tile_count = len(tile_filenames)
+
+    raw_download_gb = tile_count * NOAA_TILE_SIZE_MB / 1024
+    # Empirical: ~29 MB per tile in final MBTiles (from actual test: 2 tiles → 58 MB)
+    final_mbtiles_gb = tile_count * 29 / 1024
+    # Empirical: ~4 min per tile (download + reproject + convert)
+    est_hours = tile_count * 4 / 60
+    # Download speed: ~2.7 MB/s observed
+    download_speed_mbs = 2.7
+
+    return {
+        "status": "ok",
+        "tile_count": tile_count,
+        "raw_download_gb": round(raw_download_gb, 1),
+        "final_mbtiles_gb": round(final_mbtiles_gb, 1),
+        "staging_peak_gb": round(NOAA_TILE_SIZE_MB * 2 / 1024, 1),  # raw + warped at peak
+        "est_hours": round(est_hours, 1),
+        "est_days": round(est_hours / 24, 1),
+        "download_speed_mbs": download_speed_mbs,
+        "disk_free_gb": round(_get_disk_free_gb(), 1),
+    }
+
+
 @app.post("/admin/pipeline/import", dependencies=[Depends(require_config_source)])
 async def pipeline_import(
     layer_name: Optional[str] = Query(None),
