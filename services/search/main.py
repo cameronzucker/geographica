@@ -1047,6 +1047,7 @@ async def pipeline_start(body: PipelineStartBody):
     zoom_min = zoom_max = tile_count = 0
     estimated_size_gb = 0.0
     is_m2m = body.type == "imagery" and body.mode == "m2m"
+    is_noaa = body.type == "imagery" and body.mode == "noaa"
     is_sentinel = body.type == "sentinel"
     is_naip = body.type == "naip"
 
@@ -1073,7 +1074,7 @@ async def pipeline_start(body: PipelineStartBody):
             raise HTTPException(status_code=422, detail="mode must be 'direct' or 'm2m'")
         if not body.bbox:
             raise HTTPException(status_code=422, detail="bbox is required for imagery/elevation")
-        if not is_m2m and not body.zoom:
+        if not is_m2m and not is_noaa and not body.zoom:
             raise HTTPException(status_code=422, detail="zoom is required for imagery/elevation")
 
         # Parse and validate bbox
@@ -1089,8 +1090,8 @@ async def pipeline_start(body: PipelineStartBody):
             except ValueError as e:
                 raise HTTPException(status_code=422, detail=f"Invalid zoom: {e}")
 
-        # Estimate tile count and check disk space (skip for M2M — auto-detected)
-        if not is_m2m:
+        # Estimate tile count and check disk space (skip for M2M/NOAA — auto-detected or GeoTIFF-based)
+        if not is_m2m and not is_noaa:
             tile_count = estimate_tile_count(bbox, zoom_min, zoom_max)
             estimated_size_gb = tile_count * 20 * 1024 / (1024 ** 3)
             disk_free_gb = _get_disk_free_gb()
@@ -1380,7 +1381,11 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
             # Determine final status: check logs for success before marking interrupted
             if state_data.get("status") == "cancelling":
                 new_status = "cancelled"
-            elif "MBTiles written to" in (state_data.get("last_logs") or ""):
+            elif any(s in (state_data.get("last_logs") or "") for s in (
+                "MBTiles written to",
+                "NOAA pipeline complete",
+                "Import complete",
+            )):
                 new_status = "completed"
             else:
                 new_status = "interrupted"
@@ -1425,6 +1430,7 @@ async def pipeline_cancel():
             _state_file_for_type("osm_poi"),
             _state_file_for_type("sentinel"),
             _state_file_for_type("naip"),
+            _state_file_for_type("import"),
         ]:
             if state_file.exists():
                 try:
