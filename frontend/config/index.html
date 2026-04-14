@@ -548,6 +548,8 @@
     }
 
     function updateEstimate() {
+        var source = document.getElementById('cfg-source').value;
+        if (source === 'm2m' || source === 'noaa') return;
         var bbox = document.getElementById('cfg-bbox').value;
         var zoom = document.getElementById('cfg-zoom').value;
         var count = estimateTiles(bbox, zoom);
@@ -1353,7 +1355,7 @@
         }
 
         if (isNOAA) {
-            estimateEl.textContent = 'NOAA: draw bbox and click Start to see tile count';
+            estimateEl.textContent = 'NOAA: click "Estimate Download" above to see tile count and download size';
             estimateEl.style.color = '#7a8299';
         }
 
