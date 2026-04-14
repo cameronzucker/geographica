@@ -19,7 +19,10 @@
   var EARTH_RADIUS = 6371000; // meters
 
   var OFF_ROUTE_THRESHOLD = 50;       // meters
-  var OFF_ROUTE_TICKS = 5;            // consecutive 1 Hz ticks
+  var OFF_ROUTE_TICKS = 5;            // consecutive 1 Hz ticks (legacy, unused)
+  var OFF_ROUTE_EXIT_THRESHOLD = 35;  // meters -- must drop below this to exit off-route
+  var OFF_ROUTE_WINDOW = 5;           // rolling window size
+  var OFF_ROUTE_MIN_COUNT = 3;        // minimum off-route ticks in window to trigger
   var REROUTE_COOLDOWN = 15000;       // ms between reroute triggers
   var JOIN_TOLERANCE = 200;           // meters — give up joining if exceeded for 15s
   var JOIN_THRESHOLD = 50;            // meters — close enough to join route
@@ -126,7 +129,8 @@
   var state = "idle";         // state machine
   var lastIndex = 0;          // last snapped segment index
   var currentManeuverIdx = 0;
-  var offRouteCount = 0;
+  var offRouteHistory = [];  // rolling window of booleans
+  var inOffRouteState = false;
   var lastRerouteTime = 0;
   var rerouteSeq = 0;         // monotonic counter for aborting stale reroutes
   var joinStartTime = 0;      // timestamp when JOINING began
@@ -573,17 +577,32 @@
       return;
     }
 
-    // Off-route detection
-    if (snap.distanceFromRoute > OFF_ROUTE_THRESHOLD) {
-      offRouteCount++;
-      if (offRouteCount >= OFF_ROUTE_TICKS) {
-        offRouteCount = 0;
+    // Off-route detection with hysteresis
+    var offRouteThreshold = inOffRouteState ? OFF_ROUTE_EXIT_THRESHOLD : OFF_ROUTE_THRESHOLD;
+    var isOffRoute = snap.distanceFromRoute > offRouteThreshold;
+
+    offRouteHistory.push(isOffRoute);
+    if (offRouteHistory.length > OFF_ROUTE_WINDOW) offRouteHistory.shift();
+
+    if (!inOffRouteState && isOffRoute) {
+      inOffRouteState = true;
+    } else if (inOffRouteState && snap.distanceFromRoute <= OFF_ROUTE_EXIT_THRESHOLD) {
+      inOffRouteState = false;
+      offRouteHistory = [];
+    }
+
+    if (inOffRouteState) {
+      var offCount = 0;
+      for (var i = 0; i < offRouteHistory.length; i++) {
+        if (offRouteHistory[i]) offCount++;
+      }
+      if (offCount >= OFF_ROUTE_MIN_COUNT && offRouteHistory.length >= OFF_ROUTE_WINDOW) {
+        offRouteHistory = [];
+        inOffRouteState = false;
         triggerReroute(lat, lng);
         emitUpdate(buildState(snap, false));
         return;
       }
-    } else {
-      offRouteCount = 0;
     }
 
     // Voice announcements
@@ -658,7 +677,8 @@
     state = "idle";
     lastIndex = 0;
     currentManeuverIdx = 0;
-    offRouteCount = 0;
+    offRouteHistory = [];
+    inOffRouteState = false;
     lastRerouteTime = 0;
     rerouteSeq = 0;
     joinStartTime = 0;
@@ -747,7 +767,8 @@
       route = routeData;
       lastIndex = 0;
       currentManeuverIdx = 0;
-      offRouteCount = 0;
+      offRouteHistory = [];
+      inOffRouteState = false;
       announcedSet = {};
       speedHistory = [];
       precomputeDistances();
