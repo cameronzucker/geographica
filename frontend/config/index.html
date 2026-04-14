@@ -764,7 +764,7 @@
                 normalized.detail = 'Converting GeoTIFFs to tiles...';
             }
         }
-        normalized.source = d.mode === 'm2m' ? 'm2m' : 'direct';
+        normalized.source = d.mode || 'direct';
 
         renderGenericProgress(normalized, {
             startBtn: 'cfg-start',
