@@ -1679,8 +1679,63 @@ async def run_noaa(args):
 
         from pipeline_security import validate_file_header
 
+        # Pipelined processing: download tile N+1 while reprojecting+converting tile N.
+        # This overlaps ~100s of GDAL work with the next ~150s download, ~40% faster.
+        # At most 2 raw tiles on disk simultaneously (~1 GB peak staging).
+
+        async def _download_tile(tile_fname):
+            """Download and validate a single tile. Returns raw_path or None."""
+            url = f"{blob_base}/{tile_fname}"
+            dest = staging / tile_fname
+            ok = await fetch_to_file(session, url, dest, timeout_s=3600,
+                                     max_size=NOAA_MAX_GEOTIFF_SIZE)
+            if not ok:
+                return None
+            if not validate_file_header(dest, "geotiff"):
+                log.error("Invalid GeoTIFF header for %s — removing", tile_fname)
+                dest.unlink(missing_ok=True)
+                return None
+            return dest
+
+        def _process_tile(raw_path, tile_fname, idx):
+            """Reproject + convert a downloaded tile. Returns True on success."""
+            warped_path = staging / f"warped_{tile_fname}"
+            try:
+                run_gdal_subprocess(
+                    ["gdalwarp", "-t_srs", "EPSG:3857", "-r", "lanczos",
+                     "-co", "TILED=YES", "-co", "COMPRESS=DEFLATE",
+                     str(raw_path), str(warped_path)],
+                    timeout=3600,
+                    cancel_check=lambda: _cancel_requested,
+                )
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                log.error("gdalwarp failed for %s: %s", tile_fname, exc)
+                raw_path.unlink(missing_ok=True)
+                warped_path.unlink(missing_ok=True)
+                return False
+
+            raw_path.unlink(missing_ok=True)
+
+            ok = convert_batch_to_mbtiles([warped_path], output, f"noaa_tile_{idx}")
+            warped_path.unlink(missing_ok=True)
+            return ok
+
+        # Start first download
+        pending_download = None
+        if tile_filenames:
+            log.info("[1/%d] Downloading %s (~%d MB)",
+                     total_tiles, tile_filenames[0], NOAA_TILE_SIZE_MB)
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            0, total_tiles, phase="downloading",
+                            geotiffs_downloaded=0, geotiffs_total=total_tiles)
+            pending_download = asyncio.ensure_future(
+                _download_tile(tile_filenames[0])
+            )
+
         for idx, tile_filename in enumerate(tile_filenames):
             if _cancel_requested:
+                if pending_download and not pending_download.done():
+                    pending_download.cancel()
                 log.info("Cancellation requested after %d/%d tiles", tiles_done, total_tiles)
                 update_progress(output, "noaa", args.bbox, "n/a",
                                 tiles_done, total_tiles, status="cancelled",
@@ -1689,109 +1744,46 @@ async def run_noaa(args):
                                 geotiffs_total=total_tiles)
                 return
 
-            tile_url = f"{blob_base}/{tile_filename}"
-            raw_path = staging / tile_filename
-            warped_name = f"warped_{tile_filename}"
-            warped_path = staging / warped_name
+            # Wait for this tile's download to complete
+            raw_path = await pending_download
+            pending_download = None
 
-            log.info("[%d/%d] Downloading %s (~%d MB)",
-                     idx + 1, total_tiles, tile_filename, NOAA_TILE_SIZE_MB)
+            # Start downloading NEXT tile in background (pipeline overlap)
+            next_idx = idx + 1
+            if next_idx < len(tile_filenames) and not _cancel_requested:
+                next_fname = tile_filenames[next_idx]
+                log.info("[%d/%d] Downloading %s (~%d MB) [pipelined]",
+                         next_idx + 1, total_tiles, next_fname, NOAA_TILE_SIZE_MB)
+                pending_download = asyncio.ensure_future(
+                    _download_tile(next_fname)
+                )
 
-            update_progress(output, "noaa", args.bbox, "n/a",
-                            tiles_done, total_tiles, phase="downloading",
-                            geotiffs_downloaded=tiles_done,
-                            geotiffs_total=total_tiles)
-
-            # Download with streaming (486 MB files)
-            success = await fetch_to_file(
-                session, tile_url, raw_path,
-                timeout_s=3600,  # 1 hour for ~486 MB
-                max_size=NOAA_MAX_GEOTIFF_SIZE,
-            )
-
-            if not success:
+            if raw_path is None:
                 log.warning("Failed to download %s, skipping", tile_filename)
-                tiles_failed += 1
-                continue
-
-            # Validate GeoTIFF header
-            if not validate_file_header(raw_path, "geotiff"):
-                log.error("Invalid GeoTIFF header for %s — removing", tile_filename)
-                raw_path.unlink(missing_ok=True)
                 tiles_failed += 1
                 continue
 
             if _cancel_requested:
                 raw_path.unlink(missing_ok=True)
-                log.info("Cancellation requested during tile processing")
+                if pending_download and not pending_download.done():
+                    pending_download.cancel()
                 update_progress(output, "noaa", args.bbox, "n/a",
                                 tiles_done, total_tiles, status="cancelled",
                                 phase="cancelled")
                 return
 
-            # Reproject to EPSG:3857
-            log.info("[%d/%d] Reprojecting %s to EPSG:3857",
+            # Reproject + convert (blocking — runs while next tile downloads)
+            log.info("[%d/%d] Reprojecting + converting %s",
                      idx + 1, total_tiles, tile_filename)
-
-            update_progress(output, "noaa", args.bbox, "n/a",
-                            tiles_done, total_tiles, phase="reprojecting",
-                            geotiffs_downloaded=tiles_done,
-                            geotiffs_total=total_tiles)
-
-            try:
-                run_gdal_subprocess(
-                    [
-                        "gdalwarp",
-                        "-t_srs", "EPSG:3857",
-                        "-r", "lanczos",
-                        "-co", "TILED=YES",
-                        "-co", "COMPRESS=DEFLATE",
-                        str(raw_path), str(warped_path),
-                    ],
-                    timeout=3600,
-                    cancel_check=lambda: _cancel_requested,
-                )
-            except subprocess.CalledProcessError as exc:
-                if _cancel_requested:
-                    raw_path.unlink(missing_ok=True)
-                    warped_path.unlink(missing_ok=True)
-                    log.info("Cancellation requested during reprojection")
-                    update_progress(output, "noaa", args.bbox, "n/a",
-                                    tiles_done, total_tiles, status="cancelled",
-                                    phase="cancelled")
-                    return
-                log.error("gdalwarp failed for %s: %s", tile_filename,
-                          exc.stderr if exc.stderr else str(exc))
-                raw_path.unlink(missing_ok=True)
-                warped_path.unlink(missing_ok=True)
-                tiles_failed += 1
-                continue
-            except subprocess.TimeoutExpired:
-                log.error("gdalwarp timed out for %s", tile_filename)
-                raw_path.unlink(missing_ok=True)
-                warped_path.unlink(missing_ok=True)
-                tiles_failed += 1
-                continue
-
-            # Delete raw file immediately after reprojection
-            raw_path.unlink(missing_ok=True)
-            log.info("[%d/%d] Deleted raw tile: %s", idx + 1, total_tiles, tile_filename)
-
-            # Convert to MBTiles using existing helper
-            log.info("[%d/%d] Converting %s to MBTiles",
-                     idx + 1, total_tiles, warped_name)
-
             update_progress(output, "noaa", args.bbox, "n/a",
                             tiles_done, total_tiles, phase="converting",
                             geotiffs_downloaded=tiles_done,
                             geotiffs_total=total_tiles)
 
-            convert_ok = convert_batch_to_mbtiles(
-                [warped_path], output, f"noaa_tile_{idx}"
+            # Run GDAL in a thread so the event loop stays alive for the pipelined download
+            convert_ok = await asyncio.get_event_loop().run_in_executor(
+                None, _process_tile, raw_path, tile_filename, idx
             )
-
-            # Delete warped file after conversion
-            warped_path.unlink(missing_ok=True)
 
             if convert_ok:
                 tiles_done += 1
@@ -1799,6 +1791,13 @@ async def run_noaa(args):
                          idx + 1, total_tiles, tile_filename)
             else:
                 tiles_failed += 1
+                if _cancel_requested:
+                    if pending_download and not pending_download.done():
+                        pending_download.cancel()
+                    update_progress(output, "noaa", args.bbox, "n/a",
+                                    tiles_done, total_tiles, status="cancelled",
+                                    phase="cancelled")
+                    return
                 log.warning("[%d/%d] Conversion failed for %s",
                             idx + 1, total_tiles, tile_filename)
 
