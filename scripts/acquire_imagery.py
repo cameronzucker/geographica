@@ -1381,7 +1381,7 @@ def main():
         description="Download USGS orthoimagery and convert to MBTiles"
     )
     parser.add_argument(
-        "--mode", choices=["tnmaccess", "direct", "m2m"], default="tnmaccess",
+        "--mode", choices=["tnmaccess", "direct", "m2m", "nationalmap"], default="tnmaccess",
         help="Download mode (default: tnmaccess)",
     )
     parser.add_argument(
@@ -1425,6 +1425,10 @@ def main():
         asyncio.run(run_tnmaccess(args))
     elif args.mode == "m2m":
         asyncio.run(run_m2m(args))
+    elif args.mode == "nationalmap":
+        if not args.zoom or args.zoom == "0-14":
+            args.zoom = "15-18"
+        asyncio.run(run_direct(args, url_fn=nationalmap_tile_url))
     else:
         asyncio.run(run_direct(args))
 
