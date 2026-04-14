@@ -1572,7 +1572,9 @@ async def noaa_estimate(
 
     raw_download_gb = tile_count * NOAA_TILE_SIZE_MB / 1024
     final_mbtiles_gb = tile_count * 29 / 1024  # empirical: ~29 MB/tile in MBTiles
-    est_hours = tile_count * 4 / 60  # empirical: ~4 min/tile
+    # Pipelined: download (~2.5 min) overlaps with reproject+convert (~1.5 min).
+    # Effective per-tile time ≈ download time ≈ 2.5 min (the longer leg).
+    est_hours = tile_count * 2.5 / 60
     download_speed_mbs = 2.7  # empirical
 
     return {
