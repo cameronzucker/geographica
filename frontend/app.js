@@ -746,6 +746,8 @@
     // --- Optional NAIP / Sentinel-2 imagery sources (appear when MBTiles exist) ---
     _tryAddTileJSONSource('imagery-naip', '/tiles/data/imagery_naip.json', 'raster');
     _tryAddTileJSONSource('imagery-sentinel', '/tiles/data/imagery_sentinel.json', 'raster');
+    _tryAddTileJSONSource('imagery-noaa', '/tiles/data/imagery_noaa.json', 'raster');
+    _tryAddTileJSONSource('imagery-custom', '/tiles/data/imagery_custom.json', 'raster');
   }
 
   /** Helper: empty GeoJSON FeatureCollection */
@@ -3955,6 +3957,10 @@
       _availableTileJSON['imagery-sentinel'] = undefined;
       _tryAddTileJSONSource('imagery-naip', '/tiles/data/imagery_naip.json', 'raster');
       _tryAddTileJSONSource('imagery-sentinel', '/tiles/data/imagery_sentinel.json', 'raster');
+      _availableTileJSON['imagery-noaa'] = undefined;
+      _availableTileJSON['imagery-custom'] = undefined;
+      _tryAddTileJSONSource('imagery-noaa', '/tiles/data/imagery_noaa.json', 'raster');
+      _tryAddTileJSONSource('imagery-custom', '/tiles/data/imagery_custom.json', 'raster');
     }, 30000);
   });
 
