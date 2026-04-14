@@ -451,6 +451,97 @@ def convert_geotiffs_to_mbtiles(tif_paths: list[Path], output: Path):
     log.info("MBTiles written to %s", output)
 
 
+def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
+    """Append tiles from src MBTiles into dst MBTiles.
+
+    Creates dst tables if they don't exist (first batch).
+    Later batches override overlapping tiles via INSERT OR REPLACE.
+    """
+    dst = sqlite3.connect(str(dst_path))
+    try:
+        dst.execute("ATTACH DATABASE ? AS src", (str(src_path),))
+        # Create tables if they don't exist (first batch)
+        dst.execute("""CREATE TABLE IF NOT EXISTS tiles (
+            zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER,
+            tile_data BLOB,
+            PRIMARY KEY (zoom_level, tile_column, tile_row))""")
+        dst.execute("""CREATE TABLE IF NOT EXISTS metadata (
+            name TEXT PRIMARY KEY, value TEXT)""")
+        # Insert or replace tiles (later batches override overlapping tiles)
+        dst.execute("""INSERT OR REPLACE INTO tiles
+            SELECT zoom_level, tile_column, tile_row, tile_data
+            FROM src.tiles""")
+        # Copy metadata from first batch only
+        dst.execute("""INSERT OR IGNORE INTO metadata
+            SELECT name, value FROM src.metadata""")
+        dst.commit()
+        dst.execute("DETACH DATABASE src")
+    finally:
+        dst.close()
+
+
+def convert_batch_to_mbtiles(tif_paths: list[Path], output: Path,
+                             batch_label: str = "batch") -> bool:
+    """Convert a batch of GeoTIFFs to a temp MBTiles, then merge into output.
+
+    1. Build VRT from the batch's GeoTIFFs
+    2. Convert VRT to a temporary MBTiles file
+    3. Merge temp MBTiles tiles into the main output via SQLite append
+    4. Delete the temp MBTiles
+
+    Returns True on success, False on failure.
+    """
+    if not tif_paths:
+        log.error("No GeoTIFF files to convert")
+        return False
+
+    workdir = tif_paths[0].parent
+    vrt_path = workdir / f"{batch_label}.vrt"
+    temp_mbtiles = workdir / f"{batch_label}.mbtiles"
+
+    try:
+        # Build VRT from this batch
+        log.info("%s: building VRT from %d files", batch_label, len(tif_paths))
+        run_gdal_subprocess(
+            ["gdalbuildvrt", str(vrt_path)] + [str(p) for p in tif_paths],
+            timeout=600,
+            cancel_check=lambda: _cancel_requested,
+        )
+
+        # Convert VRT to temp MBTiles
+        log.info("%s: converting VRT to temp MBTiles", batch_label)
+        run_gdal_subprocess(
+            [
+                "gdal_translate", "-of", "MBTiles",
+                "-co", "TILE_FORMAT=JPEG",
+                str(vrt_path), str(temp_mbtiles),
+            ],
+            timeout=7200,
+            cancel_check=lambda: _cancel_requested,
+        )
+
+        # Merge temp MBTiles into the main output
+        output.parent.mkdir(parents=True, exist_ok=True)
+        log.info("%s: merging tiles into %s", batch_label, output)
+        merge_mbtiles(temp_mbtiles, output)
+
+        return True
+
+    except subprocess.CalledProcessError as exc:
+        log.error("%s: GDAL conversion failed: %s", batch_label,
+                  exc.stderr if hasattr(exc, 'stderr') and exc.stderr else str(exc))
+        return False
+    except subprocess.TimeoutExpired:
+        log.error("%s: GDAL conversion timed out", batch_label)
+        return False
+    finally:
+        # Cleanup temp files
+        if vrt_path.exists():
+            vrt_path.unlink()
+        if temp_mbtiles.exists():
+            temp_mbtiles.unlink()
+
+
 async def run_tnmaccess(args):
     bbox_str = args.bbox
     staging = Path(args.staging)
@@ -922,21 +1013,25 @@ async def m2m_download_batched(
     pending_conversion = None  # Task for the currently-running background conversion
 
     async def _convert_and_cleanup(paths, batch_label):
-        """Convert GeoTIFFs to MBTiles and delete originals. Runs in thread."""
+        """Convert GeoTIFFs to temp MBTiles, merge into output, delete originals."""
         async with convert_sem:
             log.info("%s: converting %d GeoTIFFs to MBTiles...",
                      batch_label, len(paths))
             try:
-                await asyncio.get_event_loop().run_in_executor(
-                    None, convert_geotiffs_to_mbtiles, paths, output_path
+                success = await asyncio.get_event_loop().run_in_executor(
+                    None, convert_batch_to_mbtiles, paths, output_path, batch_label
                 )
-                for tif_path in paths:
-                    if tif_path.exists():
-                        tif_path.unlink()
-                log.info("%s: converted and cleaned up %d GeoTIFFs",
-                         batch_label, len(paths))
+                if success:
+                    for tif_path in paths:
+                        if tif_path.exists():
+                            tif_path.unlink()
+                    log.info("%s: converted, merged, and cleaned up %d GeoTIFFs",
+                             batch_label, len(paths))
+                else:
+                    log.warning("%s: conversion failed -- keeping raw files",
+                                batch_label)
             except Exception as exc:
-                log.warning("%s: conversion failed (%s) — keeping raw files",
+                log.warning("%s: conversion failed (%s) -- keeping raw files",
                             batch_label, exc)
 
     for batch_start in range(0, total_scenes, M2M_BATCH_SIZE):
@@ -1200,16 +1295,39 @@ async def run_m2m(args):
                         scenes_total=len(scenes),
                         geotiffs_downloaded=len(tif_paths), geotiffs_total=len(scenes))
         try:
-            convert_geotiffs_to_mbtiles(remaining_tifs, output)
-            for p in remaining_tifs:
-                if p.exists():
-                    p.unlink()
+            success = convert_batch_to_mbtiles(remaining_tifs, output, "final_pass")
+            if success:
+                for p in remaining_tifs:
+                    if p.exists():
+                        p.unlink()
+            else:
+                log.error("Final GDAL conversion failed")
+                update_progress(output, "m2m", args.bbox, "n/a",
+                                0, 0, status="error", phase="error",
+                                error="GDAL conversion failed")
+                sys.exit(1)
         except Exception as exc:
             log.error("Final GDAL conversion failed: %s", exc)
             update_progress(output, "m2m", args.bbox, "n/a",
                             0, 0, status="error", phase="error",
                             error=f"GDAL conversion failed: {exc}")
             sys.exit(1)
+
+    # Build overview pyramids ONCE at the very end (not per batch)
+    if output.exists():
+        log.info("Building overview pyramids for %s", output)
+        update_progress(output, "m2m", args.bbox, "n/a",
+                        0, 0, phase="overviews",
+                        scenes_total=len(scenes),
+                        geotiffs_downloaded=len(tif_paths), geotiffs_total=len(scenes))
+        try:
+            run_gdal_subprocess(
+                ["gdaladdo", "-r", "average", str(output), "2", "4", "8", "16"],
+                timeout=3600,
+                cancel_check=lambda: _cancel_requested,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            log.warning("Overview generation failed: %s -- output is still usable", exc)
 
     update_progress(output, "m2m", args.bbox, "n/a",
                     0, len(scenes), status="completed", phase="complete",
