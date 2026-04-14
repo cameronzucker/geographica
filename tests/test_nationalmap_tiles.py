@@ -1,14 +1,17 @@
 """Tests for National Map NAIP tile URL builder."""
 
+import asyncio
 import math
+import sqlite3
 import sys
 from pathlib import Path
+from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from acquire_imagery import nationalmap_tile_url
+from acquire_imagery import nationalmap_tile_url, run_direct
 
 
 class TestNationalMapTileUrl:
@@ -70,3 +73,50 @@ class TestNationalMapTileUrl:
         # north/south should be identical for same y
         assert abs(south_a - south_b) < 1e-10
         assert abs(north_a - north_b) < 1e-10
+
+
+class TestNationalMapIntegration:
+    """End-to-end test with mocked HTTP — verify tiles land in MBTiles."""
+
+    def _make_jpeg_blob(self):
+        """Return a minimal valid JPEG blob (SOI + EOI markers)."""
+        return b"\xff\xd8\xff\xe0" + b"\x00" * 100 + b"\xff\xd9"
+
+    def test_tiles_written_to_mbtiles(self, tmp_path):
+        """Mock aiohttp, run a tiny 2x2 bbox, verify tiles in MBTiles."""
+        output = tmp_path / "test_naip.mbtiles"
+        jpeg_blob = self._make_jpeg_blob()
+
+        # Create a mock args object
+        args = MagicMock()
+        args.bbox = "-112.01,33.44,-112.0,33.45"
+        args.zoom = "15-15"
+        args.output = str(output)
+        args.concurrency = 5
+        args.mode = "nationalmap"
+
+        # Mock fetch_with_retry to return our JPEG blob
+        with patch("acquire_imagery.fetch_with_retry", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = jpeg_blob
+            with patch("acquire_imagery._cancel_requested", False):
+                asyncio.run(run_direct(args, url_fn=nationalmap_tile_url))
+
+        # Verify MBTiles has tiles
+        conn = sqlite3.connect(str(output))
+        tile_count = conn.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
+        assert tile_count > 0, "Expected at least 1 tile in MBTiles"
+
+        # Verify tile data is our JPEG blob
+        row = conn.execute("SELECT tile_data FROM tiles LIMIT 1").fetchone()
+        assert row[0] == jpeg_blob
+
+        # Verify metadata
+        meta = dict(conn.execute("SELECT name, value FROM metadata").fetchall())
+        assert meta.get("format") == "jpeg"
+        assert "bounds" in meta
+
+        # Verify checkpoint table has entries
+        cp_count = conn.execute("SELECT COUNT(*) FROM _checkpoint").fetchone()[0]
+        assert cp_count == tile_count
+
+        conn.close()
