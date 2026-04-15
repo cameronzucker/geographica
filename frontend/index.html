@@ -246,6 +246,25 @@
       <span class="status-label">Eye</span>
       <span id="status-camera-value">—</span>
     </div>
+    <div class="status-divider"></div>
+    <button id="about-btn" title="About Geographica" style="background:none;border:none;cursor:pointer;padding:0 6px;color:#7a8299;font-size:14px;line-height:1;">&#x24D8;</button>
+  </div>
+
+  <!-- ===== About dialog ===== -->
+  <div id="about-overlay" class="hidden">
+    <div id="about-dialog">
+      <button id="about-close">&times;</button>
+      <div class="about-title">Geographica</div>
+      <div class="about-version">v1.0.0 &middot; MIT License</div>
+      <div class="about-desc">Offline-first GIS and navigation platform for AREDN amateur radio mesh networks. Runs entirely on a Raspberry Pi&nbsp;5.</div>
+      <div class="about-label">Author</div>
+      <div>Cameron Zucker</div>
+      <div class="about-label">Built with</div>
+      <div class="about-list">MapLibre GL JS &middot; Valhalla &middot; Nominatim &middot; TileServer GL &middot; faster-whisper &middot; FastAPI</div>
+      <div class="about-label">Data sources</div>
+      <div class="about-list">&copy; OpenStreetMap contributors (ODbL) &middot; USGS &middot; NOAA Digital Coast &middot; ESA Copernicus &middot; GNIS &middot; PAD-US</div>
+      <a href="https://github.com/cameronzucker/geographica" target="_blank" rel="noopener" class="about-link">GitHub</a>
+    </div>
   </div>
 
   <!-- ===== Position detail overlay (tap status bar to open) ===== -->

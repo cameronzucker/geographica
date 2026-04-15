@@ -1137,6 +1137,36 @@ h4 {
   display: block;
 }
 
+/* ----- About Dialog ----- */
+#about-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center;
+}
+#about-dialog {
+  background: var(--sidebar-bg, #1e1e2e);
+  border: 1px solid #45475a; border-radius: 12px;
+  padding: 24px; max-width: 380px; width: 90%;
+  color: #cdd6f4; font-size: 13px; line-height: 1.6;
+  position: relative;
+}
+#about-close {
+  position: absolute; top: 10px; right: 14px;
+  background: none; border: none; color: #7a8299;
+  font-size: 22px; cursor: pointer; padding: 4px;
+  width: 32px; height: 32px; line-height: 32px; text-align: center;
+}
+.about-title { font-size: 18px; font-weight: 700; color: #f5f5f5; margin-bottom: 2px; }
+.about-version { font-size: 11px; color: #7a8299; margin-bottom: 12px; }
+.about-desc { margin-bottom: 12px; }
+.about-label { font-size: 11px; color: #7a8299; margin-top: 8px; margin-bottom: 2px; font-weight: 600; }
+.about-list { font-size: 12px; }
+.about-link {
+  display: inline-block; margin-top: 14px;
+  padding: 6px 14px; background: #89b4fa; color: #1e1e2e;
+  border-radius: 6px; font-size: 12px; font-weight: 600; text-decoration: none;
+}
+
 /* ----- Utility ----- */
 .hidden {
   display: none !important;

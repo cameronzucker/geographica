@@ -3799,13 +3799,32 @@
     var overlay   = document.getElementById('position-detail');
     var closeBtn  = document.getElementById('position-detail-close');
 
-    // Tap status bar to open (works on all screen sizes)
+    // Tap status bar to open position detail (works on all screen sizes)
     statusBar.style.pointerEvents = 'auto';
     statusBar.style.cursor = 'pointer';
-    statusBar.addEventListener('click', function () {
+    statusBar.addEventListener('click', function (e) {
+      // Don't open position detail if the about button was clicked
+      if (e.target.closest('#about-btn')) return;
       populatePositionDetail();
       overlay.classList.remove('hidden');
     });
+
+    // About dialog
+    var aboutBtn = document.getElementById('about-btn');
+    var aboutOverlay = document.getElementById('about-overlay');
+    var aboutClose = document.getElementById('about-close');
+    if (aboutBtn && aboutOverlay) {
+      aboutBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        aboutOverlay.classList.remove('hidden');
+      });
+      aboutClose.addEventListener('click', function () {
+        aboutOverlay.classList.add('hidden');
+      });
+      aboutOverlay.addEventListener('click', function (e) {
+        if (e.target === aboutOverlay) aboutOverlay.classList.add('hidden');
+      });
+    }
 
     // Close button
     closeBtn.addEventListener('click', function () {
