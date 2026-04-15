@@ -28,6 +28,28 @@ from pipeline_progress import update_progress as _generic_progress
 from pipeline_security import safe_staging_path, sanitize_scene_id, validate_file_header
 
 # ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+
+
+def _load_secrets() -> dict:
+    """Load credentials from tmpfs secret file if available."""
+    secrets_dir = Path("/secrets")
+    if secrets_dir.exists():
+        for f in secrets_dir.glob("*.json"):
+            try:
+                creds = json.loads(f.read_text())
+                try:
+                    f.unlink()
+                except OSError:
+                    pass  # read-only mount
+                return creds
+            except (json.JSONDecodeError, OSError):
+                continue
+    return {}
+
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 logging.basicConfig(
@@ -467,10 +489,11 @@ async def run_pipeline(args):
     end_date = args.end_date or today.strftime("%Y-%m-%d")
     start_date = args.start_date or (today - timedelta(days=180)).strftime("%Y-%m-%d")
 
-    username = os.environ.get("COPERNICUS_USERNAME", "")
-    password = os.environ.get("COPERNICUS_PASSWORD", "")
+    secrets = _load_secrets()
+    username = secrets.get("copernicus_username") or os.environ.get("COPERNICUS_USERNAME", "")
+    password = secrets.get("copernicus_password") or os.environ.get("COPERNICUS_PASSWORD", "")
     if not username or not password:
-        log.error("COPERNICUS_USERNAME and COPERNICUS_PASSWORD must be set")
+        log.error("Copernicus credentials required (via keyring or COPERNICUS_USERNAME/COPERNICUS_PASSWORD env vars)")
         update_progress(output, "authenticating", status="error",
                         error="Missing Copernicus credentials", bbox=args.bbox)
         return

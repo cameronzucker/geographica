@@ -33,6 +33,28 @@ from tqdm import tqdm
 from pipeline_progress import update_progress as _generic_progress
 
 # ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+
+
+def _load_secrets() -> dict:
+    """Load credentials from tmpfs secret file if available."""
+    secrets_dir = Path("/secrets")
+    if secrets_dir.exists():
+        for f in secrets_dir.glob("*.json"):
+            try:
+                creds = json.loads(f.read_text())
+                try:
+                    f.unlink()
+                except OSError:
+                    pass  # read-only mount
+                return creds
+            except (json.JSONDecodeError, OSError):
+                continue
+    return {}
+
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 logging.basicConfig(
@@ -1363,11 +1385,11 @@ async def run_m2m(args):
     """Run the M2M imagery acquisition pipeline."""
     global _cancel_requested
 
-    username = args.m2m_username
-    token = args.m2m_token
+    secrets = _load_secrets()
+    username = args.m2m_username or secrets.get("m2m_username") or os.environ.get("USGS_M2M_USERNAME")
+    token = args.m2m_token or secrets.get("m2m_token") or os.environ.get("USGS_M2M_TOKEN")
     if not username or not token:
-        log.error("M2M mode requires --m2m-username and --m2m-token "
-                  "(or USGS_M2M_USERNAME / USGS_M2M_TOKEN env vars)")
+        log.error("M2M mode requires credentials (via keyring, --m2m-username/--m2m-token, or env vars)")
         sys.exit(1)
 
     bbox = parse_bbox(args.bbox)
