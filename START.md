@@ -26,158 +26,201 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 6. **Never stop the production stack** (`docker compose down`) without explicit user permission.
 
+## What to work on next — PRIORITY TASK LIST
+
+Use the `build-robust-features` skill (at `.claude/skills/build-robust-features/`) for each subsystem below. Each is an independent feature that gets its own brainstorm → adversarial → plan → execution cycle.
+
+### 1. Unified Imagery Layer + z15-z17 Gap Fix (HIGH PRIORITY)
+
+**Problem:** Users see a jarring gap between z14 (USGS basemap tiles) and z18 (NOAA NAIP aerial). Zooming from z14 drops to positron vector basemap at z15-z17, then jumps to aerial at z18.
+
+**Proven solution:** Add `gdaladdo -r average <temp.mbtiles> 2 4 8` to the per-tile conversion step in the NOAA pipeline. This generates z15-z17 overview tiles from each z18 tile for +34 seconds/tile and +0 MB extra memory (peak is already 633 MB from gdalwarp). Benchmarked — see below.
+
+**Benchmark data (from this session):**
+
+| Metric | Value |
+|--------|-------|
+| Per-tile gdaladdo time | 34 seconds |
+| Per-tile gdaladdo memory | 0 MB additional (633 MB peak set by gdalwarp) |
+| Output zoom levels | z15, z16, z17, z18 (from single NAIP quad) |
+| Tile counts per quad | z15: 56, z16: 224, z17: 837, z18: 3,172 |
+| Size overhead | +16 MB per quad (43 MB → 59 MB) |
+| Full job overhead | +3 hours for 322 tiles |
+
+**Implementation:** In `scripts/acquire_imagery.py`, `_process_tile()` function, add `gdaladdo -r average` on the temp MBTiles BEFORE merging into the main output. The temp file is small (~43 MB) so gdaladdo is fast. After gdaladdo, the temp file has z15-z18 and gets merged into the main output preserving all zoom levels.
+
+**Also needed:** When overlay imagery is toggled on, restyle basemap vector layers to match the hybrid style (white semi-transparent roads, white-on-dark-halo labels, no building/landuse fills). The hybrid style at `tileserver/styles/hybrid/style.local.json` has 35 layers with these paint properties already defined — they need to be applied dynamically via `map.setPaintProperty()` when any overlay imagery is visible.
+
+### 2. Pipeline Admin Page Overhaul (HIGH PRIORITY)
+
+**Problem:** The Pipelines tab at localhost:8097 has 4 imagery sources in one dropdown (USGS Direct, USGS M2M, National Map NAIP, NOAA NAIP), plus Sentinel-2 and NAIP county-lookup cards below, plus a BYO import card. It's confusing — users don't know which source to pick or what each produces.
+
+**What users need to understand at a glance:**
+- What imagery do I already have? (covered in subsystem 3 below)
+- What resolution/coverage does each source provide?
+- Which ones need credentials vs. are free?
+- How long will each take?
+
+**Current state:** Source dropdown with 4 options + contextual help text per selection. NOAA has an "Estimate Download" button showing tile count, download size, final size, and ETA. Other sources have basic tile count estimates.
+
+**Design direction:** Replace the single dropdown with a card-per-source layout. Each card shows: source name, resolution, auth requirements, coverage area, estimated time, and a "Start" button. Cards should be collapsible like the existing Sentinel/NAIP cards.
+
+### 3. Imagery Inventory Manager (HIGH PRIORITY)
+
+**Problem:** Users have no way to see what imagery they've downloaded, at what zoom levels, covering what areas. With 4+ sources producing separate MBTiles files, they need a visual inventory.
+
+**Cameron's vision:** A map showing partially transparent labeled overlays for each imagery source. Users can select an overlay to see its details (zoom range, tile count, file size, download date) and manage it (delete, re-download, extend coverage).
+
+**Data available:** Each MBTiles file has metadata (bounds, minzoom, maxzoom) and tile data that can be queried for actual coverage. TileServer config.json lists all registered data sources.
+
+**Implementation approach:** Add a new tab or section in the admin panel that:
+1. Reads all `imagery_*.mbtiles` files from the data directory
+2. For each, queries SQLite for zoom levels, tile counts, bounds
+3. Renders a MapLibre map with semi-transparent colored rectangles showing each source's coverage
+4. Clicking a source shows details + management options (delete file, restart pipeline for this area)
+
+### 4. Mobile Navigation UX Fixes (MEDIUM)
+
+Three specific bugs:
+
+**a) Search bar takes too much space in navigation mode:**
+When navigation is active, the search bar should collapse to just search + voice icons positioned to the right, out of the way of the turn-by-turn instructions.
+
+**b) Scale bar position:**
+Currently sits on top of the zoom +/- controls. Should be at the bottom of the page, to the LEFT of the zoom controls.
+
+**c) Navigation pane z-order:**
+The left-hand control pane (sidebar) layers UNDER the turn-by-turn navigation top pane. It should be ON TOP so users can manipulate controls while navigating. The nav pane should go behind the sidebar when the sidebar is open.
+
+Files: `frontend/app.js`, `frontend/nav-ui.js`, `frontend/index.html` (CSS)
+
+### 5. Frontend/Backend UI Overhaul (MEDIUM)
+
+Use the `frontend-design` skill for a visual refresh of both:
+- **Frontend (map app):** sidebar design, control layout, imagery toggles, dark mode polish
+- **Backend (admin panel):** pipeline cards, settings, credential management, import card
+
+Cameron's preferences: dark mode, ~800px max-width for UI elements, Catppuccin-esque color palette (already in use: `#89b4fa` blue, `#f9e2af` amber, `#a6e3a1` green, `#f38ba8` red, `#313244` dark bg).
+
+### 6. Documentation Update (DO LAST)
+
+After all features are implemented:
+- Review README.md against all changes
+- Update CLAUDE.md with new files, commands, architectural details
+- Update START.md for the next agent session
+- Check for stale content from parallel agent sessions
+
 ## Current system state
 
 ### Running services (Docker Compose)
-- **TileServer GL** (:8090) — vector basemap + elevation + aerial imagery + public lands
+- **TileServer GL** (:8090) — vector basemap + elevation + aerial imagery + public lands + NOAA NAIP
 - **Valhalla** (:8094) — routing engine, 11 Western US states
 - **Nominatim** (:8092) — geocoding, 11 Western US states imported
 - **GPS** (:8095) — FastAPI WebSocket, reads Pi's GPS hat via gpsd
-- **Search** (:8096) — spatial search (intent parser, corridor, proximity, city-aware) + admin API + pipeline orchestration
+- **Search** (:8096) — spatial search + admin API + pipeline orchestration + NOAA/import endpoints
 - **STT** (:8098) — Whisper base.en (CPU + NPU backends), push-to-hold mic button
 - **NGINX/Frontend** (:8093 HTTP, :443 HTTPS) — main app + config panel on localhost:8097
 
-### Setup wizard
-- `bootstrap.sh` — system prerequisites (sudo): apt install, docker group, data dir
-- `setup.sh` — launches browser-based setup wizard on localhost:8099
-- `setup/` — FastAPI app with CSRF, WebSocket progress, 5-step guided deployment
-- **New (2026-04-14):** Custom storage path input with allowlist validation, pre-flight dependency checker with auto-fix buttons (FIX_REGISTRY, no shell injection), categorized pipeline error handling with exponential backoff
-- Dark mode, MapLibre region picker, skip-all for networking-only deployments
+### Imagery sources (current state)
+
+| Source | Mode | File | Status | Zoom | Coverage |
+|--------|------|------|--------|------|----------|
+| USGS Direct (tile scraper) | `direct` | `imagery.mbtiles` (25 GB) | COMPLETE | z0-z14 | Western US |
+| USGS M2M | `m2m` | `imagery_az.mbtiles` (304 MB) | Partial (50 tiles) | z19 | SE Arizona |
+| National Map ImageServer | `nationalmap` | `imagery_naip.mbtiles` (150 MB) | TESTED | z15 | Small test areas |
+| NOAA Digital Coast | `noaa` | `imagery_noaa.mbtiles` (1.7 GB) | 53/322 tiles | z18 | Phoenix metro (partial) |
+| BYO Import | `import_imagery.py` | `imagery_custom.mbtiles` | NOT TESTED | varies | user-provided |
+
+**Critical gap:** z15-z17 has no imagery. The NOAA pipeline produces z18 only. The gdaladdo fix (subsystem 1 above) fills this gap.
+
+**National Map throttling:** The ImageServer throttles sustained bulk downloads to ~1 tile/sec after a few minutes. Useful for small areas only (~1000 tiles). IP-based rate limit persists for 3+ hours.
+
+**NOAA unthrottled:** Azure Blob Storage, no auth, ~2.7 MB/s per connection. 3 concurrent downloads. Pipeline has producer-consumer pattern with asyncio. ~6 min/tile effective rate. Per-tile checkpoint resume works.
+
+**USDA Gateway:** Officially unavailable since April 3, 2026. The `acquire_naip.py` script targets this source but it's dead.
+
+### NOAA Pipeline Technical Details
+
+The NOAA pipeline (`run_noaa()` in `scripts/acquire_imagery.py`) was extensively debugged in this session. Key details for the next agent:
+
+- **Tile index:** NOAA distributes as a ZIP archive (`tileindex_*.zip`) containing .shp/.shx/.dbf/.prj. The code downloads the ZIP, extracts, caches in `/data/noaa_cache/{STATE}_{YEAR}/`.
+- **Spatial filtering:** `ogr2ogr -f CSV /dev/stdout <shp> -spat w s e n -select filename` returns intersecting tile filenames.
+- **Download:** `fetch_to_file()` with `sock_read=120s` timeout (detects stalled connections in 2 min instead of 30 min), 5 retries with 30s/60s/120s/240s/480s backoff.
+- **Processing per tile:** download (~150s) → `gdalwarp -t_srs EPSG:3857` (~85s) → `gdal_translate -of MBTiles` (~100s) → merge into main output → delete staging files.
+- **Concurrency:** 3 concurrent downloads via `asyncio.Semaphore`, sequential GDAL processing via `asyncio.Queue` + `run_in_executor`.
+- **Cancel:** SIGTERM handler kills child GDAL process group via `os.killpg(os.getpgid(_child_pid), signal.SIGTERM)`.
+- **Catalog:** Static dict `NOAA_NAIP_CATALOG` — currently only Arizona 2021 (`AZ_NAIP_2021_9596`). Needs other Western US states populated.
+- **Estimate endpoint:** `GET /admin/pipeline/noaa/estimate?bbox=...&state=AZ` uses pure-Python DBF reader (no GDAL in search container) with area-ratio approximation.
+- **TileServer integration:** Pipeline updates `tileserver/config.json` via `TILESERVER_CONFIG` env var. The catch-all `/tiles/` NGINX location has `sub_filter` rewriting for `$http_host` patterns.
 
 ### Navigation system (2026-04-14 overhaul — 14 bugs fixed + compass button)
-The turn-by-turn navigation system was extensively field-tested and bug-hunted. Major changes:
-- **Event-driven GPS feed** — replaced 500ms polling with callback from GPS WebSocket (was causing double-processing)
-- **Off-route detection** — 3-of-5 rolling window with hysteresis (50m enter, 35m exit)
-- **Reroute recovery** — 10s engine timeout + 3 retries with exponential backoff
-- **Voice announcements** — 5s cooldown, 2 m/s speed gate (50m near-maneuver exemption), mute-aware thresholds
-- **GPS position** — offset below nav overlay with dynamic padding + 5px hysteresis
-- **Compass button** — global north-up button, rotates with bearing, avoids Pitfall #11
-- **Mobile layout** — sidebar/search repositioned below nav overlay via `body.nav-active`
+- Event-driven GPS feed from WebSocket callback (NOT polling)
+- Off-route detection: 3-of-5 rolling window with hysteresis (50m enter, 35m exit)
+- Reroute recovery: 10s engine timeout + 3 retries with exponential backoff
+- Voice: 5s cooldown, 2 m/s speed gate, 50m near-maneuver exemption
 - Bug hunt reports: `dev/bug-hunts/2026-04-14-navigation-*.md`
 
-### Imagery pipeline (2026-04-14 overhaul — 11 bugs fixed)
-The imagery acquisition pipeline was bug-hunted after a job got stuck "stopping" for over an hour. Major changes:
-- **Interruptible GDAL** — new `scripts/gdal_subprocess.py` using Popen + os.setsid process groups + signal forwarding (was: subprocess.run blocked SIGTERM indefinitely)
-- **Batch MBTiles merge** — per-batch conversion to temp MBTiles + SQLite ATTACH append (was: each batch overwrote the output, only last batch survived)
-- **Streaming downloads** — iter_chunked(64KB) to disk (was: resp.read() loading entire multi-GB files into 2GB container)
-- **Sentinel concurrent downloads** — asyncio.gather with semaphore (was: sequential despite semaphore)
-- **Token refresh** — Sentinel OAuth2 token refreshed inside retry loop (was: stale token after 10min)
-- Plus: atomic checkpoints, UnboundLocalError fix, poll math fix, NAIP concurrency wired up
-- Bug hunt reports: `dev/bug-hunts/2026-04-14-imagery-pipeline-*.md`
-- **The stuck imagery job was killed. Needs re-run with the new fixes.**
+### Setup wizard
+- `bootstrap.sh` + `setup.sh` → browser wizard on localhost:8099
+- Custom storage path, pre-flight checks, auto-fix buttons, dark mode
+- See `docs/superpowers/specs/2026-04-10-setup-wizard-design.md`
 
 ### LXD validation harness
 - Automated README testing in isolated Debian 13 LXC containers
-- Quick mode (~15 min, bind-mount data, works WITH prod stack running)
-- Full mode (hours, downloads everything from scratch)
-
-### Imagery downloads status
-- The M2M sequential pipeline was killed (stuck gdal_translate). Needs restart with fixed code.
-- Tile scraper z0-z14 Western US — COMPLETE (25 GB)
-- **After re-running pipeline:** merge with `tile-join -o imagery_merged.mbtiles imagery.mbtiles imagery_az.mbtiles imagery_maricopa.mbtiles imagery_phoenix.mbtiles`
-
-### Data
-- **Elevation z0-14**: 1,474,959 tiles (~120 GB)
-- **Imagery z0-14**: 25 GB tile scraper (z15+ needs re-run via fixed M2M pipeline)
-- **Public lands**: 1,077,968 tiles (412MB, PAD-US 4.1 + AIANNH tribal, 365 tribal boundaries)
-- **POI index**: 304,094 GNIS features + OSM amenities
-- **Vector basemap**: 2.4GB (southwest5.mbtiles — needs regeneration for minor road visibility, see TODOS)
+- Generalized skill at `.claude/skills/lxd-validation/`
+- Reports: `docs/validation/`
 
 ### TLS
 - **Tailscale HTTPS active**: `https://pandora.twin-bramble.ts.net` (Let's Encrypt)
 - Dual-mode: HTTP on :8093 (LAN/AREDN) + HTTPS on :443 (Tailscale)
 
 ### Tests
-446 tests across project. Run: `python -m pytest tests/ -v`
+475+ tests across project. Run: `python -m pytest tests/ -v`
+(9 pre-existing asyncio event loop errors in test_osm_poi_search and test_spatial_osm — test isolation issue, not a bug)
 
-Key test files:
-- `tests/test_intent_parser.py` (54) — spatial search intent parsing + city-aware extraction
-- `tests/test_setup_config.py` (39+) — system detection, .env generation, bbox validation, path validation
-- `tests/test_setup_main.py` (31+) — FastAPI wizard endpoints, CSRF, preflight, fix-dependency
-- `tests/test_setup_runner.py` (17) — subprocess runner, checkpoint management
-- `tests/test_gdal_subprocess.py` (9) — interruptible GDAL subprocess management
-- `tests/test_mbtiles_merge.py` (6) — batch-level MBTiles merge via SQLite
-- `tests/test_acquire_imagery_streaming.py` (6) — streaming download to disk
-- `tests/test_acquire_imagery_fixes.py` (6) — UnboundLocalError, atomic checkpoint, poll math
-- `tests/test_sentinel_fixes.py` (2) — token refresh, concurrent downloads
-- `tests/test_naip_concurrency.py` (3) — concurrency parameter wiring
-- `tests/test_geocode.py` (10) — city geocoding with position-biased cache
-- `tests/test_spatial_endpoint.py` (15) — spatial search endpoint integration
-- `tests/test_spatial_osm.py` (21) — OSM POI search
-- `tests/test_corridor.py` (19) — corridor math
+### Data
+- **Elevation z0-14**: ~120 GB
+- **Imagery z0-14**: 25 GB (just restored)
+- **Imagery NOAA z18**: 1.7 GB (53/322 Phoenix tiles)
+- **Public lands**: 412 MB
+- **POI index**: GNIS + OSM amenities
+- **Vector basemap**: 2.4 GB (southwest5.mbtiles)
+- **Disk free**: ~576 GB
 
 ### Key files
 - `docker-compose.yml` — 7 persistent services + pipeline
-- `setup/main.py` — Setup wizard FastAPI app (CSRF, WebSocket, path validation, preflight, fix registry)
-- `setup/config.py` — System detection, .env generation, RAM profiles, validate_path
-- `setup/runner.py` — Async subprocess executor, checkpoint management
-- `services/search/spatial.py` — Intent parser, corridor math, city-aware geocoding
-- `services/search/main.py` — Search API, admin API, pipeline orchestration
-- `frontend/app.js` — Main frontend (~3900 lines), compass button, costing propagation
-- `frontend/navigation.js` — Navigation engine (off-route, reroute, voice, dead reckoning)
-- `frontend/nav-ui.js` — Navigation UI (event-driven GPS, padding, heading, mobile layout)
-- `scripts/acquire_imagery.py` — M2M/TNMAccess/Sentinel orchestrator, batch MBTiles merge
-- `scripts/gdal_subprocess.py` — Shared interruptible GDAL subprocess module
-- `scripts/acquire_naip.py` — NAIP M2M download with streaming + concurrency
-- `scripts/acquire_sentinel.py` — Sentinel-2 download with token refresh + concurrent
-- `docs/pitfalls/implementation-pitfalls.md` — 13 pitfalls
-- `docs/pitfalls/testing-pitfalls.md` — 12 testing pitfalls
+- `services/search/main.py` — Search API, admin API, pipeline orchestration, NOAA/import endpoints
+- `frontend/app.js` — Main frontend (~4000 lines), imagery toggles, overlay state management
+- `frontend/config/index.html` — Admin panel (~1800 lines), pipeline UI, NOAA estimate, BYO import
+- `frontend/navigation.js` — Navigation engine
+- `frontend/nav-ui.js` — Navigation UI
+- `scripts/acquire_imagery.py` — All imagery modes (direct, m2m, nationalmap, noaa), concurrent pipeline
+- `scripts/import_imagery.py` — BYO GeoTIFF import
+- `scripts/tileserver_config.py` — TileServer config.json updater
+- `scripts/pipeline_security.py` — Path traversal guards, layer name sanitization
+- `tileserver/config.json` — TileServer data source registry
+- `tileserver/styles/hybrid/style.local.json` — 35-layer hybrid imagery+roads style
+- `nginx/nginx.conf` — Reverse proxy with sub_filter URL rewriting
 
 ### Custom skills
-- `~/.claude/skills/build-robust-features/` — Brainstorm → adversarial → subagent-proof plan
-- `~/.claude/skills/gstack/` — Full gstack toolkit
+- `.claude/skills/build-robust-features/` — Brainstorm → adversarial → subagent-proof plan
 - `.claude/skills/bug-hunt-cycle/` — 3-hunter parallel dispatch + consolidation
 - `.claude/skills/code-bug-hunter-*/` — Exploratory, holistic, multipass analysis
 - `.claude/skills/lxd-validation/` — LXD container doc testing
 
-## What to work on next
-
-See TODOS.md for the full backlog. Top priorities:
-
-### Immediate
-- **Re-run imagery pipeline** — The stuck M2M job was killed. Rebuild the pipeline container and re-run with the fixed code (interruptible GDAL, batch merge, streaming downloads)
-- **Merge dev to main** — dev is ahead with all the fixes from this session
-
-### High priority
-- **Credential management overhaul** — unify credentials.json + .env into one source of truth
-- **USB GPS support** — auto-detect /dev/ttyUSB*, /dev/ttyACM* alongside HAT
-- **Regenerate vector basemap** — Planetiler custom profile for minor road visibility at lower zoom
-- **Relax Nominatim dependency** — change service_healthy to service_started in docker-compose.yml
-
-### Medium priority
-- **Full LXD dress rehearsal** — run validation harness in full download mode
-- **Remove npm prerequisite** — replace remaining npm references with direct wget
-- **Enable cgroup memory limits** — add kernel parameters to /boot/firmware/cmdline.txt
-- **NGINX selective compression** — compress PBF tiles over mesh
-
-### Blocked
-- **Whisper NPU backend** — blocked on hailo-10-all 5.3.0 for Pi 5
-
 ## Key architectural details
 
-1. **Setup wizard security:** CSRF token generated at startup, validated on all POST endpoints. CORS restricted to localhost. Credential path hardcoded (never from client). Binds localhost:8099 only. Path validation uses ALLOWLIST (/srv, /mnt, /media, /home). Fix-dependency uses FIX_REGISTRY (no shell=True, no user strings in subprocess).
+1. **NGINX sub_filter for TileServer URLs:** The catch-all `/tiles/` location rewrites both `http://tileserver:8080/` and `http://$http_host/` patterns to `$scheme://$http_host/tiles/`. This is critical — without it, TileJSON responses contain internal URLs that fail on HTTPS. Per-source location blocks exist for the original 6 data sources; new sources use the catch-all.
 
-2. **City-aware search:** `_extract_place()` uses space-bounded "in" detection (NOT `\b` word boundary). Compound phrase table prevents splitting on "drive-in". Geocode cache keyed by (name, position_bucket) to prevent cross-city contamination.
+2. **TileServer does NOT auto-discover MBTiles.** New data sources must be added to `tileserver/config.json` and TileServer restarted. The `tileserver_config.py` helper does this atomically.
 
-3. **Navigation engine architecture:** Event-driven GPS feed from WebSocket callback (NOT polling). Engine (`navigation.js`) computes all state (heading validity at 3 m/s gate, off-route with hysteresis, voice thresholds). UI (`nav-ui.js`) consumes engine state for map bearing, padding, and instructions. Voice has 5s global cooldown + 2 m/s speed gate with 50m near-maneuver exemption.
+3. **Pipeline container runs as root.** Files it creates need `chmod a+rw` for TileServer (runs as uid 999 `node`). The `/srv/geographica/data/` directory itself must be world-writable for SQLite journal creation.
 
-4. **GDAL subprocess management:** All GDAL calls go through `scripts/gdal_subprocess.py` which uses Popen + os.setsid process groups. SIGTERM is forwarded via os.killpg. Configurable timeouts. The `_cancel_requested` global is checked between poll cycles.
+4. **`log` is NOT defined in `services/search/main.py`.** All `log.error()` calls in exception handlers are dead code. Use `print()` for diagnostics. (Should be fixed properly with `logging.getLogger(__name__)`.)
 
-5. **MBTiles batch merge:** M2M pipeline converts each batch to a temp MBTiles, then merges into the main output via SQLite ATTACH + INSERT OR REPLACE. Overviews (gdaladdo) run once at the end, not per batch. This keeps memory bounded and allows interruption between batches.
+5. **Overlay imagery toggle state management:** `_updateOverlayImageryState()` in `app.js` hides conflicting basemap layers (buildings, landuse, parks) when any overlay imagery is visible. The opacity slider works for both hybrid and overlay imagery. But the basemap road/label styling is still positron (dark on white) — needs to switch to hybrid styling (white on dark) for proper imagery overlay.
 
-6. **Compass button (Pitfall #11 safe):** Custom button using map.easeTo({ bearing: 0 }). Does NOT use NavigationControl compass (which re-enables dragRotate). Does NOT call dragRotate.enable/disable. During navigation, compass click pauses auto-center for 10s.
-
-7. **LXD validation:** Quick mode needs `security.nesting=true`, `security.syscalls.intercept.mknod=true`, `security.syscalls.intercept.setxattr=true` for Docker-in-LXC. Works with prod stack running (6GB container limit).
-
-8. **Vendor JS committed:** `frontend/vendor/` contains maplibre-gl.js, togeojson.js, jszip.min.js, dompurify.min.js. No npm needed.
-
-9. **Hybrid imagery mode uses map.setStyle().** The persistent `style.load` handler replays all overlays AND removes mouseRotate/mousePitch handlers from MapLibre's internal `_handlers._handlersById` (Pitfall #11).
-
-10. **Docker cgroup memory limits NOT enforced** on default Pi OS. Add `cgroup_enable=memory cgroup_memory=1` to `/boot/firmware/cmdline.txt` and reboot.
-
-11. **HTTP/2 enabled on HTTPS** (`listen 443 ssl http2` in `nginx/tls-include.conf`).
-
-12. **Public lands uses 3 fill layers.** Non-tribal solid, tribal striped pattern, outline. Pipeline runs on HOST (requires Tippecanoe + ogr2ogr).
+6. **The hybrid style is a complete 35-layer MapLibre style** with imagery as the base. It has NO building fills, NO landuse fills. Roads use semi-transparent white (`rgba(255,255,255,0.35)`), labels use white text with dark halos. This is what the overlay imagery needs to replicate via dynamic `setPaintProperty()` calls.
 
 ## Cameron's preferences (from memory)
 - Prioritizes correctness and completeness over speed
