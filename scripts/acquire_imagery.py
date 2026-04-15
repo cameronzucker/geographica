@@ -369,7 +369,8 @@ async def fetch_to_file(session: aiohttp.ClientSession, url: str,
                         dest: Path, *,
                         retries: int = MAX_RETRIES,
                         timeout_s: int = 1200,
-                        max_size: int = 0) -> bool:
+                        max_size: int = 0,
+                        sock_read_s: int = 120) -> bool:
     """Stream-download url to dest file with retry. Returns True on success.
 
     Unlike fetch_with_retry, this streams to disk via iter_chunked() to
@@ -382,11 +383,16 @@ async def fetch_to_file(session: aiohttp.ClientSession, url: str,
         retries: Max retry attempts.
         timeout_s: Total timeout per attempt in seconds.
         max_size: Maximum file size in bytes (0 = unlimited).
+        sock_read_s: Max seconds to wait between data chunks (detects stalled
+                     connections from network outages). Default 120s — generous
+                     enough for slow servers, short enough to recover from a
+                     10-minute network outage in ~6 minutes (3 retries × 120s).
     """
     for attempt in range(retries):
         try:
             async with session.get(
-                url, timeout=aiohttp.ClientTimeout(total=timeout_s)
+                url, timeout=aiohttp.ClientTimeout(
+                    total=timeout_s, sock_read=sock_read_s)
             ) as resp:
                 if resp.status == 200:
                     total = 0
@@ -410,8 +416,15 @@ async def fetch_to_file(session: aiohttp.ClientSession, url: str,
                 log.error("HTTP %s for %s -- skipping", resp.status, url)
                 return False
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            wait = RETRY_BACKOFF * (2 ** attempt)
-            log.warning("%s for %s -- retrying in %ss", exc, url, wait)
+            # Connection failures get longer backoff than HTTP errors — a network
+            # outage lasts minutes, not seconds. Backoff: 30s, 60s, 120s, 240s, 480s
+            # Total wait across 5 attempts: ~15 min, enough to survive a switch reboot.
+            wait = 30 * (2 ** attempt)
+            log.warning("%s for %s -- retrying in %ss (attempt %d/%d)",
+                        exc, url, wait, attempt + 1, retries)
+            # Clean up partial file before retry
+            if dest.exists():
+                dest.unlink(missing_ok=True)
             await asyncio.sleep(wait)
     log.error("All retries exhausted for %s", url)
     return False
@@ -1697,7 +1710,8 @@ async def run_noaa(args):
                 if _cancel_requested:
                     return (tile_fname, None)
                 ok = await fetch_to_file(session, url, dest, timeout_s=3600,
-                                         max_size=NOAA_MAX_GEOTIFF_SIZE)
+                                         max_size=NOAA_MAX_GEOTIFF_SIZE,
+                                         retries=5, sock_read_s=120)
             if not ok:
                 return (tile_fname, None)
             if not validate_file_header(dest, "geotiff"):
