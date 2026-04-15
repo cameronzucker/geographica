@@ -889,8 +889,10 @@
             } else if (_catalogData[src.id]) {
                 var catEntry = _catalogData[src.id];
                 diskDiv.className = 'card-disk';
-                diskText = catEntry.size_human || catEntry.size_mb + ' MB';
-                if (catEntry.tile_count) diskText += ' \u00b7 ' + catEntry.tile_count.toLocaleString() + ' tiles';
+                var bytes = catEntry.size_bytes || 0;
+                diskText = bytes > 1e9 ? (bytes / 1e9).toFixed(1) + ' GB' : (bytes / 1e6).toFixed(0) + ' MB';
+                var totalTiles = (catEntry.zoom_levels || []).reduce(function(s, z) { return s + (z.tile_count || 0); }, 0);
+                if (totalTiles) diskText += ' \u00b7 ' + totalTiles.toLocaleString() + ' tiles';
             }
             diskDiv.textContent = diskText;
             card.appendChild(diskDiv);
@@ -1095,9 +1097,11 @@
     // -----------------------------------------------------------------------
     function renderNoaaBody(body, src) {
         var catEntry = _catalogData[src.id];
-        var diskInfo = catEntry
-            ? (catEntry.size_human || catEntry.size_mb + ' MB') + ' on disk'
-            : 'Not downloaded yet';
+        var diskInfo = 'Not downloaded yet';
+        if (catEntry) {
+            var bytes = catEntry.size_bytes || 0;
+            diskInfo = (bytes > 1e9 ? (bytes / 1e9).toFixed(1) + ' GB' : (bytes / 1e6).toFixed(0) + ' MB') + ' on disk';
+        }
 
         body.innerHTML =
             '<p style="font-size:12px;color:#7a8299;margin:0 0 8px">GeoTIFF tiles from Azure Blob Storage. No auth, no throttling.</p>' +
