@@ -2006,16 +2006,18 @@
             var color = invSourceColor(src.id);
             var srcId = 'inv-' + src.id;
 
-            // Collect all cluster polygons across zoom levels
+            // Show clusters from highest zoom level only — lower zooms cover
+            // the same or wider area and just stack opacity when overlaid.
+            // Per-zoom detail stays in the sidebar.
             var features = [];
             var zl = src.zoom_levels || [];
-            for (var i = 0; i < zl.length; i++) {
-                var clusters = zl[i].clusters || [zl[i].bounds_lonlat];
+            var topZoom = zl.length > 0 ? zl[zl.length - 1] : null;
+            if (topZoom) {
+                var clusters = topZoom.clusters || [topZoom.bounds_lonlat];
                 for (var c = 0; c < clusters.length; c++) {
                     var b = clusters[c];
                     if (!b || b.length < 4) continue;
                     features.push(invBoundsToPolygon(b));
-                    // Extend allBounds for fitBounds
                     if (!allBounds) {
                         allBounds = b.slice();
                     } else {
