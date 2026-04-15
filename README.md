@@ -11,7 +11,7 @@ isolated LAN or standalone device.
 ## Features
 
 - **Vector basemaps** with three themes (Positron light, Dark Matter dark, Hybrid imagery+roads) and house number labels
-- **Aerial imagery** overlay — USGS NAIP (0.6m, US) via M2M API or tile scraper. Sentinel-2 pipeline code exists but is untested. Per-source toggles and opacity slider.
+- **Aerial imagery** overlay — 5 acquisition modes: USGS Direct (z0-z14 tile scraper, free), NOAA Digital Coast (z15-z18 NAIP from Azure, free, unthrottled), National Map ImageServer (z15+ NAIP, free but throttled), USGS M2M API (z19 NAIP, requires ERS account), and BYO GeoTIFF import. Per-source toggles and opacity slider. Dynamic basemap restyling (white roads/labels) when imagery is active.
 - **Public lands layer** — BLM, National Forest, National Park, Fish & Wildlife, Military, Bureau of Reclamation, Tribal, State Trust, and Wilderness boundaries with agency-colored fills and legend. Tribal boundaries rendered with diagonal stripe pattern.
 - **3D terrain** with hillshade and adjustable exaggeration slider (z0-14 elevation data)
 - **Free-look camera** for 3D terrain exploration (pitch/bearing control)
@@ -27,11 +27,13 @@ isolated LAN or standalone device.
 - **Coordinate display** — Maidenhead grid locator and MGRS in addition to lat/lon
 - **Imperial and metric units** — switchable distance/elevation units
 - **Draw-on-map bounding box selection** for imagery downloads
-- **Admin config panel** (localhost-only, separated from main app) with 3-tab layout: Dashboard (service health with color-coded status dots, disk/TLS info), Pipelines (imagery with MapLibre minimap bbox selection, elevation, OSM POI extraction, Sentinel-2, NAIP), Settings (M2M + Copernicus credentials, TLS config, STT status)
-- **Pipeline management** — start/cancel imagery (direct + M2M), NAIP, Sentinel-2, elevation, public lands, and OSM POI extraction from the browser with phase-aware progress tracking
+- **Admin config panel** (localhost-only, separated from main app) with 4-tab layout: Dashboard (service health with color-coded status dots, disk/TLS info), Pipelines (7-source card grid with MapLibre minimap bbox selection: USGS Direct, USGS M2M, National Map, NOAA NAIP, Sentinel-2, NAIP county lookup, BYO import), Inventory (imagery coverage map with clustered markers, zoom/size/source details, delete capability), Settings (credential keyring, TLS config, STT status)
+- **Pipeline management** — start/cancel imagery (direct, M2M, National Map, NOAA, Sentinel-2, BYO import), elevation, public lands, and OSM POI extraction from the browser with phase-aware progress tracking and download estimates
 - **Print/export directions** (Mapquest-style printable page)
 - **ATAK integration** — serves as a WMS map source for TAK clients
 - **TLS support** — three modes: HTTP, HTTPS (self-signed), or Tailscale (Let's Encrypt)
+- **Mobile-optimized navigation** — collapsible search bar during nav, correct z-ordering, touch-friendly popup close buttons, GPS follow pauses during search
+- **Credential security** — API keys stored in GNOME Keyring via host-side daemon, shared with containers over tmpfs (no plaintext credential files)
 - **No build step** — vanilla JS + MapLibre GL JS frontend, no bundler required
 
 ## Hardware requirements
@@ -53,7 +55,7 @@ isolated LAN or standalone device.
 | Vector basemap (OpenMapTiles via Planetiler) | ~2.4 GB |
 | Elevation tiles (zoom 0-14) | ~70-120 GB |
 | Aerial imagery — scraper z0-z14 (USGS tile cache) | ~25 GB |
-| Aerial imagery — NAIP z15-z19 (USGS M2M, per region) | ~30-270 GB |
+| Aerial imagery — NAIP z15-z19 (NOAA, National Map, or M2M, per region) | ~30-270 GB |
 | Public lands (PAD-US + Census AIANNH tribal) | ~0.4 GB |
 | OSM extracts (merged PBF) | ~3.1 GB |
 | Valhalla routing graph | ~4.3 GB |
@@ -82,7 +84,9 @@ Config ──> NGINX (:8097) ──┬──> Search (:8096)           pipeline 
                           ├──> TileServer GL (:8090)   minimap tile proxy
                           └──> /vendor/                MapLibre GL JS/CSS
 
-Pipeline container (on-demand) ──> acquire_imagery.py     imagery downloads (direct + M2M)
+Pipeline container (on-demand) ──> acquire_imagery.py     imagery downloads (direct, M2M, National Map, NOAA)
+                               ──> import_imagery.py       BYO GeoTIFF import + MBTiles conversion
+                               ──> tileserver_config.py    TileServer config.json updater
                                ──> build_osm_pois.py      OSM POI extraction
                                ──> download_elevation.py   elevation tile downloads
 ```
@@ -160,10 +164,15 @@ sudo sed -i 's/$/ cgroup_enable=memory cgroup_memory=1/' /boot/firmware/cmdline.
 sudo reboot
 ```
 
-**Optional: USGS M2M credentials** (for high-resolution NAIP aerial imagery):
+**Optional: USGS M2M credentials** (for highest-resolution z19 NAIP aerial imagery):
 Register at https://ers.cr.usgs.gov/register and generate an API token at
 https://ers.cr.usgs.gov/profile/access. Enter credentials in the admin panel
-(Settings tab) after the stack is running.
+(Settings tab) after the stack is running. Credentials are stored securely via
+GNOME Keyring (not plaintext files).
+
+> **Free alternatives:** NOAA Digital Coast (z15-z18, unthrottled, no account needed)
+> and National Map ImageServer (z15+, rate-limited) provide NAIP imagery without
+> credentials. These cover most use cases — M2M is only needed for z19 resolution.
 
 ### 1. Clone the repo
 
@@ -489,19 +498,26 @@ docker compose --profile pipeline build
 ## Config panel
 
 The admin config panel is accessible at **http://localhost:8097/config/** from
-the Pi only. It provides a 3-tab interface:
+the Pi only. It provides a 4-tab interface:
 
 **Dashboard** — Service health with color-coded status dots (green/yellow/red),
 disk usage (used/free/% full), TLS mode and certificate status, and a pipeline
 progress banner linking to the Pipelines tab.
 
-**Pipelines** — Imagery acquisition (direct USGS or M2M API with phase-aware
-progress), elevation tile downloads, and OSM POI extraction. Includes a MapLibre
-minimap with draw-to-select bounding box. M2M downloads show real-time progress:
-GeoTIFFs downloaded, batch counter, total bytes. Only one pipeline runs at a time.
+**Pipelines** — 7-source card grid layout: USGS Direct (z0-z14 basemap tiles),
+USGS M2M (z19 NAIP via ERS API), National Map ImageServer (z15+ NAIP, free),
+NOAA Digital Coast (z15-z18 NAIP from Azure, free, unthrottled), Sentinel-2
+(Copernicus), NAIP county mosaic lookup, and BYO GeoTIFF import. Each card shows
+resolution, auth requirements, and estimated time. Includes a MapLibre minimap
+with draw-to-select bounding box. NOAA has a pre-download estimate (tile count,
+size, ETA). Only one pipeline runs at a time.
 
-**Settings** — M2M API credentials (USGS EarthExplorer), TLS configuration
-display, and STT service status.
+**Inventory** — MapLibre map with clustered coverage markers showing downloaded
+imagery sources. Click a source to see zoom range, tile count, file size, and
+download date. Delete individual sources from the map.
+
+**Settings** — Credential management via GNOME Keyring (M2M, Copernicus),
+TLS configuration display, and STT service status.
 
 Security is handled via Docker port binding — port 8097 is bound to `127.0.0.1`,
 so no password is needed. The panel is unreachable from the network.
@@ -631,6 +647,12 @@ The NGINX config is stale. Docker file bind mounts track inodes — git operatio
 that replace `nginx/nginx.conf` leave the container serving the old version.
 Fix: `docker compose up -d --force-recreate frontend`.
 
+**NAIP county mosaic pipeline returns no data**
+The USDA Gateway (`data.nal.usda.gov/api/3/`) has been unavailable since
+April 2026. The `acquire_naip.py` script targets this source but it is currently
+nonfunctional. Use NOAA Digital Coast (free, unthrottled) or National Map
+ImageServer (free, rate-limited) for NAIP imagery instead.
+
 **System crashed / OOM during first run**
 Ensure cgroup memory limits are enabled (see above). The M2M imagery pipeline
 is the most memory-intensive process — it holds all scene metadata in memory
@@ -679,7 +701,7 @@ geographica/
 │   └── nginx.conf              # Reverse proxy with URL rewriting
 ├── frontend/
 │   ├── index.html              # Single-page app entry point
-│   ├── app.js                  # MapLibre GL JS application (~3900 lines)
+│   ├── app.js                  # MapLibre GL JS application (~4150 lines)
 │   ├── navigation.js           # Turn-by-turn navigation engine
 │   ├── nav-ui.js               # Navigation UI bridge
 │   ├── stt.js                  # Voice search module (mic button, audio capture)
@@ -688,7 +710,7 @@ geographica/
 │   ├── import-store.js         # IndexedDB session persistence for imports
 │   ├── style.css               # UI styles
 │   ├── config/
-│   │   └── index.html          # Admin config panel (3-tab: Dashboard/Pipelines/Settings)
+│   │   └── index.html          # Admin config panel (4-tab: Dashboard/Pipelines/Inventory/Settings)
 │   └── vendor/                 # Vendored JS/CSS (maplibre-gl, togeojson, jszip, dompurify)
 ├── tileserver/
 │   ├── config.json             # TileServer GL data source config (basemap, elevation, imagery, public lands)
@@ -710,13 +732,17 @@ geographica/
 │   │   ├── main.py
 │   │   ├── backends/           # CPU (faster-whisper) + NPU (HailoRT) backends
 │   │   └── requirements.txt
-│   └── search/                 # FastAPI spatial search + admin service
-│       ├── Dockerfile
-│       ├── main.py             # Nominatim/POI query, admin API, pipeline orchestration
-│       ├── spatial.py          # Intent parser, synonym table, corridor math, spatial endpoint
-│       ├── geocode.py          # Async geocode helper with position-biased caching
-│       ├── requirements.txt
-│       └── tests/              # Admin status, pipeline, zoom validation tests
+│   ├── search/                 # FastAPI spatial search + admin service
+│   │   ├── Dockerfile
+│   │   ├── main.py             # Nominatim/POI query, admin API, pipeline orchestration
+│   │   ├── spatial.py          # Intent parser, synonym table, corridor math, spatial endpoint
+│   │   ├── geocode.py          # Async geocode helper with position-biased caching
+│   │   ├── keyring_client.py   # GNOME Keyring client (reads credentials via tmpfs)
+│   │   ├── requirements.txt
+│   │   └── tests/              # Admin status, pipeline, zoom validation tests
+│   └── keyring-agent/          # Host-side credential daemon (GNOME Keyring → tmpfs secrets)
+│       ├── agent.py            # D-Bus keyring interface, writes secrets to tmpfs mount
+│       └── geographica-keyring.service  # systemd unit for keyring agent
 ├── scripts/
 │   ├── requirements.txt        # Python deps for data pipeline
 │   ├── download_elevation.py   # Terrain-RGB tile downloader
@@ -724,19 +750,24 @@ geographica/
 │   ├── build_osm_pois.py       # OSM amenity + public land extractor
 │   ├── build_public_lands.py   # PAD-US public lands vector tile generator
 │   ├── build_county_index.py   # Census TIGER/Line county lookup database
-│   ├── acquire_imagery.py      # USGS legacy imagery downloader
-│   ├── acquire_naip.py         # USGS NAIP county mosaic downloader
+│   ├── acquire_imagery.py      # Multi-mode imagery downloader (direct, M2M, National Map, NOAA)
+│   ├── acquire_naip.py         # USGS NAIP county mosaic downloader (USDA Gateway — currently unavailable)
 │   ├── acquire_sentinel.py     # Copernicus Sentinel-2 imagery downloader
+│   ├── import_imagery.py       # BYO GeoTIFF import with MBTiles conversion
+│   ├── tileserver_config.py    # TileServer config.json updater (atomic source registration)
 │   ├── pipeline_progress.py    # Shared progress reporting module
 │   ├── pipeline_security.py    # Pipeline input validation and security checks
 │   ├── provision_tailscale_tls.sh  # Tailscale TLS cert provisioning
 │   └── generate_tls.sh         # Self-signed TLS cert generation
-├── tests/                      # Top-level test suite (331 tests)
+├── tests/                      # Top-level test suite (535 tests)
 │   ├── test_intent_parser.py   # Spatial search intent parser (54 tests)
 │   ├── test_geocode.py         # City geocode with cache (10 tests)
 │   ├── test_spatial_endpoint.py # Endpoint integration (15 tests)
 │   ├── test_spatial_osm.py     # OSM POI + operator queries
 │   ├── test_corridor.py        # Douglas-Peucker + corridor math
+│   ├── test_noaa_naip.py       # NOAA pipeline, catalog, estimate, tile index tests
+│   ├── test_import_imagery.py  # BYO GeoTIFF import tests
+│   ├── test_tileserver_config.py # TileServer config updater + layer name sanitization
 │   └── ...                     # Pipeline, security, sentinel, county tests
 ├── systemd/
 │   ├── geographica-tls-renew.service  # Cert renewal oneshot
@@ -747,6 +778,8 @@ geographica/
     ├── valhalla/               # PBF + generated routing graph
     ├── poi.sqlite              # FTS5 search database
     ├── elevation.mbtiles       # Terrain-RGB tiles (~70 GB, gitignored)
+    ├── imagery_*.mbtiles       # Aerial imagery per source (NOAA, M2M, custom, etc.)
+    ├── noaa_cache/             # Cached NOAA tile index shapefiles
     └── public-lands.mbtiles    # PAD-US public lands vector tiles
 ```
 
