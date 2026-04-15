@@ -106,6 +106,9 @@ class TestImageryCatalogEndpoint:
         assert data["sources"][0]["id"] == "imagery"
 
 
+_CONFIG_HEADERS = {"X-Config-Source": "internal", "X-Geographica": "1"}
+
+
 class TestDeleteImageryEndpoint:
     def test_delete_existing_source(self, tmp_path):
         mbt = tmp_path / "imagery_test.mbtiles"
@@ -115,7 +118,7 @@ class TestDeleteImageryEndpoint:
             from main import app
             from fastapi.testclient import TestClient
             client = TestClient(app)
-            resp = client.delete("/admin/imagery/imagery_test")
+            resp = client.delete("/admin/imagery/imagery_test", headers=_CONFIG_HEADERS)
         assert resp.status_code == 200
         data = resp.json()
         assert data["deleted"] == "imagery_test"
@@ -127,7 +130,7 @@ class TestDeleteImageryEndpoint:
             from main import app
             from fastapi.testclient import TestClient
             client = TestClient(app)
-            resp = client.delete("/admin/imagery/imagery_nosuch")
+            resp = client.delete("/admin/imagery/imagery_nosuch", headers=_CONFIG_HEADERS)
         assert resp.status_code == 404
 
     def test_delete_rejects_path_traversal(self, tmp_path):
@@ -135,7 +138,7 @@ class TestDeleteImageryEndpoint:
             from main import app
             from fastapi.testclient import TestClient
             client = TestClient(app)
-            resp = client.delete("/admin/imagery/../../etc/passwd")
+            resp = client.delete("/admin/imagery/../../etc/passwd", headers=_CONFIG_HEADERS)
         assert resp.status_code in (404, 422)
 
     def test_delete_rejects_non_imagery_id(self, tmp_path):
@@ -143,7 +146,7 @@ class TestDeleteImageryEndpoint:
             from main import app
             from fastapi.testclient import TestClient
             client = TestClient(app)
-            resp = client.delete("/admin/imagery/elevation")
+            resp = client.delete("/admin/imagery/elevation", headers=_CONFIG_HEADERS)
         assert resp.status_code == 422
 
     def test_delete_accepts_base_imagery(self, tmp_path):
@@ -153,6 +156,15 @@ class TestDeleteImageryEndpoint:
             from main import app
             from fastapi.testclient import TestClient
             client = TestClient(app)
-            resp = client.delete("/admin/imagery/imagery")
+            resp = client.delete("/admin/imagery/imagery", headers=_CONFIG_HEADERS)
         assert resp.status_code == 200
         assert not mbt.exists()
+
+    def test_delete_without_auth_returns_403(self, tmp_path):
+        _create_test_mbtiles(tmp_path / "imagery_test.mbtiles", [(18, 1, 1)])
+        with patch.dict("os.environ", {"DATA_DIR": str(tmp_path)}):
+            from main import app
+            from fastapi.testclient import TestClient
+            client = TestClient(app)
+            resp = client.delete("/admin/imagery/imagery_test")  # no headers
+        assert resp.status_code == 403

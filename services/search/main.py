@@ -718,14 +718,21 @@ def _list_docker_services() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _tile_bounds_tms(z: int, min_x: int, max_x: int, min_y: int, max_y: int) -> list[float]:
-    """Convert TMS tile coordinate range to [lon_min, lat_min, lon_max, lat_max]."""
+    """Convert TMS tile coordinate range to [lon_min, lat_min, lon_max, lat_max].
+
+    MBTiles uses TMS y-axis (y=0 at south pole). The slippy-map latitude formula
+    assumes XYZ convention (y=0 at north pole), so we flip y before computing.
+    """
     n = 2 ** z
     lon_min = min_x / n * 360 - 180
     lon_max = (max_x + 1) / n * 360 - 180
-    lat_a = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * min_y / n))))
-    lat_b = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (max_y + 1) / n))))
-    return [round(lon_min, 6), round(min(lat_a, lat_b), 6),
-            round(lon_max, 6), round(max(lat_a, lat_b), 6)]
+    # Flip TMS y to XYZ y before applying latitude formula
+    xyz_min_y = n - 1 - max_y   # TMS max_y → XYZ min_y (northernmost)
+    xyz_max_y = n - 1 - min_y   # TMS min_y → XYZ max_y (southernmost)
+    lat_max = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * xyz_min_y / n))))
+    lat_min = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (xyz_max_y + 1) / n))))
+    return [round(lon_min, 6), round(lat_min, 6),
+            round(lon_max, 6), round(lat_max, 6)]
 
 
 def _build_imagery_catalog(
@@ -798,7 +805,7 @@ async def imagery_catalog():
     return {"sources": sources}
 
 
-@app.delete("/admin/imagery/{source_id}")
+@app.delete("/admin/imagery/{source_id}", dependencies=[Depends(require_config_source)])
 async def delete_imagery_source(source_id: str):
     """Delete an imagery MBTiles file by source ID."""
     if not re.fullmatch(r"imagery[a-z0-9_]*", source_id):

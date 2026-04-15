@@ -2005,8 +2005,8 @@
         sources.forEach(function(src) {
             var bounds = invComputeUnionBounds(src);
             if (!bounds) return;
-            var color = invSourceColor(src.source_id);
-            var srcId = 'inv-' + src.source_id;
+            var color = invSourceColor(src.id);
+            var srcId = 'inv-' + src.id;
 
             _inventoryMap.addSource(srcId, {
                 type: 'geojson',
@@ -2026,7 +2026,7 @@
             });
 
             _inventoryMap.on('click', srcId + '-fill', function() {
-                selectInventorySource(src.source_id);
+                selectInventorySource(src.id);
             });
 
             if (!allBounds) {
@@ -2057,17 +2057,17 @@
         }
 
         sources.forEach(function(src) {
-            var color = invSourceColor(src.source_id);
+            var color = invSourceColor(src.id);
             var bounds = invComputeUnionBounds(src);
 
             var div = document.createElement('div');
             div.className = 'inv-source';
             div.style.borderLeft = '3px solid ' + color;
-            div.dataset.sourceId = src.source_id;
+            div.dataset.sourceId = src.id;
 
             var nameEl = document.createElement('div');
             nameEl.className = 'inv-name';
-            nameEl.textContent = invHumanName(src.source_id);
+            nameEl.textContent = invHumanName(src.id);
             div.appendChild(nameEl);
 
             // Zoom levels
@@ -2082,7 +2082,7 @@
             (src.zoom_levels || []).forEach(function(z) { totalTiles += (z.tile_count || 0); });
             var sizeEl = document.createElement('div');
             sizeEl.className = 'inv-size';
-            sizeEl.textContent = invFormatSize(src.file_size_bytes) + ' \u00b7 ' + totalTiles.toLocaleString() + ' tiles';
+            sizeEl.textContent = invFormatSize(src.size_bytes) + ' \u00b7 ' + totalTiles.toLocaleString() + ' tiles';
             div.appendChild(sizeEl);
 
             // Detail section (hidden until selected)
@@ -2115,13 +2115,13 @@
             delBtn.style.width = '100%';
             delBtn.style.fontSize = '12px';
             delBtn.style.padding = '6px 10px';
-            delBtn.textContent = 'Delete ' + invHumanName(src.source_id);
+            delBtn.textContent = 'Delete ' + invHumanName(src.id);
             delBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
-                var fileName = src.source_id + '.mbtiles';
-                var sizeStr = invFormatSize(src.file_size_bytes);
+                var fileName = src.id + '.mbtiles';
+                var sizeStr = invFormatSize(src.size_bytes);
                 if (!confirm('Delete ' + fileName + ' (' + sizeStr + ')?\n\nThis removes the file and unregisters it from TileServer. This cannot be undone.')) return;
-                cfgFetch('/admin/imagery/' + src.source_id, { method: 'DELETE' }).then(function(r) {
+                cfgFetch('/admin/imagery/' + src.id, { method: 'DELETE' }).then(function(r) {
                     if (!r.ok) return r.json().then(function(d) { throw new Error(formatApiError(d.detail)); });
                     loadInventoryData();
                 }).catch(function(err) {
@@ -2133,7 +2133,7 @@
             div.appendChild(detailEl);
 
             div.addEventListener('click', function() {
-                selectInventorySource(src.source_id);
+                selectInventorySource(src.id);
             });
 
             list.appendChild(div);
