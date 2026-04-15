@@ -640,7 +640,11 @@ def run_gdal_subprocess(cmd: list[str], timeout: int = 7200,
     if cancel_check and cancel_check():
         raise subprocess.CalledProcessError(1, cmd, stderr="Cancelled before start")
     full_cmd = ["nice", "-n", "19"] + cmd
-    gdal_env = {**os.environ, "GDAL_CACHEMAX": os.environ.get("GDAL_CACHEMAX", "1024")}
+    gdal_env = {
+        **os.environ,
+        "GDAL_CACHEMAX": os.environ.get("GDAL_CACHEMAX", "1024"),
+        "GDAL_NUM_THREADS": os.environ.get("GDAL_NUM_THREADS", "ALL_CPUS"),
+    }
     proc = subprocess.Popen(
         full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, env=gdal_env,
