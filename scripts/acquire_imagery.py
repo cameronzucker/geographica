@@ -639,6 +639,42 @@ def run_gdal_subprocess(cmd: list[str], timeout: int = 7200,
     return subprocess.CompletedProcess(full_cmd, proc.returncode, stdout, stderr)
 
 
+def _run_gdaladdo_with_metadata_fixup(output: Path) -> None:
+    """Run gdaladdo on MBTiles output, then fix metadata to match actual tiles.
+
+    Uses run_gdal_subprocess() for cancel support (not subprocess.run).
+    After gdaladdo adds overview tiles at lower zoom levels, updates the
+    metadata table so TileServer reports correct minzoom/maxzoom in TileJSON.
+    """
+    if _cancel_requested:
+        return
+
+    run_gdal_subprocess(
+        ["gdaladdo", "-r", "average", str(output), "2", "4", "8", "16"],
+        timeout=14400,  # 4 hours — full MBTiles overview can take 2+ hours
+        cancel_check=lambda: _cancel_requested,
+    )
+
+    # Cancel guard: don't fixup metadata on partial overviews
+    if _cancel_requested:
+        return
+
+    # Fix metadata to reflect actual tile zoom range
+    conn = sqlite3.connect(str(output))
+    try:
+        conn.execute(
+            "UPDATE metadata SET value = (SELECT MIN(zoom_level) FROM tiles) "
+            "WHERE name = 'minzoom'"
+        )
+        conn.execute(
+            "UPDATE metadata SET value = (SELECT MAX(zoom_level) FROM tiles) "
+            "WHERE name = 'maxzoom'"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def convert_batch_to_mbtiles(tif_paths: list[Path], output: Path,
                              batch_label: str = "batch") -> bool:
     """Convert a batch of GeoTIFFs to a temp MBTiles, then merge into output.
@@ -1840,12 +1876,7 @@ async def run_noaa(args):
                         geotiffs_downloaded=tiles_done,
                         geotiffs_total=total_tiles)
         try:
-            subprocess.run(
-                ["nice", "-n", "19", "gdaladdo", "-r", "average",
-                 str(output), "2", "4", "8", "16"],
-                check=True, capture_output=True, text=True,
-                env=_NOAA_GDAL_ENV, timeout=3600,
-            )
+            _run_gdaladdo_with_metadata_fixup(output)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             log.warning("Overview generation failed: %s — output is still usable", exc)
 
