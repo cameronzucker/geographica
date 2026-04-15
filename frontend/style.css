@@ -1628,13 +1628,7 @@ body.nav-active #search-container.nav-search-open #search-icon {
   box-shadow: none;
 }
 
-body.nav-active #search-container.nav-search-open #search-results {
-  display: block;
-}
-
-body.nav-active #search-container.nav-search-open #search-results:empty {
-  display: none;
-}
+/* During nav, results show as map pins only — no dropdown list */
 
 /* ----- Compass Button ----- */
 #compass-north-btn {
