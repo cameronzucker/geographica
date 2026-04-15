@@ -1452,8 +1452,8 @@
         var progressFill = document.getElementById(ids.progressFill);
         var progressDetail = document.getElementById(ids.progressDetail);
         var completedEl = document.getElementById(ids.completedEl);
-        // Guard: if elements were removed (card grid overhaul), bail silently
-        if (!startBtn || !progressDiv || !progressFill || !progressDetail || !completedEl) return;
+        // Guard: progress elements must exist; startBtn/cancelBtn may not exist (collapsed card)
+        if (!progressDiv || !progressFill || !progressDetail || !completedEl) return;
 
         // Backward compat: tiles_done -> items_done
         if (d.items_done == null && d.tiles_done != null) {
@@ -1467,7 +1467,7 @@
         var sourceLabel = SOURCE_LABELS[d.source] || d.source || '';
 
         if (d.status === 'running') {
-            startBtn.style.display = 'none';
+            if (startBtn) startBtn.style.display = 'none';
             if (cancelBtn) cancelBtn.style.display = '';
             progressDiv.style.display = '';
             completedEl.style.display = 'none';
@@ -1497,14 +1497,14 @@
                 progressDetail.textContent += ' \u2014 ' + d.detail;
             }
         } else if (d.status === 'cancelling') {
-            startBtn.style.display = 'none';
+            if (startBtn) startBtn.style.display = 'none';
             if (cancelBtn) cancelBtn.style.display = 'none';
             progressDiv.style.display = '';
             completedEl.style.display = 'none';
             progressFill.className = 'progress-fill cancelling';
             progressDetail.textContent = 'Shutting down\u2026 finishing current batch before stopping. Progress and partial data are saved \u2014 you can resume later.';
         } else {
-            startBtn.style.display = '';
+            if (startBtn) startBtn.style.display = '';
             if (cancelBtn) cancelBtn.style.display = 'none';
             progressFill.className = 'progress-fill';
             var ago = timeAgo(d.completed_at);
