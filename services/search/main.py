@@ -1572,21 +1572,30 @@ async def noaa_estimate(
 
     raw_download_gb = tile_count * NOAA_TILE_SIZE_MB / 1024
     final_mbtiles_gb = tile_count * 29 / 1024  # empirical: ~29 MB/tile in MBTiles
-    # Concurrent pipeline: 3 downloads overlap with sequential processing.
-    # Download ~2.5 min/tile but 3 concurrent ≈ throughput of ~1 tile/50s delivered.
-    # Processing ~1.5 min/tile is the bottleneck. Effective ~1.7 min/tile.
-    est_hours = tile_count * 1.7 / 60
-    download_speed_mbs = 2.7  # empirical
+
+    # Best-case estimate with concurrent pipeline (3 downloads, 1 processor):
+    # Download: ~150s/tile, but 3 concurrent → ~50s/tile delivered to queue
+    # Process: ~90s reproject + convert (the bottleneck when downloads are fast)
+    # Effective per-tile: max(download_time/concurrency, process_time) ≈ 90s best case
+    # With slower connections, download becomes the bottleneck: 150s/tile ÷ 3 = 50s
+    # but single-connection may be 2-3 MB/s → 486MB/2.7MB/s = 180s → 180/3 = 60s
+    # Best case: ~1.5 min/tile (CPU-bound processing is bottleneck)
+    download_concurrency = 3
+    download_time_s = NOAA_TILE_SIZE_MB / 2.7  # seconds per tile at ~2.7 MB/s
+    process_time_s = 90  # reproject + convert empirical
+    effective_per_tile_s = max(download_time_s / download_concurrency, process_time_s)
+    est_hours = tile_count * effective_per_tile_s / 3600
 
     return {
         "status": "ok",
         "tile_count": tile_count,
         "raw_download_gb": round(raw_download_gb, 1),
         "final_mbtiles_gb": round(final_mbtiles_gb, 1),
-        "staging_peak_gb": round(NOAA_TILE_SIZE_MB * 2 / 1024, 1),
+        "staging_peak_gb": round(NOAA_TILE_SIZE_MB * (download_concurrency + 1) / 1024, 1),
         "est_hours": round(est_hours, 1),
         "est_days": round(est_hours / 24, 1),
-        "download_speed_mbs": download_speed_mbs,
+        "download_concurrency": download_concurrency,
+        "download_speed_mbs": 2.7,
         "disk_free_gb": round(_get_disk_free_gb(), 1),
     }
 

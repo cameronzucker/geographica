@@ -1679,9 +1679,9 @@
                     d.tile_count.toLocaleString() + ' tiles intersect your bbox',
                     'Download: ~' + d.raw_download_gb + ' GB raw (' + d.tile_count + ' \u00d7 486 MB)',
                     'Final MBTiles: ~' + d.final_mbtiles_gb + ' GB (after reprojection + JPEG compression)',
-                    'Staging peak: ~' + d.staging_peak_gb + ' GB (1 tile at a time)',
+                    'Staging peak: ~' + d.staging_peak_gb + ' GB (' + (d.download_concurrency || 3) + ' concurrent downloads + 1 processing)',
                     'Disk free: ' + d.disk_free_gb + ' GB',
-                    'Estimated time: ~' + d.est_hours + ' hours (' + d.est_days + ' days) at ~' + d.download_speed_mbs + ' MB/s'
+                    'Estimated time (best case): ~' + d.est_hours + ' hours (' + d.est_days + ' days) at ' + (d.download_concurrency || 3) + ' concurrent \u00d7 ~' + d.download_speed_mbs + ' MB/s'
                 ];
                 if (d.final_mbtiles_gb > d.disk_free_gb * 0.8) {
                     lines.push('\u26a0 Final output may exceed available disk space!');
