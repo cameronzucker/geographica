@@ -5,7 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py spatial.py geocode.py ./
+COPY main.py spatial.py geocode.py keyring_client.py ./
 
 EXPOSE 8000
 
