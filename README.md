@@ -785,4 +785,6 @@ geographica/
 
 ## License
 
-TBD
+MIT License. See [LICENSE](LICENSE) for details.
+
+Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL). Aerial imagery from USGS, NOAA, and ESA Copernicus. Public land boundaries from PAD-US.
