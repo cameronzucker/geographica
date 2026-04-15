@@ -123,8 +123,11 @@ services:
       POI_DB_PATH: "/data/poi.sqlite"
       DATA_HOST_PATH: "${DATA_HOST_PATH:-/srv/geographica/data}"
       SCRIPTS_HOST_PATH: "${SCRIPTS_HOST_PATH:-/home/administrator/Code/geographica/scripts}"
+      TILESERVER_CONFIG: "/tileserver/config.json"
     volumes:
       - ./data:/data
+      - ./scripts:/scripts:ro
+      - ./tileserver/config.json:/tileserver/config.json:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${TLS_CERT_DIR:-./tls}:/tls:ro
     depends_on:
