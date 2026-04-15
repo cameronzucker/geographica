@@ -1161,7 +1161,443 @@
     }
 
     function renderCardBody(src) {
-        // Implemented in Task 2
+        var body = document.getElementById('card-' + src.id + '-body');
+        if (!body) return;
+        switch (src.controls) {
+            case 'direct': renderDirectBody(body, src); break;
+            case 'noaa': renderNoaaBody(body, src); break;
+            case 'm2m': renderM2mBody(body, src); break;
+            case 'sentinel': renderSentinelBody(body, src); break;
+            case 'nationalmap': renderNationalmapBody(body, src); break;
+            case 'naip_county': break; // disabled, no body
+            case 'import': renderImportBody(body, src); break;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // startPipeline helper
+    // -----------------------------------------------------------------------
+    function startPipeline(src, params) {
+        var bbox = document.getElementById('cfg-bbox').value;
+        var body = { type: src.pipelineType, bbox: bbox };
+        if (src.pipelineMode) body.mode = src.pipelineMode;
+        Object.keys(params).forEach(function(k) { body[k] = params[k]; });
+        cfgFetch('/admin/pipeline/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        }).then(function(resp) {
+            if (!resp.ok) return resp.json().then(function(d) { alert(d.detail || 'Start failed'); });
+            toggleCardExpand(null);
+            fetchAll();
+        }).catch(function(e) { alert('Start failed: ' + e.message); });
+    }
+
+    // -----------------------------------------------------------------------
+    // USGS Basemap panel
+    // -----------------------------------------------------------------------
+    function renderDirectBody(body, src) {
+        var bbox = document.getElementById('cfg-bbox').value;
+        body.innerHTML =
+            '<div class="config-row">' +
+                '<div>' +
+                    '<label>Zoom range</label>' +
+                    '<select id="card-' + src.id + '-zoom">' +
+                        '<option value="0-8">z0-8 (overview)</option>' +
+                        '<option value="0-10">z0-10</option>' +
+                        '<option value="0-12">z0-12</option>' +
+                        '<option value="0-14" selected>z0-14 (full detail)</option>' +
+                    '</select>' +
+                '</div>' +
+                '<div>' +
+                    '<label class="checkbox-label" style="margin-top:24px">' +
+                        '<input type="checkbox" id="card-' + src.id + '-resume" checked> Resume (skip existing tiles)' +
+                    '</label>' +
+                '</div>' +
+            '</div>' +
+            '<div class="estimate-box" id="card-' + src.id + '-est"></div>' +
+            '<div class="btn-row">' +
+                '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start">Start Download</button>' +
+            '</div>';
+
+        var zoomSel = document.getElementById('card-' + src.id + '-zoom');
+        var estBox = document.getElementById('card-' + src.id + '-est');
+
+        function refreshEst() {
+            var count = estimateTiles(document.getElementById('cfg-bbox').value, zoomSel.value);
+            var sizeGB = (count * 20 * 1024 / (1024 * 1024 * 1024)).toFixed(1);
+            var hours = (count / 680 / 3600).toFixed(1);
+            estBox.textContent = count > 0
+                ? '~' + count.toLocaleString() + ' tiles, ~' + sizeGB + ' GB, ~' + hours + ' hours'
+                : 'Invalid bbox';
+        }
+        refreshEst();
+        zoomSel.addEventListener('change', refreshEst);
+
+        document.getElementById('card-' + src.id + '-start').addEventListener('click', function() {
+            startPipeline(src, {
+                zoom: zoomSel.value,
+                update: document.getElementById('card-' + src.id + '-resume').checked
+            });
+        });
+
+        if (_anyPipelineRunning) {
+            document.getElementById('card-' + src.id + '-start').disabled = true;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // NOAA NAIP panel
+    // -----------------------------------------------------------------------
+    function renderNoaaBody(body, src) {
+        var catEntry = _catalogData[src.id];
+        var diskInfo = catEntry
+            ? (catEntry.size_human || catEntry.size_mb + ' MB') + ' on disk'
+            : 'Not downloaded yet';
+
+        body.innerHTML =
+            '<p style="font-size:12px;color:#7a8299;margin:0 0 8px">GeoTIFF tiles from Azure Blob Storage. No auth, no throttling.</p>' +
+            '<div class="config-row">' +
+                '<div>' +
+                    '<label>State / Year</label>' +
+                    '<select id="card-' + src.id + '-state">' +
+                        '<option value="AZ:2021" selected>Arizona 2021</option>' +
+                    '</select>' +
+                '</div>' +
+                '<div>' +
+                    '<div style="font-size:11px;color:#7a8299;margin-top:24px">On Disk: ' + diskInfo + '</div>' +
+                '</div>' +
+            '</div>' +
+            '<div class="estimate-box" id="card-' + src.id + '-est" style="display:none"></div>' +
+            '<div class="btn-row">' +
+                '<button type="button" class="btn-secondary" id="card-' + src.id + '-est-btn" style="flex:none">Estimate Download</button>' +
+                '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start">Start Download</button>' +
+            '</div>';
+
+        var estBtn = document.getElementById('card-' + src.id + '-est-btn');
+        var estBox = document.getElementById('card-' + src.id + '-est');
+        var stateSel = document.getElementById('card-' + src.id + '-state');
+
+        estBtn.addEventListener('click', function() {
+            estBox.style.display = '';
+            estBox.textContent = 'Estimating...';
+            estBox.style.color = '#7a8299';
+            var parts = stateSel.value.split(':');
+            var bbox = document.getElementById('cfg-bbox').value;
+            cfgFetch('/admin/pipeline/noaa/estimate?bbox=' + encodeURIComponent(bbox) + '&state=' + parts[0])
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (d.error || d.detail) {
+                        estBox.textContent = 'Error: ' + (d.error || d.detail);
+                        estBox.style.color = '#f38ba8';
+                        return;
+                    }
+                    if (d.status === 'no_index') {
+                        estBox.textContent = d.message;
+                        estBox.style.color = '#f9e2af';
+                        return;
+                    }
+                    estBox.textContent = '';
+                    estBox.style.color = '#a6e3a1';
+                    var lines = [
+                        d.tile_count.toLocaleString() + ' tiles intersect your bbox',
+                        'Download: ~' + d.raw_download_gb + ' GB raw',
+                        'Final MBTiles: ~' + d.final_mbtiles_gb + ' GB',
+                        'Estimated time: ~' + d.est_hours + ' hours',
+                        'Disk free: ' + d.disk_free_gb + ' GB'
+                    ];
+                    if (d.disk_free_gb < d.final_mbtiles_gb * 1.2) {
+                        lines.push('\u26a0 Disk space may be insufficient!');
+                        estBox.style.color = '#f38ba8';
+                    }
+                    lines.forEach(function(line, i) {
+                        if (i > 0) estBox.appendChild(document.createElement('br'));
+                        estBox.appendChild(document.createTextNode(line));
+                    });
+                })
+                .catch(function() {
+                    estBox.textContent = 'Estimate failed (API offline?)';
+                    estBox.style.color = '#f38ba8';
+                });
+        });
+
+        document.getElementById('card-' + src.id + '-start').addEventListener('click', function() {
+            var parts = stateSel.value.split(':');
+            startPipeline(src, { state: parts[0], year: parseInt(parts[1]) });
+        });
+
+        if (_anyPipelineRunning) {
+            document.getElementById('card-' + src.id + '-start').disabled = true;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // USGS M2M panel
+    // -----------------------------------------------------------------------
+    function renderM2mBody(body, src) {
+        var credWarn = '';
+        if (!_m2mConfigured) {
+            credWarn = '<div class="cred-warning">M2M credentials not configured. <a href="#" id="card-' + src.id + '-cred-link">Set up in Settings</a></div>';
+        }
+
+        body.innerHTML = credWarn +
+            '<div class="config-row">' +
+                '<div>' +
+                    '<label>Zoom range</label>' +
+                    '<select id="card-' + src.id + '-zoom">' +
+                        '<option value="0-16">z0-16</option>' +
+                        '<option value="0-17">z0-17</option>' +
+                        '<option value="0-19" selected>z0-19 (full detail)</option>' +
+                    '</select>' +
+                '</div>' +
+                '<div>' +
+                    '<label>Concurrency</label>' +
+                    '<select id="card-' + src.id + '-concurrency">' +
+                        '<option value="3" selected>3 (safe)</option>' +
+                        '<option value="4">4</option>' +
+                        '<option value="5">5 (max)</option>' +
+                    '</select>' +
+                '</div>' +
+            '</div>' +
+            '<label class="checkbox-label" style="margin-top:8px">' +
+                '<input type="checkbox" id="card-' + src.id + '-resume" checked> Resume (skip existing tiles)' +
+            '</label>' +
+            '<div class="btn-row" style="margin-top:10px">' +
+                '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start">Start Download</button>' +
+            '</div>';
+
+        var credLink = document.getElementById('card-' + src.id + '-cred-link');
+        if (credLink) {
+            credLink.addEventListener('click', function(e) {
+                e.preventDefault();
+                toggleCardExpand(null);
+                switchTab('settings');
+            });
+        }
+
+        var startBtn = document.getElementById('card-' + src.id + '-start');
+        if (!_m2mConfigured || _anyPipelineRunning) startBtn.disabled = true;
+
+        startBtn.addEventListener('click', function() {
+            startPipeline(src, {
+                zoom: document.getElementById('card-' + src.id + '-zoom').value,
+                concurrency: parseInt(document.getElementById('card-' + src.id + '-concurrency').value),
+                update: document.getElementById('card-' + src.id + '-resume').checked
+            });
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Sentinel-2 panel
+    // -----------------------------------------------------------------------
+    function renderSentinelBody(body, src) {
+        var credWarn = '';
+        if (!_copernicusConfigured) {
+            credWarn = '<div class="cred-warning">Copernicus credentials not configured. <a href="#" id="card-' + src.id + '-cred-link">Set up in Settings</a></div>';
+        }
+
+        var now = new Date();
+        var endDate = now.toISOString().slice(0, 10);
+        var startDate = new Date(now);
+        startDate.setMonth(startDate.getMonth() - 6);
+        var startStr = startDate.toISOString().slice(0, 10);
+
+        body.innerHTML = credWarn +
+            '<div class="config-row">' +
+                '<div>' +
+                    '<label>Date start</label>' +
+                    '<input type="date" id="card-' + src.id + '-date-start" value="' + startStr + '">' +
+                '</div>' +
+                '<div>' +
+                    '<label>Date end</label>' +
+                    '<input type="date" id="card-' + src.id + '-date-end" value="' + endDate + '">' +
+                '</div>' +
+            '</div>' +
+            '<label>Cloud cover max</label>' +
+            '<div class="slider-row">' +
+                '<input type="range" id="card-' + src.id + '-cloud" min="0" max="100" value="20">' +
+                '<span class="slider-val" id="card-' + src.id + '-cloud-val">20%</span>' +
+            '</div>' +
+            '<div class="estimate-box" id="card-' + src.id + '-est" style="display:none"></div>' +
+            '<div class="btn-row" style="margin-top:10px">' +
+                '<button type="button" class="btn-secondary" id="card-' + src.id + '-est-btn" style="flex:none">Estimate</button>' +
+                '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start">Start Download</button>' +
+            '</div>';
+
+        var credLink = document.getElementById('card-' + src.id + '-cred-link');
+        if (credLink) {
+            credLink.addEventListener('click', function(e) {
+                e.preventDefault();
+                toggleCardExpand(null);
+                switchTab('settings');
+            });
+        }
+
+        var cloudSlider = document.getElementById('card-' + src.id + '-cloud');
+        var cloudVal = document.getElementById('card-' + src.id + '-cloud-val');
+        cloudSlider.addEventListener('input', function() {
+            cloudVal.textContent = this.value + '%';
+        });
+
+        var estBtn = document.getElementById('card-' + src.id + '-est-btn');
+        var estBox = document.getElementById('card-' + src.id + '-est');
+        estBtn.addEventListener('click', function() {
+            estBox.style.display = '';
+            estBox.textContent = 'Estimating...';
+            var bbox = document.getElementById('cfg-bbox').value;
+            var ds = document.getElementById('card-' + src.id + '-date-start').value;
+            var de = document.getElementById('card-' + src.id + '-date-end').value;
+            var cc = cloudSlider.value;
+            var qs = '?bbox=' + encodeURIComponent(bbox) +
+                '&cloud_cover_max=' + cc +
+                (ds ? '&date_start=' + encodeURIComponent(ds) : '') +
+                (de ? '&date_end=' + encodeURIComponent(de) : '');
+            cfgFetch('/admin/pipeline/sentinel/estimate' + qs)
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (d.error || d.detail) {
+                        estBox.textContent = 'Error: ' + (d.error || d.detail);
+                        estBox.style.color = '#f38ba8';
+                    } else {
+                        var scenes = d.scene_count != null ? d.scene_count + ' scenes' : '';
+                        var sizeGB = d.estimated_gb != null ? '~' + d.estimated_gb.toFixed(1) + ' GB' : '';
+                        estBox.textContent = [scenes, sizeGB].filter(Boolean).join(', ') || 'No estimate available';
+                        estBox.style.color = '#a6e3a1';
+                    }
+                }).catch(function() {
+                    estBox.textContent = 'Estimate unavailable (API offline?)';
+                    estBox.style.color = '#f38ba8';
+                });
+        });
+
+        var startBtn = document.getElementById('card-' + src.id + '-start');
+        if (!_copernicusConfigured || _anyPipelineRunning) startBtn.disabled = true;
+
+        startBtn.addEventListener('click', function() {
+            startPipeline(src, {
+                date_start: document.getElementById('card-' + src.id + '-date-start').value,
+                date_end: document.getElementById('card-' + src.id + '-date-end').value,
+                cloud_cover_max: parseInt(cloudSlider.value),
+                mode: 'composite'
+            });
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // National Map panel
+    // -----------------------------------------------------------------------
+    function renderNationalmapBody(body, src) {
+        body.innerHTML =
+            '<div class="inline-warn" style="margin-bottom:8px">Rate-limited to ~1 tile/sec. Best for small areas (&lt;1000 tiles).</div>' +
+            '<label>Zoom range</label>' +
+            '<select id="card-' + src.id + '-zoom">' +
+                '<option value="15-15">z15 only</option>' +
+                '<option value="15-16">z15-16</option>' +
+                '<option value="15-17">z15-17</option>' +
+                '<option value="15-18" selected>z15-18 (full detail)</option>' +
+            '</select>' +
+            '<div class="estimate-box" id="card-' + src.id + '-est"></div>' +
+            '<div class="btn-row" style="margin-top:10px">' +
+                '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start">Start Download</button>' +
+            '</div>';
+
+        var zoomSel = document.getElementById('card-' + src.id + '-zoom');
+        var estBox = document.getElementById('card-' + src.id + '-est');
+
+        function refreshEst() {
+            var count = estimateTiles(document.getElementById('cfg-bbox').value, zoomSel.value);
+            var msg = '~' + count.toLocaleString() + ' tiles';
+            if (count > 1000) {
+                msg += ' \u2014 \u26a0 Large area! This will take ~' + Math.round(count / 3600) + ' hours at 1 tile/sec.';
+                estBox.style.color = '#f9e2af';
+            } else {
+                estBox.style.color = '';
+            }
+            estBox.textContent = msg;
+        }
+        refreshEst();
+        zoomSel.addEventListener('change', refreshEst);
+
+        document.getElementById('card-' + src.id + '-start').addEventListener('click', function() {
+            startPipeline(src, {
+                zoom: zoomSel.value,
+                concurrency: 20
+            });
+        });
+
+        if (_anyPipelineRunning) {
+            document.getElementById('card-' + src.id + '-start').disabled = true;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Custom Import panel
+    // -----------------------------------------------------------------------
+    function renderImportBody(body, src) {
+        body.innerHTML =
+            '<p style="font-size:12px;color:#7a8299;margin:0 0 8px">Place GeoTIFF files in <code style="background:#313244;padding:2px 6px;border-radius:3px">/data/import/</code> then scan and import.</p>' +
+            '<div class="estimate-box" id="card-' + src.id + '-scan">Scanning...</div>' +
+            '<div class="config-row">' +
+                '<div>' +
+                    '<label>Layer name (optional)</label>' +
+                    '<input type="text" id="card-' + src.id + '-layer" placeholder="custom" style="font-family:monospace">' +
+                '</div>' +
+                '<div>' +
+                    '<label class="checkbox-label" style="margin-top:24px">' +
+                        '<input type="checkbox" id="card-' + src.id + '-delete"> Delete source files after import' +
+                    '</label>' +
+                '</div>' +
+            '</div>' +
+            '<div class="btn-row" style="margin-top:10px">' +
+                '<button type="button" class="btn-secondary" id="card-' + src.id + '-refresh" style="flex:none">Refresh Scan</button>' +
+                '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start" disabled>Import</button>' +
+            '</div>';
+
+        var scanBox = document.getElementById('card-' + src.id + '-scan');
+        var importBtn = document.getElementById('card-' + src.id + '-start');
+        var _importTifCount = 0;
+
+        function doScan() {
+            scanBox.textContent = 'Scanning...';
+            importBtn.disabled = true;
+            cfgFetch('/admin/pipeline/import/scan')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (d.error || d.detail) {
+                        scanBox.textContent = 'Error: ' + (d.error || d.detail);
+                        return;
+                    }
+                    _importTifCount = d.tif_count || 0;
+                    var totalMB = ((d.total_bytes || 0) / 1e6).toFixed(0);
+                    var msg = _importTifCount + ' GeoTIFFs (' + totalMB + ' MB)';
+                    if ((d.other_geo_count || d.unsupported_count || 0) > 0) {
+                        msg += ' \u2022 ' + (d.other_geo_count || d.unsupported_count) + ' unsupported files found';
+                    }
+                    scanBox.textContent = msg;
+                    importBtn.disabled = _importTifCount === 0 || _anyPipelineRunning;
+                })
+                .catch(function() {
+                    scanBox.textContent = 'Scan failed (API offline?)';
+                });
+        }
+        doScan();
+
+        document.getElementById('card-' + src.id + '-refresh').addEventListener('click', doScan);
+
+        importBtn.addEventListener('click', function() {
+            var name = document.getElementById('card-' + src.id + '-layer').value.trim();
+            var deleteAfter = document.getElementById('card-' + src.id + '-delete').checked;
+            var qs = '?delete_after=' + deleteAfter;
+            if (name) qs += '&layer_name=' + encodeURIComponent(name);
+            cfgFetch('/admin/pipeline/import' + qs, { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (d.error || d.detail) alert(d.error || d.detail);
+                    toggleCardExpand(null);
+                    fetchAll();
+                })
+                .catch(function(e) { alert('Import failed: ' + e.message); });
+        });
     }
 
     function renderGenericProgress(d, ids) {
@@ -1279,6 +1715,24 @@
             if (!btn) return;
             // Don't re-enable naip-start if county lookup hasn't happened
             if (id === 'naip-start' && !_naipCountiesReady && !_anyPipelineRunning) return;
+            btn.disabled = _anyPipelineRunning;
+            btn.title = _anyPipelineRunning ? 'Another pipeline is running' : '';
+        });
+
+        // Also handle card-grid pipeline-start-btn elements
+        document.querySelectorAll('.pipeline-start-btn').forEach(function(btn) {
+            // Don't enable M2M if no credentials
+            if (btn.id.indexOf('imagery_m2m') >= 0 && !_m2mConfigured) {
+                btn.disabled = true;
+                return;
+            }
+            // Don't enable Sentinel if no credentials
+            if (btn.id.indexOf('imagery_sentinel') >= 0 && !_copernicusConfigured) {
+                btn.disabled = true;
+                return;
+            }
+            // Don't enable import button if scan hasn't found files
+            if (btn.id.indexOf('imagery_custom') >= 0) return; // import manages its own state
             btn.disabled = _anyPipelineRunning;
             btn.title = _anyPipelineRunning ? 'Another pipeline is running' : '';
         });
