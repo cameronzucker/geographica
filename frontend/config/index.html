@@ -6,56 +6,57 @@
     <title>Geographica Config</title>
     <link rel="stylesheet" href="/vendor/maplibre-gl.css">
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
         /* === BASE === */
-        body { font-family: -apple-system, sans-serif; background: #1e1e2e; color: #cdd6f4; margin: 0; padding: 20px; }
+        body { font-family: 'Instrument Sans', -apple-system, sans-serif; background: #080c12; color: #a0acb8; margin: 0; padding: 20px; }
         .container { max-width: 600px; margin: 0 auto; }
 
         /* === TABS === */
-        .tab-bar { display: flex; gap: 0; border-bottom: 1px solid #45475a; margin-bottom: 16px; }
-        .tab-btn { padding: 10px 16px; background: transparent; border: none; color: #7a8299; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; }
-        .tab-btn.active { color: #cdd6f4; border-bottom-color: #89b4fa; }
+        .tab-bar { display: flex; gap: 0; border-bottom: 1px solid #1e2a38; margin-bottom: 16px; }
+        .tab-btn { padding: 10px 16px; background: transparent; border: none; color: #6a7a8a; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; }
+        .tab-btn.active { color: #a0acb8; border-bottom-color: #8aaccc; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
 
         /* === SERVICE LIST === */
-        .svc-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #313244; }
+        .svc-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #111920; }
         .svc-left { display: flex; align-items: center; gap: 8px; }
         .svc-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-        .svc-dot.green { background: #a6e3a1; }
-        .svc-dot.yellow { background: #f9e2af; }
-        .svc-dot.red { background: #f38ba8; }
+        .svc-dot.green { background: #6aaa6a; }
+        .svc-dot.yellow { background: #c8aa64; }
+        .svc-dot.red { background: #c45858; }
         .svc-name { font-size: 13px; font-weight: 500; }
-        .svc-context { font-size: 11px; color: #7a8299; text-align: right; }
+        .svc-context { font-size: 11px; color: #6a7a8a; text-align: right; }
 
         /* === CARDS === */
         .info-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
-        .info-card { background: #313244; border-radius: 8px; padding: 12px; }
-        .info-card-label { font-size: 11px; color: #7a8299; margin-bottom: 4px; }
+        .info-card { background: #111920; border-radius: 8px; padding: 12px; }
+        .info-card-label { font-size: 11px; color: #6a7a8a; margin-bottom: 4px; }
         .info-card-value { font-size: 14px; font-weight: 500; }
 
         /* === PIPELINE BANNER === */
-        .pipeline-banner { background: rgba(137,180,250,0.1); border: 1px solid #89b4fa; border-radius: 8px; padding: 12px; margin-top: 16px; cursor: pointer; }
+        .pipeline-banner { background: rgba(138,172,204,0.1); border: 1px solid #8aaccc; border-radius: 8px; padding: 12px; margin-top: 16px; cursor: pointer; }
 
         /* === REUSED STYLES === */
-        .section { background: #181825; border-radius: 8px; padding: 16px; margin: 12px 0; }
+        .section { background: #0c1219; border-radius: 8px; padding: 16px; margin: 12px 0; }
         .status { padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: 12px; }
-        .status-ok { background: rgba(166,227,161,0.15); color: #a6e3a1; }
-        .status-warn { background: rgba(249,226,175,0.15); color: #f9e2af; }
-        .status-error { background: rgba(243,139,168,0.15); color: #f38ba8; }
-        .progress-bar { height: 6px; background: #313244; border-radius: 3px; margin: 8px 0; }
-        .progress-fill { height: 100%; background: #89b4fa; border-radius: 3px; transition: width 1s; }
-        .progress-fill.cancelling { width: 100% !important; background: #f9e2af; animation: pulse-cancel 1.5s ease-in-out infinite; }
+        .status-ok { background: rgba(106,170,106,0.15); color: #6aaa6a; }
+        .status-warn { background: rgba(200,170,100,0.15); color: #c8aa64; }
+        .status-error { background: rgba(196,88,88,0.15); color: #c45858; }
+        .progress-bar { height: 6px; background: #111920; border-radius: 3px; margin: 8px 0; }
+        .progress-fill { height: 100%; background: #8aaccc; border-radius: 3px; transition: width 1s; }
+        .progress-fill.cancelling { width: 100% !important; background: #c8aa64; animation: pulse-cancel 1.5s ease-in-out infinite; }
         @keyframes pulse-cancel { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
-        .detail { font-size: 11px; color: #7a8299; margin: 4px 0; }
+        .detail { font-size: 11px; color: #6a7a8a; margin: 4px 0; }
         .mono { font-family: 'SF Mono', monospace; }
-        label { display: block; font-size: 12px; color: #7a8299; margin: 8px 0 3px; }
-        input, select { width: 100%; padding: 8px; background: #313244; border: 1px solid #45475a; border-radius: 6px; color: #cdd6f4; font-size: 13px; box-sizing: border-box; }
+        label { display: block; font-size: 12px; color: #6a7a8a; margin: 8px 0 3px; }
+        input, select { width: 100%; padding: 8px; background: #111920; border: 1px solid #1e2a38; border-radius: 6px; color: #a0acb8; font-size: 13px; box-sizing: border-box; }
         button { padding: 10px 16px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; margin: 4px 2px; }
-        .btn-primary { background: #a6e3a1; color: #1e1e2e; font-weight: 600; }
+        .btn-primary { background: #6aaa6a; color: #080c12; font-weight: 600; }
         .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
-        .btn-danger { background: #f38ba8; color: #1e1e2e; }
-        .btn-secondary { background: transparent; border: 1px solid #45475a; color: #cdd6f4; }
-        h2 { font-size: 16px; color: #f5f5f5; margin-top: 24px; }
+        .btn-danger { background: #c45858; color: #080c12; }
+        .btn-secondary { background: transparent; border: 1px solid #1e2a38; color: #a0acb8; }
+        h2 { font-size: 16px; color: #e8ecf0; margin-top: 24px; }
 
         /* === MINIMAP === */
         #minimap { width: 100%; height: 200px; border-radius: 6px; margin: 8px 0; }
@@ -63,58 +64,58 @@
 
         /* === SETTINGS === */
         .setting-row { display: flex; justify-content: space-between; padding: 6px 0; }
-        .setting-label { font-size: 12px; color: #7a8299; }
+        .setting-label { font-size: 12px; color: #6a7a8a; }
         .setting-value { font-size: 12px; }
 
         /* === EMPTY STATE === */
-        .empty-state { text-align: center; padding: 60px 20px; color: #7a8299; }
+        .empty-state { text-align: center; padding: 60px 20px; color: #6a7a8a; }
 
         /* === CHECKBOX === */
-        .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #cdd6f4; cursor: pointer; }
+        .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #a0acb8; cursor: pointer; }
         .checkbox-label input[type="checkbox"] { width: auto; margin: 0; }
 
         /* === INLINE WARNING === */
-        .inline-warn { background: rgba(249,226,175,0.15); color: #f9e2af; padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: 12px; }
-        .inline-warn a { color: #89b4fa; cursor: pointer; text-decoration: underline; }
+        .inline-warn { background: rgba(200,170,100,0.15); color: #c8aa64; padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: 12px; }
+        .inline-warn a { color: #8aaccc; cursor: pointer; text-decoration: underline; }
 
         /* === RANGE SLIDER === */
         .slider-row { display: flex; align-items: center; gap: 8px; }
         .slider-row input[type=range] { flex: 1; width: auto; padding: 0; background: transparent; border: none; }
-        .slider-val { font-size: 12px; color: #cdd6f4; min-width: 28px; text-align: right; }
+        .slider-val { font-size: 12px; color: #a0acb8; min-width: 28px; text-align: right; }
 
         /* === PIPELINE HINT === */
-        .pipeline-hint { font-size: 12px; color: #7a8299; background: rgba(137,180,250,0.08); border: 1px solid rgba(137,180,250,0.2); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; }
+        .pipeline-hint { font-size: 12px; color: #6a7a8a; background: rgba(138,172,204,0.08); border: 1px solid rgba(138,172,204,0.2); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; }
 
         /* === SOURCE CARD GRID === */
         .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
         @media (max-width: 480px) { .card-grid { grid-template-columns: 1fr; } }
-        .source-card { background: #181825; padding: 12px; border-radius: 8px; border: 1px solid #45475a; cursor: pointer; transition: opacity 0.2s; }
-        .source-card:hover { border-color: #89b4fa; }
+        .source-card { background: #0c1219; padding: 12px; border-radius: 8px; border: 1px solid #1e2a38; cursor: pointer; transition: opacity 0.2s; }
+        .source-card:hover { border-color: #8aaccc; }
         .source-card.dimmed { opacity: 0.4; pointer-events: none; }
         .source-card.custom { border-style: dashed; }
         .source-card.disabled { opacity: 0.6; }
-        .source-card.disabled:hover { border-color: #45475a; }
+        .source-card.disabled:hover { border-color: #1e2a38; }
         .source-card .card-header { display: flex; justify-content: space-between; align-items: center; }
         .source-card .card-name { font-weight: 600; font-size: 13px; }
-        .source-card .card-meta { font-size: 11px; color: #7a8299; }
-        .source-card .card-disk { font-size: 11px; color: #89b4fa; }
-        .source-card .card-disk.none { color: #7a8299; }
+        .source-card .card-meta { font-size: 11px; color: #6a7a8a; }
+        .source-card .card-disk { font-size: 11px; color: #8aaccc; }
+        .source-card .card-disk.none { color: #6a7a8a; }
         .auth-badge { font-size: 9px; padding: 1px 6px; border-radius: 3px; }
-        .auth-badge.free { background: #a6e3a1; color: #1e1e2e; }
-        .auth-badge.apikey { background: #f9e2af; color: #1e1e2e; }
-        .source-card.expanded { grid-column: 1 / -1; border: 2px solid #89b4fa; cursor: default; }
-        .source-card.expanded:hover { border-color: #89b4fa; }
+        .auth-badge.free { background: rgba(106,170,106,0.15); color: #6aaa6a; }
+        .auth-badge.apikey { background: rgba(200,170,100,0.15); color: #c8aa64; }
+        .source-card.expanded { grid-column: 1 / -1; border: 2px solid #8aaccc; cursor: default; }
+        .source-card.expanded:hover { border-color: #8aaccc; }
         .source-card .card-close { display: none; }
         .source-card.expanded .card-close { display: inline; }
         .source-card .card-body { display: none; }
-        .source-card.expanded .card-body { display: block; margin-top: 10px; border-top: 1px solid #45475a; padding-top: 10px; }
+        .source-card.expanded .card-body { display: block; margin-top: 10px; border-top: 1px solid #1e2a38; padding-top: 10px; }
         .config-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         @media (max-width: 480px) { .config-row { grid-template-columns: 1fr; } }
-        .estimate-box { background: #313244; padding: 10px; border-radius: 6px; font-size: 11px; margin-bottom: 10px; }
+        .estimate-box { background: #111920; padding: 10px; border-radius: 6px; font-size: 11px; margin-bottom: 10px; }
         .btn-row { display: flex; gap: 8px; }
         .btn-row .btn-primary { flex: 1; }
-        .cred-warning { background: rgba(249,226,175,0.12); border: 1px solid rgba(249,226,175,0.3); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #f9e2af; margin-bottom: 8px; }
-        .gateway-warning { background: rgba(249,226,175,0.12); border: 1px solid rgba(249,226,175,0.3); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #f9e2af; margin-bottom: 8px; }
+        .cred-warning { background: rgba(200,170,100,0.12); border: 1px solid rgba(200,170,100,0.3); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #c8aa64; margin-bottom: 8px; }
+        .gateway-warning { background: rgba(200,170,100,0.12); border: 1px solid rgba(200,170,100,0.3); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #c8aa64; margin-bottom: 8px; }
 
         /* === INVENTORY TAB === */
         .container.wide { max-width: 1000px; }
@@ -122,22 +123,22 @@
         .inventory-map { flex: 2; background: #0d1117; border-radius: 8px; overflow: hidden; }
         .inventory-sidebar { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 8px; }
         @media (max-width: 640px) { .inventory-layout { flex-direction: column; } .inventory-map { min-height: 250px; } }
-        .inv-source { padding: 8px; background: #181825; border-radius: 6px; cursor: pointer; transition: background 0.15s; }
-        .inv-source:hover { background: #313244; }
-        .inv-source.selected { background: #313244; }
+        .inv-source { padding: 8px; background: #0c1219; border-radius: 6px; cursor: pointer; transition: background 0.15s; }
+        .inv-source:hover { background: #111920; }
+        .inv-source.selected { background: #111920; }
         .inv-source .inv-name { font-size: 12px; font-weight: 600; }
-        .inv-source .inv-meta { font-size: 10px; color: #7a8299; margin-top: 2px; }
+        .inv-source .inv-meta { font-size: 10px; color: #6a7a8a; margin-top: 2px; }
         .inv-source .inv-size { font-size: 11px; margin-top: 2px; }
-        .inv-source .inv-detail { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px solid #45475a; font-size: 11px; }
+        .inv-source .inv-detail { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px solid #1e2a38; font-size: 11px; }
         .inv-source.selected .inv-detail { display: block; }
-        .inv-disk-summary { padding: 8px; background: #181825; border-radius: 6px; margin-top: auto; }
-        .inv-disk-bar { height: 6px; background: #313244; border-radius: 3px; margin-top: 6px; overflow: hidden; }
-        .inv-disk-bar-fill { height: 100%; background: #89b4fa; border-radius: 3px; }
+        .inv-disk-summary { padding: 8px; background: #0c1219; border-radius: 6px; margin-top: auto; }
+        .inv-disk-bar { height: 6px; background: #111920; border-radius: 3px; margin-top: 6px; overflow: hidden; }
+        .inv-disk-bar-fill { height: 100%; background: #8aaccc; border-radius: 3px; }
     </style>
 </head>
 <body>
 <div class="container">
-    <h1 style="font-size:20px;color:#f5f5f5;margin-bottom:4px">Geographica Configuration</h1>
+    <h1 style="font-size:20px;color:#e8ecf0;margin-bottom:4px">Geographica Configuration</h1>
     <p class="detail">This panel is only accessible from localhost. Changes take effect immediately.</p>
 
     <!-- Tab bar -->
@@ -156,7 +157,7 @@
         </div>
         <div id="dashboard-content">
             <div class="section">
-                <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">Services</h2>
+                <h2 style="font-size:14px;color:#e8ecf0;margin:0 0 12px">Services</h2>
                 <div id="svc-list">Loading...</div>
             </div>
             <div class="info-cards">
@@ -179,7 +180,7 @@
 
         <!-- Shared Coverage Area -->
         <div class="section">
-            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">Coverage Area</h2>
+            <h2 style="font-size:14px;color:#e8ecf0;margin:0 0 12px">Coverage Area</h2>
             <div id="minimap-container">
                 <label>Draw bbox on map or enter manually</label>
                 <div id="minimap"></div>
@@ -190,12 +191,12 @@
         </div>
 
         <!-- Source Card Grid -->
-        <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 8px">Imagery Sources</h2>
+        <h2 style="font-size:14px;color:#e8ecf0;margin:0 0 8px">Imagery Sources</h2>
         <div id="source-card-grid" class="card-grid"></div>
 
         <!-- Elevation Tiles -->
         <div class="section">
-            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">Elevation Tiles</h2>
+            <h2 style="font-size:14px;color:#e8ecf0;margin:0 0 12px">Elevation Tiles</h2>
             <div id="elev-status" class="detail">Checking...</div>
             <div style="margin-top:8px">
                 <button type="button" class="btn-primary pipeline-start-btn" id="elev-start">Start Elevation Download</button>
@@ -210,7 +211,7 @@
 
         <!-- OSM POI Extraction -->
         <div class="section">
-            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">OSM POI Extraction</h2>
+            <h2 style="font-size:14px;color:#e8ecf0;margin:0 0 12px">OSM POI Extraction</h2>
             <div id="osm-status" class="detail">Checking...</div>
             <div style="margin-top:8px">
                 <button type="button" class="btn-primary pipeline-start-btn" id="osm-start">Extract OSM POIs</button>
@@ -239,7 +240,7 @@
     <div id="tab-settings" class="tab-content">
         <!-- M2M Credentials -->
         <div class="section">
-            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">M2M API Credentials</h2>
+            <h2 style="font-size:14px;color:#e8ecf0;margin:0 0 12px">M2M API Credentials</h2>
             <div id="m2m-configured" style="display:none">
                 <div class="status status-ok">Configured</div>
                 <div style="margin-top:8px">
@@ -261,7 +262,7 @@
 
         <!-- Copernicus Credentials -->
         <div class="section">
-            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">Copernicus (Sentinel-2)</h2>
+            <h2 style="font-size:14px;color:#e8ecf0;margin:0 0 12px">Copernicus (Sentinel-2)</h2>
             <div id="copernicus-configured" style="display:none">
                 <div class="status status-ok">Configured</div>
                 <div style="margin-top:8px">
@@ -275,7 +276,7 @@
                 <label>Password</label>
                 <input type="password" id="cfg-copernicus-pass" placeholder="Copernicus dataspace password">
                 <div class="detail" style="margin-top:4px">
-                    <a href="https://dataspace.copernicus.eu" target="_blank" rel="noopener" style="color:#89b4fa">Register for free at dataspace.copernicus.eu</a>
+                    <a href="https://dataspace.copernicus.eu" target="_blank" rel="noopener" style="color:#8aaccc">Register for free at dataspace.copernicus.eu</a>
                 </div>
                 <div style="margin-top:8px">
                     <button type="button" class="btn-primary" id="copernicus-save-btn">Save Credentials</button>
@@ -286,13 +287,13 @@
 
         <!-- TLS Configuration -->
         <div class="section">
-            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">TLS Configuration</h2>
+            <h2 style="font-size:14px;color:#e8ecf0;margin:0 0 12px">TLS Configuration</h2>
             <div id="tls-settings">Loading...</div>
         </div>
 
         <!-- Voice Search (STT) -->
         <div class="section">
-            <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">Voice Search (STT)</h2>
+            <h2 style="font-size:14px;color:#e8ecf0;margin:0 0 12px">Voice Search (STT)</h2>
             <div id="stt-settings">Loading...</div>
         </div>
     </div>
