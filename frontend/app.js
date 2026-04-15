@@ -246,7 +246,7 @@
             type: 'raster',
             source: sourceId,
             layout: { visibility: 'none' },
-            paint: { 'raster-opacity': 0.8 }
+            paint: { 'raster-opacity': 1.0 }
           }, _firstSymbolLayer());
         }
         _updateImageryToggles();
@@ -786,6 +786,7 @@
     cb.checked = map.getLayer(layerId) && map.getLayoutProperty(layerId, 'visibility') === 'visible';
     cb.addEventListener('change', function() {
       map.setLayoutProperty(layerId, 'visibility', cb.checked ? 'visible' : 'none');
+      _updateOverlayImageryState();
     });
     var lbl = document.createElement('span');
     lbl.style.cssText = 'font-size:13px;';
@@ -797,6 +798,51 @@
     div.appendChild(lbl);
     div.appendChild(sub);
     return div;
+  }
+
+  // Basemap layers to hide when overlay imagery is active (buildings, landuse fills
+  // that obscure aerial photos). Roads and labels stay visible.
+  var _conflictingBasemapLayers = [
+    'building', 'building-top',
+    'landuse-residential', 'landuse',
+    'landcover-grass', 'landcover-wood', 'landcover-ice',
+    'park', 'park_outline',
+  ];
+
+  function _updateOverlayImageryState() {
+    // Check if any overlay imagery layer is visible
+    var overlayIds = ['imagery-noaa-layer', 'imagery-naip-layer',
+                      'imagery-sentinel-layer', 'imagery-custom-layer'];
+    var anyVisible = overlayIds.some(function(id) {
+      return map.getLayer(id) &&
+             map.getLayoutProperty(id, 'visibility') === 'visible';
+    });
+
+    // Show/hide opacity slider row for overlay imagery
+    var opacityRow = document.getElementById('imagery-opacity-row');
+    if (opacityRow && currentStyle !== 'hybrid') {
+      opacityRow.classList.toggle('visible', anyVisible);
+    }
+
+    // Hide/show conflicting basemap fills
+    _conflictingBasemapLayers.forEach(function(layerId) {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, 'visibility', anyVisible ? 'none' : 'visible');
+      }
+    });
+
+    // Wire opacity slider to overlay imagery layers
+    if (anyVisible) {
+      var slider = document.getElementById('imagery-opacity');
+      if (slider) {
+        var val = parseInt(slider.value, 10) / 100;
+        overlayIds.forEach(function(id) {
+          if (map.getLayer(id) && map.getLayoutProperty(id, 'visibility') === 'visible') {
+            map.setPaintProperty(id, 'raster-opacity', val);
+          }
+        });
+      }
+    }
   }
 
   // =====================================================================
@@ -857,6 +903,12 @@
       } else if (map.getLayer('imagery-layer')) {
         map.setPaintProperty('imagery-layer', 'raster-opacity', val / 100);
       }
+      // Also apply to any visible overlay imagery layers
+      ['imagery-noaa-layer', 'imagery-naip-layer', 'imagery-sentinel-layer', 'imagery-custom-layer'].forEach(function(id) {
+        if (map.getLayer(id) && map.getLayoutProperty(id, 'visibility') === 'visible') {
+          map.setPaintProperty(id, 'raster-opacity', val / 100);
+        }
+      });
     });
 
     // Hillshade toggle
