@@ -1276,6 +1276,10 @@
   function clearSearchPins() {
     var src = map.getSource('search-results');
     if (src) src.setData({ type: 'FeatureCollection', features: [] });
+    // Resume GPS follow if nav is active and we paused for search results
+    if (document.body.classList.contains('nav-active') && window._navRecenter) {
+      window._navRecenter();
+    }
   }
 
   function updateSearchPins(results) {
@@ -1292,9 +1296,10 @@
     var src = map.getSource('search-results');
     if (src) src.setData({ type: 'FeatureCollection', features: features });
 
-    // During navigation, zoom to show results (search bar is collapsed,
-    // results list is hidden — pins on map are the only feedback)
+    // During navigation, zoom to show results and pause GPS follow
+    // so the map stays on the results until the user taps to dismiss
     if (document.body.classList.contains('nav-active') && features.length > 0) {
+      if (window._navPauseAutoCenter) window._navPauseAutoCenter();
       var bounds = new maplibregl.LngLatBounds();
       features.forEach(function (f) { bounds.extend(f.geometry.coordinates); });
       map.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: 500 });

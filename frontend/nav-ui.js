@@ -632,6 +632,10 @@
     feedGPS();
   }
 
+  // Expose pause/recenter for search integration
+  window._navPauseAutoCenter = function () { onManualPan(); };
+  window._navRecenter = function () { recenter(); };
+
   // =====================================================================
   //  VOICE / SPEECH
   // =====================================================================
