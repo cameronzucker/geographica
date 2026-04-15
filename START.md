@@ -110,6 +110,21 @@ After all features are implemented:
 - Update START.md for the next agent session
 - Check for stale content from parallel agent sessions
 
+**Known README.md stale items (audited 2026-04-15):**
+
+| Line(s) | Issue |
+|---------|-------|
+| 14 | Features: only 2 imagery modes listed; should be 5 (direct, m2m, nationalmap, noaa, import) |
+| 30-31 | Admin panel description missing NOAA, National Map, BYO import |
+| 56 | Storage table: NAIP row says "(USGS M2M, per region)" only — add alternatives |
+| 85 | Architecture diagram: "direct + M2M" comment stale; missing import_imagery.py, tileserver_config.py |
+| 163 | M2M credentials framed as primary NAIP path; no mention of free alternatives (National Map, NOAA) |
+| 498-503 | Config panel Pipelines tab description missing NOAA, National Map, BYO import |
+| 635-638 | Troubleshooting: no mention USDA Gateway down since April 2026 |
+| 727 | Project structure: acquire_imagery.py called "USGS legacy"; import_imagery.py and tileserver_config.py absent |
+| 734 | Test count: says 331, actual is 475+ |
+| 682 | app.js line count: says ~3900, actual is ~4025 |
+
 ## Current system state
 
 ### Running services (Docker Compose)
