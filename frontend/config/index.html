@@ -2123,6 +2123,7 @@
                 toggleCb.type = 'checkbox';
                 toggleCb.checked = _showAllZoomLevels;
                 toggleCb.style.accentColor = '#89b4fa';
+                toggleCb.addEventListener('click', function(e) { e.stopPropagation(); });
                 toggleCb.addEventListener('change', function() {
                     _showAllZoomLevels = this.checked;
                     renderInventoryMap(_inventorySources);
