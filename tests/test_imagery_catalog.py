@@ -104,3 +104,55 @@ class TestImageryCatalogEndpoint:
         assert "sources" in data
         assert len(data["sources"]) == 1
         assert data["sources"][0]["id"] == "imagery"
+
+
+class TestDeleteImageryEndpoint:
+    def test_delete_existing_source(self, tmp_path):
+        mbt = tmp_path / "imagery_test.mbtiles"
+        _create_test_mbtiles(mbt, [(14, 1, 1)])
+        assert mbt.exists()
+        with patch.dict("os.environ", {"DATA_DIR": str(tmp_path)}):
+            from main import app
+            from fastapi.testclient import TestClient
+            client = TestClient(app)
+            resp = client.delete("/admin/imagery/imagery_test")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["deleted"] == "imagery_test"
+        assert data["file"] == "imagery_test.mbtiles"
+        assert not mbt.exists()
+
+    def test_delete_nonexistent_returns_404(self, tmp_path):
+        with patch.dict("os.environ", {"DATA_DIR": str(tmp_path)}):
+            from main import app
+            from fastapi.testclient import TestClient
+            client = TestClient(app)
+            resp = client.delete("/admin/imagery/imagery_nosuch")
+        assert resp.status_code == 404
+
+    def test_delete_rejects_path_traversal(self, tmp_path):
+        with patch.dict("os.environ", {"DATA_DIR": str(tmp_path)}):
+            from main import app
+            from fastapi.testclient import TestClient
+            client = TestClient(app)
+            resp = client.delete("/admin/imagery/../../etc/passwd")
+        assert resp.status_code in (404, 422)
+
+    def test_delete_rejects_non_imagery_id(self, tmp_path):
+        with patch.dict("os.environ", {"DATA_DIR": str(tmp_path)}):
+            from main import app
+            from fastapi.testclient import TestClient
+            client = TestClient(app)
+            resp = client.delete("/admin/imagery/elevation")
+        assert resp.status_code == 422
+
+    def test_delete_accepts_base_imagery(self, tmp_path):
+        mbt = tmp_path / "imagery.mbtiles"
+        _create_test_mbtiles(mbt, [(14, 1, 1)])
+        with patch.dict("os.environ", {"DATA_DIR": str(tmp_path)}):
+            from main import app
+            from fastapi.testclient import TestClient
+            client = TestClient(app)
+            resp = client.delete("/admin/imagery/imagery")
+        assert resp.status_code == 200
+        assert not mbt.exists()

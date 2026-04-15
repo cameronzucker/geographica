@@ -23,6 +23,7 @@ from typing import Optional
 import aiosqlite
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 NOMINATIM_URL = os.environ.get("NOMINATIM_URL", "http://nominatim:8080")
@@ -795,6 +796,31 @@ async def imagery_catalog():
 
     sources = _build_imagery_catalog(data_dir, tileserver_config=ts_config)
     return {"sources": sources}
+
+
+@app.delete("/admin/imagery/{source_id}")
+async def delete_imagery_source(source_id: str):
+    """Delete an imagery MBTiles file by source ID."""
+    if not re.fullmatch(r"imagery[a-z0-9_]*", source_id):
+        return JSONResponse(status_code=422, content={"detail": f"Invalid source_id: {source_id}"})
+
+    data_dir = Path(os.environ.get("DATA_DIR", "/data"))
+    mbt_path = data_dir / f"{source_id}.mbtiles"
+
+    if not mbt_path.exists():
+        return JSONResponse(status_code=404, content={"detail": f"File not found: {source_id}.mbtiles"})
+
+    mbt_path.unlink()
+
+    ts_config_path = os.environ.get("TILESERVER_CONFIG")
+    if ts_config_path:
+        try:
+            from tileserver_config import remove_mbtiles_from_config
+            remove_mbtiles_from_config(Path(ts_config_path), source_id)
+        except Exception:
+            pass
+
+    return {"deleted": source_id, "file": f"{source_id}.mbtiles"}
 
 
 @app.get("/admin/status")
