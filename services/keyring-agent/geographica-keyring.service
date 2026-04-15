@@ -1,0 +1,18 @@
+[Unit]
+Description=Geographica Keyring Agent
+After=dbus.service
+Requires=dbus.service
+
+[Service]
+Type=simple
+User=administrator
+ExecStart=/usr/bin/python3 /home/administrator/Code/geographica/services/keyring-agent/agent.py
+RuntimeDirectory=geographica
+RuntimeDirectoryMode=0750
+Restart=on-failure
+RestartSec=5
+Environment=KEYRING_SOCKET=/run/geographica/keyring.sock
+Environment=SECRETS_DIR=/run/geographica/secrets
+
+[Install]
+WantedBy=multi-user.target
