@@ -221,7 +221,7 @@
 
     var scaleUnit = useImperial ? 'imperial' : 'metric';
     map._scaleControl = new maplibregl.ScaleControl({ unit: scaleUnit });
-    map.addControl(map._scaleControl, 'bottom-right');
+    map.addControl(map._scaleControl, 'bottom-left');
 
     map.on('load', function () {
       // Add empty sources for optional overlay layers (imagery, hillshade, route, imports).
@@ -1083,7 +1083,7 @@
         }
         var scaleUnit = useImperial ? 'imperial' : 'metric';
         map._scaleControl = new maplibregl.ScaleControl({ unit: scaleUnit });
-        map.addControl(map._scaleControl, 'bottom-right');
+        map.addControl(map._scaleControl, 'bottom-left');
 
         // Refresh status bar readouts immediately
         updateCameraStatus();
