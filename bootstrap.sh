@@ -25,7 +25,7 @@ if [ "${PERMS: -1}" -ge 6 ]; then
   exit 1
 fi
 
-echo "[1/5] Installing system packages..."
+echo "[1/6] Installing system packages..."
 apt update
 apt install -y \
   docker.io docker-compose \
@@ -34,20 +34,43 @@ apt install -y \
   gpsd gpsd-clients \
   git wget curl unzip
 
-echo "[2/5] Adding $ACTUAL_USER to docker group..."
+echo "[2/6] Installing keyring dependencies..."
+apt install -y gnome-keyring libsecret-tools dbus-x11
+
+# Configure PAM auto-unlock for GNOME Keyring
+if ! grep -q pam_gnome_keyring /etc/pam.d/common-auth 2>/dev/null; then
+    echo "auth optional pam_gnome_keyring.so" >> /etc/pam.d/common-auth
+    echo "  Added PAM auto-unlock to common-auth"
+fi
+if ! grep -q pam_gnome_keyring /etc/pam.d/common-session 2>/dev/null; then
+    echo "session optional pam_gnome_keyring.so auto_start" >> /etc/pam.d/common-session
+    echo "  Added PAM auto-start to common-session"
+fi
+
+echo "[3/6] Adding $ACTUAL_USER to docker group..."
 usermod -aG docker "$ACTUAL_USER"
 
-echo "[3/5] Starting Docker..."
+echo "[4/6] Starting Docker..."
 systemctl start docker
 systemctl enable docker
 
-echo "[4/5] Creating data directory..."
+echo "[5/6] Creating data directory..."
 DATA_DIR="/srv/geographica/data"
 mkdir -p "$DATA_DIR"/{pbf,nominatim,valhalla}
 chown -R "$ACTUAL_USER":"$ACTUAL_USER" /srv/geographica
 
-echo "[5/5] Creating data symlink..."
+echo "      Creating data symlink..."
 ln -sf "$DATA_DIR" "$REPO_DIR/data"
+
+echo "[6/6] Installing keyring agent service..."
+cp "$REPO_DIR/services/keyring-agent/geographica-keyring.service" /etc/systemd/system/
+# Update paths to match actual repo location and user
+sed -i "s|/home/administrator/Code/geographica|$REPO_DIR|g" /etc/systemd/system/geographica-keyring.service
+sed -i "s|User=administrator|User=$ACTUAL_USER|g" /etc/systemd/system/geographica-keyring.service
+systemctl daemon-reload
+systemctl enable geographica-keyring
+systemctl start geographica-keyring
+echo "  Keyring agent installed and started"
 
 echo ""
 echo "=========================================="

@@ -30,3 +30,8 @@ START.md
 .superpowers/
 .codex
 .playwright-mcp/
+
+# Credential files (must never be committed)
+.credentials.json
+credentials.json
+*.credentials.json
