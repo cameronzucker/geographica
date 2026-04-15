@@ -732,7 +732,7 @@ def _build_imagery_catalog(
     tileserver_config: dict | None = None,
 ) -> list[dict]:
     """Scan data_dir for imagery*.mbtiles and return structured catalog."""
-    from datetime import datetime
+    from datetime import datetime, timezone
     results = []
     for mbt_path in sorted(data_dir.glob("imagery*.mbtiles")):
         source_id = mbt_path.stem
@@ -772,7 +772,7 @@ def _build_imagery_catalog(
             "id": source_id,
             "file": mbt_path.name,
             "size_bytes": stat_info.st_size,
-            "modified": datetime.fromtimestamp(stat_info.st_mtime).isoformat() + "Z",
+            "modified": datetime.fromtimestamp(stat_info.st_mtime, tz=timezone.utc).isoformat(),
             "registered": registered,
             "zoom_levels": zoom_levels,
         })
