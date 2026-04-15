@@ -735,6 +735,70 @@ def _tile_bounds_tms(z: int, min_x: int, max_x: int, min_y: int, max_y: int) -> 
             round(lon_max, 6), round(lat_max, 6)]
 
 
+def _cluster_tile_bounds(conn, z: int, gap_threshold: int = 10) -> list[list[float]]:
+    """Find contiguous clusters of tiles at a given zoom and return their bounds.
+
+    Groups tiles by row ranges. If there's a gap of more than gap_threshold
+    rows between consecutive groups of tiles, they're split into separate
+    clusters. Each cluster gets its own bounding box.
+
+    For zoom levels with many tiles (>100K), uses coarser grouping to keep
+    the query fast.
+    """
+    tile_count = conn.execute(
+        "SELECT COUNT(*) FROM tiles WHERE zoom_level = ?", (z,)
+    ).fetchone()[0]
+
+    if tile_count == 0:
+        return []
+
+    # For small tile counts or low zoom levels, one bbox is fine
+    if tile_count < 500 or z < 10:
+        row = conn.execute(
+            "SELECT MIN(tile_column), MAX(tile_column), "
+            "MIN(tile_row), MAX(tile_row) "
+            "FROM tiles WHERE zoom_level = ?", (z,)
+        ).fetchone()
+        return [_tile_bounds_tms(z, row[0], row[1], row[2], row[3])]
+
+    # Group tiles by row bands and detect gaps
+    band_size = max(1, 2 ** max(0, z - 14))  # coarser bands at higher zooms
+    bands = conn.execute(
+        "SELECT tile_row / ? as band, "
+        "MIN(tile_column), MAX(tile_column), "
+        "MIN(tile_row), MAX(tile_row) "
+        "FROM tiles WHERE zoom_level = ? "
+        "GROUP BY band ORDER BY band",
+        (band_size, z)
+    ).fetchall()
+
+    if not bands:
+        return []
+
+    # Merge consecutive bands into clusters, splitting on gaps
+    clusters = []
+    cur_min_x, cur_max_x = bands[0][1], bands[0][2]
+    cur_min_y, cur_max_y = bands[0][3], bands[0][4]
+    prev_band = bands[0][0]
+
+    for band, min_x, max_x, min_y, max_y in bands[1:]:
+        if band - prev_band > gap_threshold:
+            # Gap detected — emit current cluster, start new one
+            clusters.append(_tile_bounds_tms(z, cur_min_x, cur_max_x, cur_min_y, cur_max_y))
+            cur_min_x, cur_max_x = min_x, max_x
+            cur_min_y, cur_max_y = min_y, max_y
+        else:
+            # Extend current cluster
+            cur_min_x = min(cur_min_x, min_x)
+            cur_max_x = max(cur_max_x, max_x)
+            cur_min_y = min(cur_min_y, min_y)
+            cur_max_y = max(cur_max_y, max_y)
+        prev_band = band
+
+    clusters.append(_tile_bounds_tms(z, cur_min_x, cur_max_x, cur_min_y, cur_max_y))
+    return clusters
+
+
 def _build_imagery_catalog(
     data_dir: Path,
     tileserver_config: dict | None = None,
@@ -764,10 +828,12 @@ def _build_imagery_catalog(
 
         zoom_levels = []
         for z, count, min_x, max_x, min_y, max_y in rows:
+            clusters = _cluster_tile_bounds(conn, z)
             zoom_levels.append({
                 "zoom": z,
                 "tile_count": count,
                 "bounds_lonlat": _tile_bounds_tms(z, min_x, max_x, min_y, max_y),
+                "clusters": clusters,
             })
         conn.close()
 
