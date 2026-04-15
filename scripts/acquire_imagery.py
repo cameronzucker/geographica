@@ -1666,6 +1666,20 @@ async def run_noaa(args):
     import datetime
     update_progress._started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+    # Unregister from TileServer before writing — prevents TileServer from
+    # crash-looping on SQLITE_BUSY while we hold the file lock for gdalwarp/merge.
+    # Phase 6 re-registers after completion.
+    ts_config_path = os.environ.get("TILESERVER_CONFIG")
+    if ts_config_path:
+        ts_config = Path(ts_config_path)
+        if ts_config.exists():
+            try:
+                from tileserver_config import remove_mbtiles_from_config
+                if remove_mbtiles_from_config(ts_config, "imagery_noaa"):
+                    log.info("Temporarily unregistered imagery_noaa from TileServer")
+            except Exception:
+                pass
+
     # Validate catalog entry
     if (state, year) not in NOAA_NAIP_CATALOG:
         log.error("No NOAA catalog entry for state=%s year=%d", state, year)
