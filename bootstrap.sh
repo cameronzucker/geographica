@@ -47,6 +47,13 @@ if ! grep -q pam_gnome_keyring /etc/pam.d/common-session 2>/dev/null; then
     echo "  Added PAM auto-start to common-session"
 fi
 
+# Enable cgroup memory controller for Docker memory limits
+if ! grep -q "cgroup_enable=memory" /boot/firmware/cmdline.txt 2>/dev/null; then
+    sed -i 's/$/ cgroup_enable=memory cgroup_memory=1/' /boot/firmware/cmdline.txt
+    echo "  Enabled cgroup memory controller (reboot required to take effect)"
+    NEEDS_REBOOT=1
+fi
+
 echo "[3/6] Adding $ACTUAL_USER to docker group..."
 usermod -aG docker "$ACTUAL_USER"
 
@@ -74,7 +81,18 @@ echo "  Keyring agent installed and started"
 
 echo ""
 echo "=========================================="
-echo "Bootstrap complete!"
+if [ "${NEEDS_REBOOT:-0}" = "1" ]; then
+    echo "Bootstrap complete! REBOOT REQUIRED."
+    echo ""
+    echo "Cgroup memory limits were enabled. Reboot to activate:"
+    echo "  sudo reboot"
+    echo ""
+    echo "After reboot, run:"
+else
+    echo "Bootstrap complete!"
+    echo ""
+    echo "Next step:"
+fi
 echo ""
 echo "Next step:"
 echo ""
