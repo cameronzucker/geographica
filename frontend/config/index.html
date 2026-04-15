@@ -1900,6 +1900,7 @@
     var _inventoryMap = null;
     var _inventorySelectedSource = null;
     var _inventorySources = [];
+    var _showAllZoomLevels = false;
     var INV_COLORS = {
         imagery: '#89b4fa', imagery_noaa: '#a6e3a1', imagery_m2m: '#f9e2af',
         imagery_sentinel: '#cba6f7', imagery_naip: '#fab387', imagery_custom: '#f38ba8'
@@ -2006,14 +2007,19 @@
             var color = invSourceColor(src.id);
             var srcId = 'inv-' + src.id;
 
-            // Show clusters from highest zoom level only — lower zooms cover
-            // the same or wider area and just stack opacity when overlaid.
-            // Per-zoom detail stays in the sidebar.
+            // Default: show clusters from highest zoom level only (clean view).
+            // With _showAllZoomLevels: show clusters from every zoom level.
             var features = [];
             var zl = src.zoom_levels || [];
-            var topZoom = zl.length > 0 ? zl[zl.length - 1] : null;
-            if (topZoom) {
-                var clusters = topZoom.clusters || [topZoom.bounds_lonlat];
+            var zoomsToShow = [];
+            if (_showAllZoomLevels) {
+                zoomsToShow = zl;
+            } else {
+                var topZoom = zl.length > 0 ? zl[zl.length - 1] : null;
+                if (topZoom) zoomsToShow = [topZoom];
+            }
+            for (var zi = 0; zi < zoomsToShow.length; zi++) {
+                var clusters = zoomsToShow[zi].clusters || [zoomsToShow[zi].bounds_lonlat];
                 for (var c = 0; c < clusters.length; c++) {
                     var b = clusters[c];
                     if (!b || b.length < 4) continue;
@@ -2108,6 +2114,24 @@
                 row.textContent = 'z' + z.zoom + ': ' + (z.tile_count || 0).toLocaleString() + ' tiles';
                 detailEl.appendChild(row);
             });
+
+            // Show all zoom levels toggle
+            if ((src.zoom_levels || []).length > 1) {
+                var toggleRow = document.createElement('label');
+                toggleRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11px;cursor:pointer;';
+                var toggleCb = document.createElement('input');
+                toggleCb.type = 'checkbox';
+                toggleCb.checked = _showAllZoomLevels;
+                toggleCb.style.accentColor = '#89b4fa';
+                toggleCb.addEventListener('change', function() {
+                    _showAllZoomLevels = this.checked;
+                    renderInventoryMap(_inventorySources);
+                });
+                toggleRow.appendChild(toggleCb);
+                var toggleLabel = document.createTextNode('Show all zoom levels on map');
+                toggleRow.appendChild(toggleLabel);
+                detailEl.appendChild(toggleRow);
+            }
 
             // Registration status
             var regEl = document.createElement('div');
