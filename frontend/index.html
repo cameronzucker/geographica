@@ -54,17 +54,15 @@
         <input type="radio" name="basemap" value="darkmatter"> Dark Matter (Dark)
       </label>
 
-      <h3>Overlays</h3>
-      <label class="checkbox-label">
-        <input type="checkbox" id="toggle-imagery"> Aerial Imagery
-      </label>
+      <h3>Detail Imagery</h3>
+      <!-- Dynamic imagery source toggles (NOAA, NAIP, Sentinel-2, Custom appear when MBTiles exist) -->
+      <div id="imagery-toggles"></div>
       <div class="slider-row" id="imagery-opacity-row">
         <label for="imagery-opacity">Opacity</label>
         <input type="range" id="imagery-opacity" min="0" max="100" value="80">
         <span id="imagery-opacity-value">80%</span>
       </div>
-      <!-- Dynamic imagery source toggles (NAIP, Sentinel-2 appear when MBTiles exist) -->
-      <div id="imagery-toggles"></div>
+      <h3>Overlays</h3>
       <label class="checkbox-label">
         <input type="checkbox" id="toggle-hillshade"> Elevation Hillshade
       </label>

@@ -93,7 +93,7 @@
 
   var map;                     // MapLibre GL map instance
   var currentStyle = 'positron';
-  var previousStyle = 'positron'; // style to restore when imagery/hybrid is toggled off
+  var _imageryOpacity = 0.8;      // persisted opacity for all imagery layers (synced with slider default)
   var searchPopup  = null;     // popup for search results
   var searchTimer  = null;     // debounce timer
 
@@ -144,7 +144,7 @@
       addPlaceholderSources();
       syncLayerVisibility();
       // Re-apply hybrid paint overrides if overlay imagery was active before style swap
-      if (_savedBasemapPaint && currentStyle !== 'hybrid') {
+      if (_savedBasemapPaint) {
         _savedBasemapPaint = null;
         _updateOverlayImageryState();
       }
@@ -251,10 +251,11 @@
             type: 'raster',
             source: sourceId,
             layout: { visibility: 'none' },
-            paint: { 'raster-opacity': 1.0 }
+            paint: { 'raster-opacity': _imageryOpacity }
           }, _firstSymbolLayer());
         }
         _updateImageryToggles();
+        _enforceImageryOrder();
       }
     }).catch(function() {
       _availableTileJSON[sourceId] = false;
@@ -267,6 +268,24 @@
       if (layers[i].type === 'symbol') return layers[i].id;
     }
     return undefined;
+  }
+
+  var IMAGERY_LAYER_ORDER = [
+    'imagery-layer',          // USGS basemap z0-14 (lowest)
+    'imagery-sentinel-layer', // Sentinel 10m
+    'imagery-naip-layer',     // National Map 0.6m
+    'imagery-noaa-layer',     // NOAA 0.6m z15-18
+    'imagery-custom-layer',   // Custom (highest — user's data wins)
+  ];
+
+  function _enforceImageryOrder() {
+    var firstSymbol = _firstSymbolLayer();
+    for (var i = 0; i < IMAGERY_LAYER_ORDER.length; i++) {
+      var layerId = IMAGERY_LAYER_ORDER[i];
+      if (map.getLayer(layerId)) {
+        map.moveLayer(layerId, firstSymbol);
+      }
+    }
   }
 
   /**
@@ -283,13 +302,13 @@
         url: '/tiles/data/imagery.json'
       });
     }
-    if (currentStyle !== 'hybrid' && !map.getLayer('imagery-layer')) {
+    if (!map.getLayer('imagery-layer')) {
       map.addLayer({
         id: 'imagery-layer',
         type: 'raster',
         source: 'imagery',
         layout: { visibility: 'none' },
-        paint: { 'raster-opacity': 0.8 }
+        paint: { 'raster-opacity': _imageryOpacity }
       });
     }
 
@@ -565,17 +584,7 @@
     }
 
     // Determine z-order anchor for public lands layers
-    // In hybrid mode, insert below the hybrid style's road layers (not just route-line)
     var publicLandsAnchor = 'route-line';
-    if (currentStyle === 'hybrid') {
-      var hybridLayers = map.getStyle().layers;
-      for (var pli = 0; pli < hybridLayers.length; pli++) {
-        if (hybridLayers[pli]['source-layer'] === 'transportation') {
-          publicLandsAnchor = hybridLayers[pli].id;
-          break;
-        }
-      }
-    }
 
     // Fill layer for non-tribal categories (solid fill)
     if (!map.getLayer('public-lands-fill')) {
@@ -767,8 +776,7 @@
     // Clear existing toggles
     while (container.firstChild) container.removeChild(container.firstChild);
 
-    // USGS Legacy is handled by the static #toggle-imagery checkbox.
-    // Only show dynamic sources here.
+    // Show toggles for available imagery sources
     if (_availableTileJSON['imagery-naip']) {
       container.appendChild(_makeLayerToggle('imagery-naip-layer', 'NAIP Aerial', '(0.6m, US)'));
     }
@@ -860,6 +868,37 @@
     { layer: 'water_name', prop: 'text-color', value: 'rgba(255,255,255,0.8)' },
     { layer: 'water_name', prop: 'text-halo-color', value: 'rgba(0,0,0,0.5)' },
     { layer: 'water_name', prop: 'text-halo-width', value: 1.5 },
+    // Railways
+    { layer: 'railway_transit', prop: 'line-color', value: 'rgba(255,255,255,0.4)' },
+    { layer: 'railway_transit_dashline', prop: 'line-color', value: 'rgba(255,255,255,0.4)' },
+    { layer: 'railway_minor', prop: 'line-color', value: 'rgba(255,255,255,0.3)' },
+    { layer: 'railway_minor_dashline', prop: 'line-color', value: 'rgba(255,255,255,0.3)' },
+    { layer: 'railway', prop: 'line-color', value: 'rgba(255,255,255,0.4)' },
+    { layer: 'railway_dashline', prop: 'line-color', value: 'rgba(255,255,255,0.4)' },
+    // Boundaries
+    { layer: 'boundary_state', prop: 'line-color', value: 'rgba(255,255,255,0.3)' },
+    { layer: 'boundary_country_z0-4', prop: 'line-color', value: 'rgba(255,255,255,0.3)' },
+    { layer: 'boundary_country_z5-', prop: 'line-color', value: 'rgba(255,255,255,0.3)' },
+    // Road arrows
+    { layer: 'road_oneway', prop: 'text-color', value: '#ffffff' },
+    { layer: 'road_oneway', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'road_oneway', prop: 'text-halo-width', value: 1.5 },
+    { layer: 'road_oneway_opposite', prop: 'text-color', value: '#ffffff' },
+    { layer: 'road_oneway_opposite', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'road_oneway_opposite', prop: 'text-halo-width', value: 1.5 },
+    // State/country labels
+    { layer: 'place_state', prop: 'text-color', value: '#ffffff' },
+    { layer: 'place_state', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'place_state', prop: 'text-halo-width', value: 1.5 },
+    { layer: 'place_country_other', prop: 'text-color', value: '#ffffff' },
+    { layer: 'place_country_other', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'place_country_other', prop: 'text-halo-width', value: 1.5 },
+    { layer: 'place_country_minor', prop: 'text-color', value: '#ffffff' },
+    { layer: 'place_country_minor', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'place_country_minor', prop: 'text-halo-width', value: 1.5 },
+    { layer: 'place_country_major', prop: 'text-color', value: '#ffffff' },
+    { layer: 'place_country_major', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'place_country_major', prop: 'text-halo-width', value: 1.5 },
   ];
 
   var _savedBasemapPaint = null;
@@ -872,9 +911,17 @@
              map.getLayoutProperty(id, 'visibility') === 'visible';
     });
 
+    // Auto-show USGS basemap raster under detail imagery
+    if (map.getLayer('imagery-layer')) {
+      map.setLayoutProperty('imagery-layer', 'visibility', anyVisible ? 'visible' : 'none');
+      if (anyVisible) {
+        map.setPaintProperty('imagery-layer', 'raster-opacity', _imageryOpacity);
+      }
+    }
+
     // Show/hide opacity slider row for overlay imagery
     var opacityRow = document.getElementById('imagery-opacity-row');
-    if (opacityRow && currentStyle !== 'hybrid') {
+    if (opacityRow) {
       opacityRow.classList.toggle('visible', anyVisible);
     }
 
@@ -885,8 +932,8 @@
       }
     });
 
-    // Apply/restore hybrid paint overrides (only on non-hybrid basemaps)
-    if (currentStyle !== 'hybrid') {
+    // Apply/restore hybrid paint overrides when overlays are active
+    {
       if (anyVisible && !_savedBasemapPaint) {
         // Snapshot current paint values and apply hybrid overrides
         _savedBasemapPaint = [];
@@ -911,17 +958,13 @@
       }
     }
 
-    // Wire opacity slider to overlay imagery layers
+    // Wire opacity to overlay imagery layers
     if (anyVisible) {
-      var slider = document.getElementById('imagery-opacity');
-      if (slider) {
-        var val = parseInt(slider.value, 10) / 100;
-        overlayIds.forEach(function(id) {
-          if (map.getLayer(id) && map.getLayoutProperty(id, 'visibility') === 'visible') {
-            map.setPaintProperty(id, 'raster-opacity', val);
-          }
-        });
-      }
+      overlayIds.forEach(function(id) {
+        if (map.getLayer(id) && map.getLayoutProperty(id, 'visibility') === 'visible') {
+          map.setPaintProperty(id, 'raster-opacity', _imageryOpacity);
+        }
+      });
     }
   }
 
@@ -934,42 +977,10 @@
     var radios = document.querySelectorAll('input[name="basemap"]');
     radios.forEach(function (radio) {
       radio.addEventListener('change', function () {
-        // If hybrid is active, deactivate it
-        var imageryCheckbox = document.getElementById('toggle-imagery');
-        if (imageryCheckbox && imageryCheckbox.checked) {
-          imageryCheckbox.checked = false;
-          var opRow = document.getElementById('imagery-opacity-row');
-          if (opRow) opRow.classList.remove('visible');
-          var imageryToggles = document.getElementById('imagery-toggles');
-          if (imageryToggles) imageryToggles.style.display = '';
-        }
-        previousStyle = this.value;
         currentStyle = this.value;
         map.setStyle(STYLES[currentStyle]);
         // persistent style.load handler fires automatically
       });
-    });
-
-    // Imagery toggle
-    var imageryCheckbox = document.getElementById('toggle-imagery');
-    var opacityRow      = document.getElementById('imagery-opacity-row');
-    imageryCheckbox.addEventListener('change', function () {
-      if (this.checked) {
-        // Switch to hybrid style (imagery base + roads on top)
-        previousStyle = currentStyle;
-        currentStyle = 'hybrid';
-        map.setStyle(STYLES.hybrid);
-      } else {
-        // Restore previous basemap
-        if (previousStyle === 'hybrid') previousStyle = 'positron';
-        currentStyle = previousStyle;
-        map.setStyle(STYLES[currentStyle]);
-      }
-      // persistent style.load handler fires automatically
-      opacityRow.classList.toggle('visible', this.checked);
-      // Hide NAIP/Sentinel toggles in hybrid mode (prevent double imagery)
-      var imageryToggles = document.getElementById('imagery-toggles');
-      if (imageryToggles) imageryToggles.style.display = this.checked ? 'none' : '';
     });
 
     // Imagery opacity slider
@@ -978,15 +989,15 @@
     opacitySlider.addEventListener('input', function () {
       var val = parseInt(this.value, 10);
       opacityLabel.textContent = val + '%';
-      if (currentStyle === 'hybrid' && map.getLayer('imagery-base')) {
-        map.setPaintProperty('imagery-base', 'raster-opacity', val / 100);
-      } else if (map.getLayer('imagery-layer')) {
-        map.setPaintProperty('imagery-layer', 'raster-opacity', val / 100);
+      _imageryOpacity = val / 100;
+      // Apply to USGS basemap raster
+      if (map.getLayer('imagery-layer')) {
+        map.setPaintProperty('imagery-layer', 'raster-opacity', _imageryOpacity);
       }
-      // Also apply to any visible overlay imagery layers
+      // Apply to all visible overlay imagery layers
       ['imagery-noaa-layer', 'imagery-naip-layer', 'imagery-sentinel-layer', 'imagery-custom-layer'].forEach(function(id) {
         if (map.getLayer(id) && map.getLayoutProperty(id, 'visibility') === 'visible') {
-          map.setPaintProperty(id, 'raster-opacity', val / 100);
+          map.setPaintProperty(id, 'raster-opacity', _imageryOpacity);
         }
       });
     });
@@ -1100,13 +1111,9 @@
 
   /** After a style swap, re-apply checkbox state to layers */
   function syncLayerVisibility() {
-    var imagery   = document.getElementById('toggle-imagery').checked;
     var hillshade = document.getElementById('toggle-hillshade').checked;
     var terrainCb = document.getElementById('toggle-terrain');
-    // In hybrid mode, imagery is baked into the style — don't toggle imagery-layer
-    if (currentStyle !== 'hybrid') {
-      setLayerVisibility('imagery-layer', imagery);
-    }
+    // imagery-layer visibility is managed by _updateOverlayImageryState
     setLayerVisibility('hillshade-layer', hillshade);
     if (terrainCb && terrainCb.checked) {
       var exSlider = document.getElementById('terrain-exaggeration');
