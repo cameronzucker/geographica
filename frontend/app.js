@@ -1235,23 +1235,31 @@
       });
     }
 
-    // Close results on outside click — during nav, also clear map pins
+    // Close results + clear pins on outside click (any mode)
+    // Delay slightly so MapLibre pin click can set _searchPinClicked flag first
     document.addEventListener('click', function (e) {
-      if (!e.target.closest('#search-container')) {
+      if (e.target.closest('#search-container')) return;
+      setTimeout(function () {
+        if (_searchPinClicked) return; // user tapped a pin, not empty map
         hideSearchResults();
-        // During nav mode, tapping the map dismisses search pins
-        if (document.body.classList.contains('nav-active')) {
-          clearSearchPins();
+        clearSearchPins();
+        // Resume GPS follow if nav was paused for search results
+        if (document.body.classList.contains('nav-active') && window._navRecenter) {
+          window._navRecenter();
         }
-        // Also collapse nav search if open
+        // Collapse nav search bar if open
         var container = document.getElementById('search-container');
         if (container) container.classList.remove('nav-search-open');
-      }
+      }, 50);
     });
 
     // Search pin click handler — popup with name, distance, route button
+    var _searchPinClicked = false;
     map.on('click', 'search-result-circles', function (e) {
       if (!e.features || !e.features.length) return;
+      _searchPinClicked = true;
+      setTimeout(function () { _searchPinClicked = false; }, 200);
+
       var feat = e.features[0];
       var idx = parseInt(feat.properties.index, 10) - 1;
       var resultCoords = feat.geometry.coordinates;
@@ -1280,10 +1288,6 @@
   function clearSearchPins() {
     var src = map.getSource('search-results');
     if (src) src.setData({ type: 'FeatureCollection', features: [] });
-    // Resume GPS follow if nav is active and we paused for search results
-    if (document.body.classList.contains('nav-active') && window._navRecenter) {
-      window._navRecenter();
-    }
   }
 
   function updateSearchPins(results) {
