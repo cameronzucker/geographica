@@ -12,6 +12,7 @@ import math
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import subprocess
 import tempfile
@@ -709,6 +710,91 @@ def _list_docker_services() -> list[dict]:
     finally:
         client.close()
     return services
+
+
+# ---------------------------------------------------------------------------
+# Imagery catalog
+# ---------------------------------------------------------------------------
+
+def _tile_bounds_tms(z: int, min_x: int, max_x: int, min_y: int, max_y: int) -> list[float]:
+    """Convert TMS tile coordinate range to [lon_min, lat_min, lon_max, lat_max]."""
+    n = 2 ** z
+    lon_min = min_x / n * 360 - 180
+    lon_max = (max_x + 1) / n * 360 - 180
+    lat_a = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * min_y / n))))
+    lat_b = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (max_y + 1) / n))))
+    return [round(lon_min, 6), round(min(lat_a, lat_b), 6),
+            round(lon_max, 6), round(max(lat_a, lat_b), 6)]
+
+
+def _build_imagery_catalog(
+    data_dir: Path,
+    tileserver_config: dict | None = None,
+) -> list[dict]:
+    """Scan data_dir for imagery*.mbtiles and return structured catalog."""
+    from datetime import datetime
+    results = []
+    for mbt_path in sorted(data_dir.glob("imagery*.mbtiles")):
+        source_id = mbt_path.stem
+        try:
+            conn = sqlite3.connect(
+                f"file:{mbt_path}?mode=ro", uri=True, timeout=5
+            )
+        except sqlite3.OperationalError:
+            continue
+
+        try:
+            rows = conn.execute(
+                "SELECT zoom_level, COUNT(*) as tile_count, "
+                "MIN(tile_column), MAX(tile_column), "
+                "MIN(tile_row), MAX(tile_row) "
+                "FROM tiles GROUP BY zoom_level ORDER BY zoom_level"
+            ).fetchall()
+        except sqlite3.DatabaseError:
+            conn.close()
+            continue
+
+        zoom_levels = []
+        for z, count, min_x, max_x, min_y, max_y in rows:
+            zoom_levels.append({
+                "zoom": z,
+                "tile_count": count,
+                "bounds_lonlat": _tile_bounds_tms(z, min_x, max_x, min_y, max_y),
+            })
+        conn.close()
+
+        registered = False
+        if tileserver_config and "data" in tileserver_config:
+            registered = source_id in tileserver_config["data"]
+
+        stat_info = mbt_path.stat()
+        results.append({
+            "id": source_id,
+            "file": mbt_path.name,
+            "size_bytes": stat_info.st_size,
+            "modified": datetime.fromtimestamp(stat_info.st_mtime).isoformat() + "Z",
+            "registered": registered,
+            "zoom_levels": zoom_levels,
+        })
+
+    return results
+
+
+@app.get("/admin/imagery/catalog")
+async def imagery_catalog():
+    """Return structured catalog of all imagery MBTiles files."""
+    data_dir = Path(os.environ.get("DATA_DIR", "/data"))
+
+    ts_config = None
+    ts_config_path = os.environ.get("TILESERVER_CONFIG")
+    if ts_config_path:
+        try:
+            ts_config = json.loads(Path(ts_config_path).read_text())
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    sources = _build_imagery_catalog(data_dir, tileserver_config=ts_config)
+    return {"sources": sources}
 
 
 @app.get("/admin/status")
