@@ -1174,6 +1174,15 @@ h4 {
   font-size: 12px;
 }
 
+.maplibregl-popup-close-button {
+  font-size: 22px;
+  width: 32px;
+  height: 32px;
+  line-height: 32px;
+  text-align: center;
+  padding: 0;
+}
+
 .kml-description {
   margin-top: 4px;
   font-size: 12px;
