@@ -1147,8 +1147,11 @@ h4 {
   bottom: 26px !important;
 }
 
-.maplibregl-ctrl-bottom-left {
-  bottom: 26px !important;
+/* Position scale bar to the left of zoom controls, not stacked above */
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-scale {
+  position: absolute;
+  bottom: 4px;
+  right: 40px; /* width of zoom control + gap */
 }
 
 .maplibregl-popup-content {
@@ -1569,19 +1572,35 @@ body.nav-active #search-container {
   max-width: none;
 }
 
-/* Collapse search bar to icons only during navigation */
+/* Collapse search bar to compact icons during navigation */
 body.nav-active #search-input {
   display: none;
 }
 
 body.nav-active #search-box {
-  padding: 0 6px;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  gap: 8px;
+}
+
+/* Search icon becomes a circular button */
+body.nav-active #search-icon {
   background: rgba(255, 255, 255, 0.9);
   border-radius: 50%;
-  width: 40px;
-  height: 40px;
-  justify-content: center;
+  padding: 10px;
+  width: 18px;
+  height: 18px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  box-sizing: content-box;
+}
+
+/* STT mic button scales down to match */
+body.nav-active #stt-mic-button {
+  width: 38px !important;
+  height: 38px !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3) !important;
 }
 
 body.nav-active #search-results {
