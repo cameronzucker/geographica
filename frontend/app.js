@@ -1235,10 +1235,14 @@
       });
     }
 
-    // Close results on outside click
+    // Close results on outside click — during nav, also clear map pins
     document.addEventListener('click', function (e) {
       if (!e.target.closest('#search-container')) {
         hideSearchResults();
+        // During nav mode, tapping the map dismisses search pins
+        if (document.body.classList.contains('nav-active')) {
+          clearSearchPins();
+        }
         // Also collapse nav search if open
         var container = document.getElementById('search-container');
         if (container) container.classList.remove('nav-search-open');
