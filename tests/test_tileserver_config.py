@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from tileserver_config import add_mbtiles_to_config
+from tileserver_config import add_mbtiles_to_config, remove_mbtiles_from_config
 from pipeline_security import sanitize_layer_name
 
 
@@ -59,6 +59,38 @@ class TestAddMbtilesToConfig:
         config_path.write_text(json.dumps(SAMPLE_CONFIG, indent=2))
         add_mbtiles_to_config(config_path, "test", "/srv/data/test.mbtiles")
         assert not list(tmp_path.glob("*.tmp"))
+
+
+class TestRemoveMbtilesFromConfig:
+    def test_removes_existing_source(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(SAMPLE_CONFIG, indent=2))
+        result = remove_mbtiles_from_config(config_path, "imagery")
+        assert result is True
+        config = json.loads(config_path.read_text())
+        assert "imagery" not in config["data"]
+
+    def test_returns_false_if_not_present(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(SAMPLE_CONFIG, indent=2))
+        result = remove_mbtiles_from_config(config_path, "nonexistent")
+        assert result is False
+
+    def test_preserves_other_sources(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps(SAMPLE_CONFIG, indent=2))
+        remove_mbtiles_from_config(config_path, "imagery")
+        config = json.loads(config_path.read_text())
+        assert config["data"]["southwest5"] == {"mbtiles": "southwest5.mbtiles"}
+        assert config["options"] == SAMPLE_CONFIG["options"]
+        assert config["styles"] == SAMPLE_CONFIG["styles"]
+
+    def test_handles_empty_data_section(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        empty_data_config = {**SAMPLE_CONFIG, "data": {}}
+        config_path.write_text(json.dumps(empty_data_config, indent=2))
+        result = remove_mbtiles_from_config(config_path, "anything")
+        assert result is False
 
 
 class TestSanitizeLayerName:

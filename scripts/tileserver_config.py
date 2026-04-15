@@ -39,3 +39,31 @@ def add_mbtiles_to_config(config_path: Path, name: str, mbtiles_path: str) -> bo
     os.replace(str(tmp_path), str(config_path))
 
     return True
+
+
+def remove_mbtiles_from_config(config_path: Path, name: str) -> bool:
+    """Remove an MBTiles entry from TileServer config.json.
+
+    Args:
+        config_path: Path to tileserver/config.json
+        name: Data source name to remove (e.g., "imagery_noaa")
+
+    Returns:
+        True if entry was removed (config changed), False if not present.
+    """
+    config = json.loads(config_path.read_text())
+
+    if name not in config.get("data", {}):
+        return False
+
+    del config["data"][name]
+
+    tmp_path = config_path.with_suffix(".json.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(str(tmp_path), str(config_path))
+
+    return True
