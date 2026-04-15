@@ -207,7 +207,7 @@
             <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">Elevation Tiles</h2>
             <div id="elev-status" class="detail">Checking...</div>
             <div style="margin-top:8px">
-                <button type="button" class="btn-primary" id="elev-start">Start Elevation Download</button>
+                <button type="button" class="btn-primary pipeline-start-btn" id="elev-start">Start Elevation Download</button>
                 <button type="button" class="btn-danger" id="elev-cancel" style="display:none">Cancel</button>
             </div>
             <div id="elev-progress" style="display:none">
@@ -222,7 +222,7 @@
             <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">OSM POI Extraction</h2>
             <div id="osm-status" class="detail">Checking...</div>
             <div style="margin-top:8px">
-                <button type="button" class="btn-primary" id="osm-start">Extract OSM POIs</button>
+                <button type="button" class="btn-primary pipeline-start-btn" id="osm-start">Extract OSM POIs</button>
             </div>
             <div id="osm-progress" style="display:none">
                 <div class="progress-bar"><div class="progress-fill" id="osm-progress-fill"></div></div>
@@ -601,45 +601,62 @@
     }
 
     // -----------------------------------------------------------------------
-    // Imagery progress rendering (uses generic renderer with M2M special-casing)
+    // Catalog fetch — populates _catalogData from /admin/imagery/catalog
     // -----------------------------------------------------------------------
-    function renderImageryProgress(d) {
-        _imageryRunning = (d.status === 'running' || d.status === 'cancelling');
+    function fetchCatalog() {
+        fetch('/admin/imagery/catalog')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                _catalogData = {};
+                (data.sources || []).forEach(function(s) {
+                    _catalogData[s.id] = s;
+                });
+                renderSourceCards();
+            })
+            .catch(function() {
+                renderSourceCards(); // render without disk data
+            });
+    }
 
-        // Normalize M2M phase-specific fields into generic fields
-        var normalized = Object.assign({}, d);
-        if (d.mode === 'm2m' && d.status === 'running') {
-            var phase = d.phase || 'downloading';
-            if (phase === 'login' || phase === 'searching') {
-                normalized.items_done = 0;
-                normalized.items_total = 0;
-                normalized.item_unit = 'scenes';
-                normalized.detail = phase === 'login' ? 'Logging in to USGS M2M API...' : 'Searching for NAIP scenes...';
-            } else if (phase === 'downloading') {
-                normalized.items_done = d.geotiffs_downloaded || 0;
-                normalized.items_total = d.geotiffs_total || 1;
-                normalized.item_unit = 'GeoTIFFs';
-                normalized.bytes_done = d.geotiffs_bytes || null;
-                var batch = d.current_batch && d.total_batches
-                    ? 'batch ' + d.current_batch + '/' + d.total_batches : '';
-                normalized.detail = batch || null;
-            } else if (phase === 'converting') {
-                normalized.items_done = 1;
-                normalized.items_total = 1;
-                normalized.item_unit = '';
-                normalized.detail = 'Converting GeoTIFFs to tiles...';
+    // -----------------------------------------------------------------------
+    // Card-based progress rendering — routes pipeline status to card DOM IDs
+    // -----------------------------------------------------------------------
+    function renderSourceProgress(sourceId, d) {
+        var ids = {
+            startBtn: 'card-' + sourceId + '-start',
+            cancelBtn: 'card-' + sourceId + '-cancel',
+            progressDiv: 'card-' + sourceId + '-progress',
+            progressFill: 'card-' + sourceId + '-progress-fill',
+            progressDetail: 'card-' + sourceId + '-progress-detail',
+            completedEl: 'card-' + sourceId + '-completed'
+        };
+
+        // Create cancel button dynamically if it doesn't exist yet
+        if (!document.getElementById(ids.cancelBtn)) {
+            var card = document.getElementById('card-' + sourceId);
+            if (card) {
+                var cancelBtn = document.createElement('button');
+                cancelBtn.className = 'btn-danger';
+                cancelBtn.id = ids.cancelBtn;
+                cancelBtn.style.display = 'none';
+                cancelBtn.style.marginTop = '8px';
+                cancelBtn.textContent = 'Cancel';
+                cancelBtn.addEventListener('click', function() {
+                    fetch('/admin/pipeline/cancel', { method: 'POST' });
+                });
+                // Insert before progress elements
+                var progressDiv = document.getElementById(ids.progressDiv);
+                if (progressDiv) card.insertBefore(cancelBtn, progressDiv);
+                else card.appendChild(cancelBtn);
             }
         }
-        normalized.source = d.mode || 'direct';
 
-        renderGenericProgress(normalized, {
-            startBtn: 'cfg-start',
-            cancelBtn: 'cfg-cancel',
-            progressDiv: 'cfg-progress',
-            progressFill: 'cfg-progress-fill',
-            progressDetail: 'cfg-progress-detail',
-            completedEl: 'cfg-imagery-completed'
-        });
+        renderGenericProgress(d, ids);
+
+        // Re-fetch catalog when pipeline completes to update disk data
+        if (d.status === 'completed' || d.status === 'error' || d.status === 'cancelled') {
+            fetchCatalog();
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -738,121 +755,7 @@
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Sentinel-2 rendering
-    // -----------------------------------------------------------------------
-    function renderSentinel(d) {
-        _sentinelRunning = (d.status === 'running' || d.status === 'cancelling');
-        var normalized = Object.assign({source: 'sentinel'}, d);
-        renderGenericProgress(normalized, {
-            startBtn: 'sentinel-start',
-            cancelBtn: 'sentinel-cancel',
-            progressDiv: 'sentinel-progress',
-            progressFill: 'sentinel-progress-fill',
-            progressDetail: 'sentinel-progress-detail',
-            completedEl: 'sentinel-completed'
-        });
-    }
-
-    // -----------------------------------------------------------------------
-    // NAIP rendering
-    var _naipSelectedCounties = []; // [{fips, name, state, area_sq_km}, ...]
-    var _naipRemovedCounties = []; // counties removed by the user
-
-    function renderNaipCountyList() {
-        var summaryEl = document.getElementById('naip-county-summary');
-        var listEl = document.getElementById('naip-county-list');
-        var areaEl = document.getElementById('naip-county-area');
-        if (!summaryEl || !listEl || !areaEl) return;
-        areaEl.style.display = '';
-
-        // Estimate GB from total area (same ratio the backend uses: ~0.5 GB per 10000 sq km)
-        var totalArea = 0;
-        _naipSelectedCounties.forEach(function(c) { totalArea += c.area_sq_km || 0; });
-        var estGB = (totalArea * 0.00005).toFixed(1);
-        var removedNote = _naipRemovedCounties.length > 0
-            ? ' (' + _naipRemovedCounties.length + ' removed)'
-            : '';
-        summaryEl.textContent = _naipSelectedCounties.length + ' counties, ~' + estGB + ' GB' + removedNote;
-
-        // Group by state
-        listEl.textContent = '';
-        var byState = {};
-        _naipSelectedCounties.forEach(function(c) {
-            var st = c.state || 'Unknown';
-            if (!byState[st]) byState[st] = [];
-            byState[st].push(c);
-        });
-
-        Object.keys(byState).sort().forEach(function(state) {
-            var group = document.createElement('div');
-            group.className = 'county-state-group';
-            var stLbl = document.createElement('div');
-            stLbl.className = 'county-state-label';
-            stLbl.textContent = state;
-            group.appendChild(stLbl);
-            byState[state].forEach(function(c) {
-                var item = document.createElement('div');
-                item.className = 'county-item county-removable';
-                var nameSpan = document.createElement('span');
-                nameSpan.textContent = c.name;
-                item.appendChild(nameSpan);
-                var removeBtn = document.createElement('span');
-                removeBtn.className = 'county-remove';
-                removeBtn.textContent = '\u00d7';
-                removeBtn.title = 'Remove ' + c.name + ' from download';
-                removeBtn.addEventListener('click', function() {
-                    _naipSelectedCounties = _naipSelectedCounties.filter(function(sc) { return sc.fips !== c.fips; });
-                    _naipRemovedCounties.push(c);
-                    renderNaipCountyList();
-                    _naipCountiesReady = _naipSelectedCounties.length > 0;
-                    var nsBtn = document.getElementById('naip-start');
-                    if (nsBtn) nsBtn.disabled = !_naipCountiesReady || _anyPipelineRunning;
-                });
-                item.appendChild(removeBtn);
-                group.appendChild(item);
-            });
-            listEl.appendChild(group);
-        });
-
-        // Restore button (only if counties have been removed)
-        if (_naipRemovedCounties.length > 0) {
-            var restoreBtn = document.createElement('button');
-            restoreBtn.type = 'button';
-            restoreBtn.className = 'btn-link';
-            restoreBtn.textContent = 'Restore ' + _naipRemovedCounties.length + ' removed';
-            restoreBtn.addEventListener('click', function() {
-                _naipSelectedCounties = _naipSelectedCounties.concat(_naipRemovedCounties);
-                _naipRemovedCounties = [];
-                renderNaipCountyList();
-                _naipCountiesReady = _naipSelectedCounties.length > 0;
-                var nsBtn = document.getElementById('naip-start');
-                if (nsBtn) nsBtn.disabled = !_naipCountiesReady || _anyPipelineRunning;
-            });
-            listEl.appendChild(restoreBtn);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    var _naipCountiesReady = false;
-
-    function renderNaip(d) {
-        _naipRunning = (d.status === 'running' || d.status === 'cancelling');
-        var normalized = Object.assign({source: 'naip'}, d);
-        renderGenericProgress(normalized, {
-            startBtn: 'naip-start',
-            cancelBtn: 'naip-cancel',
-            progressDiv: 'naip-progress',
-            progressFill: 'naip-progress-fill',
-            progressDetail: 'naip-progress-detail',
-            completedEl: 'naip-completed'
-        });
-        // naip-start is only enabled after county lookup unless running
-        var naipStartBtn = document.getElementById('naip-start');
-        if (naipStartBtn && !_naipRunning && !_naipCountiesReady) {
-            naipStartBtn.disabled = true;
-        }
-    }
+    // (Sentinel and NAIP rendering now handled by renderSourceProgress)
 
     // -----------------------------------------------------------------------
     // Settings: Copernicus credentials
@@ -872,8 +775,7 @@
     }
 
     function updateSentinelCredsWarning() {
-        var warn = document.getElementById('sentinel-creds-warn');
-        if (warn) warn.style.display = _copernicusConfigured ? 'none' : '';
+        // Legacy — sentinel-creds-warn element removed in card grid overhaul
     }
 
     // -----------------------------------------------------------------------
@@ -1705,21 +1607,9 @@
     var _m2mConfigured = false;
     var _copernicusConfigured = false;
 
-    var ALL_START_BTNS = ['cfg-start', 'elev-start', 'osm-start', 'sentinel-start', 'naip-start'];
-
     function updatePipelineButtons() {
         _anyPipelineRunning = _imageryRunning || _elevRunning || _osmRunning || _sentinelRunning || _naipRunning;
 
-        ALL_START_BTNS.forEach(function(id) {
-            var btn = document.getElementById(id);
-            if (!btn) return;
-            // Don't re-enable naip-start if county lookup hasn't happened
-            if (id === 'naip-start' && !_naipCountiesReady && !_anyPipelineRunning) return;
-            btn.disabled = _anyPipelineRunning;
-            btn.title = _anyPipelineRunning ? 'Another pipeline is running' : '';
-        });
-
-        // Also handle card-grid pipeline-start-btn elements
         document.querySelectorAll('.pipeline-start-btn').forEach(function(btn) {
             // Don't enable M2M if no credentials
             if (btn.id.indexOf('imagery_m2m') >= 0 && !_m2mConfigured) {
@@ -1834,150 +1724,16 @@
     }
 
     // -----------------------------------------------------------------------
-    // Event handlers: source change, zoom change, bbox input
+    // Event handlers: bbox input
     // -----------------------------------------------------------------------
-    // Legacy source-change handler (elements removed in card grid overhaul, kept for future wiring)
-    var _legacyCfgSource = document.getElementById('cfg-source');
-    if (_legacyCfgSource) { _legacyCfgSource.addEventListener('change', function() {
-        var val = this.value;
-        var isM2M = val === 'm2m';
-        var isNM = val === 'nationalmap';
-        var isNOAA = val === 'noaa';
-        var noaaContainer = document.getElementById('noaa-state-container');
-        if (noaaContainer) noaaContainer.style.display = isNOAA ? '' : 'none';
-        var zoomEl = document.getElementById('cfg-zoom');
-        var estimateEl = document.getElementById('cfg-estimate');
-        if (!zoomEl || !estimateEl) return;
-
-        zoomEl.disabled = isM2M || isNOAA;
-        if (isM2M) {
-            estimateEl.textContent = 'M2M: download size depends on source imagery coverage';
-            estimateEl.style.color = '#7a8299';
-        } else {
-            if (isNM) {
-                zoomEl.value = '0-18';
-                for (var i = 0; i < zoomEl.options.length; i++) {
-                    if (zoomEl.options[i].value === '0-18') { zoomEl.selectedIndex = i; break; }
-                }
-                if (zoomEl.value !== '0-18') zoomEl.value = '0-17';
-            }
-            estimateEl.style.color = '';
-            updateEstimate();
-        }
-
-        if (isNOAA) {
-            estimateEl.textContent = 'NOAA: click "Estimate Download" above to see tile count and download size';
-            estimateEl.style.color = '#7a8299';
-        }
-
-        updateConcurrencyOptions();
-        updateM2MWarning();
-        zoomEl.dispatchEvent(new Event('change'));
-    }); }
-
     document.getElementById('cfg-bbox').addEventListener('input', function() {
         updateEstimate();
         syncBboxToMap();
     });
 
-    var _legacyCfgZoom = document.getElementById('cfg-zoom');
-    if (_legacyCfgZoom) { _legacyCfgZoom.addEventListener('change', function() {
-        var sourceEl = document.getElementById('cfg-source');
-        var source = sourceEl ? sourceEl.value : 'direct';
-        var note = document.getElementById('cfg-zoom-note');
-        if (!note) return;
-
-        if (source === 'm2m') {
-            note.textContent = 'M2M mode auto-detects zoom from source imagery (~z17-z19 for NAIP)';
-            note.style.color = '#7a8299';
-            return;
-        }
-
-        updateEstimate();
-        var zoom = this.value;
-        var maxZ = parseInt(zoom.split('-')[1]);
-
-        if (source === 'nationalmap') {
-            if (maxZ < 15) {
-                note.textContent = 'Below z15, USGS Direct is faster (pre-cached tiles). National Map is best at z15-z18.';
-                note.style.color = '#f9e2af';
-            } else if (maxZ > 18) {
-                note.textContent = 'Above z18, NAIP imagery is upscaled (native resolution is 0.6m).';
-                note.style.color = '#f9e2af';
-            } else {
-                note.textContent = 'NAIP 0.6m aerial imagery via USGS ImageServer. No auth required.';
-                note.style.color = '#a6e3a1';
-            }
-            return;
-        }
-
-        if (maxZ > 16) {
-            note.textContent = 'Zoom levels above 16 require M2M mode (NAIP GeoTIFF source).';
-            note.style.color = '#f9e2af';
-        } else {
-            note.textContent = '';
-        }
-    }); }
-
-    // M2M warning link -> switch to settings tab
-    var _legacyM2MLink = document.getElementById('m2m-warning-link');
-    if (_legacyM2MLink) { _legacyM2MLink.addEventListener('click', function(e) {
-        e.preventDefault();
-        switchTab('settings');
-    }); }
-
     // -----------------------------------------------------------------------
     // Pipeline start handlers
     // -----------------------------------------------------------------------
-
-    // Legacy imagery start/cancel (elements removed in card grid overhaul)
-    var _legacyCfgStart = document.getElementById('cfg-start');
-    if (_legacyCfgStart) { _legacyCfgStart.addEventListener('click', function() {
-        var source = document.getElementById('cfg-source').value;
-        var isM2M = source === 'm2m';
-        var body = {
-            type: 'imagery',
-            mode: source,
-            bbox: document.getElementById('cfg-bbox').value,
-            concurrency: parseInt(document.getElementById('cfg-concurrency').value),
-            update: document.getElementById('cfg-update').checked
-        };
-        if (!isM2M) {
-            body.zoom = document.getElementById('cfg-zoom').value;
-        }
-
-        if (source === 'noaa') {
-            body.state = document.getElementById('noaa-state').value;
-            body.year = 2021;
-        }
-
-        var confirmMsg;
-        if (isM2M) {
-            confirmMsg = 'Start M2M download for ' + body.bbox + '?';
-        } else if (source === 'noaa') {
-            var estEl = document.getElementById('noaa-estimate-result');
-            var estText = estEl && estEl.style.display !== 'none' ? '\n\n' + estEl.textContent : '';
-            confirmMsg = 'Start NOAA download for ' + (body.state || 'AZ') + '?' + estText;
-        } else {
-            var tileCount = estimateTiles(body.bbox, document.getElementById('cfg-zoom').value);
-            var label = source === 'nationalmap' ? 'National Map NAIP' : 'USGS Direct';
-            confirmMsg = 'Start ' + label + ' download? ~' + tileCount.toLocaleString() + ' tiles';
-        }
-        if (!confirm(confirmMsg)) return;
-
-        cfgFetch('/admin/pipeline/start', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(body)
-        }).then(function(r) { return r.json(); })
-          .then(function(d) { if (d.error || d.detail) alert(d.error || d.detail); fetchAll(); });
-    }); }
-
-    var _legacyCfgCancel = document.getElementById('cfg-cancel');
-    if (_legacyCfgCancel) { _legacyCfgCancel.addEventListener('click', function() {
-        cfgFetch('/admin/pipeline/cancel', {method: 'POST'})
-            .then(function() { fetchAll(); });
-    }); }
 
     // Elevation Start
     document.getElementById('elev-start').addEventListener('click', function() {
@@ -2013,221 +1769,7 @@
           .then(function(d) { if (d.error || d.detail) alert(d.error || d.detail); fetchAll(); });
     });
 
-    // Sentinel-2 Start (legacy, elements removed in card grid overhaul)
-    var _legacySentinelStart = document.getElementById('sentinel-start');
-    if (_legacySentinelStart) { _legacySentinelStart.addEventListener('click', function() {
-        var bbox = document.getElementById('cfg-bbox').value;
-        var dateStart = document.getElementById('sentinel-date-start').value;
-        var dateEnd = document.getElementById('sentinel-date-end').value;
-        var cloudCover = parseInt(document.getElementById('sentinel-cloud').value);
-        var mode = document.getElementById('sentinel-mode').value;
-        var body = {
-            type: 'sentinel',
-            bbox: bbox,
-            date_start: dateStart || null,
-            date_end: dateEnd || null,
-            cloud_cover_max: cloudCover,
-            mode: mode
-        };
-        if (!confirm('Start Sentinel-2 download for ' + bbox + '?')) return;
-        cfgFetch('/admin/pipeline/start', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(body)
-        }).then(function(r) { return r.json(); })
-          .then(function(d) { if (d.error || d.detail) alert(d.error || d.detail); fetchAll(); });
-    }); }
 
-    var _legacySentinelCancel = document.getElementById('sentinel-cancel');
-    if (_legacySentinelCancel) { _legacySentinelCancel.addEventListener('click', function() {
-        cfgFetch('/admin/pipeline/cancel', {method: 'POST'})
-            .then(function() { fetchAll(); });
-    }); }
-
-    var _legacySentinelEstBtn = document.getElementById('sentinel-estimate-btn');
-    if (_legacySentinelEstBtn) { _legacySentinelEstBtn.addEventListener('click', function() {
-        var bbox = document.getElementById('cfg-bbox').value;
-        var dateStart = document.getElementById('sentinel-date-start').value;
-        var dateEnd = document.getElementById('sentinel-date-end').value;
-        var cloudCover = document.getElementById('sentinel-cloud').value;
-        var estimateEl = document.getElementById('sentinel-estimate');
-        estimateEl.textContent = 'Estimating...';
-        var qs = '?bbox=' + encodeURIComponent(bbox) +
-            '&cloud_cover_max=' + cloudCover +
-            (dateStart ? '&date_start=' + encodeURIComponent(dateStart) : '') +
-            (dateEnd ? '&date_end=' + encodeURIComponent(dateEnd) : '');
-        cfgFetch('/admin/pipeline/sentinel/estimate' + qs)
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (d.error || d.detail) {
-                    estimateEl.textContent = 'Error: ' + (d.error || d.detail);
-                } else {
-                    var scenes = d.scene_count != null ? d.scene_count + ' scenes' : '';
-                    var sizeGB = d.estimated_gb != null ? '~' + d.estimated_gb.toFixed(1) + ' GB' : '';
-                    estimateEl.textContent = [scenes, sizeGB].filter(Boolean).join(', ') || 'No estimate available';
-                }
-            }).catch(function() { estimateEl.textContent = 'Estimate unavailable (API offline?)'; });
-    }); }
-
-    // NAIP County Lookup (legacy, elements removed in card grid overhaul)
-    var _legacyNaipLookup = document.getElementById('naip-lookup-btn');
-    if (_legacyNaipLookup) { _legacyNaipLookup.addEventListener('click', function() {
-        var bbox = document.getElementById('cfg-bbox').value;
-        var summaryEl = document.getElementById('naip-county-summary');
-        var listEl = document.getElementById('naip-county-list');
-        var areaEl = document.getElementById('naip-county-area');
-        summaryEl.textContent = 'Looking up counties...';
-        listEl.textContent = '';
-        areaEl.style.display = '';
-        cfgFetch('/admin/pipeline/naip/counties?bbox=' + encodeURIComponent(bbox))
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (d.error || d.detail) {
-                    summaryEl.textContent = 'Error: ' + (d.error || d.detail);
-                    _naipCountiesReady = false;
-                    var ns1 = document.getElementById('naip-start');
-                    if (ns1) ns1.disabled = true;
-                    return;
-                }
-                var counties = d.counties || [];
-                _naipSelectedCounties = counties.slice();
-                renderNaipCountyList();
-                _naipCountiesReady = _naipSelectedCounties.length > 0;
-                var ns2 = document.getElementById('naip-start');
-                if (ns2) ns2.disabled = !_naipCountiesReady || _anyPipelineRunning;
-            }).catch(function() {
-                summaryEl.textContent = 'Lookup failed (API offline?)';
-                _naipCountiesReady = false;
-                var naipStartBtn = document.getElementById('naip-start');
-                if (naipStartBtn) naipStartBtn.disabled = true;
-            });
-    }); }
-
-    // NAIP Start (legacy, elements removed in card grid overhaul)
-    var _legacyNaipStart = document.getElementById('naip-start');
-    if (_legacyNaipStart) { _legacyNaipStart.addEventListener('click', function() {
-        var bbox = document.getElementById('cfg-bbox').value;
-        var fipsList = _naipSelectedCounties.map(function(c) { return c.fips; });
-        var body = {type: 'naip', bbox: bbox, counties: fipsList.join(',')};
-        var removedNote = _naipRemovedCounties.length > 0
-            ? ' (' + _naipRemovedCounties.length + ' counties excluded)'
-            : '';
-        if (!confirm('Start NAIP download for ' + _naipSelectedCounties.length + ' counties?' + removedNote)) return;
-        cfgFetch('/admin/pipeline/start', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(body)
-        }).then(function(r) { return r.json(); })
-          .then(function(d) { if (d.error || d.detail) alert(d.error || d.detail); fetchAll(); });
-    }); }
-
-    var _legacyNaipCancel = document.getElementById('naip-cancel');
-    if (_legacyNaipCancel) { _legacyNaipCancel.addEventListener('click', function() {
-        cfgFetch('/admin/pipeline/cancel', {method: 'POST'})
-            .then(function() { fetchAll(); });
-    }); }
-
-    // -----------------------------------------------------------------------
-    // BYO Import (legacy, elements removed in card grid overhaul)
-    // -----------------------------------------------------------------------
-    function scanImportDir() {
-        var scanEl = document.getElementById('import-scan-result');
-        if (!scanEl) return;
-        scanEl.textContent = 'Scanning...';
-        var importStartBtn = document.getElementById('import-start');
-        if (importStartBtn) importStartBtn.disabled = true;
-
-        cfgFetch('/admin/pipeline/import/scan')
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (d.error || d.detail) {
-                    scanEl.textContent = 'Error: ' + (d.error || d.detail);
-                    return;
-                }
-                var tifCount = d.tif_count || 0;
-                var totalMB = ((d.total_bytes || 0) / 1e6).toFixed(0);
-                var msg = tifCount + ' GeoTIFFs (' + totalMB + ' MB)';
-                if (d.other_geo_count > 0) {
-                    msg += ' \u2022 ' + d.other_geo_count + ' unsupported geo files found';
-                }
-                scanEl.textContent = msg;
-                if (importStartBtn) importStartBtn.disabled = tifCount === 0 || _anyPipelineRunning;
-            })
-            .catch(function() { scanEl.textContent = 'Scan failed (API offline?)'; });
-    }
-
-    var _legacyImportRefresh = document.getElementById('import-refresh');
-    if (_legacyImportRefresh) _legacyImportRefresh.addEventListener('click', scanImportDir);
-
-    var _legacyImportStart = document.getElementById('import-start');
-    if (_legacyImportStart) { _legacyImportStart.addEventListener('click', function() {
-        var name = document.getElementById('import-layer-name').value.trim();
-        var deleteAfter = document.getElementById('import-delete-after').checked;
-        var qs = '?delete_after=' + deleteAfter;
-        if (name) qs += '&layer_name=' + encodeURIComponent(name);
-
-        if (!confirm('Start import? GeoTIFFs will be reprojected and converted to MBTiles.')) return;
-
-        cfgFetch('/admin/pipeline/import' + qs, { method: 'POST' })
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (d.error || d.detail) alert(d.error || d.detail);
-                fetchAll();
-            });
-    }); }
-
-    scanImportDir();
-
-    // -----------------------------------------------------------------------
-    // NOAA Estimate
-    // -----------------------------------------------------------------------
-    var _legacyNoaaEstBtn = document.getElementById('noaa-estimate-btn');
-    if (_legacyNoaaEstBtn) { _legacyNoaaEstBtn.addEventListener('click', function() {
-        var bbox = document.getElementById('cfg-bbox').value;
-        var state = document.getElementById('noaa-state').value;
-        var resultEl = document.getElementById('noaa-estimate-result');
-        resultEl.style.display = '';
-        resultEl.textContent = 'Estimating...';
-        resultEl.style.color = '#7a8299';
-
-        cfgFetch('/admin/pipeline/noaa/estimate?bbox=' + encodeURIComponent(bbox) + '&state=' + state)
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (d.error || d.detail) {
-                    resultEl.textContent = 'Error: ' + (d.error || d.detail);
-                    resultEl.style.color = '#f38ba8';
-                    return;
-                }
-                if (d.status === 'no_index') {
-                    resultEl.textContent = d.message;
-                    resultEl.style.color = '#f9e2af';
-                    return;
-                }
-                // Build estimate display using safe DOM methods
-                resultEl.textContent = '';
-                resultEl.style.color = '#a6e3a1';
-                var lines = [
-                    d.tile_count.toLocaleString() + ' tiles intersect your bbox',
-                    'Download: ~' + d.raw_download_gb + ' GB raw (' + d.tile_count + ' \u00d7 486 MB)',
-                    'Final MBTiles: ~' + d.final_mbtiles_gb + ' GB (after reprojection + JPEG compression)',
-                    'Staging peak: ~' + d.staging_peak_gb + ' GB (' + (d.download_concurrency || 3) + ' concurrent downloads + 1 processing)',
-                    'Disk free: ' + d.disk_free_gb + ' GB',
-                    'Estimated time (best case): ~' + d.est_hours + ' hours (' + d.est_days + ' days) at ' + (d.download_concurrency || 3) + ' concurrent \u00d7 ~' + d.download_speed_mbs + ' MB/s'
-                ];
-                if (d.final_mbtiles_gb > d.disk_free_gb * 0.8) {
-                    lines.push('\u26a0 Final output may exceed available disk space!');
-                    resultEl.style.color = '#f38ba8';
-                }
-                lines.forEach(function(line, i) {
-                    if (i > 0) resultEl.appendChild(document.createElement('br'));
-                    resultEl.appendChild(document.createTextNode(line));
-                });
-            })
-            .catch(function() {
-                resultEl.textContent = 'Estimate failed (API offline?)';
-                resultEl.style.color = '#f38ba8';
-            });
-    }); }
 
     // Pipeline banner click -> switch to pipelines tab
     document.getElementById('pipeline-banner').addEventListener('click', function() {
@@ -2365,7 +1907,11 @@
 
         cfgFetch('/admin/pipeline/status?type=imagery').then(function(r) { return r.json(); }).then(function(d) {
             _lastImagery = d;
-            renderImageryProgress(d);
+            _imageryRunning = d.status === 'running' || d.status === 'cancelling';
+            var mode = d.mode || d.source || 'direct';
+            var modeToCard = { direct: 'imagery', noaa: 'imagery_noaa', m2m: 'imagery_m2m', nationalmap: 'imagery_naip' };
+            var cardId = modeToCard[mode];
+            if (cardId) renderSourceProgress(cardId, d);
             _updateBanner();
             updatePipelineButtons();
         }).catch(function() {});
@@ -2385,24 +1931,19 @@
         }).catch(function() {});
 
         cfgFetch('/admin/pipeline/status?type=sentinel').then(function(r) { return r.json(); }).then(function(d) {
-            renderSentinel(d);
+            _sentinelRunning = d.status === 'running' || d.status === 'cancelling';
+            renderSourceProgress('imagery_sentinel', d);
             updatePipelineButtons();
         }).catch(function() {});
 
         cfgFetch('/admin/pipeline/status?type=naip').then(function(r) { return r.json(); }).then(function(d) {
-            renderNaip(d);
+            _naipRunning = d.status === 'running' || d.status === 'cancelling';
+            renderSourceProgress('imagery_naip_county', d);
             updatePipelineButtons();
         }).catch(function() {});
 
         cfgFetch('/admin/pipeline/status?type=import').then(function(r) { return r.json(); }).then(function(d) {
-            renderGenericProgress(Object.assign({source: 'import'}, d), {
-                startBtn: 'import-start',
-                cancelBtn: null,
-                progressDiv: 'import-progress',
-                progressFill: 'import-progress-fill',
-                progressDetail: 'import-progress-detail',
-                completedEl: 'import-completed'
-            });
+            renderSourceProgress('imagery_custom', Object.assign({source: 'import'}, d));
             updatePipelineButtons();
         }).catch(function() {});
 
@@ -2412,74 +1953,11 @@
         }).catch(function() {});
     }
 
-    // -----------------------------------------------------------------------
-    // Collapsible card toggles
-    // -----------------------------------------------------------------------
-    function initCollapsible(headerId, bodyId, arrowId) {
-        var header = document.getElementById(headerId);
-        var body = document.getElementById(bodyId);
-        var arrow = document.getElementById(arrowId);
-        if (!header || !body || !arrow) return;
-        header.addEventListener('click', function() {
-            var isOpen = body.classList.toggle('open');
-            arrow.classList.toggle('open', isOpen);
-        });
-    }
-
-    initCollapsible('sentinel-header', 'sentinel-body', 'sentinel-arrow');
-    initCollapsible('naip-header', 'naip-body', 'naip-arrow');
-
-    // Sentinel credentials link -> Settings tab (legacy, element removed)
-    var _legacySentinelCredsLink = document.getElementById('sentinel-creds-link');
-    if (_legacySentinelCredsLink) { _legacySentinelCredsLink.addEventListener('click', function(e) {
-        e.preventDefault();
-        switchTab('settings');
-    }); }
-
-    // Sync bbox to collapsible cards when main bbox changes
-    function syncCollapsibleBbox() {
-        var val = document.getElementById('cfg-bbox').value;
-        var sentinelBbox = document.getElementById('sentinel-bbox');
-        var naipBbox = document.getElementById('naip-bbox');
-        if (sentinelBbox) sentinelBbox.value = val;
-        if (naipBbox) naipBbox.value = val;
-    }
-    document.getElementById('cfg-bbox').addEventListener('input', syncCollapsibleBbox);
-
-    // Sentinel-2 advanced toggle (legacy, element removed)
-    var _legacySentinelAdvToggle = document.getElementById('sentinel-adv-toggle');
-    if (_legacySentinelAdvToggle) { _legacySentinelAdvToggle.addEventListener('click', function() {
-        var adv = document.getElementById('sentinel-adv');
-        var isOpen = adv.classList.toggle('open');
-        this.textContent = isOpen ? 'Hide advanced options' : 'Show advanced options';
-    }); }
-
-    // Sentinel cloud cover slider -> live label (legacy, element removed)
-    var _legacySentinelCloud = document.getElementById('sentinel-cloud');
-    if (_legacySentinelCloud) { _legacySentinelCloud.addEventListener('input', function() {
-        document.getElementById('sentinel-cloud-val').textContent = this.value;
-    }); }
-
-    // Set default dates for Sentinel-2 (legacy, elements removed)
-    (function() {
-        var dateEnd = document.getElementById('sentinel-date-end');
-        var dateStart = document.getElementById('sentinel-date-start');
-        if (!dateEnd || !dateStart) return;
-        var now = new Date();
-        var end = now.toISOString().slice(0, 10);
-        var start = new Date(now);
-        start.setMonth(start.getMonth() - 6);
-        dateEnd.value = end;
-        dateStart.value = start.toISOString().slice(0, 10);
-    })();
 
     // -----------------------------------------------------------------------
     // Initialization
     // -----------------------------------------------------------------------
-    renderSourceCards();
-    updateConcurrencyOptions();
-    updateEstimate();
-    syncCollapsibleBbox();
+    fetchCatalog();
     fetchAll();
     setInterval(fetchAll, 10000);
     initMinimap();
