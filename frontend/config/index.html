@@ -115,6 +115,24 @@
         .btn-row .btn-primary { flex: 1; }
         .cred-warning { background: rgba(249,226,175,0.12); border: 1px solid rgba(249,226,175,0.3); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #f9e2af; margin-bottom: 8px; }
         .gateway-warning { background: rgba(249,226,175,0.12); border: 1px solid rgba(249,226,175,0.3); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: #f9e2af; margin-bottom: 8px; }
+
+        /* === INVENTORY TAB === */
+        .container.wide { max-width: 1000px; }
+        .inventory-layout { display: flex; gap: 12px; min-height: 400px; }
+        .inventory-map { flex: 2; background: #0d1117; border-radius: 8px; overflow: hidden; }
+        .inventory-sidebar { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 8px; }
+        @media (max-width: 640px) { .inventory-layout { flex-direction: column; } .inventory-map { min-height: 250px; } }
+        .inv-source { padding: 8px; background: #181825; border-radius: 6px; cursor: pointer; transition: background 0.15s; }
+        .inv-source:hover { background: #313244; }
+        .inv-source.selected { background: #313244; }
+        .inv-source .inv-name { font-size: 12px; font-weight: 600; }
+        .inv-source .inv-meta { font-size: 10px; color: #7a8299; margin-top: 2px; }
+        .inv-source .inv-size { font-size: 11px; margin-top: 2px; }
+        .inv-source .inv-detail { display: none; margin-top: 6px; padding-top: 6px; border-top: 1px solid #45475a; font-size: 11px; }
+        .inv-source.selected .inv-detail { display: block; }
+        .inv-disk-summary { padding: 8px; background: #181825; border-radius: 6px; margin-top: auto; }
+        .inv-disk-bar { height: 6px; background: #313244; border-radius: 3px; margin-top: 6px; overflow: hidden; }
+        .inv-disk-bar-fill { height: 100%; background: #89b4fa; border-radius: 3px; }
     </style>
 </head>
 <body>
@@ -126,6 +144,7 @@
     <div class="tab-bar">
         <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
         <button class="tab-btn" data-tab="pipelines">Pipelines</button>
+        <button class="tab-btn" data-tab="inventory">Inventory</button>
         <button class="tab-btn" data-tab="settings">Settings</button>
     </div>
 
@@ -202,6 +221,18 @@
             </div>
             <div id="osm-completed" class="status status-ok" style="display:none"></div>
         </div>
+    </div>
+
+    <!-- INVENTORY TAB -->
+    <div id="tab-inventory" class="tab-content">
+      <div class="inventory-layout">
+        <div class="inventory-map" id="inventory-map"></div>
+        <div class="inventory-sidebar" id="inventory-sidebar">
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px;">Imagery Sources</div>
+          <div id="inventory-source-list"></div>
+          <div class="inv-disk-summary" id="inventory-disk-summary"></div>
+        </div>
+      </div>
     </div>
 
     <!-- SETTINGS TAB -->
@@ -307,6 +338,7 @@
     // -----------------------------------------------------------------------
     // Tab switching (hash-based)
     // -----------------------------------------------------------------------
+    var _inventoryInited = false;
     function switchTab(name) {
         document.querySelectorAll('.tab-btn').forEach(function(btn) {
             btn.classList.toggle('active', btn.dataset.tab === name);
@@ -314,6 +346,11 @@
         document.querySelectorAll('.tab-content').forEach(function(tab) {
             tab.classList.toggle('active', tab.id === 'tab-' + name);
         });
+        document.querySelector('.container').classList.toggle('wide', name === 'inventory');
+        if (name === 'inventory' && !_inventoryInited) {
+            _inventoryInited = true;
+            setTimeout(initInventoryMap, 100);
+        }
         history.replaceState(null, '', '#' + name);
     }
 
@@ -322,7 +359,7 @@
     });
 
     var initTab = location.hash.replace('#', '') || 'dashboard';
-    if (['dashboard', 'pipelines', 'settings'].indexOf(initTab) >= 0) switchTab(initTab);
+    if (['dashboard', 'pipelines', 'inventory', 'settings'].indexOf(initTab) >= 0) switchTab(initTab);
 
     // -----------------------------------------------------------------------
     // Tile estimation
@@ -1856,6 +1893,312 @@
         }).catch(function() {});
     }
 
+
+    // -----------------------------------------------------------------------
+    // Inventory tab
+    // -----------------------------------------------------------------------
+    var _inventoryMap = null;
+    var _inventorySelectedSource = null;
+    var _inventorySources = [];
+    var INV_COLORS = {
+        imagery: '#89b4fa', imagery_noaa: '#a6e3a1', imagery_m2m: '#f9e2af',
+        imagery_sentinel: '#cba6f7', imagery_naip: '#fab387', imagery_custom: '#f38ba8'
+    };
+
+    function initInventoryMap() {
+        if (_inventoryMap) return;
+        _inventoryMap = new maplibregl.Map({
+            container: 'inventory-map',
+            style: '/tiles/styles/darkmatter/style.json',
+            center: [-113.4, 40.15],
+            zoom: 4,
+            attributionControl: false
+        });
+        _inventoryMap.on('load', function() {
+            loadInventoryData();
+        });
+    }
+
+    function loadInventoryData() {
+        cfgFetch('/admin/imagery/catalog').then(function(r) {
+            if (!r.ok) throw new Error('catalog ' + r.status);
+            return r.json();
+        }).then(function(data) {
+            var sources = data.sources || [];
+            _inventorySources = sources;
+            renderInventoryMap(sources);
+            renderInventorySidebar(sources);
+        }).catch(function(err) {
+            console.warn('Inventory catalog fetch failed:', err);
+            renderInventoryMap([]);
+            renderInventorySidebar([]);
+        });
+
+        cfgFetch('/admin/status').then(function(r) { return r.json(); }).then(function(data) {
+            renderDiskSummary(data);
+        }).catch(function() {});
+    }
+
+    function invSourceColor(sourceId) {
+        return INV_COLORS[sourceId] || '#89b4fa';
+    }
+
+    function invHumanName(sourceId) {
+        var name = sourceId.replace(/^imagery_?/, '') || 'USGS Basemap';
+        return name.charAt(0).toUpperCase() + name.slice(1);
+    }
+
+    function invFormatSize(bytes) {
+        if (bytes == null) return '--';
+        if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+        if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+        if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB';
+        return bytes + ' B';
+    }
+
+    function invComputeUnionBounds(source) {
+        var minW = 180, minS = 90, maxE = -180, maxN = -90;
+        var found = false;
+        var zl = source.zoom_levels || [];
+        for (var i = 0; i < zl.length; i++) {
+            var b = zl[i].bounds_lonlat;
+            if (!b || b.length < 4) continue;
+            found = true;
+            if (b[0] < minW) minW = b[0];
+            if (b[1] < minS) minS = b[1];
+            if (b[2] > maxE) maxE = b[2];
+            if (b[3] > maxN) maxN = b[3];
+        }
+        if (!found) return null;
+        return [minW, minS, maxE, maxN];
+    }
+
+    function invBoundsToPolygon(b) {
+        return {
+            type: 'Feature',
+            geometry: {
+                type: 'Polygon',
+                coordinates: [[[b[0],b[1]], [b[2],b[1]], [b[2],b[3]], [b[0],b[3]], [b[0],b[1]]]]
+            }
+        };
+    }
+
+    function renderInventoryMap(sources) {
+        if (!_inventoryMap) return;
+        // Remove old layers/sources
+        sources.forEach(function() {}); // placeholder
+        var style = _inventoryMap.getStyle();
+        if (style && style.layers) {
+            var toRemove = [];
+            style.layers.forEach(function(l) {
+                if (l.id && l.id.indexOf('inv-') === 0) toRemove.push(l.id);
+            });
+            toRemove.forEach(function(id) { try { _inventoryMap.removeLayer(id); } catch(e) {} });
+        }
+        if (style && style.sources) {
+            Object.keys(style.sources).forEach(function(id) {
+                if (id.indexOf('inv-') === 0) { try { _inventoryMap.removeSource(id); } catch(e) {} }
+            });
+        }
+
+        var allBounds = null;
+        sources.forEach(function(src) {
+            var bounds = invComputeUnionBounds(src);
+            if (!bounds) return;
+            var color = invSourceColor(src.source_id);
+            var srcId = 'inv-' + src.source_id;
+
+            _inventoryMap.addSource(srcId, {
+                type: 'geojson',
+                data: { type: 'FeatureCollection', features: [invBoundsToPolygon(bounds)] }
+            });
+            _inventoryMap.addLayer({
+                id: srcId + '-fill',
+                type: 'fill',
+                source: srcId,
+                paint: { 'fill-color': color, 'fill-opacity': 0.1 }
+            });
+            _inventoryMap.addLayer({
+                id: srcId + '-line',
+                type: 'line',
+                source: srcId,
+                paint: { 'line-color': color, 'line-opacity': 0.6, 'line-width': 2 }
+            });
+
+            _inventoryMap.on('click', srcId + '-fill', function() {
+                selectInventorySource(src.source_id);
+            });
+
+            if (!allBounds) {
+                allBounds = bounds.slice();
+            } else {
+                if (bounds[0] < allBounds[0]) allBounds[0] = bounds[0];
+                if (bounds[1] < allBounds[1]) allBounds[1] = bounds[1];
+                if (bounds[2] > allBounds[2]) allBounds[2] = bounds[2];
+                if (bounds[3] > allBounds[3]) allBounds[3] = bounds[3];
+            }
+        });
+
+        if (allBounds) {
+            _inventoryMap.fitBounds([[allBounds[0], allBounds[1]], [allBounds[2], allBounds[3]]], { padding: 40 });
+        }
+    }
+
+    function renderInventorySidebar(sources) {
+        var list = document.getElementById('inventory-source-list');
+        list.innerHTML = '';
+
+        if (sources.length === 0) {
+            var empty = document.createElement('div');
+            empty.className = 'detail';
+            empty.textContent = 'No imagery sources found. Run a pipeline to download imagery.';
+            list.appendChild(empty);
+            return;
+        }
+
+        sources.forEach(function(src) {
+            var color = invSourceColor(src.source_id);
+            var bounds = invComputeUnionBounds(src);
+
+            var div = document.createElement('div');
+            div.className = 'inv-source';
+            div.style.borderLeft = '3px solid ' + color;
+            div.dataset.sourceId = src.source_id;
+
+            var nameEl = document.createElement('div');
+            nameEl.className = 'inv-name';
+            nameEl.textContent = invHumanName(src.source_id);
+            div.appendChild(nameEl);
+
+            // Zoom levels
+            var zoomLevels = (src.zoom_levels || []).map(function(z) { return 'z' + z.zoom; }).join(', ');
+            var metaEl = document.createElement('div');
+            metaEl.className = 'inv-meta';
+            metaEl.textContent = zoomLevels || 'No zoom data';
+            div.appendChild(metaEl);
+
+            // Size + tile count
+            var totalTiles = 0;
+            (src.zoom_levels || []).forEach(function(z) { totalTiles += (z.tile_count || 0); });
+            var sizeEl = document.createElement('div');
+            sizeEl.className = 'inv-size';
+            sizeEl.textContent = invFormatSize(src.file_size_bytes) + ' \u00b7 ' + totalTiles.toLocaleString() + ' tiles';
+            div.appendChild(sizeEl);
+
+            // Detail section (hidden until selected)
+            var detailEl = document.createElement('div');
+            detailEl.className = 'inv-detail';
+
+            // Per-zoom breakdown
+            (src.zoom_levels || []).forEach(function(z) {
+                var row = document.createElement('div');
+                row.textContent = 'z' + z.zoom + ': ' + (z.tile_count || 0).toLocaleString() + ' tiles';
+                detailEl.appendChild(row);
+            });
+
+            // Registration status
+            var regEl = document.createElement('div');
+            regEl.style.marginTop = '4px';
+            if (src.registered) {
+                regEl.style.color = '#a6e3a1';
+                regEl.textContent = '\u2713 Registered in TileServer';
+            } else {
+                regEl.style.color = '#f9e2af';
+                regEl.textContent = '\u26a0 Not registered';
+            }
+            detailEl.appendChild(regEl);
+
+            // Delete button
+            var delBtn = document.createElement('button');
+            delBtn.className = 'btn-danger';
+            delBtn.style.marginTop = '8px';
+            delBtn.style.width = '100%';
+            delBtn.style.fontSize = '12px';
+            delBtn.style.padding = '6px 10px';
+            delBtn.textContent = 'Delete ' + invHumanName(src.source_id);
+            delBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var fileName = src.source_id + '.mbtiles';
+                var sizeStr = invFormatSize(src.file_size_bytes);
+                if (!confirm('Delete ' + fileName + ' (' + sizeStr + ')?\n\nThis removes the file and unregisters it from TileServer. This cannot be undone.')) return;
+                cfgFetch('/admin/imagery/' + src.source_id, { method: 'DELETE' }).then(function(r) {
+                    if (!r.ok) return r.json().then(function(d) { throw new Error(formatApiError(d.detail)); });
+                    loadInventoryData();
+                }).catch(function(err) {
+                    alert('Delete failed: ' + err.message);
+                });
+            });
+            detailEl.appendChild(delBtn);
+
+            div.appendChild(detailEl);
+
+            div.addEventListener('click', function() {
+                selectInventorySource(src.source_id);
+            });
+
+            list.appendChild(div);
+        });
+    }
+
+    function selectInventorySource(sourceId) {
+        // Toggle: deselect if already selected
+        if (_inventorySelectedSource === sourceId) {
+            _inventorySelectedSource = null;
+        } else {
+            _inventorySelectedSource = sourceId;
+        }
+
+        // Update sidebar selection
+        document.querySelectorAll('#inventory-source-list .inv-source').forEach(function(el) {
+            el.classList.toggle('selected', el.dataset.sourceId === _inventorySelectedSource);
+        });
+
+        // Zoom map to selected source
+        if (_inventorySelectedSource && _inventoryMap) {
+            var src = null;
+            for (var i = 0; i < _inventorySources.length; i++) {
+                if (_inventorySources[i].source_id === _inventorySelectedSource) { src = _inventorySources[i]; break; }
+            }
+            if (src) {
+                var bounds = invComputeUnionBounds(src);
+                if (bounds) {
+                    _inventoryMap.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: 60 });
+                }
+            }
+        }
+    }
+
+    function renderDiskSummary(statusData) {
+        var el = document.getElementById('inventory-disk-summary');
+        if (!el) return;
+        var freeGb = statusData.disk_free_gb;
+        var totalGb = statusData.disk_total_gb;
+        if (freeGb == null || totalGb == null) {
+            el.textContent = 'Disk info unavailable';
+            return;
+        }
+        var usedGb = totalGb - freeGb;
+        var pct = totalGb > 0 ? (usedGb / totalGb * 100) : 0;
+
+        var textEl = document.createElement('div');
+        textEl.style.fontSize = '11px';
+        textEl.textContent = 'Disk: ' + freeGb.toFixed(0) + ' GB free of ' + totalGb.toFixed(0) + ' GB';
+        el.innerHTML = '';
+        el.appendChild(textEl);
+
+        var barOuter = document.createElement('div');
+        barOuter.className = 'inv-disk-bar';
+        var barFill = document.createElement('div');
+        barFill.className = 'inv-disk-bar-fill';
+        barFill.style.width = Math.min(pct, 100).toFixed(1) + '%';
+        if (pct > 90) {
+            barFill.style.background = '#f38ba8';
+        } else if (pct > 75) {
+            barFill.style.background = '#f9e2af';
+        }
+        barOuter.appendChild(barFill);
+        el.appendChild(barOuter);
+    }
 
     // -----------------------------------------------------------------------
     // Initialization
