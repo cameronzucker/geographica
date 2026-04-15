@@ -143,6 +143,11 @@
     map.on('style.load', function () {
       addPlaceholderSources();
       syncLayerVisibility();
+      // Re-apply hybrid paint overrides if overlay imagery was active before style swap
+      if (_savedBasemapPaint && currentStyle !== 'hybrid') {
+        _savedBasemapPaint = null;
+        _updateOverlayImageryState();
+      }
       // Re-disable and re-remove dragRotate handlers after style swap
       // MapLibre resets handler state on style change — see Pitfall #11
       map.dragRotate.disable();
@@ -809,8 +814,57 @@
     'park', 'park_outline',
   ];
 
+  // Paint property overrides for overlay imagery on non-hybrid basemaps.
+  // Values from tileserver/styles/hybrid/style.local.json.
+  var _hybridPaintOverrides = [
+    // Roads
+    { layer: 'highway_path', prop: 'line-color', value: 'rgba(255,255,255,0.15)' },
+    { layer: 'highway_minor', prop: 'line-color', value: 'rgba(255,255,255,0.35)' },
+    { layer: 'highway_minor', prop: 'line-width', value: { base: 1.0, stops: [[13, 0.8], [15, 1.5], [17, 2.5], [18, 4]] } },
+    { layer: 'highway_major_casing', prop: 'line-color', value: 'rgba(0,0,0,0.12)' },
+    { layer: 'highway_major_inner', prop: 'line-color', value: 'rgba(255,255,255,0.35)' },
+    { layer: 'highway_major_inner', prop: 'line-width', value: { base: 1.1, stops: [[13, 1.2], [15, 2.5], [18, 5]] } },
+    { layer: 'highway_major_subtle', prop: 'line-color', value: 'rgba(255,255,255,0.25)' },
+    { layer: 'highway_motorway_casing', prop: 'line-color', value: 'rgba(0,0,0,0.2)' },
+    { layer: 'highway_motorway_casing', prop: 'line-width', value: { base: 1.2, stops: [[6, 1.5], [10, 3], [14, 5], [18, 8]] } },
+    { layer: 'highway_motorway_inner', prop: 'line-color', value: 'rgba(232,166,62,0.85)' },
+    { layer: 'highway_motorway_inner', prop: 'line-width', value: { base: 1.2, stops: [[6, 0.5], [10, 1.5], [14, 3], [18, 6]] } },
+    { layer: 'highway_motorway_subtle', prop: 'line-color', value: 'rgba(232,166,62,0.5)' },
+    { layer: 'road_pier', prop: 'line-color', value: 'rgba(255,255,255,0.1)' },
+    // Labels
+    { layer: 'highway_name_other', prop: 'text-color', value: '#ffffff' },
+    { layer: 'highway_name_other', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'highway_name_other', prop: 'text-halo-width', value: 1.5 },
+    { layer: 'highway_name_motorway', prop: 'text-color', value: '#ffffff' },
+    { layer: 'highway_name_motorway', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'highway_name_motorway', prop: 'text-halo-width', value: 1.5 },
+    { layer: 'place_other', prop: 'text-color', value: '#ffffff' },
+    { layer: 'place_other', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'place_other', prop: 'text-halo-width', value: 1.5 },
+    { layer: 'place_suburb', prop: 'text-color', value: '#ffffff' },
+    { layer: 'place_suburb', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'place_suburb', prop: 'text-halo-width', value: 1.5 },
+    { layer: 'place_village', prop: 'text-color', value: '#ffffff' },
+    { layer: 'place_village', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'place_village', prop: 'text-halo-width', value: 1.5 },
+    { layer: 'place_town', prop: 'text-color', value: '#ffffff' },
+    { layer: 'place_town', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'place_town', prop: 'text-halo-width', value: 1.5 },
+    { layer: 'place_city', prop: 'text-color', value: '#ffffff' },
+    { layer: 'place_city', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'place_city', prop: 'text-halo-width', value: 1.5 },
+    { layer: 'place_city_large', prop: 'text-color', value: '#ffffff' },
+    { layer: 'place_city_large', prop: 'text-halo-color', value: 'rgba(0,0,0,0.7)' },
+    { layer: 'place_city_large', prop: 'text-halo-width', value: 1.5 },
+    // Water labels
+    { layer: 'water_name', prop: 'text-color', value: 'rgba(255,255,255,0.8)' },
+    { layer: 'water_name', prop: 'text-halo-color', value: 'rgba(0,0,0,0.5)' },
+    { layer: 'water_name', prop: 'text-halo-width', value: 1.5 },
+  ];
+
+  var _savedBasemapPaint = null;
+
   function _updateOverlayImageryState() {
-    // Check if any overlay imagery layer is visible
     var overlayIds = ['imagery-noaa-layer', 'imagery-naip-layer',
                       'imagery-sentinel-layer', 'imagery-custom-layer'];
     var anyVisible = overlayIds.some(function(id) {
@@ -830,6 +884,32 @@
         map.setLayoutProperty(layerId, 'visibility', anyVisible ? 'none' : 'visible');
       }
     });
+
+    // Apply/restore hybrid paint overrides (only on non-hybrid basemaps)
+    if (currentStyle !== 'hybrid') {
+      if (anyVisible && !_savedBasemapPaint) {
+        // Snapshot current paint values and apply hybrid overrides
+        _savedBasemapPaint = [];
+        _hybridPaintOverrides.forEach(function(o) {
+          if (map.getLayer(o.layer)) {
+            _savedBasemapPaint.push({
+              layer: o.layer,
+              prop: o.prop,
+              value: map.getPaintProperty(o.layer, o.prop)
+            });
+            map.setPaintProperty(o.layer, o.prop, o.value);
+          }
+        });
+      } else if (!anyVisible && _savedBasemapPaint) {
+        // Restore original paint values
+        _savedBasemapPaint.forEach(function(o) {
+          if (map.getLayer(o.layer)) {
+            map.setPaintProperty(o.layer, o.prop, o.value);
+          }
+        });
+        _savedBasemapPaint = null;
+      }
+    }
 
     // Wire opacity slider to overlay imagery layers
     if (anyVisible) {
