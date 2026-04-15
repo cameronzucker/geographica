@@ -770,6 +770,12 @@
     if (_availableTileJSON['imagery-sentinel']) {
       container.appendChild(_makeLayerToggle('imagery-sentinel-layer', 'Sentinel-2', '(10m, global)'));
     }
+    if (_availableTileJSON['imagery-noaa']) {
+      container.appendChild(_makeLayerToggle('imagery-noaa-layer', 'NOAA NAIP', '(0.6m, free)'));
+    }
+    if (_availableTileJSON['imagery-custom']) {
+      container.appendChild(_makeLayerToggle('imagery-custom-layer', 'Custom Imagery', ''));
+    }
   }
 
   function _makeLayerToggle(layerId, label, sublabel) {
