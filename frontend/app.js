@@ -1221,10 +1221,27 @@
       }
     });
 
+    // Search icon click — expand search bar during navigation mode
+    var searchIcon = document.getElementById('search-icon');
+    if (searchIcon) {
+      searchIcon.addEventListener('click', function () {
+        var container = document.getElementById('search-container');
+        if (document.body.classList.contains('nav-active')) {
+          container.classList.toggle('nav-search-open');
+          if (container.classList.contains('nav-search-open')) {
+            input.focus();
+          }
+        }
+      });
+    }
+
     // Close results on outside click
     document.addEventListener('click', function (e) {
       if (!e.target.closest('#search-container')) {
         hideSearchResults();
+        // Also collapse nav search if open
+        var container = document.getElementById('search-container');
+        if (container) container.classList.remove('nav-search-open');
       }
     });
 
@@ -1274,6 +1291,14 @@
     }).filter(Boolean);
     var src = map.getSource('search-results');
     if (src) src.setData({ type: 'FeatureCollection', features: features });
+
+    // During navigation, zoom to show results (search bar is collapsed,
+    // results list is hidden — pins on map are the only feedback)
+    if (document.body.classList.contains('nav-active') && features.length > 0) {
+      var bounds = new maplibregl.LngLatBounds();
+      features.forEach(function (f) { bounds.extend(f.geometry.coordinates); });
+      map.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: 500 });
+    }
   }
 
   function performSearch(query) {
