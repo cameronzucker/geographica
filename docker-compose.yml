@@ -130,6 +130,8 @@ services:
       - ./tileserver/config.json:/tileserver/config.json:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${TLS_CERT_DIR:-./tls}:/tls:ro
+      - /run/geographica/keyring.sock:/run/geographica/keyring.sock:ro
+      - /run/geographica/secrets:/run/geographica/secrets:ro
     depends_on:
       nominatim:
         condition: service_healthy

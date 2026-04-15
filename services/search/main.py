@@ -16,6 +16,7 @@ import sqlite3
 import stat
 import subprocess
 import tempfile
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -26,9 +27,10 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+import keyring_client
+
 NOMINATIM_URL = os.environ.get("NOMINATIM_URL", "http://nominatim:8080")
 POI_DB_PATH = os.environ.get("POI_DB_PATH", "/data/poi.sqlite")
-CREDENTIALS_PATH = Path("/data/.credentials.json")
 DATA_DIR = Path("/data")
 TLS_CERT_PATH = Path("/tls/server.crt")
 
@@ -1032,83 +1034,25 @@ async def admin_status():
 # ---------------------------------------------------------------------------
 # Credential management
 # ---------------------------------------------------------------------------
-_credential_lock = asyncio.Lock()
-
-
-async def _remove_credential_keys(keys_to_remove: list) -> dict:
-    """Remove specified credential keys, deleting the file if none remain."""
-    async with _credential_lock:
-        existing = {}
-        try:
-            existing = json.loads(CREDENTIALS_PATH.read_text())
-        except FileNotFoundError:
-            pass
-
-        for key in keys_to_remove:
-            existing.pop(key, None)
-
-        known_keys = {"m2m_username", "m2m_token", "copernicus_username", "copernicus_password"}
-        has_remaining = any(existing.get(k) for k in known_keys)
-
-        if has_remaining:
-            cred_data = json.dumps(existing)
-            fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=".tmp")
-            try:
-                os.write(fd, cred_data.encode())
-            finally:
-                os.close(fd)
-            os.chmod(tmp_path, 0o600)
-            os.replace(tmp_path, str(CREDENTIALS_PATH))
-        else:
-            CREDENTIALS_PATH.unlink(missing_ok=True)
-
-    return {"status": "deleted"}
-
-
 @app.post("/admin/credentials", dependencies=[Depends(require_config_source)])
 async def save_credentials(body: CredentialBody):
-    """Store API credentials securely. Supports M2M and/or Copernicus credentials."""
+    """Store API credentials in system keyring via keyring agent."""
     has_m2m = body.m2m_username.strip() and body.m2m_token.strip()
     has_copernicus = body.copernicus_username.strip() and body.copernicus_password.strip()
 
     if not has_m2m and not has_copernicus:
         raise HTTPException(status_code=422, detail="Provide m2m_username+m2m_token and/or copernicus_username+copernicus_password")
 
-    async with _credential_lock:
-        # Merge with existing credentials (don't overwrite one type when saving the other)
-        existing = {}
-        if CREDENTIALS_PATH.exists():
-            try:
-                existing = json.loads(CREDENTIALS_PATH.read_text())
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        if has_m2m:
-            existing["m2m_username"] = body.m2m_username
-            existing["m2m_token"] = body.m2m_token
-        if has_copernicus:
-            existing["copernicus_username"] = body.copernicus_username
-            existing["copernicus_password"] = body.copernicus_password
-
-        cred_data = json.dumps(existing)
-
-        # Atomic write: write to temp file, then os.replace
-        try:
-            fd, tmp_path = tempfile.mkstemp(dir=str(DATA_DIR), suffix=".tmp")
-            try:
-                os.write(fd, cred_data.encode())
-            finally:
-                os.close(fd)
-            os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
-            os.replace(tmp_path, str(CREDENTIALS_PATH))
-        except Exception as e:
-            # Clean up temp file if replace failed
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            log.error("Failed to save credentials: %s", e)
-            raise HTTPException(status_code=500, detail="Failed to save credentials. Check server logs.")
+    if has_m2m:
+        if not keyring_client.store_credential("m2m", "username", body.m2m_username):
+            raise HTTPException(status_code=500, detail="Failed to store M2M username in keyring")
+        if not keyring_client.store_credential("m2m", "token", body.m2m_token):
+            raise HTTPException(status_code=500, detail="Failed to store M2M token in keyring")
+    if has_copernicus:
+        if not keyring_client.store_credential("copernicus", "username", body.copernicus_username):
+            raise HTTPException(status_code=500, detail="Failed to store Copernicus username in keyring")
+        if not keyring_client.store_credential("copernicus", "password", body.copernicus_password):
+            raise HTTPException(status_code=500, detail="Failed to store Copernicus password in keyring")
 
     return {"status": "saved"}
 
@@ -1116,47 +1060,34 @@ async def save_credentials(body: CredentialBody):
 @app.get("/admin/credentials/status")
 async def credentials_status():
     """Check if credentials are configured (no auth required)."""
-    m2m = False
-    copernicus = False
-    if CREDENTIALS_PATH.exists():
-        try:
-            creds = json.loads(CREDENTIALS_PATH.read_text())
-            m2m = bool(creds.get("m2m_username") and creds.get("m2m_token"))
-            copernicus = bool(creds.get("copernicus_username") and creds.get("copernicus_password"))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {"m2m_configured": m2m, "copernicus_configured": copernicus}
+    status = keyring_client.get_status()
+    return {
+        "m2m_configured": status.get("m2m_configured", False),
+        "copernicus_configured": status.get("copernicus_configured", False),
+        "keyring_available": status.get("keyring_available", False),
+    }
 
 
 @app.delete("/admin/credentials", dependencies=[Depends(require_config_source)])
 async def delete_credentials():
-    """Remove stored credentials."""
-    try:
-        CREDENTIALS_PATH.unlink(missing_ok=True)
-    except Exception as e:
-        log.error("Failed to delete credentials: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to delete credentials. Check server logs.")
+    """Remove all stored credentials from keyring."""
+    keyring_client.delete_credentials("m2m")
+    keyring_client.delete_credentials("copernicus")
     return {"status": "deleted"}
 
 
 @app.delete("/admin/credentials/m2m", dependencies=[Depends(require_config_source)])
 async def delete_m2m_credentials():
-    """Remove only M2M credentials, preserving Copernicus."""
-    try:
-        return await _remove_credential_keys(["m2m_username", "m2m_token"])
-    except Exception as e:
-        log.error("Failed to delete M2M credentials: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to delete credentials. Check server logs.")
+    """Remove only M2M credentials from keyring, preserving Copernicus."""
+    keyring_client.delete_credentials("m2m")
+    return {"status": "deleted"}
 
 
 @app.delete("/admin/credentials/copernicus", dependencies=[Depends(require_config_source)])
 async def delete_copernicus_credentials():
-    """Remove only Copernicus credentials, preserving M2M."""
-    try:
-        return await _remove_credential_keys(["copernicus_username", "copernicus_password"])
-    except Exception as e:
-        log.error("Failed to delete Copernicus credentials: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to delete credentials. Check server logs.")
+    """Remove only Copernicus credentials from keyring, preserving M2M."""
+    keyring_client.delete_credentials("copernicus")
+    return {"status": "deleted"}
 
 
 # ---------------------------------------------------------------------------
@@ -1240,14 +1171,9 @@ async def pipeline_start(body: PipelineStartBody):
     if is_sentinel:
         if not body.bbox:
             raise HTTPException(status_code=422, detail="bbox is required for sentinel")
-        if not CREDENTIALS_PATH.exists():
+        cred_status = keyring_client.get_status()
+        if not cred_status.get("copernicus_configured"):
             raise HTTPException(status_code=422, detail="Copernicus credentials not configured. POST to /admin/credentials first.")
-        try:
-            creds = json.loads(CREDENTIALS_PATH.read_text())
-            if "copernicus_username" not in creds or "copernicus_password" not in creds:
-                raise HTTPException(status_code=422, detail="credentials.json missing copernicus_username or copernicus_password")
-        except json.JSONDecodeError as e:
-            raise HTTPException(status_code=500, detail=f"Failed to read credentials: {e}")
 
     # NAIP validation: requires bbox only
     if is_naip:
@@ -1288,20 +1214,17 @@ async def pipeline_start(body: PipelineStartBody):
 
     # For M2M mode, verify credentials exist
     if body.mode == "m2m":
-        if not CREDENTIALS_PATH.exists():
+        cred_status = keyring_client.get_status()
+        if not cred_status.get("m2m_configured"):
             raise HTTPException(status_code=422, detail="M2M credentials not configured. POST to /admin/credentials first.")
-        try:
-            creds = json.loads(CREDENTIALS_PATH.read_text())
-            if not creds.get("m2m_username") or not creds.get("m2m_token"):
-                raise HTTPException(status_code=422, detail="M2M credentials not configured. POST to /admin/credentials first.")
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=422, detail="Credentials file is corrupted.")
 
     async with _pipeline_lock:
         client = _get_docker_client()
         if not client:
             raise HTTPException(status_code=503, detail="Docker socket not available")
 
+        session_id = None
+        secret_types = []
         try:
             # Check if a pipeline is already running
             if _is_pipeline_container_running(client):
@@ -1413,20 +1336,20 @@ async def pipeline_start(body: PipelineStartBody):
                 "GDAL_CACHEMAX": "1024",
                 "PYTHONUNBUFFERED": "1",
             }
+
+            # Prepare credentials via keyring agent (tmpfs secrets)
+            session_id = f"pipeline-{int(time.time())}"
+            secret_types = []
             if body.mode == "m2m":
-                try:
-                    creds = json.loads(CREDENTIALS_PATH.read_text())
-                    env["USGS_M2M_USERNAME"] = creds["m2m_username"]
-                    env["USGS_M2M_TOKEN"] = creds["m2m_token"]
-                except (json.JSONDecodeError, KeyError) as e:
-                    raise HTTPException(status_code=500, detail=f"Failed to read credentials: {e}")
+                secret_types.append("m2m")
             if is_sentinel:
-                try:
-                    creds = json.loads(CREDENTIALS_PATH.read_text())
-                    env["COPERNICUS_USERNAME"] = creds["copernicus_username"]
-                    env["COPERNICUS_PASSWORD"] = creds["copernicus_password"]
-                except (json.JSONDecodeError, KeyError) as e:
-                    raise HTTPException(status_code=500, detail=f"Failed to read credentials: {e}")
+                secret_types.append("copernicus")
+
+            secret_path = None
+            if secret_types:
+                secret_path = keyring_client.prepare_secrets(secret_types, session_id)
+                if not secret_path:
+                    raise HTTPException(status_code=500, detail="Failed to prepare credentials from keyring")
 
             # Find the compose network
             try:
@@ -1469,6 +1392,8 @@ async def pipeline_start(body: PipelineStartBody):
             }
             if host_scripts_path:
                 volumes[host_scripts_path] = {"bind": "/scripts", "mode": "ro"}
+            if secret_path:
+                volumes["/run/geographica/secrets"] = {"bind": "/secrets", "mode": "ro"}
 
             # Remove any stale pipeline container before starting
             try:
@@ -1512,6 +1437,8 @@ async def pipeline_start(body: PipelineStartBody):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start pipeline: {e}")
         finally:
+            if secret_types and session_id:
+                keyring_client.cleanup_secrets(session_id)
             client.close()
 
     return {"status": "started"}
