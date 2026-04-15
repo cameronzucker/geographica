@@ -77,38 +77,10 @@
         .inline-warn { background: rgba(249,226,175,0.15); color: #f9e2af; padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: 12px; }
         .inline-warn a { color: #89b4fa; cursor: pointer; text-decoration: underline; }
 
-        /* === COLLAPSIBLE CARDS === */
-        .collapsible-card { background: #181825; border-radius: 8px; margin: 12px 0; overflow: hidden; }
-        .collapsible-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; cursor: pointer; user-select: none; }
-        .collapsible-header:hover { background: rgba(255,255,255,0.03); }
-        .collapsible-title { font-size: 14px; color: #f5f5f5; font-weight: 500; }
-        .collapsible-subtitle { font-size: 11px; color: #7a8299; margin-top: 2px; }
-        .collapsible-arrow { font-size: 12px; color: #7a8299; transition: transform 0.2s; flex-shrink: 0; }
-        .collapsible-arrow.open { transform: rotate(180deg); }
-        .collapsible-body { padding: 0 16px 16px; display: none; }
-        .collapsible-body.open { display: block; }
-
         /* === RANGE SLIDER === */
         .slider-row { display: flex; align-items: center; gap: 8px; }
         .slider-row input[type=range] { flex: 1; width: auto; padding: 0; background: transparent; border: none; }
         .slider-val { font-size: 12px; color: #cdd6f4; min-width: 28px; text-align: right; }
-
-        /* === ADVANCED TOGGLE === */
-        .advanced-toggle { font-size: 12px; color: #89b4fa; cursor: pointer; text-decoration: underline; margin: 8px 0 4px; display: inline-block; }
-        .advanced-options { display: none; margin-top: 8px; border-top: 1px solid #313244; padding-top: 8px; }
-        .advanced-options.open { display: block; }
-
-        /* === COUNTY LIST === */
-        .county-list { max-height: 300px; overflow-y: auto; background: #313244; border-radius: 6px; padding: 8px; margin: 8px 0; font-size: 12px; }
-        .county-state-group { margin-bottom: 8px; }
-        .county-state-label { font-weight: 600; color: #cdd6f4; margin-bottom: 4px; }
-        .county-item { color: #7a8299; padding: 1px 0; }
-        .county-removable { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; border-radius: 3px; }
-        .county-removable:hover { background: #45475a; }
-        .county-remove { color: #f38ba8; cursor: pointer; font-size: 14px; font-weight: 700; padding: 0 4px; opacity: 0.5; }
-        .county-remove:hover { opacity: 1; }
-        .btn-link { background: none; border: none; color: #89b4fa; font-size: 12px; cursor: pointer; padding: 4px 0; margin-top: 4px; }
-        .btn-link:hover { text-decoration: underline; }
 
         /* === PIPELINE HINT === */
         .pipeline-hint { font-size: 12px; color: #7a8299; background: rgba(137,180,250,0.08); border: 1px solid rgba(137,180,250,0.2); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; }
@@ -353,36 +325,6 @@
     if (['dashboard', 'pipelines', 'settings'].indexOf(initTab) >= 0) switchTab(initTab);
 
     // -----------------------------------------------------------------------
-    // Concurrency options
-    // -----------------------------------------------------------------------
-    var CONCURRENCY_DIRECT = [
-        {value: 10, label: 'Conservative (10)'},
-        {value: 20, label: 'Normal (20)', default: true},
-        {value: 50, label: 'Fast (50)'},
-        {value: 80, label: 'Maximum (80)'},
-    ];
-    var CONCURRENCY_M2M = [
-        {value: 3, label: 'M2M safe (3)', default: true},
-        {value: 5, label: 'M2M max (5)'},
-    ];
-
-    function updateConcurrencyOptions() {
-        var sel = document.getElementById('cfg-concurrency');
-        var sourceEl = document.getElementById('cfg-source');
-        if (!sel || !sourceEl) return;
-        var source = sourceEl.value;
-        var options = source === 'm2m' ? CONCURRENCY_M2M : CONCURRENCY_DIRECT;
-        sel.textContent = '';
-        options.forEach(function(o) {
-            var opt = document.createElement('option');
-            opt.value = o.value;
-            opt.textContent = o.label;
-            if (o.default) opt.selected = true;
-            sel.appendChild(opt);
-        });
-    }
-
-    // -----------------------------------------------------------------------
     // Tile estimation
     // -----------------------------------------------------------------------
     function estimateTiles(bbox, zoom) {
@@ -400,23 +342,6 @@
             total += (xMax - xMin + 1) * (yMax - yMin + 1);
         }
         return total;
-    }
-
-    function updateEstimate() {
-        var sourceEl = document.getElementById('cfg-source');
-        if (!sourceEl) return;
-        var source = sourceEl.value;
-        if (source === 'm2m' || source === 'noaa') return;
-        var bbox = document.getElementById('cfg-bbox').value;
-        var zoomEl = document.getElementById('cfg-zoom');
-        var estimateEl = document.getElementById('cfg-estimate');
-        if (!zoomEl || !estimateEl) return;
-        var zoom = zoomEl.value;
-        var count = estimateTiles(bbox, zoom);
-        var sizeGB = (count * 20 * 1024 / (1024 * 1024 * 1024)).toFixed(1);
-        var hours = (count / 680 / 3600).toFixed(1);
-        estimateEl.textContent =
-            count > 0 ? '~' + count.toLocaleString() + ' tiles, ~' + sizeGB + ' GB, ~' + hours + ' hours' : 'Invalid bbox';
     }
 
     // -----------------------------------------------------------------------
@@ -755,8 +680,6 @@
         }
     }
 
-    // (Sentinel and NAIP rendering now handled by renderSourceProgress)
-
     // -----------------------------------------------------------------------
     // Settings: Copernicus credentials
     // -----------------------------------------------------------------------
@@ -771,11 +694,6 @@
             configuredEl.style.display = 'none';
             formEl.style.display = '';
         }
-        updateSentinelCredsWarning();
-    }
-
-    function updateSentinelCredsWarning() {
-        // Legacy — sentinel-creds-warn element removed in card grid overhaul
     }
 
     // -----------------------------------------------------------------------
@@ -850,19 +768,6 @@
         } else {
             configuredEl.style.display = 'none';
             formEl.style.display = '';
-        }
-        updateM2MWarning();
-    }
-
-    function updateM2MWarning() {
-        var warn = document.getElementById('m2m-warning');
-        var sourceEl = document.getElementById('cfg-source');
-        if (!warn || !sourceEl) return;
-        var source = sourceEl.value;
-        if (source === 'm2m' && !_m2mConfigured) {
-            warn.style.display = '';
-        } else {
-            warn.style.display = 'none';
         }
     }
 
@@ -1660,7 +1565,6 @@
         el.value = w.toFixed(4) + ',' + s.toFixed(4) + ',' + e.toFixed(4) + ',' + n.toFixed(4);
         el.dispatchEvent(new Event('input'));
         _map.getSource('bbox-rect').setData(bboxToGeoJSON(w, s, e, n));
-        updateEstimate();
     }
 
     function initMinimap() {
@@ -1727,7 +1631,6 @@
     // Event handlers: bbox input
     // -----------------------------------------------------------------------
     document.getElementById('cfg-bbox').addEventListener('input', function() {
-        updateEstimate();
         syncBboxToMap();
     });
 
