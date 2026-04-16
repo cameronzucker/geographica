@@ -20,6 +20,9 @@
     },
     "publiclands": {
       "mbtiles": "/srv/data/public-lands.mbtiles"
+    },
+    "imagery_noaa": {
+      "mbtiles": "/srv/data/imagery_noaa.mbtiles"
     }
   },
   "styles": {

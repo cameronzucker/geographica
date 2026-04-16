@@ -15,6 +15,11 @@
 
 ## High Priority
 
+### Pipeline UX redesign
+- **What:** The pipeline section of the admin panel is confusing — 4 data sources (Direct tiles, M2M, Sentinel-2, NAIP) with overlapping controls, ambiguous content descriptions, and unclear relationships between zoom levels and output formats.
+- **Problems:** (a) Top imagery card has a source dropdown (Direct vs M2M) with zoom levels, but NAIP and Sentinel below have no zoom controls and say "Uses the same bbox as imagery above" with no explanation of what resolution they produce, (b) It's unclear that NAIP downloads county-level JP2 mosaics vs tiles, (c) No indication of output format or resolution per source, (d) The 4 sources should have clearer visual hierarchy and descriptions of what each one actually produces.
+- **Why:** Users can't make informed decisions about which imagery source to use for their needs.
+
 ### Phase 2b: Whisper STT — CPU backend
 - **Completed and deployed 2026-04-08.** CPU backend (faster-whisper base.en INT8). STT Docker service, push-to-hold mic button, AudioWorklet capture, NGINX proxy with resilient resolver pattern (frontend stays up if STT is down). See `docs/superpowers/specs/2026-04-08-whisper-stt-design.md`.
 

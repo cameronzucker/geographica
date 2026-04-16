@@ -83,3 +83,8 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
+
+## Brainstorming preferences
+
+- Always use the visual companion (browser mockups) during brainstorming — don't ask, just launch it
+- Token budget is not a concern during design phases — be thorough

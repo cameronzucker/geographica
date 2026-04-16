@@ -503,6 +503,7 @@ async def run_pipeline(
     staging_dir: Path,
     counties_db: str,
     concurrency: int = 2,
+    county_fips: str | None = None,
 ) -> None:
     """Run the full NAIP acquisition pipeline."""
     global _cancel_requested
@@ -530,7 +531,15 @@ async def run_pipeline(
         bbox=bbox_str,
     )
 
-    counties = counties_for_bbox(counties_db, west, south, east, north)
+    if county_fips:
+        # User provided explicit FIPS list — filter the full bbox results to just those
+        all_counties = counties_for_bbox(counties_db, west, south, east, north)
+        allowed = {f.strip() for f in county_fips.split(",")}
+        counties = [c for c in all_counties if c[0] in allowed]
+        log.info("Using %d user-selected counties (from %d in bbox)", len(counties), len(all_counties))
+    else:
+        counties = counties_for_bbox(counties_db, west, south, east, north)
+
     if not counties:
         update_progress(
             state_path, phase="resolving", status="error",
@@ -734,6 +743,7 @@ def main():
     parser.add_argument("--staging", required=True, help="Staging directory for temp files")
     parser.add_argument("--counties-db", required=True, help="Path to counties.sqlite")
     parser.add_argument("--concurrency", type=int, default=2, help="Download concurrency (default: 2)")
+    parser.add_argument("--counties", default=None, help="Comma-separated FIPS codes (overrides bbox county lookup)")
 
     args = parser.parse_args()
     output_path = Path(args.output)
@@ -747,6 +757,7 @@ def main():
         staging_dir=staging_dir,
         counties_db=args.counties_db,
         concurrency=args.concurrency,
+        county_fips=args.counties,
     ))
 
 
