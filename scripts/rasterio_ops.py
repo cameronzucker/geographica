@@ -241,7 +241,11 @@ def reproject_to_mercator(
                         dst_transform=transform,
                         dst_crs=WEB_MERCATOR,
                         resampling=resamp,
-                        num_threads=os.cpu_count() or 2,
+                        # Use 1 GDAL internal thread per reproject call.
+                    # The pipeline already parallelizes via ThreadPoolExecutor
+                    # (4 workers). With num_threads=cpu_count, each worker spawns
+                    # 4 GDAL threads → 16 total on 4 cores → thrashing.
+                    num_threads=1,
                     )
         elapsed = time.monotonic() - t0
         log.debug("Reproject %s: %dx%d → %dx%d in %.1fs",
@@ -317,12 +321,22 @@ def merge_to_mbtiles(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    tile_dir = output_path.parent / f".tiles_{output_path.stem}"
+
     try:
         # Open all datasets
         datasets = [rasterio.open(str(p)) for p in input_paths]
 
         try:
-            mosaic, mosaic_transform = rasterio_merge(datasets)
+            # Single-file fast path: read directly, skip rasterio_merge overhead.
+            # rasterio_merge creates a full in-memory mosaic (~1.5-3 GB for a
+            # 486 MB GeoTIFF) which is unnecessary when there's only one input.
+            if len(datasets) == 1:
+                ds = datasets[0]
+                mosaic = ds.read()
+                mosaic_transform = ds.transform
+            else:
+                mosaic, mosaic_transform = rasterio_merge(datasets)
 
             if cancel_check and cancel_check():
                 return False
@@ -339,8 +353,13 @@ def merge_to_mbtiles(
                     max(bounds_4326[2], b[2]), max(bounds_4326[3], b[3]),
                 )
 
+            # Close datasets early — no longer needed after extracting
+            # CRS, transform, bounds, and mosaic data.
+            for d in datasets:
+                d.close()
+            datasets = []
+
             # Stage 1: render tiles to filesystem (no SQLite lock)
-            tile_dir = output_path.parent / f".tiles_{output_path.stem}"
             tile_dir.mkdir(parents=True, exist_ok=True)
 
             encode_fn = _encode_jpeg if tile_format.lower() == "jpeg" else _encode_png
@@ -356,8 +375,17 @@ def merge_to_mbtiles(
                       tile_count / render_elapsed if render_elapsed > 0 else 0)
 
             if cancel_check and cancel_check():
-                _cleanup_tile_dir(tile_dir)
                 return False
+
+            # Release the mosaic array before bulk import.
+            del mosaic
+            import gc
+            gc.collect()
+            try:
+                import ctypes
+                ctypes.CDLL("libc.so.6").malloc_trim(0)
+            except Exception:
+                pass
 
             # Stage 2: bulk import from filesystem to MBTiles
             if tile_count > 0:
@@ -371,17 +399,17 @@ def merge_to_mbtiles(
                           tile_count, import_elapsed,
                           tile_count / import_elapsed if import_elapsed > 0 else 0)
 
-            # Clean up tile directory
-            _cleanup_tile_dir(tile_dir)
-
         finally:
             for ds in datasets:
                 ds.close()
+            # Always clean up tile directory, even on exception/cancel
+            _cleanup_tile_dir(tile_dir)
 
         return True
 
     except Exception as exc:
         log.error("merge_to_mbtiles failed: %s", exc)
+        _cleanup_tile_dir(tile_dir)
         return False
 
 
@@ -648,35 +676,35 @@ def build_overviews(
     if levels is None:
         levels = [2, 4, 8, 16]
 
+    conn = None
     try:
         conn = sqlite3.connect(str(mbtiles_path))
         conn.execute("PRAGMA journal_mode=WAL")
 
-        # Find current max zoom
+        # Find current max zoom (base tiles)
         row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
         if not row or row[0] is None:
             log.warning("No tiles in %s — skipping overviews", mbtiles_path)
-            conn.close()
             return True
 
         max_zoom = row[0]
 
-        # Build overview zooms by halving
-        current_zoom = max_zoom
-        for level in levels:
-            target_zoom = current_zoom - int(math.log2(level))
-            if target_zoom < 0:
-                break
-            current_zoom = target_zoom
+        # Delete existing overview tiles so stale overviews don't persist
+        # after new quads are merged. Only delete below max_zoom (base tiles
+        # are never touched).
+        deleted = conn.execute(
+            "DELETE FROM tiles WHERE zoom_level < ?", (max_zoom,)
+        ).rowcount
+        if deleted:
+            conn.commit()
+            log.info("Cleared %d stale overview tiles before rebuild", deleted)
 
-        # Actually build: for each zoom from max_zoom-1 down, composite
+        # Build: for each zoom from max_zoom-1 down, composite 2x2 blocks
         for z in range(max_zoom - 1, -1, -1):
             if cancel_check and cancel_check():
-                conn.close()
                 return False
 
             parent_z = z + 1
-            # Get all tiles at parent zoom
             rows = conn.execute(
                 "SELECT DISTINCT tile_column/2, tile_row/2 FROM tiles WHERE zoom_level = ?",
                 (parent_z,),
@@ -687,14 +715,6 @@ def build_overviews(
 
             tile_count = 0
             for (tx, ty) in rows:
-                # Check if this overview tile already exists
-                existing = conn.execute(
-                    "SELECT 1 FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
-                    (z, tx, ty),
-                ).fetchone()
-                if existing:
-                    continue
-
                 # Gather 2x2 child tiles
                 children = []
                 for dx in range(2):
@@ -706,13 +726,11 @@ def build_overviews(
                         children.append((dx, dy, child[0] if child else None))
 
                 # Only create overview when ALL 4 children exist.
-                # Partial 2x2 blocks at coverage edges produce black quadrants
-                # (JPEG has no alpha), creating orphan overview tiles visible at
-                # low zoom with no backing data at high zoom.
+                # Partial 2x2 blocks produce black quadrants in JPEG.
                 if not all(c[2] for c in children):
                     continue
 
-                # Decode children, composite, re-encode
+                # Decode children, downsample with true 2x2 averaging, composite
                 composite = np.zeros((3, TILE_SIZE, TILE_SIZE), dtype=np.uint8)
                 half = TILE_SIZE // 2
 
@@ -724,9 +742,15 @@ def build_overviews(
                             with memfile.open() as ds:
                                 bands = min(ds.count, 3)
                                 tile_arr = ds.read(list(range(1, bands + 1)))
-                                # Downsample to half size using simple averaging
-                                if tile_arr.shape[1] >= 2 and tile_arr.shape[2] >= 2:
-                                    small = tile_arr[:, ::2, ::2][:, :half, :half]
+                                # True 2x2 box averaging (not stride-2 subsampling)
+                                h_src, w_src = tile_arr.shape[1], tile_arr.shape[2]
+                                if h_src >= 2 and w_src >= 2:
+                                    # Reshape to (bands, h/2, 2, w/2, 2) then mean over axes 2,4
+                                    h2 = (h_src // 2) * 2
+                                    w2 = (w_src // 2) * 2
+                                    cropped = tile_arr[:, :h2, :w2].astype(np.uint16)
+                                    small = cropped.reshape(bands, h2 // 2, 2, w2 // 2, 2).mean(axis=(2, 4)).astype(np.uint8)
+                                    small = small[:, :half, :half]
                                 else:
                                     small = tile_arr[:, :half, :half]
                                 x_off = dx * half
@@ -756,7 +780,6 @@ def build_overviews(
         conn.execute("INSERT OR REPLACE INTO metadata (name, value) VALUES ('minzoom', ?)", (str(min_zoom),))
         conn.execute("INSERT OR REPLACE INTO metadata (name, value) VALUES ('maxzoom', ?)", (str(max_zoom_actual),))
         conn.commit()
-        conn.close()
 
         log.info("Overviews complete for %s (zoom %d-%d)", mbtiles_path, min_zoom, max_zoom_actual)
         return True
@@ -764,6 +787,9 @@ def build_overviews(
     except Exception as exc:
         log.error("build_overviews failed for %s: %s", mbtiles_path, exc)
         return False
+    finally:
+        if conn:
+            conn.close()
 
 
 def inpaint_nodata_pixels(
@@ -788,46 +814,55 @@ def inpaint_nodata_pixels(
     from scipy.ndimage import distance_transform_edt
 
     conn = sqlite3.connect(str(mbtiles_path))
-    conn.execute("PRAGMA journal_mode=WAL")
-    tiles = conn.execute(
-        "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles"
-    ).fetchall()
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
 
-    fixed = 0
-    for z, x, y, data in tiles:
-        with rasterio.MemoryFile(data) as mf:
-            with mf.open() as ds:
-                arr = ds.read().copy()
-
-        black = np.all(arr[:3] <= nodata_threshold, axis=0)
-        n_black = black.sum()
-        total = arr.shape[1] * arr.shape[2]
-
-        if n_black == 0 or n_black > total * max_nodata_ratio:
-            continue
-
-        _, nearest = distance_transform_edt(
-            black, return_distances=True, return_indices=True,
+        # Stream tiles via cursor iteration instead of fetchall() to avoid
+        # loading all tile BLOBs into memory at once (OOM at scale).
+        cursor = conn.execute(
+            "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles"
         )
-        for band in range(arr.shape[0]):
-            arr[band][black] = arr[band][nearest[0][black], nearest[1][black]]
 
-        conn.execute(
-            "UPDATE tiles SET tile_data=? "
-            "WHERE zoom_level=? AND tile_column=? AND tile_row=?",
-            (_encode_jpeg(arr), z, x, y),
-        )
-        fixed += 1
+        fixed = 0
+        batch = cursor.fetchmany(500)
+        while batch:
+            for z, x, y, data in batch:
+                with rasterio.MemoryFile(data) as mf:
+                    with mf.open() as ds:
+                        arr = ds.read().copy()
 
-        if fixed % 1000 == 0:
-            conn.commit()
-            log.info("Inpainted %d tiles so far", fixed)
+                black = np.all(arr[:3] <= nodata_threshold, axis=0)
+                n_black = black.sum()
+                total = arr.shape[1] * arr.shape[2]
 
-    conn.commit()
-    conn.close()
-    if fixed:
-        log.info("Inpainted %d tiles in %s", fixed, mbtiles_path)
-    return fixed
+                if n_black == 0 or n_black > total * max_nodata_ratio:
+                    continue
+
+                _, nearest = distance_transform_edt(
+                    black, return_distances=True, return_indices=True,
+                )
+                for band in range(arr.shape[0]):
+                    arr[band][black] = arr[band][nearest[0][black], nearest[1][black]]
+
+                conn.execute(
+                    "UPDATE tiles SET tile_data=? "
+                    "WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                    (_encode_jpeg(arr), z, x, y),
+                )
+                fixed += 1
+
+                if fixed % 1000 == 0:
+                    conn.commit()
+                    log.info("Inpainted %d tiles so far", fixed)
+
+            batch = cursor.fetchmany(500)
+
+        conn.commit()
+        if fixed:
+            log.info("Inpainted %d tiles in %s", fixed, mbtiles_path)
+        return fixed
+    finally:
+        conn.close()
 
 
 def erode_nodata_edges(
@@ -847,72 +882,78 @@ def erode_nodata_edges(
     Returns the total number of tiles removed.
     """
     conn = sqlite3.connect(str(mbtiles_path))
-    total_removed = 0
+    try:
+        total_removed = 0
 
-    zoom_levels = [r[0] for r in conn.execute(
-        "SELECT DISTINCT zoom_level FROM tiles ORDER BY zoom_level"
-    ).fetchall()]
+        # Only erode at the base (max) zoom level. Overviews are rebuilt
+        # from post-erosion tiles, so eroding at overview zooms independently
+        # would create zoom-level coverage gaps (overview eroded while
+        # children survive → basemap at low zoom, imagery at high zoom).
+        max_z_row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
+        if not max_z_row or max_z_row[0] is None:
+            return 0
+        zoom_levels = [max_z_row[0]]
 
-    for z in zoom_levels:
-        removed_this_round = 1  # seed the loop
-        while removed_this_round > 0:
-            removed_this_round = 0
-            # Get current boundary tile positions
-            bounds = conn.execute(
-                "SELECT MIN(tile_column), MAX(tile_column), "
-                "MIN(tile_row), MAX(tile_row) FROM tiles WHERE zoom_level=?",
-                (z,),
-            ).fetchone()
-            if bounds[0] is None:
-                break
-            min_col, max_col, min_row, max_row = bounds
+        for z in zoom_levels:
+            removed_this_round = 1  # seed the loop
+            while removed_this_round > 0:
+                removed_this_round = 0
+                # Get current boundary tile positions
+                bounds = conn.execute(
+                    "SELECT MIN(tile_column), MAX(tile_column), "
+                    "MIN(tile_row), MAX(tile_row) FROM tiles WHERE zoom_level=?",
+                    (z,),
+                ).fetchone()
+                if bounds[0] is None:
+                    break
+                min_col, max_col, min_row, max_row = bounds
 
-            boundary = conn.execute(
-                "SELECT tile_column, tile_row, tile_data FROM tiles "
-                "WHERE zoom_level=? AND ("
-                "  tile_column=? OR tile_column=? OR tile_row=? OR tile_row=?)",
-                (z, min_col, max_col, min_row, max_row),
-            ).fetchall()
+                boundary = conn.execute(
+                    "SELECT tile_column, tile_row, tile_data FROM tiles "
+                    "WHERE zoom_level=? AND ("
+                    "  tile_column=? OR tile_column=? OR tile_row=? OR tile_row=?)",
+                    (z, min_col, max_col, min_row, max_row),
+                ).fetchall()
 
-            for col, row, data in boundary:
-                try:
-                    with rasterio.MemoryFile(data) as mf:
-                        with mf.open() as ds:
-                            arr = ds.read()
-                    has_data = np.any(arr[:3] > nodata_threshold, axis=0)
-                    top = has_data[:edge_pixels, :].mean()
-                    bot = has_data[-edge_pixels:, :].mean()
-                    left = has_data[:, :edge_pixels].mean()
-                    right = has_data[:, -edge_pixels:].mean()
+                for col, row, data in boundary:
+                    try:
+                        with rasterio.MemoryFile(data) as mf:
+                            with mf.open() as ds:
+                                arr = ds.read()
+                        has_data = np.any(arr[:3] > nodata_threshold, axis=0)
+                        top = has_data[:edge_pixels, :].mean()
+                        bot = has_data[-edge_pixels:, :].mean()
+                        left = has_data[:, :edge_pixels].mean()
+                        right = has_data[:, -edge_pixels:].mean()
 
-                    if min(top, bot, left, right) < min_edge_fill:
-                        conn.execute(
-                            "DELETE FROM tiles WHERE zoom_level=? "
-                            "AND tile_column=? AND tile_row=?",
-                            (z, col, row),
-                        )
-                        removed_this_round += 1
-                except Exception:
-                    pass
+                        if min(top, bot, left, right) < min_edge_fill:
+                            conn.execute(
+                                "DELETE FROM tiles WHERE zoom_level=? "
+                                "AND tile_column=? AND tile_row=?",
+                                (z, col, row),
+                            )
+                            removed_this_round += 1
+                    except Exception:
+                        pass
 
+                conn.commit()
+                total_removed += removed_this_round
+
+        if total_removed:
+            min_z = conn.execute("SELECT MIN(zoom_level) FROM tiles").fetchone()[0]
+            max_z = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()[0]
+            if min_z is not None:
+                conn.execute(
+                    "INSERT OR REPLACE INTO metadata (name, value) VALUES ('minzoom', ?)",
+                    (str(min_z),),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO metadata (name, value) VALUES ('maxzoom', ?)",
+                    (str(max_z),),
+                )
             conn.commit()
-            total_removed += removed_this_round
+            log.info("Eroded %d nodata-edge tiles from %s", total_removed, mbtiles_path)
 
-    if total_removed:
-        # Update minzoom/maxzoom metadata
-        min_z = conn.execute("SELECT MIN(zoom_level) FROM tiles").fetchone()[0]
-        max_z = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()[0]
-        if min_z is not None:
-            conn.execute(
-                "INSERT OR REPLACE INTO metadata (name, value) VALUES ('minzoom', ?)",
-                (str(min_z),),
-            )
-            conn.execute(
-                "INSERT OR REPLACE INTO metadata (name, value) VALUES ('maxzoom', ?)",
-                (str(max_z),),
-            )
-        conn.commit()
-        log.info("Eroded %d nodata-edge tiles from %s", total_removed, mbtiles_path)
-
-    conn.close()
-    return total_removed
+        return total_removed
+    finally:
+        conn.close()

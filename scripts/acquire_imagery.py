@@ -635,18 +635,20 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
             SELECT zoom_level, tile_column, tile_row, tile_data
             FROM src.tiles""")
 
-        # Composite overlapping tiles (slow path — only for edge tiles)
-        overlapping = dst.execute("""
+        # Composite overlapping tiles (slow path — only for edge tiles).
+        # Use cursor iteration instead of fetchall() to avoid loading all
+        # overlapping tile BLOBs into memory at once.
+        cursor = dst.execute("""
             SELECT s.zoom_level, s.tile_column, s.tile_row, s.tile_data, d.tile_data
             FROM src.tiles s
             JOIN tiles d ON s.zoom_level = d.zoom_level
                 AND s.tile_column = d.tile_column
                 AND s.tile_row = d.tile_row
             WHERE s.tile_data != d.tile_data
-        """).fetchall()
+        """)
 
         composited = 0
-        for z, x, y, src_data, dst_data in overlapping:
+        for z, x, y, src_data, dst_data in cursor:
             try:
                 with MemoryFile(src_data) as smf, MemoryFile(dst_data) as dmf:
                     with smf.open() as sds, dmf.open() as dds:
@@ -1747,6 +1749,12 @@ async def run_noaa(args):
     """
     global _cancel_requested
 
+    # Cap GDAL's internal block cache before importing rasterio.
+    # Default is 5% of RAM (~800 MB on 16 GB Pi). The NOAA pipeline does
+    # streaming single-file reads, so a large cache provides no benefit
+    # but permanently consumes RSS invisible to Python's GC.
+    os.environ["GDAL_CACHEMAX"] = "64"
+
     from rasterio_ops import reproject_to_mercator as rio_reproject_to_mercator
 
     pipeline_start = time.monotonic()
@@ -1977,6 +1985,7 @@ async def run_noaa(args):
 
             def _reproject_tile(raw_path, tile_fname):
                 """Reproject a single tile to EPSG:3857. Runs in thread pool."""
+                import gc
                 warped_path = staging / f"warped_{tile_fname}"
                 t0 = time.monotonic()
                 raw_size = raw_path.stat().st_size / (1024 * 1024)
@@ -2001,6 +2010,14 @@ async def run_noaa(args):
                 log.debug("Reproject done: %s — %.0f MB → %.0f MB in %.1fs (%.1f MB/s)",
                           tile_fname, raw_size, warped_size, elapsed, raw_size / elapsed if elapsed > 0 else 0)
                 raw_path.unlink(missing_ok=True)
+                # Release rasterio/numpy buffers back to OS.
+                # Without malloc_trim, glibc holds freed arenas indefinitely.
+                gc.collect()
+                try:
+                    import ctypes
+                    ctypes.CDLL("libc.so.6").malloc_trim(0)
+                except Exception:
+                    pass
                 return warped_path
 
             def _merge_tile(warped_path, idx):
@@ -2013,15 +2030,21 @@ async def run_noaa(args):
                 elapsed = time.monotonic() - t0
                 log.debug("Merge done: tile %d in %.1fs (%s)", idx, elapsed, "OK" if ok else "FAILED")
                 warped_path.unlink(missing_ok=True)
-                # Force GC + WAL checkpoint to prevent memory creep.
+                # Force GC + malloc_trim + WAL checkpoint to prevent memory creep.
                 # Python's allocator doesn't return freed numpy/rasterio buffers to
-                # the OS without explicit collection, and SQLite WAL grows unbounded
-                # without periodic checkpoints.
+                # the OS without explicit collection. Even after gc.collect(), glibc
+                # malloc holds onto freed arenas. malloc_trim(0) forces it to release
+                # them. SQLite WAL also grows unbounded without periodic checkpoints.
                 gc.collect()
+                try:
+                    import ctypes
+                    ctypes.CDLL("libc.so.6").malloc_trim(0)
+                except Exception:
+                    pass
                 import sqlite3 as _sql
                 try:
                     with _sql.connect(str(output)) as _c:
-                        _c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                        _c.execute("PRAGMA wal_checkpoint(PASSIVE)")
                 except Exception:
                     pass
                 return ok
@@ -2029,37 +2052,39 @@ async def run_noaa(args):
             async def _downloader():
                 """Stage 1: download tiles concurrently, feed reproject queue."""
                 nonlocal tiles_downloaded, downloads_finished
-                download_tasks = []
-                for idx, fname in enumerate(tile_filenames):
-                    if _cancel_requested:
-                        break
-                    log.info("[%d/%d] Queuing download: %s (~%d MB)",
-                             idx + 1, total_tiles, fname, NOAA_TILE_SIZE_MB)
-                    task = asyncio.ensure_future(_download_tile(fname))
-                    download_tasks.append((idx, fname, task))
+                try:
+                    download_tasks = []
+                    for idx, fname in enumerate(tile_filenames):
+                        if _cancel_requested:
+                            break
+                        log.info("[%d/%d] Queuing download: %s (~%d MB)",
+                                 idx + 1, total_tiles, fname, NOAA_TILE_SIZE_MB)
+                        task = asyncio.ensure_future(_download_tile(fname))
+                        download_tasks.append((idx, fname, task))
 
-                    if len(download_tasks) >= DOWNLOAD_CONCURRENCY:
-                        oldest_idx, oldest_fname, oldest_task = download_tasks.pop(0)
-                        dl_fname, dl_path = await oldest_task
+                        if len(download_tasks) >= DOWNLOAD_CONCURRENCY:
+                            oldest_idx, oldest_fname, oldest_task = download_tasks.pop(0)
+                            dl_fname, dl_path = await oldest_task
+                            with counter_lock:
+                                tiles_downloaded += 1
+                            _write_progress()
+                            await reproject_queue.put((oldest_idx, dl_fname, dl_path))
+
+                    for idx, fname, task in download_tasks:
+                        if _cancel_requested:
+                            task.cancel()
+                            continue
+                        dl_fname, dl_path = await task
                         with counter_lock:
                             tiles_downloaded += 1
                         _write_progress()
-                        await reproject_queue.put((oldest_idx, dl_fname, dl_path))
-
-                for idx, fname, task in download_tasks:
-                    if _cancel_requested:
-                        task.cancel()
-                        continue
-                    dl_fname, dl_path = await task
+                        await reproject_queue.put((idx, dl_fname, dl_path))
+                finally:
+                    # Always send sentinel so _reprojector doesn't block forever
                     with counter_lock:
-                        tiles_downloaded += 1
+                        downloads_finished = True
                     _write_progress()
-                    await reproject_queue.put((idx, dl_fname, dl_path))
-
-                with counter_lock:
-                    downloads_finished = True
-                _write_progress()
-                await reproject_queue.put(None)
+                    await reproject_queue.put(None)
 
             async def _reprojector():
                 """Stage 2: reproject tiles in parallel thread pool, feed merge queue.
@@ -2074,46 +2099,50 @@ async def run_noaa(args):
                 pending_futures = []
                 sentinel_received = False
 
-                while not sentinel_received or pending_futures:
-                    # Try to get new work, but don't block forever — we need to
-                    # drain completed futures even when no new downloads arrive
-                    try:
-                        item = await asyncio.wait_for(reproject_queue.get(), timeout=0.5)
-                        if item is None:
-                            sentinel_received = True
-                        else:
-                            idx, tile_fname, raw_path = item
-
-                            if _cancel_requested or raw_path is None:
-                                if raw_path:
-                                    raw_path.unlink(missing_ok=True)
-                                if raw_path is None:
-                                    await merge_queue.put((idx, tile_fname, None))
+                try:
+                    while not sentinel_received or pending_futures:
+                        try:
+                            item = await asyncio.wait_for(reproject_queue.get(), timeout=0.5)
+                            if item is None:
+                                sentinel_received = True
                             else:
-                                log.info("[%d/%d] Reprojecting %s (%d workers)",
-                                         idx + 1, total_tiles, tile_fname, REPROJECT_WORKERS)
+                                idx, tile_fname, raw_path = item
 
-                                future = loop.run_in_executor(
-                                    reproject_pool, _reproject_tile, raw_path, tile_fname
-                                )
-                                pending_futures.append((idx, tile_fname, future))
-                    except asyncio.TimeoutError:
-                        pass  # No new work — just drain completed futures below
+                                if _cancel_requested or raw_path is None:
+                                    if raw_path:
+                                        raw_path.unlink(missing_ok=True)
+                                    if raw_path is None:
+                                        await merge_queue.put((idx, tile_fname, None))
+                                else:
+                                    log.info("[%d/%d] Reprojecting %s (%d workers)",
+                                             idx + 1, total_tiles, tile_fname, REPROJECT_WORKERS)
 
-                    # Always drain completed futures
-                    still_pending = []
-                    for f_idx, f_fname, f_future in pending_futures:
-                        if f_future.done():
-                            warped = f_future.result()
-                            with counter_lock:
-                                tiles_reprojected += 1
-                            _write_progress()
-                            await merge_queue.put((f_idx, f_fname, warped))
-                        else:
-                            still_pending.append((f_idx, f_fname, f_future))
-                    pending_futures = still_pending
+                                    future = loop.run_in_executor(
+                                        reproject_pool, _reproject_tile, raw_path, tile_fname
+                                    )
+                                    pending_futures.append((idx, tile_fname, future))
+                        except asyncio.TimeoutError:
+                            pass
 
-                await merge_queue.put(None)
+                        # Always drain completed futures
+                        still_pending = []
+                        for f_idx, f_fname, f_future in pending_futures:
+                            if f_future.done():
+                                try:
+                                    warped = f_future.result()
+                                except Exception as exc:
+                                    log.error("Reproject future raised for %s: %s", f_fname, exc)
+                                    warped = None
+                                with counter_lock:
+                                    tiles_reprojected += 1
+                                _write_progress()
+                                await merge_queue.put((f_idx, f_fname, warped))
+                            else:
+                                still_pending.append((f_idx, f_fname, f_future))
+                        pending_futures = still_pending
+                finally:
+                    # Always send sentinel so _merger doesn't block forever
+                    await merge_queue.put(None)
 
             async def _merger():
                 """Stage 3: merge reprojected tiles into MBTiles (serialized)."""
@@ -2172,7 +2201,7 @@ async def run_noaa(args):
             try:
                 await asyncio.gather(_downloader(), _reprojector(), _merger())
             finally:
-                reproject_pool.shutdown(wait=False)
+                reproject_pool.shutdown(wait=True, cancel_futures=True)
 
             if _cancel_requested:
                 update_progress(output, "noaa", args.bbox, "n/a",
@@ -2222,7 +2251,7 @@ async def run_noaa(args):
 
     # Phase 6: Update TileServer config if path is provided via env
     ts_config_path = os.environ.get("TILESERVER_CONFIG")
-    if output.exists() and tiles_done > 0 and ts_config_path:
+    if output.exists() and (tiles_done > 0 or skip_to_postprocess) and ts_config_path:
         ts_config = Path(ts_config_path)
         if ts_config.exists():
             try:
