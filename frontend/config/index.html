@@ -517,6 +517,38 @@
                     title = 'M2M imagery: Converting to tiles...';
                     pct = 100;
                 }
+            } else if (imageryData.mode === 'noaa') {
+                var dl = imageryData.geotiffs_downloaded || 0;
+                var rp = imageryData.tiles_reprojected || 0;
+                var merged = imageryData.tiles_done || 0;
+                var total = imageryData.geotiffs_total || imageryData.tiles_total || 1;
+                var phase = imageryData.phase || 'downloading';
+                var rate = imageryData.rate_per_sec || 0;
+
+                title = 'NOAA NAIP imagery: ' + merged + '/' + total + ' tiles';
+                pct = Math.min(100, merged / total * 100);
+
+                // Three-line detail: one per stage
+                var stages = [
+                    'Downloaded: ' + dl + '/' + total,
+                    'Reprojected: ' + rp + '/' + total,
+                    'Merged: ' + merged + '/' + total,
+                ];
+                // Live ETA from rolling rate
+                if (rate > 0 && merged < total) {
+                    var remaining = total - merged;
+                    var etaSec = remaining / rate;
+                    var etaStr;
+                    if (etaSec > 3600) {
+                        etaStr = (etaSec / 3600).toFixed(1) + ' h';
+                    } else if (etaSec > 60) {
+                        etaStr = Math.round(etaSec / 60) + ' min';
+                    } else {
+                        etaStr = Math.round(etaSec) + ' s';
+                    }
+                    stages.push('ETA: ' + etaStr);
+                }
+                detail = stages.join(' \u00b7 ');
             } else {
                 title = 'Imagery download in progress';
                 var total = imageryData.estimated_tiles || imageryData.tiles_total || 1;

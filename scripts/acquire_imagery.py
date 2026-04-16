@@ -230,7 +230,8 @@ def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
                     scenes_total: int = None,
                     geotiffs_downloaded: int = None, geotiffs_total: int = None,
                     geotiffs_bytes: int = None,
-                    current_batch: int = None, total_batches: int = None):
+                    current_batch: int = None, total_batches: int = None,
+                    tiles_reprojected: int = None):
     """Write structured progress to the state file.
 
     For direct mode: tiles_done/tiles_total/rate are the primary fields.
@@ -299,7 +300,7 @@ def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
     enriched["mode"] = mode
     enriched["tiles_done"] = tiles_done
     enriched["tiles_total"] = tiles_total
-    enriched["rate_per_sec"] = round(rate, 1)
+    enriched["rate_per_sec"] = round(rate, 4)
     if getattr(update_progress, '_started_at', None) is not None:
         enriched.setdefault("started_at", update_progress._started_at)
     if error is None:
@@ -318,6 +319,8 @@ def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
         enriched["total_batches"] = total_batches
     if scenes_total is not None:
         enriched["scenes_total"] = scenes_total
+    if tiles_reprojected is not None:
+        enriched["tiles_reprojected"] = tiles_reprojected
 
     # Step 3: write enriched state back atomically
     write_pipeline_state(output_path, enriched)
@@ -1817,6 +1820,9 @@ async def run_noaa(args):
         DOWNLOAD_CONCURRENCY = min(4, total_tiles)
         REPROJECT_WORKERS = min(cpu_count, 6, total_tiles)
 
+        # Pipeline start time for rolling rate computation
+        _progress_start_monotonic = time.monotonic()
+
         # Shared counters (updated by each stage, read by progress writer)
         tiles_downloaded = 0
         tiles_reprojected = 0
@@ -1858,10 +1864,15 @@ async def run_noaa(args):
                 phase = "merging"
                 detail = f"merging {done}/{total_tiles} (reproject done)"
 
+            # Rolling rate: tiles merged per second
+            elapsed = time.monotonic() - _progress_start_monotonic
+            rate = done / elapsed if elapsed > 0 else 0.0
+
             update_progress(output, "noaa", args.bbox, "n/a",
-                            done, total_tiles, phase=phase,
+                            done, total_tiles, rate=rate, phase=phase,
                             geotiffs_downloaded=dl,
-                            geotiffs_total=total_tiles)
+                            geotiffs_total=total_tiles,
+                            tiles_reprojected=rp)
 
         async def _download_tile(tile_fname):
             """Download and validate a single tile."""

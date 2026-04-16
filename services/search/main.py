@@ -1685,18 +1685,21 @@ async def noaa_estimate(
     raw_download_gb = tile_count * NOAA_TILE_SIZE_MB / 1024
     final_mbtiles_gb = tile_count * 29 / 1024  # empirical: ~29 MB/tile in MBTiles
 
-    # Best-case estimate with concurrent pipeline (3 downloads, 1 processor):
-    # Download: ~150s/tile, but 3 concurrent → ~50s/tile delivered to queue
-    # Process: ~90s reproject + convert (the bottleneck when downloads are fast)
-    # Effective per-tile: max(download_time/concurrency, process_time) ≈ 90s best case
-    # With slower connections, download becomes the bottleneck: 150s/tile ÷ 3 = 50s
-    # but single-connection may be 2-3 MB/s → 486MB/2.7MB/s = 180s → 180/3 = 60s
-    # Best case: ~1.5 min/tile (CPU-bound processing is bottleneck)
-    download_concurrency = 3
-    download_time_s = NOAA_TILE_SIZE_MB / 2.7  # seconds per tile at ~2.7 MB/s
-    process_time_s = 90  # reproject + convert empirical
-    effective_per_tile_s = max(download_time_s / download_concurrency, process_time_s)
-    est_hours = tile_count * effective_per_tile_s / 3600
+    # 3-stage parallel pipeline economics:
+    # - Download stage: 4 concurrent fetches at ~3 MB/s each → ~160 s/tile raw but parallelized
+    # - Reproject stage: CPU-bound, min(cpu_count, 6) threads → ~45 s/tile wall-clock at 4 cores
+    # - Merge stage: serial, ~20 s/tile (the bottleneck once downloads catch up)
+    # Steady-state per-tile cost = max(download/concurrency, reproject/workers, merge_serial)
+    download_concurrency = 4
+    reproject_workers = 4  # typical Pi 5; desktops run faster, this is a conservative floor
+    download_per_tile_s = (NOAA_TILE_SIZE_MB / 3.0) / download_concurrency  # ~40 s
+    reproject_per_tile_s = 45 / reproject_workers                            # ~11 s
+    merge_per_tile_s = 20                                                     # serial bottleneck
+    effective_per_tile_s = max(download_per_tile_s, reproject_per_tile_s, merge_per_tile_s)
+    # Add pipeline-fill overhead: first tile must traverse all 3 stages before the meter moves
+    startup_overhead_s = 120
+    est_seconds = tile_count * effective_per_tile_s + startup_overhead_s
+    est_hours = est_seconds / 3600
 
     return {
         "status": "ok",
@@ -1704,10 +1707,11 @@ async def noaa_estimate(
         "raw_download_gb": round(raw_download_gb, 1),
         "final_mbtiles_gb": round(final_mbtiles_gb, 1),
         "staging_peak_gb": round(NOAA_TILE_SIZE_MB * (download_concurrency + 1) / 1024, 1),
-        "est_hours": round(est_hours, 1),
-        "est_days": round(est_hours / 24, 1),
+        "est_hours": round(est_hours, 2),
+        "est_days": round(est_hours / 24, 2),
+        "per_tile_seconds": round(effective_per_tile_s, 1),
         "download_concurrency": download_concurrency,
-        "download_speed_mbs": 2.7,
+        "download_speed_mbs": 3.0,
         "disk_free_gb": round(_get_disk_free_gb(), 1),
     }
 
