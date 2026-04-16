@@ -565,6 +565,8 @@
     // -----------------------------------------------------------------------
     // Catalog fetch — populates _catalogData from /admin/imagery/catalog
     // -----------------------------------------------------------------------
+    var _cardsRendered = false;
+
     function fetchCatalog() {
         fetch('/admin/imagery/catalog')
             .then(function(r) { return r.json(); })
@@ -573,11 +575,40 @@
                 (data.sources || []).forEach(function(s) {
                     _catalogData[s.id] = s;
                 });
-                renderSourceCards();
+                if (!_cardsRendered) {
+                    renderSourceCards();
+                    _cardsRendered = true;
+                } else {
+                    _updateCardDiskInfo();
+                }
             })
             .catch(function() {
-                renderSourceCards(); // render without disk data
+                if (!_cardsRendered) {
+                    renderSourceCards();
+                    _cardsRendered = true;
+                }
             });
+    }
+
+    /** Update disk info text on existing cards without rebuilding the DOM. */
+    function _updateCardDiskInfo() {
+        SOURCE_REGISTRY.forEach(function(src) {
+            var diskDiv = document.getElementById('card-' + src.id + '-disk');
+            if (!diskDiv) return;
+            if (src.disabled) return;
+            var catEntry = _catalogData[src.id];
+            if (catEntry) {
+                var bytes = catEntry.size_bytes || 0;
+                var text = bytes > 1e9 ? (bytes / 1e9).toFixed(1) + ' GB' : (bytes / 1e6).toFixed(0) + ' MB';
+                var totalTiles = (catEntry.zoom_levels || []).reduce(function(s, z) { return s + (z.tile_count || 0); }, 0);
+                if (totalTiles) text += ' \u00b7 ' + totalTiles.toLocaleString() + ' tiles';
+                diskDiv.textContent = text;
+                diskDiv.className = 'card-disk';
+            } else {
+                diskDiv.textContent = 'Not downloaded';
+                diskDiv.className = 'card-disk none';
+            }
+        });
     }
 
     // -----------------------------------------------------------------------
@@ -615,9 +646,15 @@
 
         renderGenericProgress(d, ids);
 
-        // Re-fetch catalog when pipeline completes to update disk data
+        // Re-fetch catalog once when pipeline reaches terminal state (not every poll)
+        var terminalKey = '_terminal_' + sourceId;
         if (d.status === 'completed' || d.status === 'error' || d.status === 'cancelled') {
-            fetchCatalog();
+            if (!renderSourceProgress[terminalKey]) {
+                renderSourceProgress[terminalKey] = true;
+                fetchCatalog();
+            }
+        } else {
+            renderSourceProgress[terminalKey] = false;
         }
     }
 
@@ -845,6 +882,7 @@
         var grid = document.getElementById('source-card-grid');
         if (!grid) return;
         grid.textContent = '';
+        _expandedCard = null;
 
         SOURCE_REGISTRY.forEach(function(src) {
             var card = document.createElement('div');
@@ -882,6 +920,7 @@
 
             // Disk info
             var diskDiv = document.createElement('div');
+            diskDiv.id = 'card-' + src.id + '-disk';
             var diskText = 'Not downloaded';
             diskDiv.className = 'card-disk none';
             if (src.disabled) {
@@ -957,10 +996,12 @@
 
             grid.appendChild(card);
 
-            // Configure button handler
+            // Card click handler — whole card is clickable to expand
             if (!src.disabled) {
-                configBtn.addEventListener('click', function(e) {
-                    e.stopPropagation();
+                card.addEventListener('click', function(e) {
+                    // Don't toggle if clicking inside the expanded card body (form controls, buttons)
+                    if (e.target.closest('.card-body')) return;
+                    if (e.target.closest('.card-close')) return;
                     toggleCardExpand(src.id);
                 });
             }
