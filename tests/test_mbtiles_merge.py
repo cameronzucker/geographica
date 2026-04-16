@@ -103,8 +103,9 @@ class TestMergeMbtiles:
         assert b"batch2_z1_1" in tile_data
         assert b"batch2_z2" in tile_data
 
-    def test_overlapping_tiles_replaced_by_later_batch(self, tmp_path):
-        """When batches have the same tile coords, later batch wins."""
+    def test_overlapping_tiles_first_batch_kept_when_composite_fails(self, tmp_path):
+        """When batches overlap and tiles can't be composited (not valid JPEG),
+        the first batch's tile is preserved via INSERT OR IGNORE."""
         dst = tmp_path / "output.mbtiles"
 
         src1 = tmp_path / "batch1.mbtiles"
@@ -121,7 +122,8 @@ class TestMergeMbtiles:
 
         tiles = _read_tiles(dst)
         assert len(tiles) == 1
-        assert tiles[0][3] == b"new_data"
+        # First batch preserved — compositing falls back to keeping existing
+        assert tiles[0][3] == b"old_data"
 
     def test_metadata_from_first_batch_preserved(self, tmp_path):
         """Metadata from first batch is kept; later batches don't overwrite."""

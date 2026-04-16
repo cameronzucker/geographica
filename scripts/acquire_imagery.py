@@ -588,12 +588,34 @@ def convert_geotiffs_to_mbtiles(tif_paths: list[Path], output: Path):
     log.info("MBTiles written to %s", output)
 
 
+def _encode_jpeg(array, quality: int = 85) -> bytes:
+    """Encode a numpy array as JPEG bytes using rasterio."""
+    import rasterio
+    with rasterio.MemoryFile() as memfile:
+        with memfile.open(
+            driver="JPEG",
+            height=array.shape[1],
+            width=array.shape[2],
+            count=min(array.shape[0], 3),
+            dtype="uint8",
+            quality=quality,
+        ) as dst:
+            dst.write(array[:3])
+        return memfile.read()
+
+
 def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
     """Append tiles from src MBTiles into dst MBTiles.
 
     Creates dst tables if they don't exist (first batch).
-    Later batches override overlapping tiles via INSERT OR REPLACE.
+    Overlapping tiles are composited: non-black pixels from the new tile
+    fill in black areas of the existing tile, preserving data from both
+    source NAIP quads at their shared boundary.
     """
+    import rasterio
+    from rasterio.io import MemoryFile
+    import numpy as np
+
     dst = sqlite3.connect(str(dst_path))
     try:
         dst.execute("ATTACH DATABASE ? AS src", (str(src_path),))
@@ -604,10 +626,44 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
             PRIMARY KEY (zoom_level, tile_column, tile_row))""")
         dst.execute("""CREATE TABLE IF NOT EXISTS metadata (
             name TEXT PRIMARY KEY, value TEXT)""")
-        # Insert or replace tiles (later batches override overlapping tiles)
-        dst.execute("""INSERT OR REPLACE INTO tiles
+
+        # Insert non-overlapping tiles directly (fast path)
+        dst.execute("""INSERT OR IGNORE INTO tiles
             SELECT zoom_level, tile_column, tile_row, tile_data
             FROM src.tiles""")
+
+        # Composite overlapping tiles (slow path — only for edge tiles)
+        overlapping = dst.execute("""
+            SELECT s.zoom_level, s.tile_column, s.tile_row, s.tile_data, d.tile_data
+            FROM src.tiles s
+            JOIN tiles d ON s.zoom_level = d.zoom_level
+                AND s.tile_column = d.tile_column
+                AND s.tile_row = d.tile_row
+            WHERE s.tile_data != d.tile_data
+        """).fetchall()
+
+        composited = 0
+        for z, x, y, src_data, dst_data in overlapping:
+            try:
+                with MemoryFile(src_data) as smf, MemoryFile(dst_data) as dmf:
+                    with smf.open() as sds, dmf.open() as dds:
+                        src_arr = sds.read()
+                        dst_arr = dds.read()
+                # Threshold 20 catches JPEG compression artifacts at nodata edges
+                black_mask = np.all(dst_arr[:3] <= 20, axis=0)
+                dst_arr[:, black_mask] = src_arr[:, black_mask]
+                merged = _encode_jpeg(dst_arr)
+                dst.execute(
+                    "UPDATE tiles SET tile_data = ? WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?",
+                    (merged, z, x, y),
+                )
+                composited += 1
+            except Exception:
+                pass  # Keep existing tile on decode error
+
+        if composited:
+            log.info("Composited %d overlapping edge tiles", composited)
+
         # Copy metadata from first batch only
         dst.execute("""INSERT OR IGNORE INTO metadata
             SELECT name, value FROM src.metadata""")
@@ -699,6 +755,116 @@ def _run_gdaladdo_with_metadata_fixup(output: Path) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _postprocess_nodata(output: Path) -> None:
+    """Erode nodata boundary tiles and inpaint black seams.
+
+    JPEG tiles have no alpha, so nodata renders as opaque black over
+    the basemap. This two-step cleanup:
+      1. Erodes boundary tiles with heavy black edges
+      2. Inpaints remaining black pixels via nearest-neighbor fill
+
+    Called automatically after overview generation.
+    """
+    import rasterio
+    import numpy as np
+
+    if _cancel_requested:
+        return
+
+    conn = sqlite3.connect(str(output))
+    conn.execute("PRAGMA journal_mode=WAL")
+
+    # Step 1: Erode boundary tiles with >10% black in any 48px edge strip
+    edge_px, min_fill, threshold = 48, 0.90, 20
+    zoom_levels = [r[0] for r in conn.execute(
+        "SELECT DISTINCT zoom_level FROM tiles ORDER BY zoom_level"
+    ).fetchall()]
+
+    total_eroded = 0
+    for z in zoom_levels:
+        eroded_round = 1
+        while eroded_round > 0:
+            eroded_round = 0
+            bounds = conn.execute(
+                "SELECT MIN(tile_column), MAX(tile_column), "
+                "MIN(tile_row), MAX(tile_row) FROM tiles WHERE zoom_level=?",
+                (z,),
+            ).fetchone()
+            if bounds[0] is None:
+                break
+            boundary = conn.execute(
+                "SELECT tile_column, tile_row, tile_data FROM tiles "
+                "WHERE zoom_level=? AND ("
+                "  tile_column=? OR tile_column=? OR tile_row=? OR tile_row=?)",
+                (z, bounds[0], bounds[1], bounds[2], bounds[3]),
+            ).fetchall()
+            for col, row, data in boundary:
+                try:
+                    with rasterio.MemoryFile(data) as mf:
+                        with mf.open() as ds:
+                            arr = ds.read()
+                    has_data = np.any(arr[:3] > threshold, axis=0)
+                    edges = [
+                        has_data[:edge_px, :].mean(),
+                        has_data[-edge_px:, :].mean(),
+                        has_data[:, :edge_px].mean(),
+                        has_data[:, -edge_px:].mean(),
+                    ]
+                    if min(edges) < min_fill:
+                        conn.execute(
+                            "DELETE FROM tiles WHERE zoom_level=? "
+                            "AND tile_column=? AND tile_row=?",
+                            (z, col, row),
+                        )
+                        eroded_round += 1
+                except Exception:
+                    pass
+            conn.commit()
+            total_eroded += eroded_round
+
+    if total_eroded:
+        log.info("Eroded %d nodata-edge tiles", total_eroded)
+
+    if _cancel_requested:
+        conn.close()
+        return
+
+    # Step 2: Inpaint remaining black pixels via nearest-neighbor fill
+    from scipy.ndimage import distance_transform_edt
+
+    tiles = conn.execute(
+        "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles"
+    ).fetchall()
+    inpainted = 0
+    for z, x, y, data in tiles:
+        with rasterio.MemoryFile(data) as mf:
+            with mf.open() as ds:
+                arr = ds.read().copy()
+        black = np.all(arr[:3] <= threshold, axis=0)
+        n_black = black.sum()
+        total = arr.shape[1] * arr.shape[2]
+        if n_black == 0 or n_black > total * 0.5:
+            continue
+        _, nearest = distance_transform_edt(
+            black, return_distances=True, return_indices=True,
+        )
+        for band in range(arr.shape[0]):
+            arr[band][black] = arr[band][nearest[0][black], nearest[1][black]]
+        conn.execute(
+            "UPDATE tiles SET tile_data=? "
+            "WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+            (_encode_jpeg(arr), z, x, y),
+        )
+        inpainted += 1
+        if inpainted % 1000 == 0:
+            conn.commit()
+
+    conn.commit()
+    conn.close()
+    if inpainted:
+        log.info("Inpainted %d tiles to remove black seams", inpainted)
 
 
 def convert_batch_to_mbtiles(tif_paths: list[Path], output: Path,
@@ -1919,6 +2085,11 @@ async def run_noaa(args):
             _run_gdaladdo_with_metadata_fixup(output)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             log.warning("Overview generation failed: %s — output is still usable", exc)
+
+        try:
+            _postprocess_nodata(output)
+        except Exception as exc:
+            log.warning("Nodata cleanup failed: %s — output is still usable", exc)
 
     # Phase 6: Update TileServer config if path is provided via env
     ts_config_path = os.environ.get("TILESERVER_CONFIG")
