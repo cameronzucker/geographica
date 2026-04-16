@@ -670,7 +670,7 @@
                 cancelBtn.style.marginTop = '8px';
                 cancelBtn.textContent = 'Cancel';
                 cancelBtn.addEventListener('click', function() {
-                    fetch('/admin/pipeline/cancel', { method: 'POST' });
+                    cfgFetch('/admin/pipeline/cancel', { method: 'POST' });
                 });
                 // Insert before progress elements
                 var progressDiv = document.getElementById(ids.progressDiv);
@@ -1748,13 +1748,13 @@
         });
     }
 
-    function toggleDrawBox() {
+    window.toggleDrawBox = function() {
         _drawMode = !_drawMode;
         updateDrawBoxButton();
         if (_map) {
             _map.getCanvasContainer().style.cursor = _drawMode ? 'crosshair' : '';
         }
-    }
+    };
 
     function updateDrawBoxButton() {
         var btn = document.getElementById('btn-draw-bbox');

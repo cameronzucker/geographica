@@ -1,8 +1,9 @@
 FROM python:3.12-slim
 
-# Install GDAL and build dependencies
+# Install GDAL, rasterio build deps, and ogr2ogr (for NOAA tile index)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gdal-bin \
+    libgdal-dev \
     python3-gdal \
     && rm -rf /var/lib/apt/lists/*
 

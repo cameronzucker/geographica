@@ -1897,7 +1897,7 @@ async def run_noaa(args):
             import threading
 
             cpu_count = os.cpu_count() or 4
-            DOWNLOAD_CONCURRENCY = min(4, total_tiles)
+            DOWNLOAD_CONCURRENCY = min(8, total_tiles)
             REPROJECT_WORKERS = min(cpu_count, 6, total_tiles)
 
             # Pipeline start time for rolling rate computation
