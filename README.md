@@ -11,7 +11,7 @@ isolated LAN or standalone device.
 ## Features
 
 - **Vector basemaps** with three themes (Positron light, Dark Matter dark, Hybrid imagery+roads) and house number labels
-- **Aerial imagery** overlay — 5 acquisition modes: USGS Direct (z0-z14 tile scraper, free), NOAA Digital Coast (z15-z18 NAIP from Azure, free, unthrottled), National Map ImageServer (z15+ NAIP, free but throttled), USGS M2M API (z19 NAIP, requires ERS account), and BYO GeoTIFF import. Per-source toggles and opacity slider. Dynamic basemap restyling (white roads/labels) when imagery is active.
+- **Aerial imagery** overlay — 5 acquisition modes: USGS Direct (z0-z14 tile scraper, free), NOAA Digital Coast (z17 NAIP from Azure with z0-z16 overviews, free, unthrottled), National Map ImageServer (z15+ NAIP, free but throttled), USGS M2M API (z19 NAIP, requires ERS account), and BYO GeoTIFF import. Per-source toggles and opacity slider. Dynamic basemap restyling (white roads/labels) when imagery is active. NOAA mode uses a 3-stage parallel pipeline (download/reproject/merge) with quad-level deduplication for incremental coverage expansion.
 - **Public lands layer** — BLM, National Forest, National Park, Fish & Wildlife, Military, Bureau of Reclamation, Tribal, State Trust, and Wilderness boundaries with agency-colored fills and legend. Tribal boundaries rendered with diagonal stripe pattern.
 - **3D terrain** with hillshade and adjustable exaggeration slider (z0-14 elevation data)
 - **Free-look camera** for 3D terrain exploration (pitch/bearing control)
@@ -55,18 +55,21 @@ isolated LAN or standalone device.
 | Vector basemap (OpenMapTiles via Planetiler) | ~2.4 GB |
 | Elevation tiles (zoom 0-14) | ~70-120 GB |
 | Aerial imagery — scraper z0-z14 (USGS tile cache) | ~25 GB |
-| Aerial imagery — NAIP z15-z19 (NOAA, National Map, or M2M, per region) | ~30-270 GB |
+| Aerial imagery — NAIP z17 (NOAA, per region) | ~10-50 GB |
 | Public lands (PAD-US + Census AIANNH tribal) | ~0.4 GB |
 | OSM extracts (merged PBF) | ~3.1 GB |
 | Valhalla routing graph | ~4.3 GB |
 | Nominatim geocoding DB | ~30-40 GB |
 | POI index (GNIS + OSM) | ~80 MB |
-| **Total** | **~170-470 GB** |
+| **Total** | **~145-320 GB** |
 
-Imagery size varies by region and max zoom. z0-z14 scraper covers the full
-region at ~25 GB. Each additional zoom level roughly quadruples tile count.
-Arizona at z16 adds ~23 GB, at z17 adds ~91 GB. NAIP GeoTIFFs are downloaded
-in batches and deleted after conversion — staging requires ~15 GB temporary.
+Imagery size varies by region. z0-z14 scraper covers the full region at ~25 GB.
+NOAA NAIP imagery is ~21 MB per NAIP quad after JPEG compression, edge erosion,
+and inpainting. Northern Arizona (494 quads) is ~10 GB; all of Arizona (~2,000
+quads) would be ~42 GB. The 3-stage pipeline processes ~0.7 tiles/min on a Pi 5
+(~1.5 min/tile) — a full state takes 12-48 hours depending on quad count. Staging
+requires ~4 GB temporary (8 concurrent 486 MB GeoTIFF downloads). Re-running with
+a larger overlapping bbox skips already-processed quads automatically.
 
 POI index includes GNIS geographic features + OSM commercial amenities + public land boundaries.
 
@@ -85,6 +88,7 @@ Config ──> NGINX (:8097) ──┬──> Search (:8096)           pipeline 
                           └──> /vendor/                MapLibre GL JS/CSS
 
 Pipeline container (on-demand) ──> acquire_imagery.py     imagery downloads (direct, M2M, National Map, NOAA)
+                               ──> rasterio_ops.py         tile reproject, merge, overviews, edge cleanup
                                ──> import_imagery.py       BYO GeoTIFF import + MBTiles conversion
                                ──> tileserver_config.py    TileServer config.json updater
                                ──> build_osm_pois.py      OSM POI extraction
@@ -134,7 +138,7 @@ sudo apt update
 sudo apt install -y \
   docker.io docker-compose-plugin \
   python3 python3-venv python3-pip \
-  gdal-bin osmium-tool \
+  gdal-bin libgdal-dev osmium-tool \
   gpsd gpsd-clients \
   git wget curl unzip
 ```
@@ -170,9 +174,10 @@ https://ers.cr.usgs.gov/profile/access. Enter credentials in the admin panel
 (Settings tab) after the stack is running. Credentials are stored securely via
 GNOME Keyring (not plaintext files).
 
-> **Free alternatives:** NOAA Digital Coast (z15-z18, unthrottled, no account needed)
-> and National Map ImageServer (z15+, rate-limited) provide NAIP imagery without
-> credentials. These cover most use cases — M2M is only needed for z19 resolution.
+> **Free alternatives:** NOAA Digital Coast (z17 with overviews to z0, unthrottled,
+> no account needed) and National Map ImageServer (z15+, rate-limited) provide NAIP
+> imagery without credentials. NOAA is the recommended source — it's the fastest
+> and produces the best results. M2M is only needed for z19 resolution.
 
 ### 1. Clone the repo
 
@@ -446,8 +451,11 @@ docker compose ps                   # check health status
 
 > **Memory limits:** The stack has per-container memory limits to prevent
 > system-wide OOM on 16 GB hardware: Nominatim 8 GB, Valhalla 4 GB,
-> Pipeline 2 GB, STT 1.5 GB, TileServer 1 GB, Search 256 MB, GPS 128 MB,
-> Frontend 128 MB (~17 GB total ceiling, but pipeline is on-demand).
+> Pipeline 4 GB, STT 1.5 GB, TileServer 1 GB, Search 256 MB, GPS 128 MB,
+> Frontend 128 MB (~19 GB total ceiling, but pipeline is on-demand).
+> The pipeline container needs 4 GB because the NOAA rasterio-based
+> reproject runs in-process with multiple threads, each handling ~486 MB
+> GeoTIFFs.
 > If a container exceeds its limit, Docker restarts just that container —
 > the system stays up.
 
@@ -506,11 +514,12 @@ progress banner linking to the Pipelines tab.
 
 **Pipelines** — 7-source card grid layout: USGS Direct (z0-z14 basemap tiles),
 USGS M2M (z19 NAIP via ERS API), National Map ImageServer (z15+ NAIP, free),
-NOAA Digital Coast (z15-z18 NAIP from Azure, free, unthrottled), Sentinel-2
-(Copernicus), NAIP county mosaic lookup, and BYO GeoTIFF import. Each card shows
-resolution, auth requirements, and estimated time. Includes a MapLibre minimap
-with draw-to-select bounding box. NOAA has a pre-download estimate (tile count,
-size, ETA). Only one pipeline runs at a time.
+NOAA Digital Coast (z17 NAIP from Azure with z0-z16 overviews, free, unthrottled),
+Sentinel-2 (Copernicus), NAIP county mosaic lookup, and BYO GeoTIFF import. Each
+card shows resolution, auth requirements, and estimated time. Includes a MapLibre
+minimap with draw-to-select bounding box. NOAA has a pre-download estimate (tile
+count, size, ETA) and 3-stage progress tracking (downloaded/reprojected/merged)
+with live ETA during runs. Only one pipeline runs at a time.
 
 **Inventory** — MapLibre map with clustered coverage markers showing downloaded
 imagery sources. Click a source to see zoom range, tile count, file size, and
@@ -560,6 +569,24 @@ sudo systemctl enable --now geographica-tls-renew.timer
 ```
 
 Visit `https://<your-tailscale-hostname>` — green padlock, GPS works.
+
+## Companion data utility
+
+For faster imagery downloads on hardware with more bandwidth and CPU (desktop,
+laptop), use the [Geographica Companion](https://github.com/cdzucker/geographica-companion)
+utility. It runs the same NOAA NAIP pipeline on your desktop, then transfers the
+finished MBTiles to the Pi via SCP. This is significantly faster than running the
+pipeline on the Pi itself — a desktop with 8+ cores and no swap pressure processes
+tiles ~3x faster.
+
+The companion produces the same output format (MBTiles with JPEG tiles, edge
+erosion, inpainting) — just copy the file to `/srv/geographica/data/` on the Pi
+and register it with TileServer:
+
+```bash
+scp imagery_noaa.mbtiles user@pi-ip:/srv/geographica/data/
+ssh user@pi-ip "cd ~/Code/geographica && python3 scripts/tileserver_config.py add tileserver/config.json imagery_noaa /srv/data/imagery_noaa.mbtiles && docker compose restart tileserver"
+```
 
 ## Customizing coverage area
 
@@ -654,10 +681,11 @@ nonfunctional. Use NOAA Digital Coast (free, unthrottled) or National Map
 ImageServer (free, rate-limited) for NAIP imagery instead.
 
 **System crashed / OOM during first run**
-Ensure cgroup memory limits are enabled (see above). The M2M imagery pipeline
-is the most memory-intensive process — it holds all scene metadata in memory
-(~1.5 GB for Arizona's 16,000+ scenes). On 8 GB Pi 5, stop Docker services
-before running large M2M downloads: `docker compose stop`.
+Ensure cgroup memory limits are enabled (see above). The NOAA imagery pipeline
+is memory-intensive — rasterio reproject runs in-process with 4 threads, each
+handling ~486 MB GeoTIFFs (peak RSS ~2-3 GB). The M2M pipeline holds all scene
+metadata in memory (~1.5 GB for Arizona's 16,000+ scenes). On 8 GB Pi 5, stop
+Docker services before running large downloads: `docker compose stop`.
 
 **Slow spatial search (5+ seconds)**
 If spatial search is slow only in the browser (curl is fast), enable HTTP/2 on
@@ -751,6 +779,7 @@ geographica/
 │   ├── build_public_lands.py   # PAD-US public lands vector tile generator
 │   ├── build_county_index.py   # Census TIGER/Line county lookup database
 │   ├── acquire_imagery.py      # Multi-mode imagery downloader (direct, M2M, National Map, NOAA)
+│   ├── rasterio_ops.py         # Rasterio tile pipeline (reproject, merge, overviews, edge erosion, inpainting)
 │   ├── acquire_naip.py         # USGS NAIP county mosaic downloader (USDA Gateway — currently unavailable)
 │   ├── acquire_sentinel.py     # Copernicus Sentinel-2 imagery downloader
 │   ├── import_imagery.py       # BYO GeoTIFF import with MBTiles conversion
@@ -759,7 +788,7 @@ geographica/
 │   ├── pipeline_security.py    # Pipeline input validation and security checks
 │   ├── provision_tailscale_tls.sh  # Tailscale TLS cert provisioning
 │   └── generate_tls.sh         # Self-signed TLS cert generation
-├── tests/                      # Top-level test suite (535 tests)
+├── tests/                      # Top-level test suite (580+ tests)
 │   ├── test_intent_parser.py   # Spatial search intent parser (54 tests)
 │   ├── test_geocode.py         # City geocode with cache (10 tests)
 │   ├── test_spatial_endpoint.py # Endpoint integration (15 tests)

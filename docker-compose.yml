@@ -218,7 +218,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 4G
     # Entrypoint is set when started via docker compose run
     # Default: idle (exits immediately if no command given)
     entrypoint: ["python3"]
