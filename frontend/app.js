@@ -243,7 +243,7 @@
       }
       _availableTileJSON[sourceId] = true;
       if (!map.getSource(sourceId)) {
-        map.addSource(sourceId, { type: sourceType, url: tileJsonUrl });
+        map.addSource(sourceId, { type: sourceType, url: tileJsonUrl, tileSize: 256 });
         var layerId = sourceId + '-layer';
         if (!map.getLayer(layerId)) {
           map.addLayer({
@@ -299,7 +299,8 @@
       // Prevents bug B1 where hardcoded maxzoom blocked higher-res tiles.
       map.addSource('imagery', {
         type: 'raster',
-        url: '/tiles/data/imagery.json'
+        url: '/tiles/data/imagery.json',
+        tileSize: 256
       });
     }
     if (!map.getLayer('imagery-layer')) {
