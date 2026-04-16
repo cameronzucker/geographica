@@ -705,7 +705,11 @@ def build_overviews(
                         ).fetchone()
                         children.append((dx, dy, child[0] if child else None))
 
-                if not any(c[2] for c in children):
+                # Only create overview when ALL 4 children exist.
+                # Partial 2x2 blocks at coverage edges produce black quadrants
+                # (JPEG has no alpha), creating orphan overview tiles visible at
+                # low zoom with no backing data at high zoom.
+                if not all(c[2] for c in children):
                     continue
 
                 # Decode children, composite, re-encode

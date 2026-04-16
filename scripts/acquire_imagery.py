@@ -2005,6 +2005,7 @@ async def run_noaa(args):
 
             def _merge_tile(warped_path, idx):
                 """Merge a reprojected tile into the output MBTiles. Runs serially."""
+                import gc
                 t0 = time.monotonic()
                 warped_size = warped_path.stat().st_size / (1024 * 1024) if warped_path.exists() else 0
                 log.debug("Merge start: tile %d (%.0f MB warped)", idx, warped_size)
@@ -2012,6 +2013,17 @@ async def run_noaa(args):
                 elapsed = time.monotonic() - t0
                 log.debug("Merge done: tile %d in %.1fs (%s)", idx, elapsed, "OK" if ok else "FAILED")
                 warped_path.unlink(missing_ok=True)
+                # Force GC + WAL checkpoint to prevent memory creep.
+                # Python's allocator doesn't return freed numpy/rasterio buffers to
+                # the OS without explicit collection, and SQLite WAL grows unbounded
+                # without periodic checkpoints.
+                gc.collect()
+                import sqlite3 as _sql
+                try:
+                    with _sql.connect(str(output)) as _c:
+                        _c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except Exception:
+                    pass
                 return ok
 
             async def _downloader():
