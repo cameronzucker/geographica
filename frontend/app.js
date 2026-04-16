@@ -307,6 +307,7 @@
         id: 'imagery-layer',
         type: 'raster',
         source: 'imagery',
+        maxzoom: 15, // Stop rendering at z15 where NOAA/detail imagery takes over
         layout: { visibility: 'none' },
         paint: { 'raster-opacity': _imageryOpacity }
       });
