@@ -181,7 +181,10 @@
         <div class="section">
             <h2 style="font-size:14px;color:#f5f5f5;margin:0 0 12px">Coverage Area</h2>
             <div id="minimap-container">
-                <label>Draw bbox on map or enter manually</label>
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+                    <button id="btn-draw-bbox" class="btn-secondary" onclick="toggleDrawBox()" style="padding:4px 10px;font-size:11px">Draw Box</button>
+                    <span style="color:#7a8299;font-size:12px">Click "Draw Box" then drag on the map, or enter coordinates below.</span>
+                </div>
                 <div id="minimap"></div>
             </div>
             <label>Coverage area (bbox)</label>
@@ -1618,7 +1621,7 @@
     // -----------------------------------------------------------------------
     // Minimap (bbox drawing)
     // -----------------------------------------------------------------------
-    var _map = null, _drawing = false, _startLngLat = null;
+    var _map = null, _drawing = false, _startLngLat = null, _drawMode = false;
 
     function bboxToGeoJSON(w, s, e, n) {
         return {
@@ -1678,6 +1681,7 @@
             syncBboxToMap();
 
             _map.on('mousedown', function(e) {
+                if (!_drawMode) return;
                 if (e.originalEvent.button !== 0) return;
                 _drawing = true;
                 _startLngLat = e.lngLat;
@@ -1695,6 +1699,9 @@
                 if (!_drawing || !_startLngLat) return;
                 _drawing = false;
                 _map.dragPan.enable();
+                _drawMode = false;
+                updateDrawBoxButton();
+                _map.getCanvasContainer().style.cursor = '';
                 var west = Math.min(_startLngLat.lng, e.lngLat.lng);
                 var east = Math.max(_startLngLat.lng, e.lngLat.lng);
                 var south = Math.min(_startLngLat.lat, e.lngLat.lat);
@@ -1707,6 +1714,30 @@
                 syncMapToBbox(west, south, east, north);
             });
         });
+    }
+
+    function toggleDrawBox() {
+        _drawMode = !_drawMode;
+        updateDrawBoxButton();
+        if (_map) {
+            _map.getCanvasContainer().style.cursor = _drawMode ? 'crosshair' : '';
+        }
+    }
+
+    function updateDrawBoxButton() {
+        var btn = document.getElementById('btn-draw-bbox');
+        if (!btn) return;
+        if (_drawMode) {
+            btn.style.background = '#89b4fa';
+            btn.style.color = '#1e1e2e';
+            btn.style.borderColor = '#89b4fa';
+            btn.textContent = 'Drawing... (drag to set area)';
+        } else {
+            btn.style.background = '';
+            btn.style.color = '';
+            btn.style.borderColor = '';
+            btn.textContent = 'Draw Box';
+        }
     }
 
     // -----------------------------------------------------------------------
