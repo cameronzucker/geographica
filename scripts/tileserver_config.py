@@ -67,3 +67,38 @@ def remove_mbtiles_from_config(config_path: Path, name: str) -> bool:
     os.replace(str(tmp_path), str(config_path))
 
     return True
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="Manage TileServer GL config sources")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    add_parser = subparsers.add_parser("add", help="Add an MBTiles data source")
+    add_parser.add_argument("config_path", help="Path to tileserver config.json")
+    add_parser.add_argument("name", help="Data source name (e.g. imagery_noaa)")
+    add_parser.add_argument("mbtiles_path", help="Path to MBTiles file inside container")
+
+    remove_parser = subparsers.add_parser("remove", help="Remove an MBTiles data source")
+    remove_parser.add_argument("config_path", help="Path to tileserver config.json")
+    remove_parser.add_argument("name", help="Data source name to remove")
+
+    args = parser.parse_args()
+
+    if args.command == "add":
+        added = add_mbtiles_to_config(Path(args.config_path), args.name, args.mbtiles_path)
+        if added:
+            print(f"Added source '{args.name}' to {args.config_path}")
+        else:
+            print(f"Source '{args.name}' already exists in {args.config_path}")
+        sys.exit(0)
+
+    elif args.command == "remove":
+        removed = remove_mbtiles_from_config(Path(args.config_path), args.name)
+        if removed:
+            print(f"Removed source '{args.name}' from {args.config_path}")
+        else:
+            print(f"Source '{args.name}' not found in {args.config_path}")
+        sys.exit(0)
