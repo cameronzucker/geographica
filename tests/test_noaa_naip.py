@@ -120,20 +120,18 @@ def _read_metadata(path):
 # ---------------------------------------------------------------------------
 
 class TestGdaladdoCancelSupport:
-    """Verify gdaladdo uses run_gdal_subprocess (Popen), not subprocess.run."""
+    """Verify gdaladdo delegates to rasterio_ops.build_overviews."""
 
-    def test_gdaladdo_uses_run_gdal_subprocess(self, tmp_path):
+    def test_gdaladdo_uses_rio_build_overviews(self, tmp_path):
         mbtiles = tmp_path / "test.mbtiles"
         _create_test_mbtiles(mbtiles, [18])
 
-        with patch.object(acquire_imagery, "run_gdal_subprocess") as mock_gdal, \
+        with patch("rasterio_ops.build_overviews") as mock_rio, \
              patch.object(acquire_imagery, "_cancel_requested", False):
             _run_gdaladdo_with_metadata_fixup(mbtiles)
-            mock_gdal.assert_called_once()
-            cmd = mock_gdal.call_args[0][0]
-            assert cmd[0] == "gdaladdo"
-            assert "-r" in cmd
-            assert "average" in cmd
+            mock_rio.assert_called_once()
+            # Verify cancel_check kwarg is passed
+            assert "cancel_check" in mock_rio.call_args.kwargs
 
     def test_run_gdal_subprocess_uses_popen(self):
         """Structural check: run_gdal_subprocess uses Popen, not subprocess.run."""
@@ -160,7 +158,7 @@ class TestMetadataFixup:
         meta_before = _read_metadata(mbtiles)
         assert meta_before["minzoom"] == "18"
 
-        with patch.object(acquire_imagery, "run_gdal_subprocess"), \
+        with patch("rasterio_ops.build_overviews"), \
              patch.object(acquire_imagery, "_cancel_requested", False):
             _run_gdaladdo_with_metadata_fixup(mbtiles)
 
@@ -182,7 +180,7 @@ class TestMetadataFixup:
         mbtiles = tmp_path / "test.mbtiles"
         _create_test_mbtiles(mbtiles, [14], meta_minzoom=18, meta_maxzoom=18)
 
-        with patch.object(acquire_imagery, "run_gdal_subprocess"), \
+        with patch("rasterio_ops.build_overviews"), \
              patch.object(acquire_imagery, "_cancel_requested", False):
             _run_gdaladdo_with_metadata_fixup(mbtiles)
 

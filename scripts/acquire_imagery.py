@@ -722,20 +722,18 @@ def run_gdal_subprocess(cmd: list[str], timeout: int = 7200,
 
 
 def _run_gdaladdo_with_metadata_fixup(output: Path) -> None:
-    """Run gdaladdo on MBTiles output, then fix metadata to match actual tiles.
+    """Build overview pyramids on MBTiles output, then fix metadata.
 
-    Uses run_gdal_subprocess() for cancel support (not subprocess.run).
-    After gdaladdo adds overview tiles at lower zoom levels, updates the
-    metadata table so TileServer reports correct minzoom/maxzoom in TileJSON.
+    Delegates to rasterio_ops.build_overviews which already updates
+    minzoom/maxzoom metadata. The post-fixup SQL ensures consistency
+    even if build_overviews is interrupted.
     """
+    from rasterio_ops import build_overviews as rio_build_overviews
+
     if _cancel_requested:
         return
 
-    run_gdal_subprocess(
-        ["gdaladdo", "-r", "average", str(output), "2", "4", "8", "16"],
-        timeout=14400,  # 4 hours — full MBTiles overview can take 2+ hours
-        cancel_check=lambda: _cancel_requested,
-    )
+    rio_build_overviews(output, cancel_check=lambda: _cancel_requested)
 
     # Cancel guard: don't fixup metadata on partial overviews
     if _cancel_requested:
@@ -757,155 +755,31 @@ def _run_gdaladdo_with_metadata_fixup(output: Path) -> None:
         conn.close()
 
 
-def _postprocess_nodata(output: Path) -> None:
-    """Erode nodata boundary tiles and inpaint black seams.
-
-    JPEG tiles have no alpha, so nodata renders as opaque black over
-    the basemap. This two-step cleanup:
-      1. Erodes boundary tiles with heavy black edges
-      2. Inpaints remaining black pixels via nearest-neighbor fill
-
-    Called automatically after overview generation.
-    """
-    import rasterio
-    import numpy as np
-
-    if _cancel_requested:
-        return
-
-    conn = sqlite3.connect(str(output))
-    conn.execute("PRAGMA journal_mode=WAL")
-
-    # Step 1: Erode boundary tiles with >10% black in any 48px edge strip
-    edge_px, min_fill, threshold = 48, 0.90, 20
-    zoom_levels = [r[0] for r in conn.execute(
-        "SELECT DISTINCT zoom_level FROM tiles ORDER BY zoom_level"
-    ).fetchall()]
-
-    total_eroded = 0
-    for z in zoom_levels:
-        eroded_round = 1
-        while eroded_round > 0:
-            eroded_round = 0
-            bounds = conn.execute(
-                "SELECT MIN(tile_column), MAX(tile_column), "
-                "MIN(tile_row), MAX(tile_row) FROM tiles WHERE zoom_level=?",
-                (z,),
-            ).fetchone()
-            if bounds[0] is None:
-                break
-            boundary = conn.execute(
-                "SELECT tile_column, tile_row, tile_data FROM tiles "
-                "WHERE zoom_level=? AND ("
-                "  tile_column=? OR tile_column=? OR tile_row=? OR tile_row=?)",
-                (z, bounds[0], bounds[1], bounds[2], bounds[3]),
-            ).fetchall()
-            for col, row, data in boundary:
-                try:
-                    with rasterio.MemoryFile(data) as mf:
-                        with mf.open() as ds:
-                            arr = ds.read()
-                    has_data = np.any(arr[:3] > threshold, axis=0)
-                    edges = [
-                        has_data[:edge_px, :].mean(),
-                        has_data[-edge_px:, :].mean(),
-                        has_data[:, :edge_px].mean(),
-                        has_data[:, -edge_px:].mean(),
-                    ]
-                    if min(edges) < min_fill:
-                        conn.execute(
-                            "DELETE FROM tiles WHERE zoom_level=? "
-                            "AND tile_column=? AND tile_row=?",
-                            (z, col, row),
-                        )
-                        eroded_round += 1
-                except Exception:
-                    pass
-            conn.commit()
-            total_eroded += eroded_round
-
-    if total_eroded:
-        log.info("Eroded %d nodata-edge tiles", total_eroded)
-
-    if _cancel_requested:
-        conn.close()
-        return
-
-    # Step 2: Inpaint remaining black pixels via nearest-neighbor fill
-    from scipy.ndimage import distance_transform_edt
-
-    tiles = conn.execute(
-        "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles"
-    ).fetchall()
-    inpainted = 0
-    for z, x, y, data in tiles:
-        with rasterio.MemoryFile(data) as mf:
-            with mf.open() as ds:
-                arr = ds.read().copy()
-        black = np.all(arr[:3] <= threshold, axis=0)
-        n_black = black.sum()
-        total = arr.shape[1] * arr.shape[2]
-        if n_black == 0 or n_black > total * 0.5:
-            continue
-        _, nearest = distance_transform_edt(
-            black, return_distances=True, return_indices=True,
-        )
-        for band in range(arr.shape[0]):
-            arr[band][black] = arr[band][nearest[0][black], nearest[1][black]]
-        conn.execute(
-            "UPDATE tiles SET tile_data=? "
-            "WHERE zoom_level=? AND tile_column=? AND tile_row=?",
-            (_encode_jpeg(arr), z, x, y),
-        )
-        inpainted += 1
-        if inpainted % 1000 == 0:
-            conn.commit()
-
-    conn.commit()
-    conn.close()
-    if inpainted:
-        log.info("Inpainted %d tiles to remove black seams", inpainted)
-
-
 def convert_batch_to_mbtiles(tif_paths: list[Path], output: Path,
                              batch_label: str = "batch") -> bool:
     """Convert a batch of GeoTIFFs to a temp MBTiles, then merge into output.
 
-    1. Build VRT from the batch's GeoTIFFs
-    2. Convert VRT to a temporary MBTiles file
-    3. Merge temp MBTiles tiles into the main output via SQLite append
-    4. Delete the temp MBTiles
+    Uses rasterio_ops.merge_to_mbtiles instead of gdalbuildvrt + gdal_translate.
 
     Returns True on success, False on failure.
     """
+    from rasterio_ops import merge_to_mbtiles as rio_merge_to_mbtiles
+
     if not tif_paths:
         log.error("No GeoTIFF files to convert")
         return False
 
-    workdir = tif_paths[0].parent
-    vrt_path = workdir / f"{batch_label}.vrt"
-    temp_mbtiles = workdir / f"{batch_label}.mbtiles"
-
     try:
-        # Build VRT from this batch
-        log.info("%s: building VRT from %d files", batch_label, len(tif_paths))
-        run_gdal_subprocess(
-            ["gdalbuildvrt", str(vrt_path)] + [str(p) for p in tif_paths],
-            timeout=600,
+        log.info("%s: merging %d GeoTIFFs to temp MBTiles", batch_label, len(tif_paths))
+        workdir = tif_paths[0].parent
+        temp_mbtiles = workdir / f"{batch_label}.mbtiles"
+        success = rio_merge_to_mbtiles(
+            tif_paths, temp_mbtiles,
             cancel_check=lambda: _cancel_requested,
         )
-
-        # Convert VRT to temp MBTiles
-        log.info("%s: converting VRT to temp MBTiles", batch_label)
-        run_gdal_subprocess(
-            [
-                "gdal_translate", "-of", "MBTiles",
-                "-co", "TILE_FORMAT=JPEG",
-                str(vrt_path), str(temp_mbtiles),
-            ],
-            timeout=7200,
-            cancel_check=lambda: _cancel_requested,
-        )
+        if not success:
+            log.error("%s: merge_to_mbtiles failed", batch_label)
+            return False
 
         # Merge temp MBTiles into the main output
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -914,19 +788,12 @@ def convert_batch_to_mbtiles(tif_paths: list[Path], output: Path,
 
         return True
 
-    except subprocess.CalledProcessError as exc:
-        log.error("%s: GDAL conversion failed: %s", batch_label,
-                  exc.stderr if hasattr(exc, 'stderr') and exc.stderr else str(exc))
-        return False
-    except subprocess.TimeoutExpired:
-        log.error("%s: GDAL conversion timed out", batch_label)
+    except Exception as exc:
+        log.error("%s: conversion failed: %s", batch_label, exc)
         return False
     finally:
-        # Cleanup temp files
-        if vrt_path.exists():
-            vrt_path.unlink()
-        if temp_mbtiles.exists():
-            temp_mbtiles.unlink()
+        temp_path = tif_paths[0].parent / f"{batch_label}.mbtiles"
+        temp_path.unlink(missing_ok=True)
 
 
 async def run_tnmaccess(args):
@@ -1821,10 +1688,14 @@ async def _noaa_fetch_tile_index(
 async def run_noaa(args):
     """Run the NOAA Digital Coast NAIP download pipeline.
 
-    Downloads GeoTIFF tiles ONE AT A TIME from NOAA Azure blob storage,
-    reprojects each to EPSG:3857, converts to MBTiles, then cleans up.
+    Downloads GeoTIFF tiles from NOAA Azure blob storage via 3-stage parallel
+    pipeline, reprojects to EPSG:3857, renders to tiles, merges to MBTiles.
     """
     global _cancel_requested
+
+    from rasterio_ops import reproject_to_mercator as rio_reproject_to_mercator
+
+    pipeline_start = time.monotonic()
 
     state = args.state
     year = args.year
@@ -1847,6 +1718,8 @@ async def run_noaa(args):
                 from tileserver_config import remove_mbtiles_from_config
                 if remove_mbtiles_from_config(ts_config, "imagery_noaa"):
                     log.info("Temporarily unregistered imagery_noaa from TileServer")
+            except ImportError:
+                pass
             except Exception:
                 pass
 
@@ -1928,26 +1801,73 @@ async def run_noaa(args):
                         0, total_tiles, phase="downloading",
                         geotiffs_downloaded=0, geotiffs_total=total_tiles)
 
-        # Phase 4: Download, reproject, and convert ONE AT A TIME
-        tiles_done = 0
+        # Phase 4: 3-stage parallel pipeline
+        #
+        # Stage 1 (download):  N concurrent async downloads (network-bound)
+        # Stage 2 (reproject): M concurrent threads via ThreadPoolExecutor (CPU-bound)
+        # Stage 3 (merge):     1 serial writer (SQLite write lock)
+        #
+        # All stages run concurrently. A single _write_progress() function
+        # owns the state file — stages update shared counters and the progress
+        # writer computes the correct phase from those counters.
+        import concurrent.futures
+        import threading
+
+        cpu_count = os.cpu_count() or 4
+        DOWNLOAD_CONCURRENCY = min(4, total_tiles)
+        REPROJECT_WORKERS = min(cpu_count, 6, total_tiles)
+
+        # Shared counters (updated by each stage, read by progress writer)
+        tiles_downloaded = 0
+        tiles_reprojected = 0
+        tiles_done = 0  # merged into MBTiles
         tiles_failed = 0
+        downloads_finished = False
+        counter_lock = threading.Lock()
 
         from pipeline_security import validate_file_header
 
-        # Concurrent pipeline: up to DOWNLOAD_CONCURRENCY tiles downloading
-        # simultaneously, feeding a processing queue. GDAL processing runs
-        # in a thread pool (one at a time — MBTiles merge is not thread-safe).
-        # Pi 5 has 4 cores and 8+ GB free RAM; 3 concurrent downloads keep
-        # the network saturated while CPU stays busy with reproject+convert.
-        DOWNLOAD_CONCURRENCY = 3  # tiles downloading simultaneously
         download_sem = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
-        process_queue = asyncio.Queue(maxsize=DOWNLOAD_CONCURRENCY)
+        reproject_queue = asyncio.Queue(maxsize=DOWNLOAD_CONCURRENCY + REPROJECT_WORKERS)
+        merge_queue = asyncio.Queue(maxsize=REPROJECT_WORKERS)
         loop = asyncio.get_event_loop()
+        reproject_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=REPROJECT_WORKERS,
+            thread_name_prefix="reproject",
+        )
+
+        def _write_progress():
+            """Write coherent progress from shared counters. Single source of truth."""
+            with counter_lock:
+                dl = tiles_downloaded
+                rp = tiles_reprojected
+                done = tiles_done
+                dl_done = downloads_finished
+
+            # Pick phase based on what's actively happening
+            if done == total_tiles:
+                phase = "converting"
+                detail = f"complete: {done}/{total_tiles} tiles"
+            elif not dl_done:
+                phase = "downloading"
+                detail = f"downloaded {dl}, reprojecting {rp - done}, merged {done}/{total_tiles}"
+            elif rp < dl:
+                phase = "reprojecting"
+                detail = f"reprojecting {rp}/{dl}, merged {done}/{total_tiles}"
+            else:
+                phase = "merging"
+                detail = f"merging {done}/{total_tiles} (reproject done)"
+
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            done, total_tiles, phase=phase,
+                            geotiffs_downloaded=dl,
+                            geotiffs_total=total_tiles)
 
         async def _download_tile(tile_fname):
-            """Download and validate a single tile. Returns (fname, path) or (fname, None)."""
+            """Download and validate a single tile."""
             url = f"{blob_base}/{tile_fname}"
             dest = staging / tile_fname
+            t0 = time.monotonic()
             async with download_sem:
                 if _cancel_requested:
                     return (tile_fname, None)
@@ -1960,111 +1880,187 @@ async def run_noaa(args):
                 log.error("Invalid GeoTIFF header for %s — removing", tile_fname)
                 dest.unlink(missing_ok=True)
                 return (tile_fname, None)
+            elapsed = time.monotonic() - t0
+            size_mb = dest.stat().st_size / (1024 * 1024) if dest.exists() else 0
+            log.debug("Download done: %s — %.0f MB in %.1fs (%.1f MB/s)",
+                      tile_fname, size_mb, elapsed, size_mb / elapsed if elapsed > 0 else 0)
             return (tile_fname, dest)
 
-        def _process_tile(raw_path, tile_fname, idx):
-            """Reproject + convert a downloaded tile. Returns True on success."""
+        def _reproject_tile(raw_path, tile_fname):
+            """Reproject a single tile to EPSG:3857. Runs in thread pool."""
             warped_path = staging / f"warped_{tile_fname}"
+            t0 = time.monotonic()
+            raw_size = raw_path.stat().st_size / (1024 * 1024)
+            log.debug("Reproject start: %s (%.0f MB)", tile_fname, raw_size)
             try:
-                run_gdal_subprocess(
-                    ["gdalwarp", "-t_srs", "EPSG:3857", "-r", "lanczos",
-                     "-co", "TILED=YES", "-co", "COMPRESS=DEFLATE",
-                     str(raw_path), str(warped_path)],
-                    timeout=3600,
+                success = rio_reproject_to_mercator(
+                    raw_path, warped_path,
                     cancel_check=lambda: _cancel_requested,
                 )
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-                log.error("gdalwarp failed for %s: %s", tile_fname, exc)
+                if not success:
+                    log.error("Reproject failed for %s", tile_fname)
+                    raw_path.unlink(missing_ok=True)
+                    warped_path.unlink(missing_ok=True)
+                    return None
+            except Exception as exc:
+                log.error("Reproject failed for %s: %s", tile_fname, exc)
                 raw_path.unlink(missing_ok=True)
                 warped_path.unlink(missing_ok=True)
-                return False
-
+                return None
+            elapsed = time.monotonic() - t0
+            warped_size = warped_path.stat().st_size / (1024 * 1024) if warped_path.exists() else 0
+            log.debug("Reproject done: %s — %.0f MB → %.0f MB in %.1fs (%.1f MB/s)",
+                      tile_fname, raw_size, warped_size, elapsed, raw_size / elapsed if elapsed > 0 else 0)
             raw_path.unlink(missing_ok=True)
+            return warped_path
 
-            # MBTiles merge is not thread-safe — must be serialized
+        def _merge_tile(warped_path, idx):
+            """Merge a reprojected tile into the output MBTiles. Runs serially."""
+            t0 = time.monotonic()
+            warped_size = warped_path.stat().st_size / (1024 * 1024) if warped_path.exists() else 0
+            log.debug("Merge start: tile %d (%.0f MB warped)", idx, warped_size)
             ok = convert_batch_to_mbtiles([warped_path], output, f"noaa_tile_{idx}")
+            elapsed = time.monotonic() - t0
+            log.debug("Merge done: tile %d in %.1fs (%s)", idx, elapsed, "OK" if ok else "FAILED")
             warped_path.unlink(missing_ok=True)
             return ok
 
-        async def _producer():
-            """Download tiles concurrently and feed into the process queue."""
+        async def _downloader():
+            """Stage 1: download tiles concurrently, feed reproject queue."""
+            nonlocal tiles_downloaded, downloads_finished
             download_tasks = []
             for idx, fname in enumerate(tile_filenames):
                 if _cancel_requested:
                     break
-                log.info("[%d/%d] Downloading %s (~%d MB)",
+                log.info("[%d/%d] Queuing download: %s (~%d MB)",
                          idx + 1, total_tiles, fname, NOAA_TILE_SIZE_MB)
                 task = asyncio.ensure_future(_download_tile(fname))
                 download_tasks.append((idx, fname, task))
 
-                # When we have DOWNLOAD_CONCURRENCY tasks in flight, wait for
-                # the oldest to finish and push it to the process queue
                 if len(download_tasks) >= DOWNLOAD_CONCURRENCY:
                     oldest_idx, oldest_fname, oldest_task = download_tasks.pop(0)
                     dl_fname, dl_path = await oldest_task
-                    await process_queue.put((oldest_idx, dl_fname, dl_path))
+                    with counter_lock:
+                        tiles_downloaded += 1
+                    _write_progress()
+                    await reproject_queue.put((oldest_idx, dl_fname, dl_path))
 
-            # Drain remaining downloads
             for idx, fname, task in download_tasks:
                 if _cancel_requested:
                     task.cancel()
                     continue
                 dl_fname, dl_path = await task
-                await process_queue.put((idx, dl_fname, dl_path))
+                with counter_lock:
+                    tiles_downloaded += 1
+                _write_progress()
+                await reproject_queue.put((idx, dl_fname, dl_path))
 
-            # Signal end of downloads
-            await process_queue.put(None)
+            with counter_lock:
+                downloads_finished = True
+            _write_progress()
+            await reproject_queue.put(None)
 
-        async def _consumer():
-            """Process downloaded tiles sequentially (MBTiles merge not thread-safe)."""
+        async def _reprojector():
+            """Stage 2: reproject tiles in parallel thread pool, feed merge queue.
+
+            Uses non-blocking queue get with a timeout so completed futures
+            are drained even when no new work arrives from the downloader.
+            This prevents a deadlock where the reprojector sits at
+            reproject_queue.get() while completed warped files pile up
+            in pending_futures, starving the merger.
+            """
+            nonlocal tiles_reprojected
+            pending_futures = []
+            sentinel_received = False
+
+            while not sentinel_received or pending_futures:
+                # Try to get new work, but don't block forever — we need to
+                # drain completed futures even when no new downloads arrive
+                try:
+                    item = await asyncio.wait_for(reproject_queue.get(), timeout=0.5)
+                    if item is None:
+                        sentinel_received = True
+                    else:
+                        idx, tile_fname, raw_path = item
+
+                        if _cancel_requested or raw_path is None:
+                            if raw_path:
+                                raw_path.unlink(missing_ok=True)
+                            if raw_path is None:
+                                await merge_queue.put((idx, tile_fname, None))
+                        else:
+                            log.info("[%d/%d] Reprojecting %s (%d workers)",
+                                     idx + 1, total_tiles, tile_fname, REPROJECT_WORKERS)
+
+                            future = loop.run_in_executor(
+                                reproject_pool, _reproject_tile, raw_path, tile_fname
+                            )
+                            pending_futures.append((idx, tile_fname, future))
+                except asyncio.TimeoutError:
+                    pass  # No new work — just drain completed futures below
+
+                # Always drain completed futures
+                still_pending = []
+                for f_idx, f_fname, f_future in pending_futures:
+                    if f_future.done():
+                        warped = f_future.result()
+                        with counter_lock:
+                            tiles_reprojected += 1
+                        _write_progress()
+                        await merge_queue.put((f_idx, f_fname, warped))
+                    else:
+                        still_pending.append((f_idx, f_fname, f_future))
+                pending_futures = still_pending
+
+            await merge_queue.put(None)
+
+        async def _merger():
+            """Stage 3: merge reprojected tiles into MBTiles (serialized)."""
             nonlocal tiles_done, tiles_failed
             while True:
-                item = await process_queue.get()
+                item = await merge_queue.get()
                 if item is None:
                     break
-                idx, tile_fname, raw_path = item
+                idx, tile_fname, warped_path = item
 
-                if _cancel_requested or raw_path is None:
-                    if raw_path:
-                        raw_path.unlink(missing_ok=True)
-                    if raw_path is None:
-                        tiles_failed += 1
+                if _cancel_requested or warped_path is None:
+                    if warped_path:
+                        warped_path.unlink(missing_ok=True)
+                    if warped_path is None:
+                        with counter_lock:
+                            tiles_failed += 1
                     continue
 
-                log.info("[%d/%d] Reprojecting + converting %s",
+                log.info("[%d/%d] Merging %s into MBTiles",
                          idx + 1, total_tiles, tile_fname)
-                update_progress(output, "noaa", args.bbox, "n/a",
-                                tiles_done, total_tiles, phase="converting",
-                                geotiffs_downloaded=tiles_done,
-                                geotiffs_total=total_tiles)
 
-                convert_ok = await loop.run_in_executor(
-                    None, _process_tile, raw_path, tile_fname, idx
+                merge_ok = await loop.run_in_executor(
+                    None, _merge_tile, warped_path, idx
                 )
 
-                if convert_ok:
-                    tiles_done += 1
+                if merge_ok:
+                    with counter_lock:
+                        tiles_done += 1
+                    _write_progress()
                     log.info("[%d/%d] Tile %s done (%d/%d complete)",
                              idx + 1, total_tiles, tile_fname,
                              tiles_done, total_tiles)
-                    update_progress(output, "noaa", args.bbox, "n/a",
-                                    tiles_done, total_tiles, phase="downloading",
-                                    geotiffs_downloaded=tiles_done,
-                                    geotiffs_total=total_tiles)
                 else:
-                    tiles_failed += 1
+                    with counter_lock:
+                        tiles_failed += 1
                     if _cancel_requested:
                         break
-                    log.warning("[%d/%d] Conversion failed for %s",
+                    log.warning("[%d/%d] Merge failed for %s",
                                 idx + 1, total_tiles, tile_fname)
 
-        # Run producer and consumer concurrently
-        update_progress(output, "noaa", args.bbox, "n/a",
-                        0, total_tiles, phase="downloading",
-                        geotiffs_downloaded=0, geotiffs_total=total_tiles)
-        log.info("Starting concurrent pipeline: %d downloads, sequential processing",
-                 DOWNLOAD_CONCURRENCY)
-        await asyncio.gather(_producer(), _consumer())
+        # Run all 3 stages concurrently
+        _write_progress()
+        log.info("Starting 3-stage pipeline: %d downloaders, %d reproject workers, 1 merger (CPUs: %d)",
+                 DOWNLOAD_CONCURRENCY, REPROJECT_WORKERS, cpu_count)
+        try:
+            await asyncio.gather(_downloader(), _reprojector(), _merger())
+        finally:
+            reproject_pool.shutdown(wait=False)
 
         if _cancel_requested:
             update_progress(output, "noaa", args.bbox, "n/a",
@@ -2083,11 +2079,21 @@ async def run_noaa(args):
                         geotiffs_total=total_tiles)
         try:
             _run_gdaladdo_with_metadata_fixup(output)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        except Exception as exc:
             log.warning("Overview generation failed: %s — output is still usable", exc)
 
+        # Post-process: clean up JPEG nodata artifacts
+        # 1. Erode boundary tiles with heavy nodata (black rectangles over basemap)
+        # 2. Inpaint remaining black pixels (seams between NAIP quads)
         try:
-            _postprocess_nodata(output)
+            from rasterio_ops import erode_nodata_edges as rio_erode_nodata_edges
+            from rasterio_ops import inpaint_nodata_pixels as rio_inpaint_nodata_pixels
+            eroded = rio_erode_nodata_edges(output)
+            if eroded:
+                log.info("Eroded %d nodata-edge tiles for clean basemap transition", eroded)
+            inpainted = rio_inpaint_nodata_pixels(output)
+            if inpainted:
+                log.info("Inpainted %d tiles to remove black seams", inpainted)
         except Exception as exc:
             log.warning("Nodata cleanup failed: %s — output is still usable", exc)
 
@@ -2105,6 +2111,8 @@ async def run_noaa(args):
                     log.info("Added imagery_noaa to TileServer config.json")
                 else:
                     log.info("imagery_noaa already in TileServer config")
+            except ImportError:
+                pass
             except Exception as exc:
                 log.warning("Failed to update TileServer config (non-fatal): %s", exc)
         else:
@@ -2122,8 +2130,13 @@ async def run_noaa(args):
                         phase="complete",
                         geotiffs_downloaded=tiles_done,
                         geotiffs_total=total_tiles)
+        total_elapsed = time.monotonic() - pipeline_start
+        output_size = output.stat().st_size / (1024 * 1024) if output.exists() else 0
         log.info("NOAA pipeline complete: %d/%d tiles processed (%d failed) → %s",
                  tiles_done, total_tiles, tiles_failed, output)
+        log.info("Total time: %.1f min | Output: %.1f MB | Throughput: %.1f tiles/min",
+                 total_elapsed / 60, output_size,
+                 tiles_done / (total_elapsed / 60) if total_elapsed > 0 else 0)
 
 
 # ---------------------------------------------------------------------------
