@@ -25,18 +25,35 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## What to work on next
 
-### 1. NOAA Pipeline Deferred Fixes (MEDIUM — from adversarial review)
+### 1. Version Control Strategy (HIGH — blocking future releases)
+
+The project is on v1.0.0 (tagged 2026-04-15) but has no formal versioning policy.
+Other people may start using the shipped product, so we need to decide:
+
+- **What necessitates major/minor/patch increments** — adopt Semantic Versioning
+  (semver.org) or define project-specific rules? Consider: API changes (admin panel
+  endpoints), data format changes (MBTiles schema, pipeline state file), Docker
+  image changes, frontend behavior changes, config format changes.
+- **When to create numbered version branches** — release branches (release/1.1.0)
+  vs tagged commits on main? Hotfix workflow for critical bugs in released versions?
+- **Industry best practice** — research Conventional Commits, semver, GitHub release
+  workflow, changelog generation. The commit messages already follow Conventional
+  Commits loosely (feat:, fix:, docs:). Formalize this.
+- **Concrete deliverables**: VERSIONING.md documenting the policy, CI check for
+  commit message format, CHANGELOG.md generation, tag + GitHub Release workflow.
+
+### 2. NOAA Pipeline Deferred Fixes (MEDIUM — from adversarial review)
 
 9 deferred items from the 8-agent adversarial review (2026-04-16). See
 `~/.claude/projects/-home-administrator-Code-geographica/memory/handoff_20260417.md`
 for the full list. Key items: checkpoint atomicity gap, atomic temp-file downloads,
 disk-full preflight, parallelized tile rendering.
 
-### 2. Visual Design Identity (MEDIUM)
+### 3. Visual Design Identity (MEDIUM)
 
 Meridian design system was attempted and reverted (contrast too low for field use). Revisit with sunlight readability as the #1 constraint.
 
-### 3. Setup Wizard GUI Completion (MEDIUM)
+### 4. Setup Wizard GUI Completion (MEDIUM)
 
 Browser wizard at localhost:8099. Partially built. Needs keyring integration, map bbox selection, pipeline progress.
 
