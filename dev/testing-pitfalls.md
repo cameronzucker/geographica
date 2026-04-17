@@ -93,3 +93,31 @@ When converting tile coordinates to lat/lon, TMS (used by MBTiles) numbers Y=0 a
 ## Missing auth dependency on write endpoints allows unauthenticated destructive actions
 When some admin endpoints use `dependencies=[Depends(require_config_source)]` and others don't, the ones without it are reachable through any path that proxies to the service — including the public NGINX `/search/` prefix. Tests should verify that every endpoint under `/admin/` that performs a write or deletion returns 403 when called without the required headers, and should test through the NGINX proxy path (not just direct to the service) to catch routing gaps.
 *Found in:* `services/search/main.py:801` -- `DELETE /admin/imagery/{source_id}` has no `require_config_source` dependency; reachable at `/search/admin/imagery/{id}` on the public port with no auth.
+
+## CRS-aware unit conversions hardcoded for equatorial/geographic assumptions
+When a function converts between coordinate units (e.g., degrees to meters), using a single constant (like 111,320 m/degree) that only holds at the equator or for geographic CRS produces wrong results at other latitudes or for projected CRS where the input is already in meters. Tests should feed the same raster through the function in multiple CRS (geographic, UTM, Web Mercator) and verify that derived values (like zoom levels) are consistent to within 1 unit.
+*Found in:* `geographica-companion/pipelines/rasterio_ops.py:408` -- `_compute_zoom_range` multiplies resolution by 111,320 regardless of CRS or latitude; yields wildly wrong zoom for UTM data (already in meters) and moderately wrong zoom at mid-latitudes.
+
+## Success return on zero output silently loses data
+When a function returns True/success after producing zero output items (e.g., zero rendered tiles), callers that delete source files on success will destroy input data without producing any output. Tests should feed a minimal input that produces zero output (e.g., an all-nodata raster) and verify the function returns failure, not success.
+*Found in:* `geographica-companion/pipelines/rasterio_ops.py:363-381` -- `merge_to_mbtiles` returns True when `_rasterize_to_disk` renders zero tiles; callers delete source GeoTIFFs believing conversion succeeded.
+
+## Resource cleanup in except blocks without finally
+When a resource (database connection, file handle, thread pool) is opened inside a `try` block and closed on the happy path, but the `except` handler returns without closing it, any exception leaks the resource. Tests should inject exceptions at each possible failure point and verify resources are closed (e.g., mock `sqlite3.connect` and assert `.close()` was called even when the body raises). This is especially dangerous for SQLite connections with WAL mode, where a leaked connection holds the WAL journal open and prevents checkpointing.
+*Found in:* `scripts/rasterio_ops.py:663-778` -- `build_overviews` opens a SQLite connection at line 664, closes it at line 771 (happy path) and 687 (cancel path), but the `except` block at line 776 returns False without closing the connection.
+
+## `fetchall()` on tables with BLOB columns causes unbounded memory usage
+When `fetchall()` is used on a query that includes BLOB columns, all BLOBs are materialized into Python memory simultaneously. For MBTiles tables where `tile_data` is a JPEG/PNG BLOB, this means the entire tileset is loaded into RAM. Tests should monitor peak memory usage (via `tracemalloc` or process RSS) when processing large tilesets and assert it stays within the container memory limit. Alternatively, test with a cursor-based iteration pattern to verify streaming works.
+*Found in:* `scripts/rasterio_ops.py:804-806` -- `inpaint_nodata_pixels` loads every tile's BLOB into memory via `fetchall()` before iterating; for large NOAA datasets this can exceed the 2 GB container memory limit.
+
+## Unhandled exceptions from `future.result()` in pipeline drain loops
+When a concurrent pipeline drains completed futures by calling `f.result()`, any exception from the worker function propagates through `result()` and kills the drain loop. If the drain loop owns a sentinel-forwarding responsibility (sending `None` to the next stage's queue), the downstream stage starves. Tests should submit a worker that raises, then verify the pipeline still completes remaining work and forwards sentinels to all downstream stages.
+*Found in:* `scripts/acquire_imagery.py:2122` -- `_reprojector` calls `f_future.result()` without try/except; an exception in `_reproject_tile` (e.g., FileNotFoundError from stat on a deleted file) kills the reprojector, which never sends a sentinel to the merge queue, hanging the merger.
+
+## Finalization guards stale after adding fast-path bypasses
+When a long function has setup (acquire resource) and teardown (release resource) gated by a counter (`if tiles_done > 0`), adding a fast-path that skips the main work loop means the counter never increments. Teardown that depended on `tiles_done > 0` silently skips, leaving the resource unreleased. Tests should exercise every named skip/bypass code path and verify that all teardown steps still execute — not just the main path.
+*Found in:* `scripts/acquire_imagery.py:2240` -- `run_noaa` unregisters imagery_noaa from TileServer at top, re-registers only when `tiles_done > 0`, but `skip_to_postprocess` path keeps `tiles_done = 0`, permanently removing the layer from TileServer config.
+
+## Temporary directory cleanup missing from exception paths in multi-stage functions
+When a function creates a temporary directory in the middle of a multi-stage pipeline (stage 1: create tiles on disk, stage 2: import to SQLite), the `finally` block may only clean up resources from stage 0 (e.g., closing rasterio datasets) without cleaning up the temp directory from stage 1. Tests should inject exceptions at each stage boundary and verify no temp directories remain on disk.
+*Found in:* `scripts/rasterio_ops.py:344-397` -- `merge_to_mbtiles` creates `.tiles_{stem}` directory at line 344; if `_rasterize_to_disk` or `_bulk_import_tiles` raises, the `finally` block at line 389 closes datasets but never calls `_cleanup_tile_dir`.
