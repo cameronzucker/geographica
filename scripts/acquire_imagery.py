@@ -2234,6 +2234,14 @@ async def run_noaa(args):
         except Exception as exc:
             log.warning("Overview generation failed: %s — output is still usable", exc)
 
+        # Checkpoint WAL after overviews before erosion/inpaint
+        import sqlite3 as _pp_sql
+        try:
+            with _pp_sql.connect(str(output)) as _pc:
+                _pc.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except Exception:
+            pass
+
         # Post-process: clean up JPEG nodata artifacts
         # 1. Erode boundary tiles with heavy nodata (black rectangles over basemap)
         # 2. Inpaint remaining black pixels (seams between NAIP quads)
@@ -2243,6 +2251,12 @@ async def run_noaa(args):
             eroded = rio_erode_nodata_edges(output)
             if eroded:
                 log.info("Eroded %d nodata-edge tiles for clean basemap transition", eroded)
+            # Checkpoint WAL between erode and inpaint (inpaint touches every tile)
+            try:
+                with _pp_sql.connect(str(output)) as _pc:
+                    _pc.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            except Exception:
+                pass
             inpainted = rio_inpaint_nodata_pixels(output)
             if inpainted:
                 log.info("Inpainted %d tiles to remove black seams", inpainted)
@@ -2269,6 +2283,26 @@ async def run_noaa(args):
                 log.warning("Failed to update TileServer config (non-fatal): %s", exc)
         else:
             log.warning("TileServer config not found at %s", ts_config_path)
+
+    # Final WAL checkpoint: flush all pending writes into the main database file.
+    # Without this, the WAL can grow to several GB during post-processing
+    # (overviews + erosion + inpainting write hundreds of thousands of tiles).
+    # TileServer can't serve an MBTiles with a huge WAL — it returns 404.
+    # TRUNCATE mode resets the WAL to zero bytes, which is safe here because
+    # no other process has the file open (TileServer source was unregistered).
+    if output.exists():
+        import sqlite3 as _wal_sql
+        try:
+            with _wal_sql.connect(str(output)) as _wc:
+                _wc.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                # Switch back to DELETE journal mode for TileServer compatibility.
+                # WAL mode requires that all readers use the same WAL file, but
+                # TileServer opens files read-only and may not handle WAL correctly
+                # on all platforms.
+                _wc.execute("PRAGMA journal_mode=DELETE")
+            log.info("WAL checkpoint complete — database ready for TileServer")
+        except Exception as exc:
+            log.warning("WAL checkpoint failed: %s — TileServer may need manual restart", exc)
 
     # Final status
     if tiles_done == 0 and not skip_to_postprocess:
