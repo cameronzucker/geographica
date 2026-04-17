@@ -28,7 +28,7 @@ isolated LAN or standalone device.
 - **Imperial and metric units** — switchable distance/elevation units
 - **Draw-on-map bounding box selection** for imagery downloads
 - **Admin config panel** (localhost-only, separated from main app) with 4-tab layout: Dashboard (service health with color-coded status dots, disk/TLS info), Pipelines (7-source card grid with MapLibre minimap bbox selection: USGS Direct, USGS M2M, National Map, NOAA NAIP, Sentinel-2, NAIP county lookup, BYO import), Inventory (imagery coverage map with clustered markers, zoom/size/source details, delete capability), Settings (credential keyring, TLS config, STT status)
-- **Pipeline management** — start/cancel imagery (direct, M2M, National Map, NOAA, Sentinel-2, BYO import), elevation, public lands, and OSM POI extraction from the browser with phase-aware progress tracking and download estimates
+- **Pipeline management** — start/cancel imagery (direct, M2M, National Map, NOAA, Sentinel-2, BYO import), elevation, public lands, and OSM POI extraction from the browser with phase-aware progress tracking, download estimates, and NOAA quad-level deduplication (re-runs skip already-processed areas)
 - **Print/export directions** (Mapquest-style printable page)
 - **ATAK integration** — serves as a WMS map source for TAK clients
 - **TLS support** — three modes: HTTP, HTTPS (self-signed), or Tailscale (Let's Encrypt)
@@ -664,10 +664,12 @@ import completes. This is expected on first run.
 The routing graph only covers the region in your PBF. Ensure your start/end
 points are within the coverage area.
 
-**TileServer crashes with SQLITE_READONLY**
-The imagery or elevation MBTiles is in WAL mode from an active download.
-TileServer reads from `/srv/data/` which must be mounted read-write in
-`docker-compose.yml`.
+**TileServer returns 404 for imagery after a pipeline run**
+The pipeline uses WAL journal mode during writes. If the process exits without
+checkpointing, a multi-GB WAL file prevents TileServer from reading the MBTiles.
+Fix: `python3 -c "import sqlite3; c=sqlite3.connect('/srv/geographica/data/imagery_noaa.mbtiles'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.execute('PRAGMA journal_mode=DELETE'); c.close()"`,
+then `docker compose restart tileserver`. This is handled automatically in the
+pipeline's post-processing since commit `68edf6d`.
 
 **STT returns 405 or HTML instead of JSON**
 The NGINX config is stale. Docker file bind mounts track inodes — git operations
@@ -682,10 +684,12 @@ ImageServer (free, rate-limited) for NAIP imagery instead.
 
 **System crashed / OOM during first run**
 Ensure cgroup memory limits are enabled (see above). The NOAA imagery pipeline
-is memory-intensive — rasterio reproject runs in-process with 4 threads, each
-handling ~486 MB GeoTIFFs (peak RSS ~2-3 GB). The M2M pipeline holds all scene
+runs rasterio in-process with 4 reproject threads (peak RSS ~800 MB after
+GDAL_CACHEMAX cap + single-file fast path). The M2M pipeline holds all scene
 metadata in memory (~1.5 GB for Arizona's 16,000+ scenes). On 8 GB Pi 5, stop
-Docker services before running large downloads: `docker compose stop`.
+Docker services before running large M2M downloads: `docker compose stop`.
+NOAA runs are safe on 8 GB — the pipeline is memory-optimized with gc.collect,
+malloc_trim, cursor-based iteration, and capped GDAL cache.
 
 **Slow spatial search (5+ seconds)**
 If spatial search is slow only in the browser (curl is fast), enable HTTP/2 on
@@ -768,6 +772,9 @@ geographica/
 │   │   ├── keyring_client.py   # GNOME Keyring client (reads credentials via tmpfs)
 │   │   ├── requirements.txt
 │   │   └── tests/              # Admin status, pipeline, zoom validation tests
+│   ├── pipeline/               # On-demand pipeline container (imagery/elevation/OSM downloads)
+│   │   ├── Dockerfile          # Python 3.12 + GDAL + rasterio + numpy + scipy
+│   │   └── requirements.txt    # aiohttp, aiosqlite, tqdm, numpy, rasterio, scipy
 │   └── keyring-agent/          # Host-side credential daemon (GNOME Keyring → tmpfs secrets)
 │       ├── agent.py            # D-Bus keyring interface, writes secrets to tmpfs mount
 │       └── geographica-keyring.service  # systemd unit for keyring agent

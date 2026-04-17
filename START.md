@@ -25,11 +25,12 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## What to work on next
 
-### 1. Companion Data Ingestion Utility (HIGH — spec ready)
+### 1. NOAA Pipeline Deferred Fixes (MEDIUM — from adversarial review)
 
-**Spec:** `docs/superpowers/specs/2026-04-15-companion-utility-design.md`
-
-Cross-platform desktop tool for fast imagery download/processing on a workstation, then SCP to Pi. Needs adversarial review → plan → execute.
+9 deferred items from the 8-agent adversarial review (2026-04-16). See
+`~/.claude/projects/-home-administrator-Code-geographica/memory/handoff_20260417.md`
+for the full list. Key items: checkpoint atomicity gap, atomic temp-file downloads,
+disk-full preflight, parallelized tile rendering.
 
 ### 2. Visual Design Identity (MEDIUM)
 
@@ -45,19 +46,29 @@ Browser wizard at localhost:8099. Partially built. Needs keyring integration, ma
 7 Docker services + 1 systemd service (keyring agent). All healthy.
 
 ### Admin Panel (localhost:8097)
-4 tabs: Dashboard, Pipelines (7-source card grid), Inventory (coverage map + delete), Settings (keyring credentials)
+4 tabs: Dashboard, Pipelines (7-source card grid with draw-to-select bbox), Inventory (coverage map + delete), Settings (keyring credentials).
+
+Pipeline features: start/cancel for all modes, 3-stage progress tracking for NOAA (downloaded/reprojected/merged + live ETA), pre-run tile count and time estimates, NAIP quad deduplication for incremental coverage expansion.
 
 ### Imagery
-USGS basemap z0-14 (26 GB), NOAA NAIP z14-18 (3 GB, 346K tiles with overviews), M2M z19 partial.
+- USGS basemap z0-14 (26 GB)
+- NOAA NAIP z17 + overviews z0-16 (8.6 GB, 419K tiles, northern AZ)
+- M2M z19 partial
+- Pipeline container has numpy/rasterio/scipy for in-process tile rendering
+
+### Companion Utility
+Separate repo at `/home/administrator/Code/geographica-companion`. Cross-platform desktop tool for fast imagery download/processing, SCP to Pi. Same pipeline code as main repo.
 
 ### Security
 GNOME Keyring via host-side agent. tmpfs secrets for pipeline containers. No plaintext credentials.
 
 ### Tests
-535 passing. `python -m pytest tests/ -v`
+579 passing (2 pre-existing M2M failures, 9 pre-existing OSM POI errors). `python -m pytest tests/ services/search/tests/ -v`
 
 ### Key architectural details
 - Combined imagery: Hybrid checkbox removed, basemap auto-shows, 28 paint overrides, tileSize:256
 - Pipeline admin: card grid with non-destructive catalog polling (no DOM rebuild on poll)
-- TileServer: source unregistered during pipeline writes to prevent crash-looping
+- NOAA pipeline: 3-stage parallel (8 downloaders, 4 reproject workers, 1 serial merger), rasterio in-process (not GDAL CLI), GDAL_CACHEMAX=64, quad-level checkpoint dedup
+- TileServer: source unregistered during pipeline writes, WAL→DELETE journal mode conversion on completion
 - Keyring: host-side daemon on Unix socket, search container communicates via bind-mounted socket
+- Pipeline container: 4 GB memory limit, bind-mounted scripts (:ro)
