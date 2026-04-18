@@ -1769,21 +1769,11 @@ async def run_noaa(args):
     import datetime
     update_progress._started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    # Unregister from TileServer before writing — prevents TileServer from
-    # crash-looping on SQLITE_BUSY while we hold the file lock for gdalwarp/merge.
-    # Phase 6 re-registers after completion.
-    ts_config_path = os.environ.get("TILESERVER_CONFIG")
-    if ts_config_path:
-        ts_config = Path(ts_config_path)
-        if ts_config.exists():
-            try:
-                from tileserver_config import remove_mbtiles_from_config
-                if remove_mbtiles_from_config(ts_config, "imagery_noaa"):
-                    log.info("Temporarily unregistered imagery_noaa from TileServer")
-            except ImportError:
-                pass
-            except Exception:
-                pass
+    # TileServer management is now centralized in the search service.
+    # The search service detects pipeline completion via status reconciliation,
+    # then WAL-checkpoints the MBTiles and restarts TileServer. No need to
+    # unregister/re-register here (and doing so was dangerous: crashes left
+    # the source permanently unregistered).
 
     # Validate catalog entry
     if (state, year) not in NOAA_NAIP_CATALOG:
@@ -2263,26 +2253,9 @@ async def run_noaa(args):
         except Exception as exc:
             log.warning("Nodata cleanup failed: %s — output is still usable", exc)
 
-    # Phase 6: Update TileServer config if path is provided via env
-    ts_config_path = os.environ.get("TILESERVER_CONFIG")
-    if output.exists() and (tiles_done > 0 or skip_to_postprocess) and ts_config_path:
-        ts_config = Path(ts_config_path)
-        if ts_config.exists():
-            try:
-                from tileserver_config import add_mbtiles_to_config
-                added = add_mbtiles_to_config(
-                    ts_config, "imagery_noaa", f"/srv/data/{output.name}"
-                )
-                if added:
-                    log.info("Added imagery_noaa to TileServer config.json")
-                else:
-                    log.info("imagery_noaa already in TileServer config")
-            except ImportError:
-                pass
-            except Exception as exc:
-                log.warning("Failed to update TileServer config (non-fatal): %s", exc)
-        else:
-            log.warning("TileServer config not found at %s", ts_config_path)
+    # TileServer config update + restart is handled by the search service
+    # after it detects pipeline completion via status reconciliation.
+    # See services/search/main.py pipeline_status() endpoint.
 
     # Final WAL checkpoint: flush all pending writes into the main database file.
     # Without this, the WAL can grow to several GB during post-processing

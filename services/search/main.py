@@ -1333,7 +1333,7 @@ async def pipeline_start(body: PipelineStartBody):
 
             # Build environment
             env = {
-                "GDAL_CACHEMAX": "1024",
+                "GDAL_CACHEMAX": "64",
                 "PYTHONUNBUFFERED": "1",
             }
 
@@ -1412,7 +1412,7 @@ async def pipeline_start(body: PipelineStartBody):
                 volumes=volumes,
                 environment=env,
                 network=network,
-                mem_limit="2g",
+                mem_limit="4g",
             )
 
             # Write state file
@@ -1497,11 +1497,50 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
                 "MBTiles written to",
                 "NOAA pipeline complete",
                 "Import complete",
+                "pipeline complete",
             )):
                 new_status = "completed"
             else:
                 new_status = "interrupted"
             state_data["status"] = new_status
+
+            # On successful completion: WAL checkpoint + TileServer restart.
+            # The pipeline writes to MBTiles in WAL mode. TileServer caches
+            # metadata at startup and won't see new tiles/bounds without a
+            # restart. This is the centralized handoff point.
+            if new_status == "completed" and client:
+                # WAL checkpoint on the output MBTiles
+                output_name = state_data.get("mode", "imagery")
+                mbtiles_candidates = [
+                    f"imagery_{output_name}.mbtiles",
+                    f"imagery.mbtiles",
+                    f"elevation.mbtiles",
+                    f"public-lands.mbtiles",
+                ]
+                for candidate in mbtiles_candidates:
+                    mbtiles_file = DATA_DIR / candidate
+                    if mbtiles_file.exists():
+                        try:
+                            import sqlite3 as _wal
+                            with _wal.connect(str(mbtiles_file), timeout=5) as _wc:
+                                _wc.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                                _wc.execute("PRAGMA journal_mode=DELETE")
+                            print(f"WAL checkpoint: {candidate}", flush=True)
+                        except Exception as exc:
+                            print(f"WAL checkpoint failed for {candidate}: {exc}", flush=True)
+                        break
+
+                # Restart TileServer to pick up new metadata/bounds
+                try:
+                    ts_containers = client.containers.list(
+                        all=False, filters={"name": "geographica-tileserver"}
+                    )
+                    for ts in ts_containers:
+                        if ts.status == "running":
+                            ts.restart(timeout=30)
+                            print("TileServer restarted after pipeline completion", flush=True)
+                except Exception as exc:
+                    print(f"TileServer restart failed: {exc}", flush=True)
 
             try:
                 tmp = state_file.with_suffix(".json.tmp")
@@ -1801,7 +1840,7 @@ async def pipeline_import(
                 volumes=volumes,
                 environment=env,
                 network=network,
-                mem_limit="2g",
+                mem_limit="4g",
             )
 
             from datetime import datetime, timezone as tz
