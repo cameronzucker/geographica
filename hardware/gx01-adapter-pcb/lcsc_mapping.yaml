@@ -1,0 +1,71 @@
+# LCSC part number mapping for JLCPCB PCBA.
+#
+# Workflow:
+#  1. Find the LCSC part number for each component at https://www.lcsc.com
+#     Prefer "Basic Parts" catalog (no setup fee) where possible.
+#     https://jlcpcb.com/parts/basic_parts
+#  2. Fill in the `lcsc:` field for each designator.
+#  3. Run `hardware/_shared/make_jlc_bundle.py` to generate the JLC bundle.
+#
+# Status: SEEDED with plausible LCSC PNs but NOT yet verified. Before
+# uploading to JLC, cross-check each PN on lcsc.com to confirm:
+#   - The part is in-stock
+#   - The footprint matches our KiCad footprint (same pitch, same form factor)
+#   - For Extended parts, note the setup fee when reviewing the JLC quote
+#
+# Heads-up: ALL components on this v1 board are through-hole. JLC's
+# through-hole PCBA pricing is higher than SMD. For small batches (≤ 5
+# boards), hand-soldering through-hole may be cheaper than JLC PCBA.
+# This mapping is set up so the board CAN be factory-assembled if/when
+# a larger run (10+ boards) makes it economical.
+
+# Components whose designators match these patterns are skipped (not sent
+# to JLC for assembly). Mounting holes have no component to place.
+skip_patterns:
+  - "^H[0-9]+$"      # H1..H4 mounting holes
+
+parts:
+  # ── Passives ─────────────────────────────────────────────────────
+  R1:
+    lcsc: C17520                       # TODO: verify — 10 Ω axial THT
+    tier: basic
+    note: "Actually: 10 Ω 1/4W axial through-hole. LCSC's Basic Parts catalog
+            is SMD-biased — the Basic 10 Ω entries are almost all 0603/0805
+            SMD. For through-hole you'll likely find a matching part in
+            Extended Parts; update tier to 'extended' if so."
+
+  C1:
+    lcsc: C14663                       # TODO: verify — 100 nF disc ceramic THT
+    tier: basic
+    note: "100 nF 50V X7R disc cap, 2.5mm lead spacing"
+
+  RV1:
+    lcsc: C3296W-103                   # TODO: verify — Bourns 3296W 10k
+    tier: extended
+    note: "Bourns 3296W-1-103 or equivalent; 10 kΩ multi-turn trim pot,
+            vertical mount, ~$2.50 each"
+
+  # ── Connectors ───────────────────────────────────────────────────
+  J1:
+    lcsc: C124379                      # TODO: verify
+    tier: extended
+    note: "2×20 female pin socket, 2.54mm pitch, stacking height ~8.5mm.
+            Needs to mate with the male header on top of the LC29H HAT."
+
+  J2:
+    lcsc: C124378                      # TODO: verify
+    tier: basic
+    note: "1×20 male pin header, 2.54mm pitch, standard break-off strip.
+            Ribbon connects here to the GDM12864H LCD module."
+
+  J3:
+    lcsc: C158013                      # TODO: verify
+    tier: basic
+    note: "JST XH-style 2-pin male vertical header, 2.50mm pitch.
+            Mates with the Noctua NF-A4x10 5V fan's 3-pin Molex via a
+            bundled JST-XH-to-fan adapter cable."
+
+  J4:
+    lcsc: C158013
+    tier: basic
+    note: "Same as J3 — second fan connector."
