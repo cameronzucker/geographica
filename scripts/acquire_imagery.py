@@ -2190,6 +2190,9 @@ async def run_noaa(args):
                         if warped_path is None:
                             with counter_lock:
                                 tiles_failed += 1
+                            # B12 fix: write progress so frontend polling
+                            # sees the failure-counter update, not stale state.
+                            _write_progress()
                         continue
 
                     log.info("[%d/%d] Merging %s into MBTiles",
@@ -2220,6 +2223,10 @@ async def run_noaa(args):
                     else:
                         with counter_lock:
                             tiles_failed += 1
+                        # B12 fix: write progress so frontend sees the
+                        # tiles_failed counter move without waiting for
+                        # the next success or Phase 5.
+                        _write_progress()
                         if _cancel_requested:
                             break
                         log.warning("[%d/%d] Merge failed for %s",
