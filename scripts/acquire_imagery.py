@@ -756,50 +756,26 @@ def _update_mbtiles_bounds(mbtiles_path: Path) -> None:
 
 def run_gdal_subprocess(cmd: list[str], timeout: int = 7200,
                         cancel_check=None) -> subprocess.CompletedProcess:
-    """Run a GDAL CLI command with nice priority and optional cancel check.
+    """Run a GDAL CLI command. Delegates to the shared helper.
 
-    Uses Popen with a process group so SIGTERM can kill the child
-    immediately (without waiting for it to finish).
-
-    Args:
-        cmd: Command and arguments (e.g., ["gdalbuildvrt", ...])
-        timeout: Max seconds before killing the process.
-        cancel_check: Optional callable returning True if cancellation requested.
-
-    Returns:
-        CompletedProcess on success.
-
-    Raises:
-        subprocess.CalledProcessError: If command fails or is cancelled.
-        subprocess.TimeoutExpired: If timeout exceeded.
+    Preserved as a thin wrapper because existing tests import it from
+    acquire_imagery. Registers/clears the module-level _child_pid so the
+    SIGTERM handler (_handle_sigterm at the top of this module) can
+    killpg the child.
     """
-    global _child_pid
-    if cancel_check and cancel_check():
-        raise subprocess.CalledProcessError(1, cmd, stderr="Cancelled before start")
-    full_cmd = ["nice", "-n", "19"] + cmd
-    gdal_env = {
-        **os.environ,
-        "GDAL_CACHEMAX": os.environ.get("GDAL_CACHEMAX", "1024"),
-        "GDAL_NUM_THREADS": os.environ.get("GDAL_NUM_THREADS", "ALL_CPUS"),
-    }
-    proc = subprocess.Popen(
-        full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, env=gdal_env,
-        preexec_fn=os.setsid,  # new process group so we can kill it
-    )
-    _child_pid = proc.pid
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        proc.wait()
+    def _set_pid(pid: int) -> None:
+        global _child_pid
+        _child_pid = pid
+
+    def _clear_pid() -> None:
+        global _child_pid
         _child_pid = None
-        raise
-    _child_pid = None
-    if proc.returncode != 0:
-        raise subprocess.CalledProcessError(proc.returncode, full_cmd,
-                                            output=stdout, stderr=stderr)
-    return subprocess.CompletedProcess(full_cmd, proc.returncode, stdout, stderr)
+
+    from gdal_subprocess import run_gdal_subprocess as _shared
+    return _shared(
+        cmd, timeout=timeout, cancel_check=cancel_check,
+        on_child_started=_set_pid, on_child_ended=_clear_pid,
+    )
 
 
 def _run_gdaladdo_with_metadata_fixup(output: Path) -> None:

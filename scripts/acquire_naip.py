@@ -27,6 +27,7 @@ from pathlib import Path
 import aiohttp
 
 from build_county_index import counties_for_bbox
+from gdal_subprocess import run_gdal_subprocess
 from pipeline_progress import update_progress as _generic_progress
 from pipeline_security import safe_staging_path, sanitize_fips, validate_file_header
 
@@ -60,13 +61,22 @@ GDAL_ENV = {
 # Cancellation
 # ---------------------------------------------------------------------------
 _cancel_requested = False
+_child_pid: int | None = None  # set by run_gdal_subprocess while a child is running
 
 
 def _handle_sigterm(signum, frame):
     """Handle SIGTERM for graceful shutdown (docker stop)."""
     global _cancel_requested
-    log.info("SIGTERM received - finishing current county and shutting down")
+    log.info("SIGTERM received - cancelling and killing any GDAL child")
     _cancel_requested = True
+    # B5 fix: forward SIGTERM to the GDAL child's process group so a
+    # long-running gdaladdo doesn't block cancel for 30+ minutes.
+    if _child_pid is not None:
+        try:
+            import os as _os
+            _os.killpg(_os.getpgid(_child_pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
 
 
 signal.signal(signal.SIGTERM, _handle_sigterm)
@@ -410,18 +420,29 @@ def convert_jp2_to_geotiff(jp2_path: Path, staging_dir: Path, fips: str) -> Path
         log.info("Using existing GeoTIFF: %s", tif_path)
         return tif_path
 
-    cmd = [
-        "nice", "-n", "19",
+    inner_cmd = [
         "gdal_translate", "-of", "GTiff",
         "-co", "TILED=YES",
         "-co", "COMPRESS=DEFLATE",
         str(jp2_path), str(tif_path),
     ]
 
+    def _set_pid(pid: int) -> None:
+        global _child_pid
+        _child_pid = pid
+
+    def _clear_pid() -> None:
+        global _child_pid
+        _child_pid = None
+
+    # B5 fix: use shared helper so SIGTERM kills the GDAL child immediately
+    # instead of waiting up to 3600s for it to finish.
     try:
-        subprocess.run(
-            cmd, check=True, capture_output=True, text=True,
-            env=GDAL_ENV, timeout=3600,
+        run_gdal_subprocess(
+            inner_cmd, timeout=3600,
+            cancel_check=lambda: _cancel_requested,
+            on_child_started=_set_pid,
+            on_child_ended=_clear_pid,
         )
     except subprocess.CalledProcessError as exc:
         log.error("GDAL translate failed for %s: %s", jp2_path, exc.stderr)
@@ -449,35 +470,48 @@ def merge_to_mbtiles(geotiff_paths: list[Path], output_path: Path) -> bool:
     # Write file list for gdalbuildvrt
     tif_list_path.write_text("\n".join(str(p) for p in geotiff_paths))
 
+    def _set_pid(pid: int) -> None:
+        global _child_pid
+        _child_pid = pid
+
+    def _clear_pid() -> None:
+        global _child_pid
+        _child_pid = None
+
+    _cc = lambda: _cancel_requested
+
     try:
         # Build VRT
-        subprocess.run(
-            ["nice", "-n", "19", "gdalbuildvrt",
+        run_gdal_subprocess(
+            ["gdalbuildvrt",
              "-input_file_list", str(tif_list_path),
              str(vrt_path)],
-            check=True, capture_output=True, text=True,
-            env=GDAL_ENV, timeout=600,
+            timeout=600,
+            cancel_check=_cc,
+            on_child_started=_set_pid, on_child_ended=_clear_pid,
         )
 
         # Convert VRT to MBTiles
-        subprocess.run(
-            ["nice", "-n", "19", "gdal_translate",
+        run_gdal_subprocess(
+            ["gdal_translate",
              "-of", "MBTiles",
              "-co", "TILE_FORMAT=JPEG",
              "-co", "QUALITY=85",
              str(vrt_path), str(output_path)],
-            check=True, capture_output=True, text=True,
-            env=GDAL_ENV, timeout=7200,
+            timeout=7200,
+            cancel_check=_cc,
+            on_child_started=_set_pid, on_child_ended=_clear_pid,
         )
 
         # Build overview pyramids
-        subprocess.run(
-            ["nice", "-n", "19", "gdaladdo",
+        run_gdal_subprocess(
+            ["gdaladdo",
              "-r", "average",
              str(output_path),
              "2", "4", "8", "16"],
-            check=True, capture_output=True, text=True,
-            env=GDAL_ENV, timeout=3600,
+            timeout=3600,
+            cancel_check=_cc,
+            on_child_started=_set_pid, on_child_ended=_clear_pid,
         )
 
         return True
