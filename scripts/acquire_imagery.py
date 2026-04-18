@@ -2358,11 +2358,29 @@ async def run_noaa(args):
             log.warning("WAL checkpoint failed: %s — TileServer may need manual restart", exc)
 
     # Final status
+    # D2: status taxonomy
+    #   error            — 0 tiles succeeded (and not a resume run)
+    #   completed_partial — tiles_done > 0 AND tiles_failed > 0
+    #   completed        — clean completion (no failures, or resume run)
+    # Search service reconciliation treats completed_partial the same as
+    # completed for TileServer restart purposes (see services/search/main.py
+    # pipeline_status). Frontend can render a warning badge for partial.
     if tiles_done == 0 and not skip_to_postprocess:
         update_progress(output, "noaa", args.bbox, "n/a",
                         0, total_tiles, status="error", phase="error",
                         error=f"All {total_tiles} tiles failed to process")
         log.error("NOAA pipeline failed: 0/%d tiles processed", total_tiles)
+    elif tiles_failed > 0 and not skip_to_postprocess:
+        reported_done = tiles_done
+        reported_total = total_tiles
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        reported_done, reported_total, status="completed_partial",
+                        phase="complete",
+                        error=f"{tiles_failed} of {total_tiles} tiles failed",
+                        geotiffs_downloaded=reported_done,
+                        geotiffs_total=reported_total)
+        log.warning("NOAA pipeline completed with partial failures: %d/%d processed, %d failed",
+                    tiles_done, total_tiles, tiles_failed)
     else:
         reported_done = total_tiles_original if skip_to_postprocess else tiles_done
         reported_total = total_tiles_original if skip_to_postprocess else total_tiles
