@@ -648,6 +648,7 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
         """)
 
         composited = 0
+        errors = 0
         for z, x, y, src_data, dst_data in cursor:
             try:
                 with MemoryFile(src_data) as smf, MemoryFile(dst_data) as dmf:
@@ -663,11 +664,20 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
                     (merged, z, x, y),
                 )
                 composited += 1
-            except Exception:
-                pass  # Keep existing tile on decode error
+            except Exception as exc:
+                # B7 fix: count and log composite failures instead of silently
+                # dropping. Keeps the existing tile (correct default) but makes
+                # silent data-quality degradation observable.
+                errors += 1
+                if errors <= 5:  # avoid log-spam for systemic failures
+                    log.warning(
+                        "merge composite failed for %d/%d/%d: %s", z, x, y, exc
+                    )
 
         if composited:
             log.info("Composited %d overlapping edge tiles", composited)
+        if errors:
+            log.warning("merge_mbtiles: %d composite errors suppressed", errors)
 
         # Copy metadata from first batch only
         dst.execute("""INSERT OR IGNORE INTO metadata
