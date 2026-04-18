@@ -431,6 +431,21 @@ async def fetch_to_file(session: aiohttp.ClientSession, url: str,
                                 dest.unlink(missing_ok=True)
                                 return False
                             f.write(chunk)
+                    # B10 fix: detect Content-Length short-reads. A server
+                    # that cleanly closes the socket mid-body after advertising
+                    # Content-Length produces a truncated file with no
+                    # exception. Compare bytes written to advertised length;
+                    # if short, discard and retry.
+                    advertised = resp.content_length
+                    if advertised is not None and total < advertised:
+                        log.warning(
+                            "Short read: got %d/%d bytes for %s -- retrying",
+                            total, advertised, url,
+                        )
+                        dest.unlink(missing_ok=True)
+                        wait = RETRY_BACKOFF * (2 ** attempt)
+                        await asyncio.sleep(wait)
+                        continue
                     return True
                 if resp.status in (429, 500, 502, 503, 504):
                     wait = RETRY_BACKOFF * (2 ** attempt)
@@ -1965,6 +1980,22 @@ async def run_noaa(args):
                 url = f"{blob_base}/{tile_fname}"
                 dest = staging / tile_fname
                 t0 = time.monotonic()
+
+                # B11 fix: if dest already exists and passes validation from a
+                # previous run (SIGTERM between download and merge), skip the
+                # re-download. Saves up to DOWNLOAD_CONCURRENCY * 486 MB on
+                # resume. Note: we check outside the semaphore because no
+                # network I/O is needed.
+                if (dest.exists()
+                        and dest.stat().st_size > 0
+                        and validate_file_header(dest, "geotiff")):
+                    size_mb = dest.stat().st_size / (1024 * 1024)
+                    log.info(
+                        "Using cached staging tile: %s (%.0f MB)",
+                        tile_fname, size_mb,
+                    )
+                    return (tile_fname, dest)
+
                 async with download_sem:
                     if _cancel_requested:
                         return (tile_fname, None)
