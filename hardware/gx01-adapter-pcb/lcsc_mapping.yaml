@@ -1,38 +1,53 @@
+# LCSC part number mapping for JLCPCB PCBA.
+#
+# Each LCSC PN below was verified against JLCPCB's live catalog via
+# hardware/_shared/verify_lcsc.py (which queries their parts API and
+# cross-checks against our KiCad footprint's THT/SMD classification).
+#
+# To re-verify after any change:
+#   python3 ../_shared/verify_lcsc.py --pcb gx01-adapter.kicad_pcb \
+#       --mapping lcsc_mapping.yaml
+#
+# To regenerate the JLC bundle:
+#   python3 ../_shared/make_jlc_bundle.py \
+#       --pcb gx01-adapter.kicad_pcb --mapping lcsc_mapping.yaml \
+#       --gerbers gerbers/ --output jlc_bundle.zip
+
 skip_patterns:
-- ^H[0-9]+$
+  - "^H[0-9]+$"   # H1-H4 mounting holes — no component to place
+
 parts:
   R1:
-    lcsc: C17520
-    tier: basic
-    note: "Actually: 10 \u03A9 1/4W axial through-hole. LCSC's Basic Parts catalog\
-      \ is SMD-biased \u2014 the Basic 10 \u03A9 entries are almost all 0603/0805\
-      \ SMD. For through-hole you'll likely find a matching part in Extended Parts;\
-      \ update tier to 'extended' if so."
+    lcsc: C1370997
+    tier: extended
+    note: "Yageo CFR-25JT-52-10R — 10Ω 1/4W 5% THT axial carbon film. 4,700 in stock."
+
   C1:
-    lcsc: C14663
-    tier: basic
-    note: 100 nF 50V X7R disc cap, 2.5mm lead spacing
+    lcsc: C254085
+    tier: extended
+    note: "Dersonic CC1H104MC1FD3F6C10MF — 100nF 50V X7R through-hole disc ceramic. 69k stock."
+
   RV1:
     lcsc: C48641779
     tier: extended
-    note: "Bourns 3296W-1-103 or equivalent; 10 k\u03A9 multi-turn trim pot, vertical\
-      \ mount, ~$2.50 each"
+    note: "BAOTER 3296W-103 — 10kΩ 25-turn cermet trim pot (Bourns 3296W clone, pin-compatible). 18k stock."
+
   J1:
-    lcsc: C124379
+    lcsc: C2977589
     tier: extended
-    note: "2\xD720 female pin socket, 2.54mm pitch, stacking height ~8.5mm. Needs\
-      \ to mate with the male header on top of the LC29H HAT."
+    note: "ZHOURI 2.54-2*20 — standard 2×20 female pin header, 2.54mm pitch. Mates with LC29H's top male header. 57k stock."
+
   J2:
     lcsc: C124378
     tier: extended
-    note: "1\xD720 male pin header, 2.54mm pitch, standard break-off strip. Ribbon\
-      \ connects here to the GDM12864H LCD module."
+    note: "1×20 male break-off pin header. Ribbon connects here to the GDM12864H LCD. 130k stock."
+
   J3:
-    lcsc: C158013
-    tier: basic
-    note: JST XH-style 2-pin male vertical header, 2.50mm pitch. Mates with the Noctua
-      NF-A4x10 5V fan's 3-pin Molex via a bundled JST-XH-to-fan adapter cable.
+    lcsc: C146125
+    tier: extended
+    note: "BOOMELE XH-2P vertical, 2.50mm pitch — standard JST-XH-compatible. Mates with Noctua fan's JST-XH-to-fan pigtail."
+
   J4:
-    lcsc: C158013
-    tier: basic
-    note: "Same as J3 \u2014 second fan connector."
+    lcsc: C146125
+    tier: extended
+    note: "Same as J3 — second fan connector."
