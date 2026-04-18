@@ -1,0 +1,9 @@
+# SKiDL working files
+*.erc
+*.log
+*_sklib.py
+skidl_REPL.*
+
+# KiCad working files (not source of truth)
+*.kicad_prl
+*-backups/
