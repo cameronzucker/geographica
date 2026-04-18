@@ -2,7 +2,7 @@
   (version "D")
   (design
     (source "circuit.py")
-    (date "04/18/2026 03:22 AM")
+    (date "04/18/2026 03:46 AM")
     (tool "SKiDL (2.2.3)")
     (sheet
       (number 1)
@@ -55,9 +55,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "G_9euPg4Rm")
+          (name "SKiDL Tag") "jABZZVVZU2")
         (field
-          (name "SKiDL Line") "circuit.py:138"))
+          (name "SKiDL Line") "circuit.py:122"))
       (libsource
         (lib "Device")
         (part "C"))
@@ -65,7 +65,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "745a0175-ae26-5f90-b4dc-327e5e4ad93d"))
+      (tstamps "d707bfda-2007-5668-a126-2cde3dfeacc0"))
     (comp
       (ref "H1")
       (value "MH_2.75mm")
@@ -79,9 +79,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "QnnPa1x6Hr")
+          (name "SKiDL Tag") "XqGlbHisRe")
         (field
-          (name "SKiDL Line") "circuit.py:149"))
+          (name "SKiDL Line") "circuit.py:131"))
       (libsource
         (lib "Mechanical")
         (part "MountingHole"))
@@ -89,7 +89,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "1d0da868-c9b4-54b3-bfc4-b075b5b8206f"))
+      (tstamps "7d6b2bf1-10e0-5111-b6a6-250581203919"))
     (comp
       (ref "H2")
       (value "MH_2.75mm")
@@ -103,9 +103,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "aCK80zA4Lv")
+          (name "SKiDL Tag") "FjUp9dn5TP")
         (field
-          (name "SKiDL Line") "circuit.py:156"))
+          (name "SKiDL Line") "circuit.py:133"))
       (libsource
         (lib "Mechanical")
         (part "MountingHole"))
@@ -113,7 +113,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "e6756ed4-7c2d-5810-8d4e-ca9414931aa6"))
+      (tstamps "9c416a90-4bff-5b04-be2c-37e29896f427"))
     (comp
       (ref "H3")
       (value "MH_2.75mm")
@@ -127,9 +127,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "CgmyRmZtzV")
+          (name "SKiDL Tag") "wYZcyJdDbE")
         (field
-          (name "SKiDL Line") "circuit.py:163"))
+          (name "SKiDL Line") "circuit.py:135"))
       (libsource
         (lib "Mechanical")
         (part "MountingHole"))
@@ -137,7 +137,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "810203b8-b075-54b0-ab63-772ed8dd7606"))
+      (tstamps "941f2ad3-915d-54f0-8e13-f7d426494467"))
     (comp
       (ref "H4")
       (value "MH_2.75mm")
@@ -151,9 +151,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "agZo9pHVH7")
+          (name "SKiDL Tag") "wJ101jb6i3")
         (field
-          (name "SKiDL Line") "circuit.py:170"))
+          (name "SKiDL Line") "circuit.py:137"))
       (libsource
         (lib "Mechanical")
         (part "MountingHole"))
@@ -161,7 +161,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "8e1f1a5b-b632-54f7-8d2d-b34d7e192ca7"))
+      (tstamps "b103d44a-1761-51aa-a50f-790763c81f3e"))
     (comp
       (ref "J1")
       (value "Pi GPIO 40-pin socket")
@@ -175,9 +175,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "vFXwseSmvD")
+          (name "SKiDL Tag") "2McCkDLcKw")
         (field
-          (name "SKiDL Line") "circuit.py:72"))
+          (name "SKiDL Line") "circuit.py:69"))
       (libsource
         (lib "Connector_Generic")
         (part "Conn_02x20_Odd_Even"))
@@ -185,31 +185,31 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "db19b3cb-a234-5ebe-9815-4f21397d145e"))
+      (tstamps "5d16cffb-6289-59e3-af49-91b8018a13cb"))
     (comp
       (ref "J2")
-      (value "LCD 20-pin IDC")
-      (description "Generic connector, double row, 02x10, odd/even pin numbering scheme (row 1 odd numbers, row 2 even numbers), script generated (kicad-library-utils/schlib/autogen/connector/)")
-      (footprint "Connector_PinHeader_2.54mm:PinHeader_2x10_P2.54mm_Vertical")
+      (value "LCD 20-pin header")
+      (description "Generic connector, single row, 01x20, script generated (kicad-library-utils/schlib/autogen/connector/)")
+      (footprint "Connector_PinHeader_2.54mm:PinHeader_1x20_P2.54mm_Vertical")
       (fields
         (field
-          (name "Description") "Generic connector, double row, 02x10, odd/even pin numbering scheme (row 1 odd numbers, row 2 even numbers), script generated (kicad-library-utils/schlib/autogen/connector/)")
+          (name "Description") "Generic connector, single row, 01x20, script generated (kicad-library-utils/schlib/autogen/connector/)")
         (field
-          (name "Footprint") "Connector_PinHeader_2.54mm:PinHeader_2x10_P2.54mm_Vertical")
+          (name "Footprint") "Connector_PinHeader_2.54mm:PinHeader_1x20_P2.54mm_Vertical")
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "ofUskITdem")
+          (name "SKiDL Tag") "vsJp12biPP")
         (field
-          (name "SKiDL Line") "circuit.py:85"))
+          (name "SKiDL Line") "circuit.py:79"))
       (libsource
         (lib "Connector_Generic")
-        (part "Conn_02x10_Odd_Even"))
+        (part "Conn_01x20"))
       (sheetpath
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "7404846a-e496-5706-84ea-f0a66e6ab251"))
+      (tstamps "ba16f35c-a61a-536d-8dd3-02bfb84af264"))
     (comp
       (ref "J3")
       (value "Fan 1 (JST-XH 2pin)")
@@ -223,9 +223,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "HzHlekVrmv")
+          (name "SKiDL Tag") "teFSQtSALJ")
         (field
-          (name "SKiDL Line") "circuit.py:96"))
+          (name "SKiDL Line") "circuit.py:88"))
       (libsource
         (lib "Connector_Generic")
         (part "Conn_01x02"))
@@ -233,7 +233,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "0c6f6175-b819-5011-9330-d7893423849f"))
+      (tstamps "a6eb40b8-829e-5cea-82df-8c87e976f022"))
     (comp
       (ref "J4")
       (value "Fan 2 (JST-XH 2pin)")
@@ -247,9 +247,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "fll2zHjrNB")
+          (name "SKiDL Tag") "zxBROqE7vy")
         (field
-          (name "SKiDL Line") "circuit.py:103"))
+          (name "SKiDL Line") "circuit.py:95"))
       (libsource
         (lib "Connector_Generic")
         (part "Conn_01x02"))
@@ -257,7 +257,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "4a24f93e-d713-5642-b829-fa9749548660"))
+      (tstamps "2fa0b109-f9a4-5bb9-b6b1-331903b82dca"))
     (comp
       (ref "R1")
       (value "10")
@@ -271,9 +271,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "eMu9BUctJS")
+          (name "SKiDL Tag") "1T0_ET0FIU")
         (field
-          (name "SKiDL Line") "circuit.py:128"))
+          (name "SKiDL Line") "circuit.py:113"))
       (libsource
         (lib "Device")
         (part "R"))
@@ -281,7 +281,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "a1fa5ae4-1002-52e0-8944-937291907175"))
+      (tstamps "5d9718c3-d4a4-5e93-b17b-aa9decdc3bd9"))
     (comp
       (ref "RV1")
       (value "10k")
@@ -295,9 +295,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "PMzOR8oth7")
+          (name "SKiDL Tag") "4CvR7J6nna")
         (field
-          (name "SKiDL Line") "circuit.py:116"))
+          (name "SKiDL Line") "circuit.py:104"))
       (libsource
         (lib "Device")
         (part "R_Potentiometer"))
@@ -305,7 +305,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "34285eb2-c93e-5727-8b3a-0e905801cd1b")))
+      (tstamps "15e068d3-96fe-5c84-8b8d-3bc13386b295")))
   (nets
     (net
       (code 1)
@@ -417,7 +417,7 @@
       (class "Default")
       (node
         (ref "J1")
-        (pin "16")
+        (pin "33")
         (pintype "PASSIVE"))
       (node
         (ref "J2")
@@ -429,7 +429,7 @@
       (class "Default")
       (node
         (ref "J1")
-        (pin "18")
+        (pin "35")
         (pintype "PASSIVE"))
       (node
         (ref "J2")
@@ -441,7 +441,7 @@
       (class "Default")
       (node
         (ref "J1")
-        (pin "37")
+        (pin "18")
         (pintype "PASSIVE"))
       (node
         (ref "J2")
@@ -453,7 +453,7 @@
       (class "Default")
       (node
         (ref "J1")
-        (pin "36")
+        (pin "19")
         (pintype "PASSIVE"))
       (node
         (ref "J2")
@@ -465,7 +465,7 @@
       (class "Default")
       (node
         (ref "J1")
-        (pin "35")
+        (pin "22")
         (pintype "PASSIVE"))
       (node
         (ref "J2")
@@ -477,7 +477,7 @@
       (class "Default")
       (node
         (ref "J1")
-        (pin "33")
+        (pin "23")
         (pintype "PASSIVE"))
       (node
         (ref "J2")
@@ -489,7 +489,7 @@
       (class "Default")
       (node
         (ref "J1")
-        (pin "32")
+        (pin "26")
         (pintype "PASSIVE"))
       (node
         (ref "J2")
@@ -501,7 +501,7 @@
       (class "Default")
       (node
         (ref "J1")
-        (pin "31")
+        (pin "40")
         (pintype "PASSIVE"))
       (node
         (ref "J2")
@@ -525,7 +525,7 @@
       (class "Default")
       (node
         (ref "J1")
-        (pin "40")
+        (pin "31")
         (pintype "PASSIVE"))
       (node
         (ref "J2")
@@ -561,7 +561,7 @@
       (class "Default")
       (node
         (ref "J1")
-        (pin "22")
+        (pin "37")
         (pintype "PASSIVE"))
       (node
         (ref "J2")

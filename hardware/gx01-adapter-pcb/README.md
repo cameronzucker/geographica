@@ -3,8 +3,10 @@
 A small passthrough HAT that sits on top of the LC29H in the GX-01 stack and breaks out the Pi 5's GPIO into clean connectors for the KS0108B LCD (20-pin ribbon), two fan power outputs (JST-XH), and hosts the LCD's contrast trim + backlight current-limit passives.
 
 **Form factor:** Standard Pi HAT — 65 × 56.5 mm, 4× M2.5 mounting holes at corners.
-**Layers:** 2 (F.Cu signal, B.Cu GND pour + power distribution).
+**Layers:** 2 (F.Cu signals + short power/analog traces, B.Cu GND pour).
 **Components:** 11 (all through-hole for hand-soldering).
+**LCD connector:** 1×20 pin header at 2.54 mm pitch — natively matches the GDM12864H's 1×20 solder pad layout; no custom ribbon cable required.
+**Pitch alignment:** J1 (GPIO) and J2 (LCD) share the same X origin (7.11 mm) and 2.54 mm pitch, so J1 pin pair k and J2 pin k are in the same vertical column. This makes LCD signal routing a set of short, mostly-straight drops in the GUI router.
 **Fab target:** OSH Park 2-layer (~$5 for 3 boards) or JLCPCB equivalent.
 
 ## Pipeline
@@ -69,23 +71,26 @@ Pins intentionally left unconnected on this v1 board: Pi 3.3V (pins 1, 17) becau
 
 The programmatic pipeline handles:
 - Footprint placement with correct anchor behavior (pin 1 at known positions)
+- J1/J2 pitch-aligned placement (column-aligned pins → short GUI signal routing)
 - Net-to-pad assignment for all 20 nets
-- GND copper pour on B.Cu covering the full board with keepouts around mounting holes
-- Short 5V link trace between J1 pins 2 and 4
+- GND copper pour on B.Cu covering the full board with circular keepouts around mounting holes
+- Short 5V link between J1 pins 2 and 4, and J1 pin 4 straight down to J2 pin 2 (VDD)
+- VEE diagonal trace (J2 pin 18 → RV1 pin 3)
+- BLA diagonal trace (J2 pin 19 → R1 pin 2)
 
-What needs finishing in KiCad's GUI:
-- 14 LCD signal traces (RS, R/W, E, CS1, CS2, RST, DB0-DB7) from J1 pads to J2 pads on F.Cu
-- 5V distribution from J1 pin 2/4 area out to J2 VDD, R1, RV1, C1, and the two fan connectors
-- Analog bias traces: VEE (J2 pin 18 → RV1 pin 3), V0 (RV1 wiper → J2 pin 3), BLA (J2 pin 19 → R1 pin 2)
+What needs finishing in KiCad's GUI (15 unconnected items):
+- **14 LCD signal traces** (RS, R/W, E, CS1, CS2, RST, DB0-DB7) from J1 odd-row pads to J2 pads. Each is a 1-2 segment trace (short descent + tiny lateral jog to dodge the opposite-row pin at the same column). The pcbnew interactive router's push-and-shove behavior handles these in ~5 minutes.
+- **1 V0 trace** (RV1 wiper → J2 pin 3). Longer path; route on B.Cu with two vias to avoid the VEE trace on F.Cu. ~1 minute.
+- **5V distribution** to remaining consumers (RV1 pin 1, R1 pin 1, C1 pin 1, J3 pin 1, J4 pin 1). All are pads flagged as connected to the +5V net but without a discrete trace; GUI router draws these with push-and-shove in ~2 minutes.
 
-**Why the script doesn't do these:** naive point-to-point routing creates trace crossings on a single layer and short-circuit errors where traces pass over unrelated pads. Real routing needs either a crossing-aware autorouter (e.g., Freerouting — standalone Java tool not installed here) or a human at the GUI. The hard parts (board outline, component positions, net assignment, GND pour) are done; the straightforward parts (drawing ~20 short tracks) are a 20-minute GUI exercise.
+**Why these aren't programmatic:** the LCD signals would need an crossing-aware autorouter (each signal's direct diagonal would hit the opposite-row pin at its column). The V0 trace's natural B.Cu path passes within 0.3 mm of C1's GND plated-hole, which the router handles by small lateral nudges but programmatic layout doesn't. 5V distribution tangles with the GND pour and requires via-based detours. All three are ~10x faster in GUI than encoding the avoidance logic in the script.
 
 ## Known non-issues in DRC
 
 After running `kicad-cli pcb drc`, expect:
-- **~23 "unconnected items"** — the ratsnest waiting for GUI routing (expected)
-- **1 "courtyard overlap"** between J1 and H1 — the GPIO socket's courtyard (mechanical keep-out advisory) touches the mounting hole. Fabs ignore courtyards; this is a review warning, not a fab problem.
-- **2–3 "silk clearance" warnings** — mounting hole reference labels clipped by board edge. Cosmetic; doesn't affect fab or function.
+- **15 "unconnected items"** — the ratsnest waiting for GUI routing (expected)
+- **1 "courtyard overlap"** between J1 and H1 — the GPIO socket's courtyard (mechanical keep-out advisory) touches the mounting hole. Fabs ignore courtyards; this is a review advisory, not a fab problem. Can be suppressed in KiCad's DRC rules if it bothers you.
+- **3 silk warnings** — mounting hole reference labels clipped by board edge, and J1's reference label over its own copper area. Cosmetic; doesn't affect fab or function. Can be fixed by manually repositioning the silkscreen reference text in GUI.
 
 After completing routing in GUI, the ratsnest should clear and DRC should report only the courtyard + silk warnings.
 
