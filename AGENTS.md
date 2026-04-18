@@ -1,5 +1,9 @@
 # Geographica
 
+> **Note:** This file mirrors [CLAUDE.md](CLAUDE.md) for non-Claude agent
+> harnesses (Codex, etc.). When updating one, update the other to match.
+> The substantive content is identical.
+
 Offline-first GIS platform for AREDN mesh networks, running on Raspberry Pi 5.
 
 ## Project structure
