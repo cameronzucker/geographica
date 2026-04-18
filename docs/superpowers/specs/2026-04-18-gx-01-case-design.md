@@ -7,21 +7,21 @@
 
 ## Summary
 
-A hybrid-construction desk enclosure — printed FDE (Flat Dark Earth) PETG body with bronze-anodized aluminum top plate and back I/O panel — that packages the existing Geographica hardware stack into a single clean object. The existing SATA drive stays; the GPS antenna is externalized on an SMA pigtail (the only internal jumper); the Pi's native port bank is direct-exposed through the precision aluminum I/O shield (no USB hubs, no extensions).
+A hybrid-construction desk enclosure — printed FDE (Flat Dark Earth) PETG body with bronze-anodized aluminum top plate and back I/O panel — that packages the existing Geographica hardware stack into a single clean object. The 2.5" SATA drive now rides on a Geekworm X1100 shield beneath the Pi (replacing the previous loose-drive + USB-A-to-SATA cable arrangement); the GPS antenna is externalized on an SMA pigtail (the only internal jumper); the Pi's native port bank is direct-exposed through the precision aluminum I/O shield (no USB hubs, no extensions).
 
-Nominal exterior: **~235 × 90 × 70 mm (L × D × H).** Final dimensions to be pinned during implementation against physical measurements of the assembled hardware.
+Nominal exterior: **~125 × 100 × 95 mm (L × D × H).** Single-chamber stacked design driven by the X1100's 107.5 × 85 mm footprint (the largest PCB in the stack). Final dimensions to be pinned during implementation against physical measurements of the assembled hardware.
 
 A front-facing 128×64 monochrome STN LCD (SparkFun GDM12864H / LCD-00710, KS0108B controller, parallel interface, transflective for daylight readability) surfaces network + GPS + battery + service status, including a live QR code to join the unit's WiFi AP. The LCD is driven by a custom Python driver implementing the KS0108B parallel protocol.
 
 Because the KS0108B needs 14 GPIO pins and the LC29H fully covers the Pi's GPIO header, a small **custom 2-layer adapter PCB** sits on top of the LC29H, breaking out GPIOs + 5V into clean connectors for the LCD ribbon, two fan power outputs (JST-XH), and hosting passive components (contrast pot, backlight current-limit resistor, bypass cap). The PCB design lives in `hardware/gx01-adapter-pcb/` and was generated programmatically (SKiDL + pcbnew Python API); Gerbers are fab-ready for OSH Park (~$5 for 3 boards).
 
-**Active cooling** via one or two 40 mm 5V axial fans: empirical measurements on the bare board show 67 °C under sustained imagery-processing load with the Pi 5 Active Cooler fan ramped up — passive cooling alone would worsen this significantly inside an enclosure. Fans power from the Pi's GPIO 5V rail (supplied by X1207's 5A PoE conversion, ~2A of headroom available above system baseline). The X1207 does NOT provide its own fan header or auxiliary power rails; wiring taps GPIO pins 2/4 (5V) and 6 (GND) via a small custom harness with 2-pin JST-XH connectors per fan.
+**Active cooling** via **two** 40 mm 5V axial fans — both installed from v0.1 rather than "start with one, add second if needed" as the earlier spec called for. The case's ~1.2 L interior volume is ~20 % smaller than the prior two-chamber design, while heat sources (Pi, Hailo, PoE transformer, and now the X1100's USB-SATA bridge IC + the SSD itself inside the stack) are unchanged or slightly increased. Empirical baseline of 67 °C on bare board under sustained imagery load means the enclosed design needs forced airflow, not just better venting. Primary exhaust fan mounts in the aluminum top plate over the HAT stack; secondary intake fan mounts in the front wall at the level of the X1100/SSD, pulling cool air across the drive before it rises through the HATs. Fans power from the adapter HAT's two JST-XH connectors (5V tapped from GPIO via the adapter PCB — see Construction below).
 
 ## Goals
 
 1. Hold the current hardware stack as-is, without modifying or replacing any component
 2. Expose the Pi 5's native I/O directly through an aluminum I/O shield on the back — no USB hubs, no extension cables, no signal degradation
-3. Survive Arizona ambient temperatures (direct sun, up to ~45 °C air / ~70 °C radiant surface) with active airflow — the existing Pi 5 Active Cooler already hits 67 °C under sustained load at room ambient, so an enclosed case needs forced airflow to match or beat that baseline. Light-colored body (FDE, ~55 °C equilibrium in sun) minimizes solar gain; aluminum top plate doubles as heat spreader; one or two 40 mm fans move air through the Pi chamber
+3. Survive Arizona ambient temperatures (direct sun, up to ~45 °C air / ~70 °C radiant surface) with active airflow — two 40 mm 5 V fans (front intake + top exhaust) move air vertically through the single stack chamber, beating the bare-board 67 °C baseline. Light-colored body (FDE, ~55 °C equilibrium in sun) minimizes solar gain; aluminum top plate doubles as heat spreader over the HAT stack
 4. Externalize the GPS antenna entirely (SMA bulkhead on the back panel → active GPS puck on coax), because the RF link budget requires ≥40 dB isolation from the Pi + PoE + USB 3.0 noise stack, which no printed enclosure can provide
 5. Present live status at a glance via a front-mounted 128×64 monochrome STN LCD — IP address, uptime, GPS fix count, CPU temp, battery state, service health, and a scan-to-join WiFi QR code; transflective LCD chosen so display is readable in Arizona daylight without relying on backlight
 6. Be fabricable by one person with a consumer 3D printer plus a friend with CNC capability — no injection molding, no cast metal, no custom PCBs
@@ -45,8 +45,9 @@ Because the KS0108B needs 14 GPIO pins and the LC29H fully covers the Pi's GPIO 
 | 21700 Li-ion cell | 1 | 21 × 70 mm cylinder | Installed in X1207 cradle, lies flat, extending perpendicular from Pi past the Pi's short (56 mm) edge |
 | Raspberry Pi AI HAT+ 2 (Hailo) | 1 | ~65 × 56 mm + Hailo heatsink (~15 mm tall) | Uses Pi's single PCIe lane |
 | Waveshare LC29H GPS HAT | 1 | ~65 × 56 mm | u.FL connector exposed for external antenna |
-| 2.5" SATA SSD (bare drive) | 1 | 100 × 70 × 7 mm | Already bare — no enclosure to remove |
-| Existing USB-A → SATA bridge adapter | 1 | ~25 × 40 × 10 mm PCB clipped onto drive's SATA edge, with USB cable tail | Keeps current working configuration; adds ~25 mm of length past the drive's short edge |
+| 2.5" SATA SSD (bare drive) | 1 | 100 × 70 × 7 mm | Already bare — mounts directly onto the X1100 shield below the Pi |
+| Geekworm X1100 USB3-to-SATA shield | 1 | 107.5 × 85 mm PCB | Sits UNDER the Pi; SSD mounts onto it; connects to Pi via supplied rigid USB3 male-to-male bridge (no cable). Supports stacking with AI HAT+ (vendor confirmed compat with X1207 for this build via email). Largest PCB in the stack — drives the case footprint. |
+| Geekworm X1100 USB3 rigid bridge | 1 | (ships with X1100) | Replaces the prior loose USB-A-to-SATA adapter + cable; consumes one Pi USB3-A port mechanically rather than via cable |
 
 ### New / to procure
 
@@ -82,11 +83,17 @@ Because the KS0108B needs 14 GPIO pins and the LC29H fully covers the Pi's GPIO 
 
 ## Physical dimensions (nominal)
 
-**Exterior:** ~235 × 90 × 70 mm (L × D × H)
+**Exterior:** ~125 × 100 × 95 mm (L × D × H)
 
-- **Length (L, 235 mm):** parallel to Pi's long (85 mm) I/O edge. Split ~90 mm Pi chamber / 3 mm divider / ~135 mm SSD chamber. The measured SSD + USB-SATA adapter assembly is ~125.4 mm end-to-end (5" minus 1/16"); SSD chamber interior is sized to ~132 mm to give ~7 mm of routing clearance for the USB-A cable tail and adapter play.
-- **Depth (D, 90 mm):** front face to back face. Accommodates the Pi + X1207 + 21700 assembly's ~81 mm depth + wall thicknesses.
-- **Height (H, 70 mm):** bottom to top plate. Accommodates the stacked Pi + X1207 + AI HAT+ 2 + LC29H + 21700 battery assembly (~55 mm) plus top-plate fan clearance (~10 mm for a 40 mm fan under the plate) + wall/plate thicknesses.
+Single-chamber stacked design. Everything (X1100 + SSD + Pi + X1207 + HATs + adapter PCB + 21700 cell) occupies one cavity driven by the X1100's 107.5 × 85 mm PCB footprint plus wall/plate clearances.
+
+- **Length (L, 125 mm):** parallel to the X1100's long edge (107.5 mm) with ~6 mm of interior clearance + 6 mm printed wall thickness on each side + 2 mm aluminum back-panel thickness.
+- **Depth (D, 100 mm):** parallel to the X1100's short edge (85 mm) with clearance for the X1207's battery cradle that extends ~25 mm past the Pi's 56 mm edge; 6 mm interior clearance + 3 mm printed walls on each side.
+- **Height (H, 95 mm):** stacked interior height of ~80 mm (X1100 + standoffs + Pi + Active Cooler + X1207 + AI HAT+ 2 + LC29H + adapter HAT) + top-plate fan clearance (~10 mm under the 2 mm aluminum top) + 3 mm printed bottom plate.
+
+**Interior volume:** ~1.1–1.2 L (~20 % less than the previous two-chamber design). The volume reduction is why active cooling — with both fans — is mandatory rather than optional.
+
+Final dimensions will be verified against physical measurements of the assembled hardware during the implementation plan phase. X1100 mounting hole positions + exact standoff heights require the Geekworm wiki (currently down; vendor notified) or direct measurement of the shipped unit.
 
 Final dimensions will be verified against physical measurements of the assembled hardware during the implementation plan phase. Expected tolerance on overall dimensions: ±3 mm (slight warp on a 210 mm PETG print is normal).
 
@@ -94,23 +101,19 @@ Final dimensions will be verified against physical measurements of the assembled
 
 ### Printed parts (FDE PETG)
 
-One main "tray" shell comprising bottom + four walls:
+One main "tray" shell comprising bottom + four walls — a single chamber, not the previous two-chamber design:
 
-1. **Main shell** — single-piece or two-piece (split at mid-height if print bed size requires)
-   - Bottom plate integrated, 3 mm thick
-   - Front wall (3 mm) with cutouts for LCD window (~55 × 38 mm), three 12 mm LED holes, one 16 mm shutdown button hole, and recessed pockets for etched nameplate
-   - Left wall (3 mm) with an optional 42 mm round cutout for a secondary intake fan (blanked with a printed plug if only one fan is used in v0.1)
-   - Right wall (3 mm), solid, with low ventilation slots for SSD chamber passive intake
-   - Back wall: a frame-only structure that accepts the aluminum I/O shield as an inset (see below)
-   - Internal divider rib separating Pi chamber (left) from SSD chamber (right)
-   - Integrated Pi mounting posts (4× M2.5 standoff receptacles with heat-set inserts)
-   - Integrated SSD mount posts (2× M3 receptacles for flat-mounting the 2.5" drive)
-   - Integrated rim on top edge to accept the aluminum top plate with M3 captive screws at all four corners
-   - Integrated microSD slot access cutout in the bottom plate, with a small rubber grommet plug
+1. **Main shell** — two-piece split horizontally (the full height is tall enough that a bed-hugging single print would need excessive supports for the top-panel rim; cleaner to split)
+   - **Bottom tray (~45 mm tall):** integrated bottom plate (3 mm thick) + lower portion of front/back/side walls. Hosts the X1100 shield via 4× M2.5 standoff receptacles with heat-set inserts at X1100's mounting-hole positions (to be confirmed from Geekworm wiki; fallback: measure shipped unit). Front wall lower section contains the **40 mm intake fan cutout** at the level of the X1100 / SSD so cool air enters at the bottom of the thermal column.
+   - **Top cap (~50 mm tall):** upper portion of walls + rim for the aluminum top plate. Front wall upper section contains cutouts for LCD window (~55 × 38 mm), three 12 mm LED holes, one 16 mm shutdown button hole, and recessed pockets for etched nameplate.
+   - Back wall (across both pieces): a frame-only structure that accepts the aluminum I/O shield as an inset (see below). No longer split into Pi-port / SSD-chamber sections — just the Pi's port cluster + SMA bulkhead + rear vents.
+   - **Integrated cable-routing slot** in the upper section's floor for the rigid USB3 bridge between Pi (USB3-A ports) and X1100 below. Since the bridge is rigid, this is just a through-slot, not a cable gland.
+   - Left + right walls (3 mm), solid with low ventilation slots near the fan-intake level for cross-airflow.
+   - Integrated microSD slot access cutout in the bottom plate (aligned to the Pi's microSD card location AFTER the X1100 is mounted — Pi is ABOVE the X1100, so the microSD cutout goes through both the printed bottom AND a matching hole through the X1100 shield), with a small rubber grommet plug.
 
-2. **Antenna dock insert** — a small separate printed part that drops into a recess on the top plate, holding the two N52 magnets for the GPS puck parking spot (printed part is needed because magnets can't be machined into aluminum plate cleanly)
+2. **Antenna dock insert** — a small separate printed part that drops into a recess on the top plate, holding the two N52 magnets for the GPS puck parking spot.
 
-3. **Button cap** — the recessed cap that covers the momentary switch on the front, shaped to be glove-friendly
+3. **Button cap** — the recessed cap that covers the momentary switch on the front, shaped to be glove-friendly.
 
 Print settings: 0.2 mm layer height, 4 perimeters, 25% gyroid infill, minimal supports (the shell is designed to print bottom-down with minimal overhangs).
 
@@ -118,49 +121,52 @@ Print settings: 0.2 mm layer height, 4 perimeters, 25% gyroid infill, minimal su
 
 Two precision parts where dimensional accuracy matters most:
 
-1. **Back I/O shield** (2 mm thick, ~229 × 64 mm — spans full interior height minus top/bottom plate overlap)
-   - Cutouts sized to Pi 5's actual port positions:
-     - USB-C power: 9.5 × 4 mm, centerline at 13 mm from Pi's port-row origin
-     - 2× Micro-HDMI: 7 × 4 mm each, centerlines at 26 mm and 39 mm
-     - USB 3.0 stacked pair: 14 × 15 mm, centerline at ~58 mm
-     - USB 2.0 stacked pair: 14 × 15 mm, centerline at ~73 mm
-     - Ethernet RJ45 (PoE-in): 16 × 13.5 mm, centerline at ~89 mm
-   - SMA-F bulkhead hole: 6.35 mm diameter, positioned just past the divider (~113 mm from panel left edge, centered vertically)
-   - Horizontal vent slots across the SSD-chamber portion (right side), roughly 30 slots × 0.8 mm × 80 mm long
+1. **Back I/O shield** (2 mm thick, ~119 × 89 mm — matches the new smaller back-panel dimensions)
+   - Cutouts sized to Pi 5's actual port positions (vertical position accounting for the Pi's Z-offset above the X1100 — Pi sits ~12 mm above the bottom plate, so port centerline is ~20-25 mm up from the bottom edge of the panel):
+     - USB-C power: 9.5 × 4 mm
+     - 2× Micro-HDMI: 7 × 4 mm each
+     - USB 3.0 stacked pair: 14 × 15 mm — NOTE: only ONE of the two USB3 ports is externally accessible; the other is consumed internally by the X1100 USB3 bridge. The panel cutout covers the stacked pair; the occupied one will just be visibly filled by the bridge's protruding connector from behind.
+     - USB 2.0 stacked pair: 14 × 15 mm
+     - Ethernet RJ45 (PoE-in): 16 × 13.5 mm
+   - SMA-F bulkhead hole: 6.35 mm diameter, positioned in the upper area of the panel (above the Pi ports, in the space the shorter panel now provides)
+   - Back exhaust vent slots at the TOP of the panel (above ports and SMA): horizontal slats, ~20 × 0.8 mm × 8 slats total — let hot air out the top rear as it rises through the stack
    - Four M3 countersunk mounting holes at corners, mating with heat-set inserts in the printed shell's back frame
    - Laser-etched labels adjacent to each port group ("PoE-IN", "USB 3.0", "USB 2.0", "HDMI", "USB-C", "GPS ANT") + one centered header ("GEOGRAPHICA · GX-01 REAR · v0.1")
 
-   **Critical:** port positions are mm-accurate from Pi 5 mechanical drawing, not guessed. The machinist should verify against the actual Pi 5 before final cut. Post-drill recovery is planned if any hole is malformed.
+   **Critical:** port positions are mm-accurate from Pi 5 mechanical drawing + X1100 mounting-height offset, not guessed. The machinist should verify against the actual Pi 5 + X1100 stack BEFORE final cut. Post-drill recovery is planned if any hole is malformed.
 
-2. **Top plate** (2 mm thick, ~229 × 84 mm)
-   - **Primary exhaust fan cutout** over the Pi chamber portion (left ~40% of plate): 42 mm round cutout with an integrated aluminum grille pattern (either a milled hex-mesh or an adhesive stainless mesh underneath). The 40 mm fan mounts to the underside of the top plate via four M3 × 20 mm screws through the fan's mounting ears into printed standoffs on the Pi chamber's top rim.
-   - Smaller passive vent pattern over the SSD chamber portion: 2× rows of ~10 holes, 2.5 mm diameter each, for convection out of the SSD chamber
-   - Recessed magnetic antenna dock pocket (~45 × 8 mm deep recess), positioned in the clear area between fan cutout and vent pattern, sized to cradle a standard 28 mm GPS puck; two N52 magnets (in the printed insert underneath) hold the puck through the aluminum
+2. **Top plate** (2 mm thick, ~119 × 94 mm — smaller than v1's 229 × 84 mm)
+   - **Primary exhaust fan cutout** centered over the HAT stack: 42 mm round cutout with an integrated aluminum grille pattern (either a milled hex-mesh or an adhesive stainless mesh underneath). The 40 mm fan mounts to the underside of the top plate via four M3 × 20 mm screws through the fan's mounting ears into printed standoffs on the top cap's rim.
+   - Recessed magnetic antenna dock pocket (~35 × 6 mm deep recess) off to one side of the fan cutout, sized to cradle a standard 28 mm GPS puck; two N52 magnets (in the printed insert underneath) hold the puck through the aluminum
    - Laser-etched small "GPS DOCK" label adjacent to the recess
    - Four M3 countersunk mounting holes at corners
+
+**Secondary intake fan cutout** moves to the printed FRONT WALL (not the aluminum top plate) at the X1100/SSD level — ~42 mm round cutout + printed aluminum-mesh insert or a simple grille pattern in the printed plastic itself (the intake fan doesn't need a machined metal grille since it's not a visible feature on the top surface).
 
 Finish: bead-blasted + clear anodized in bronze (Pantone ~7563 C). Bronze complements FDE and reflects near-IR significantly better than black anodize, reducing solar heat gain.
 
 ### Assembly sequence (planned)
 
-1. Install heat-set inserts into printed shell (all ~20)
-2. Mount Pi 5 + X1207 + 21700 battery assembly to Pi chamber floor via 4× M2.5 standoffs
-3. Stack AI HAT+ 2 and LC29H per existing working configuration
-4. Install u.FL → SMA pigtail onto the LC29H's u.FL connector while the LC29H is still exposed (critical — this becomes inaccessible once the GPIO breakout HAT is added on top); mount SMA bulkhead into back I/O shield
-5. Attach back I/O shield to printed shell's back frame with 4× M3 × 8 screws
-6. Install LCD behind front window, LEDs, shutdown button — all wired to the Pi via a small breakout harness routed through the chamber divider's wiring pass-through. LCD uses SPI (4 wires: MOSI, SCLK, CS, DC) + backlight power + ground.
-6a. **Install GPIO screw-terminal breakout HAT on top of the LC29H** (verify orientation matches the 40-pin pinout before seating); wire fan power:
-   - Strip ~5 mm from each hookup wire end
-   - Screw 2× red wires (both fans' +) into one 5V terminal (e.g., pin 2 or 4)
-   - Screw 2× black wires (both fans' −) into one GND terminal (e.g., pin 6)
-   - Crimp/connect the other ends of the hookup wires to the 2-pin JST-XH pigtails
-   - Mate each JST-XH pigtail to a fan's connector (PWM wire floats)
-   - Multimeter-verify 5V ± 0.2V between red and black at the fan end before powering Pi
-6b. Install top-exhaust fan to the underside of the aluminum top plate via 4× M3 screws; route fan cable to the breakout HAT's terminals
-7. Mount SSD to SSD chamber floor via 2× M3 screws into mount posts; clip the existing USB-A-to-SATA adapter onto the drive's SATA edge; route the adapter's USB-A cable through a slot in the chamber divider and plug into a Pi USB 3.0 port on the back
-8. Test boot + LCD + GPS lock + WiFi AP + fan spin-up + all ports
-9. Install top plate + antenna dock insert, torque to hand-tight via 4× M3 × 8 screws
-10. Install rubber feet on bottom
+1. Install heat-set inserts into printed bottom tray + top cap (all M2.5 + M3 locations — approx 16 inserts total)
+2. **Mount 2.5" SSD onto X1100 shield** per Geekworm's included screws
+3. **Mount X1100 (with SSD on it) to the printed bottom tray** via 4× M2.5 standoffs into the bottom tray's heat-set inserts
+4. **Install the rigid USB3 male-to-male bridge** into X1100's USB3 receptacle (it's designed to stick upward, ready to receive the Pi above)
+5. **Mount Pi 5 on top of X1100 via 4× M2.5 standoffs** (at least 12 mm tall to clear the SSD thickness + bridge height). The USB3 bridge plugs into one of the Pi's USB3-A ports during this step.
+6. Mount X1207 on Pi's GPIO via its shoulder-bracket style connector; verify 21700 cell seats in the X1207 cradle.
+7. Stack AI HAT+ 2 on top of X1207/Pi assembly (PCIe FPC between Pi and AI HAT+; standoffs at the remaining GPIO-header mounting points).
+8. Stack LC29H on top of AI HAT+ 2 via its 40-pin passthrough.
+9. **Install u.FL → SMA pigtail onto the LC29H's u.FL connector while the LC29H is still exposed** (critical — this becomes inaccessible once the adapter HAT is added on top); route the SMA end toward the back panel; mount SMA bulkhead into back I/O shield.
+10. Attach back I/O shield (CNC aluminum) to printed shell's back frame with 4× M3 × 8 screws.
+11. **Install the GX-01 adapter HAT on top of the LC29H** (verify orientation matches the 40-pin pinout before seating).
+12. **Wire the front-panel harness:** LCD ribbon (20-conductor) from adapter HAT J2 to the LCD module; LED cathodes/anodes to corresponding GPIO pins on the adapter; shutdown button across its two designated pins. All routed through the cable-routing slot in the shell's internal partition.
+13. **Wire the fans:**
+    - Fan 1 (top exhaust, mounted to aluminum top plate via 4× M3 screws): plug into adapter HAT's J3 JST-XH header.
+    - Fan 2 (front intake, mounted to printed shell's front wall at the X1100 level via 4× M3 screws): plug into adapter HAT's J4 JST-XH header.
+    - Multimeter-verify 5 V ± 0.2 V at each JST-XH header before powering the Pi.
+14. **Mount front panel components:** install LCD behind the front window with the smoked acrylic window in the cutout; install 3× 12 mm LED bezels; install the momentary shutdown button + printed glove-friendly cap.
+15. **Test boot + LCD + GPS lock + WiFi AP + fan spin-up + all ports** through the back I/O shield before closing the case.
+16. Install top plate + antenna dock insert on top of the printed shell, torque to hand-tight via 4× M3 × 8 screws.
+17. Install rubber feet on bottom.
 
 ## Front panel specification
 
@@ -248,14 +254,14 @@ Active cooling, informed by empirical data: the user measured **67 °C under sus
 
 Mechanisms:
 
-1. **Top-mounted exhaust fan (primary)** — 40 mm 5V axial fan (Noctua NF-A4x10 5V or equivalent) mounted to underside of aluminum top plate, directly over the Pi chamber. Pulls hot air up and out through the fan grille. The existing Pi Active Cooler blows upward into this exhaust path, so the two fans work together rather than fighting.
-2. **Passive low intakes** on the front lower edge and/or both side walls — slot vents ~2 mm × 15 mm each, positioned near the case bottom to feed cool air into the chamber as the exhaust fan creates negative pressure.
-3. **Optional secondary intake fan** on the left side wall — adds ~30% more CFM, useful if Arizona summer ambient temps prove too much for the top-exhaust-only config. Spec'd as a cutout with a printed plug by default; swap the plug for a fan if thermals demand.
-4. **Aluminum top plate as heat spreader** — the 229 × 84 × 2 mm aluminum plate contacts the AI HAT+ 2's Hailo heatsink top via a thermal pad. Spreads heat radially, dumps it through the top surface + the fan cutout grille.
+1. **Top-mounted exhaust fan (primary, mandatory)** — 40 mm 5V axial fan (Noctua NF-A4x10 5V or equivalent) mounted to underside of aluminum top plate, centered over the HAT stack. Pulls hot air up and out through the fan grille. The existing Pi Active Cooler blows upward into this exhaust path, so the two fans work together rather than fighting.
+2. **Front-mounted intake fan (secondary, also mandatory)** — 40 mm 5V axial fan mounted to the printed front wall at the level of the X1100 / SSD. Pushes cool air in at the bottom of the chamber, across the SSD (which runs warm), then lets it rise naturally through the Pi + HATs + adapter HAT toward the exhaust fan on top. This creates a strong front-to-top vertical airflow column. Unlike the earlier side-intake "optional fan" design, this one is required from v0.1 because the reduced interior volume (~1.2 L vs. the previous ~1.5 L) leaves less thermal mass to absorb transients.
+3. **Supplementary passive intakes** on the left + right walls near the bottom — slot vents ~2 mm × 15 mm each, supplementing the intake fan.
+4. **Aluminum top plate as heat spreader** — the smaller 119 × 94 × 2 mm aluminum plate contacts the adapter HAT's top surface only indirectly (through ~5 mm air gap). Removed the direct Hailo-heatsink thermal pad contact from the earlier spec since the adapter HAT now sits between the Hailo and the top plate.
 5. **FDE body color** — reflects ~70% of solar near-IR vs. black's ~5%, keeping exterior body temperature 15–20 °C lower in direct sun.
 6. **Bronze-anodized aluminum top** — also high near-IR reflectance (~55% vs. black's 5%), reduces solar gain on the top plate.
 
-**Fan power wiring:** the X1207 does not provide a fan header or auxiliary rails (confirmed via datasheet — delivers 5V 5A to Pi via GPIO header only). The Pi 5's own fan header is occupied by the Active Cooler. Giving up a USB port is not acceptable (SSD already consumes one; the remaining three are planned for other peripherals). The GPIO header itself sits flush inside the LC29H's 40-pin socket and is physically inaccessible without relocating the HAT.
+**Fan power wiring:** the X1207 does not provide a fan header or auxiliary rails (confirmed via datasheet — delivers 5 V 5 A to Pi via GPIO header only). The Pi 5's own fan header is occupied by the Active Cooler. Giving up a USB port is not acceptable (X1100 USB3 bridge already consumes one; the remaining two USB-A + other HDMI/USB-C ports are planned for peripherals). The GPIO header itself sits flush inside the LC29H's 40-pin socket and is physically inaccessible without relocating the HAT.
 
 Solution: **a custom 2-layer adapter HAT added to the TOP of the existing stack**, above the LC29H. The LCD also needs 14 GPIOs for its parallel interface, which the stackable breakout PCB provides in the same package — eliminating the need for a separate GPIO breakout. Stack becomes X1207(side) → AI HAT+ 2 → LC29H → GX-01 adapter HAT.
 
@@ -274,18 +280,18 @@ Adds ~10 mm of stack height, within case height budget (see "Stack height verifi
 
 **Current budget:** X1207's 5V 5A output minus system baseline (Pi + HATs + SSD + LCD ≈ 3A) leaves ~2A of headroom — easily covers two 72 mA fans with >1A to spare. The Pi's current limiting at the USB-C input (the X1207's output) is sufficient protection; no separate fuse is required since overdraw would brown-out the Pi itself, providing clear failure signal.
 
-**Expected thermal performance:** Pi 5 CPU ≤ 70 °C under continuous AI + tile-serving load at 35 °C ambient (target: match or beat the 67 °C bare-board baseline, despite enclosure). Hailo ≤ 75 °C. Verified empirically after assembly. If exceeded, install the secondary side-intake fan and/or upgrade to higher-CFM fans (e.g., Noctua NF-A4x20 5V at 3× CFM, still desk-acceptable noise-wise).
+**Expected thermal performance:** Pi 5 CPU ≤ 70 °C under continuous AI + tile-serving load at 35 °C ambient (target: match or beat the 67 °C bare-board baseline, despite enclosure AND the SSD now being in the same chamber). Hailo ≤ 75 °C. SSD ≤ 55 °C (intake fan flows cool air directly across it). Verified empirically after assembly. If exceeded, upgrade to higher-CFM fans (e.g., Noctua NF-A4x20 5V at 3× CFM, still desk-acceptable noise-wise).
 
 ## Risks + open questions
 
-1. **Fan quantity — 1 vs. 2** — v0.1 builds with just the top-exhaust fan. The side-intake cutout is in the printed shell but blanked with a plug. If thermal testing shows the Pi exceeds ~75 °C under sustained load, pop the plug and add the intake fan. Design already accommodates both; this is a "start minimal, upgrade if needed" choice.
-2. **LC29H 40-pin passthrough completeness** — the adapter-HAT-on-top approach depends on the LC29H having full 40-pin passthrough with all 40 pins electrically connected between its bottom female socket and top male header, including the 14 GPIOs our LCD driver uses plus 5V and GND. Most Waveshare HATs do full passthrough, but some HATs short only the pins they use. **Verify before ordering the adapter HAT fab:** continuity-test LC29H top-to-bottom on all 14 LCD signal pins + 5V + GND with a multimeter, or read the LC29H schematic on Waveshare's wiki. If passthrough is incomplete, fallback is to move the adapter HAT between AI HAT+ 2 and LC29H in the stack — same electrical outcome, slightly harder GUI/assembly access.
-3. **Stack height verification** — the breakout HAT adds ~8–10 mm to the top of the HAT stack. Current case interior height of ~65 mm (70 mm exterior minus plates minus fan clearance) must accommodate full stack + breakout. If tight, grow case height by 5 mm to 75 mm exterior. Will pin during measurement phase of the plan.
-4. **SSD chamber and case length sized to measured SSD+adapter (~125.4 mm)** — resolved. Adapter and drive measured at 5" minus ~1/16". SSD chamber sized to 132 mm internal, case to 235 mm external. No further measurement needed.
-5. **Back panel port alignment tolerance stack-up** — printed shell warp + aluminum panel hole positions + Pi PCB tolerance. Mitigation: inset the aluminum shield with ~0.5 mm slop on each side so small dimensional variation is absorbed by panel float.
+1. **X1100 mechanical dimensions not yet verified** — Geekworm's X1100 wiki (`wiki.geekworm.com/X1100`) is currently down (vendor notified). Exact mounting-hole positions, standoff heights needed between X1100 and Pi, and the USB3 bridge's physical offset from the X1100's PCB plane are all TBD until either (a) the wiki returns, or (b) the shipped X1100 is in hand and can be measured directly. The spec's nominal 125 × 100 × 95 mm exterior uses ~5 mm of slop on every axis to absorb this uncertainty; final shell dimensions get locked down after measurement.
+2. **LC29H 40-pin passthrough completeness** — unchanged from v2 spec. Continuity-test pins 2, 4, 6 + 14 LCD signal pins before ordering adapter-HAT fab.
+3. **Stack height verification** — adapter HAT adds ~8–10 mm; X1100 adds another ~12–15 mm below the Pi. Case interior ~85 mm accommodates the full stack (~80 mm measured) with ~5 mm slop + fan clearance. Verified against X1100's actual stack position in measurement phase.
+4. **Reduced interior volume, increased thermal density** — NEW risk from the X1100 change. The case went from ~1.5 L to ~1.2 L (20 % reduction) while gaining a new heat source (SSD now internal). Mitigation is the mandatory second (intake) fan + vertical airflow path from front-bottom to top-rear. If empirical testing shows Pi > 75 °C despite both fans, upgrade to Noctua NF-A4x20 (3× CFM) or NF-A6x25 (larger 60 mm fan — requires top-plate redesign).
+5. **Back panel port alignment tolerance stack-up** — printed shell warp + aluminum panel hole positions + Pi PCB tolerance + Pi's Z-offset above X1100 (~12 mm). Panel port centerlines are now at a non-zero vertical offset from panel-bottom. Mitigation: inset the aluminum shield with ~0.5 mm slop on each side AND add ±1 mm Z-tolerance for the ports (Pi's exact Z-offset depends on standoff vendor).
 6. **LCD readability under bright ambient** — reflective/transflective LCDs with green backlight are readable in most conditions including modest direct light; full sun still challenging. Not a design goal for a desk unit.
-7. **SSD + PoE component heat** — user reports SSD and PoE components get hot under sustained load, contributing to the 67 °C measurement. Within the enclosure, the SSD chamber has its own passive vent slots (low intake on right side wall, passive upward exhaust through top plate's smaller vent pattern); the PoE transformer on the X1207 is in the Pi chamber's active-airflow path, so the exhaust fan pulls heat off it directly.
-8. **Assembly sequence ergonomics** — the u.FL connector on the LC29H is fragile AND becomes inaccessible once the GPIO breakout HAT is added on top. Wiring the SMA pigtail onto the LC29H BEFORE adding the breakout HAT is mandatory — if it's forgotten, the breakout HAT has to come off to access the u.FL. Document this as a bold warning in the assembly guide.
+7. **Assembly sequence ergonomics** — the u.FL connector on the LC29H is fragile AND becomes inaccessible once the adapter HAT is added on top. Wiring the SMA pigtail onto the LC29H BEFORE adding the adapter HAT is mandatory — if it's forgotten, the adapter HAT has to come off to access the u.FL. Document this as a bold warning in the assembly guide.
+8. **USB3 bridge mechanical compatibility** — the X1100 ships with "a specially-made USB3.1 male-to-male bridge". Its exact length + orientation (90° vs. straight) affects Pi ↔ X1100 vertical spacing. Will verify on receipt of the X1100 kit.
 9. **Battery runtime under PoE-loss** — 21700 @ ~4000 mAh × 3.7 V = ~15 Wh. Pi 5 + HATs + SSD draws ~8-12 W. Expected runtime: 1-2 hours on battery. Acceptable for the "survive a PoE switch reboot" use case.
 
 ## What comes next
