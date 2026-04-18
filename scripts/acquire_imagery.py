@@ -1667,6 +1667,16 @@ async def run_m2m(args):
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             log.warning("Overview generation failed: %s -- output is still usable", exc)
 
+    # B2 fix: if cancel fired during overview build, write "cancelled" and
+    # return — don't fall through to the unconditional "completed" write.
+    if _cancel_requested:
+        update_progress(output, "m2m", args.bbox, "n/a",
+                        0, len(scenes), status="cancelled", phase="cancelled",
+                        scenes_total=len(scenes),
+                        geotiffs_downloaded=len(tif_paths), geotiffs_total=len(scenes))
+        log.info("M2M pipeline cancelled during overview build")
+        return
+
     update_progress(output, "m2m", args.bbox, "n/a",
                     0, len(scenes), status="completed", phase="complete",
                     scenes_total=len(scenes),
