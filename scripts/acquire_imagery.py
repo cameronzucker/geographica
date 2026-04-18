@@ -232,15 +232,17 @@ def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
                     geotiffs_bytes: int = None,
                     current_batch: int = None, total_batches: int = None,
                     tiles_reprojected: int = None):
-    """Write structured progress to the state file.
+    """Write structured progress to the state file atomically in ONE rename.
 
-    For direct mode: tiles_done/tiles_total/rate are the primary fields.
-    For M2M mode: phase + geotiffs fields are primary during downloading;
-    tiles_done/tiles_total during converting phase.
+    B15 fix: previous implementation called _generic_progress (atomic rename
+    #1) then read the file back, added backward-compat fields, and wrote
+    again via write_pipeline_state (atomic rename #2). A frontend polling
+    at 500ms could observe the file between writes, seeing canonical fields
+    without the compat fields (tiles_done, rate_per_sec, mode).
 
-    Delegates to the shared pipeline_progress module for the atomic write,
-    then enriches the state file with backward-compat fields so that both
-    old and new frontend/backend consumers can render progress correctly.
+    This rewrite builds the full enriched dict once, preserves any existing
+    unrelated fields by merging with the on-disk state, then writes a single
+    atomic rename.
     """
     state_path = Path(output_path).parent / ".pipeline-state.json"
 
@@ -273,40 +275,49 @@ def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
     else:
         detail = f"{tiles_done}/{tiles_total} tiles at {round(rate, 1)}/s"
 
-    # Determine source from mode
     source = mode if mode else "imagery"
 
-    # Step 1: call shared module for the canonical atomic write
-    _generic_progress(
-        state_path,
-        source=source,
-        status=status,
-        phase=phase,
-        items_done=items_done_val,
-        items_total=items_total_val,
-        item_unit=item_unit_val,
-        detail=detail,
-        error=error,
-        bbox=bbox,
-        zoom=zoom if zoom != "n/a" else None,
-    )
+    # Read any existing state so we preserve unrelated fields (mirroring
+    # write_pipeline_state's merge semantics).
+    existing: dict = {}
+    if state_path.exists():
+        try:
+            existing = json.loads(state_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            existing = {}
 
-    # Step 2: re-read the written state and add backward-compat fields
-    try:
-        enriched: dict = json.loads(state_path.read_text())
-    except (json.JSONDecodeError, OSError):
-        enriched = {}
+    import datetime as _dt
+    updated_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
 
+    # Build the canonical fields (what _generic_progress would have written).
+    enriched: dict = dict(existing)
+    enriched.update({
+        "source": source,
+        "status": status,
+        "items_done": items_done_val,
+        "items_total": items_total_val,
+        "item_unit": item_unit_val,
+        "detail": detail,
+        "bbox": bbox,
+        "updated_at": updated_at,
+    })
+    # Optional fields: only include when provided (mirrors _generic_progress semantics)
+    if phase is not None:
+        enriched["phase"] = phase
+    if zoom and zoom != "n/a":
+        enriched["zoom"] = zoom
+    if error is None:
+        enriched.pop("error", None)
+    else:
+        enriched["error"] = error
+
+    # Add the backward-compat fields in the SAME dict (no second read/write).
     enriched["mode"] = mode
     enriched["tiles_done"] = tiles_done
     enriched["tiles_total"] = tiles_total
     enriched["rate_per_sec"] = round(rate, 4)
     if getattr(update_progress, '_started_at', None) is not None:
         enriched.setdefault("started_at", update_progress._started_at)
-    if error is None:
-        enriched.pop("error", None)
-    else:
-        enriched["error"] = error
     if geotiffs_downloaded is not None:
         enriched["geotiffs_downloaded"] = geotiffs_downloaded
     if geotiffs_total is not None:
@@ -322,8 +333,8 @@ def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
     if tiles_reprojected is not None:
         enriched["tiles_reprojected"] = tiles_reprojected
 
-    # Step 3: write enriched state back atomically
-    write_pipeline_state(output_path, enriched)
+    # Single atomic write.
+    _atomic_write_json(state_path, enriched)
 
 
 # ---------------------------------------------------------------------------
