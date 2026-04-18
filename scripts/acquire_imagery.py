@@ -2235,9 +2235,10 @@ async def run_noaa(args):
                                 geotiffs_total=total_tiles)
                 return
 
-    # Phase 5: Build overview pyramids
-    # Also run when skip_to_postprocess (all quads already done) — overviews/erosion/inpaint
-    # are idempotent and should always be applied to the final output.
+    # Phase 5: Build overview pyramids + nodata cleanup
+    # Also run when skip_to_postprocess (all quads already done) — overviews
+    # and inpaint are idempotent. Erosion is NOT idempotent (boundary shifts)
+    # and is gated off on resume — see D1/B9 below.
     if output.exists() and (tiles_done > 0 or skip_to_postprocess):
         # Recalculate bounds from actual tile extent (first batch metadata is stale)
         try:
@@ -2258,6 +2259,16 @@ async def run_noaa(args):
         except Exception as exc:
             log.warning("Overview generation failed: %s — output is still usable", exc)
 
+        # B1 fix: cancel guard AFTER overview generation, before erode/inpaint
+        if _cancel_requested:
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            tiles_done, total_tiles, status="cancelled",
+                            phase="cancelled",
+                            geotiffs_downloaded=tiles_done,
+                            geotiffs_total=total_tiles)
+            log.info("NOAA pipeline cancelled after overview build")
+            return
+
         # Checkpoint WAL after overviews before erosion/inpaint
         import sqlite3 as _pp_sql
         try:
@@ -2269,23 +2280,61 @@ async def run_noaa(args):
         # Post-process: clean up JPEG nodata artifacts
         # 1. Erode boundary tiles with heavy nodata (black rectangles over basemap)
         # 2. Inpaint remaining black pixels (seams between NAIP quads)
+        #
+        # D1/B9 fix: erosion is gated off on resume (skip_to_postprocess=True).
+        # erode_nodata_edges is destructive and evaluates boundary tiles against
+        # the CURRENT tile bounds. On an expanded-bbox resume, it would strip
+        # valid tiles added by the new quads — an unrecoverable loss because
+        # the deleted tiles' filenames remain in _noaa_checkpoint.
+        # Users who want to re-erode after an expansion can delete the
+        # checkpoint and re-run. This matches the "resume = incremental add"
+        # mental model.
         try:
             from rasterio_ops import erode_nodata_edges as rio_erode_nodata_edges
             from rasterio_ops import inpaint_nodata_pixels as rio_inpaint_nodata_pixels
-            eroded = rio_erode_nodata_edges(output)
-            if eroded:
-                log.info("Eroded %d nodata-edge tiles for clean basemap transition", eroded)
+
+            if not skip_to_postprocess:
+                eroded = rio_erode_nodata_edges(
+                    output, cancel_check=lambda: _cancel_requested
+                )
+                if eroded:
+                    log.info("Eroded %d nodata-edge tiles for clean basemap transition", eroded)
+            else:
+                log.info("Skipping erosion on resume run (D1 gate: not idempotent across bbox expansion)")
+
+            # B1 fix: cancel guard AFTER erode, before inpaint
+            if _cancel_requested:
+                update_progress(output, "noaa", args.bbox, "n/a",
+                                tiles_done, total_tiles, status="cancelled",
+                                phase="cancelled",
+                                geotiffs_downloaded=tiles_done,
+                                geotiffs_total=total_tiles)
+                log.info("NOAA pipeline cancelled after erosion")
+                return
+
             # Checkpoint WAL between erode and inpaint (inpaint touches every tile)
             try:
                 with _pp_sql.connect(str(output)) as _pc:
                     _pc.execute("PRAGMA wal_checkpoint(PASSIVE)")
             except Exception:
                 pass
-            inpainted = rio_inpaint_nodata_pixels(output)
+            inpainted = rio_inpaint_nodata_pixels(
+                output, cancel_check=lambda: _cancel_requested
+            )
             if inpainted:
                 log.info("Inpainted %d tiles to remove black seams", inpainted)
         except Exception as exc:
             log.warning("Nodata cleanup failed: %s — output is still usable", exc)
+
+        # B1 fix: cancel guard AFTER inpaint, before final status write
+        if _cancel_requested:
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            tiles_done, total_tiles, status="cancelled",
+                            phase="cancelled",
+                            geotiffs_downloaded=tiles_done,
+                            geotiffs_total=total_tiles)
+            log.info("NOAA pipeline cancelled after inpaint")
+            return
 
     # TileServer config update + restart is handled by the search service
     # after it detects pipeline completion via status reconciliation.
@@ -2294,19 +2343,16 @@ async def run_noaa(args):
     # Final WAL checkpoint: flush all pending writes into the main database file.
     # Without this, the WAL can grow to several GB during post-processing
     # (overviews + erosion + inpainting write hundreds of thousands of tiles).
-    # TileServer can't serve an MBTiles with a huge WAL — it returns 404.
-    # TRUNCATE mode resets the WAL to zero bytes, which is safe here because
-    # no other process has the file open (TileServer source was unregistered).
+    # D3 fix: keep WAL mode permanently. TileServer reads WAL-mode SQLite
+    # correctly on modern SQLite; the previous journal-mode flip to the
+    # rollback-journal mode required zero other connections and caused recent
+    # 404 bugs when TileServer held a read handle. TRUNCATE checkpoint alone
+    # is sufficient (flushes WAL into main file, resets WAL to zero bytes).
     if output.exists():
         import sqlite3 as _wal_sql
         try:
             with _wal_sql.connect(str(output)) as _wc:
                 _wc.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                # Switch back to DELETE journal mode for TileServer compatibility.
-                # WAL mode requires that all readers use the same WAL file, but
-                # TileServer opens files read-only and may not handle WAL correctly
-                # on all platforms.
-                _wc.execute("PRAGMA journal_mode=DELETE")
             log.info("WAL checkpoint complete — database ready for TileServer")
         except Exception as exc:
             log.warning("WAL checkpoint failed: %s — TileServer may need manual restart", exc)

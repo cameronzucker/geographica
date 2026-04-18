@@ -812,6 +812,7 @@ def inpaint_nodata_pixels(
     mbtiles_path: Path,
     nodata_threshold: int = 20,
     max_nodata_ratio: float = 0.5,
+    cancel_check=None,
 ) -> int:
     """Replace near-black (nodata) pixels with nearest valid imagery.
 
@@ -842,6 +843,9 @@ def inpaint_nodata_pixels(
         fixed = 0
         batch = cursor.fetchmany(500)
         while batch:
+            if cancel_check and cancel_check():
+                log.info("inpaint_nodata_pixels: cancellation requested, stopping after %d tiles", fixed)
+                break
             for z, x, y, data in batch:
                 with rasterio.MemoryFile(data) as mf:
                     with mf.open() as ds:
@@ -886,6 +890,7 @@ def erode_nodata_edges(
     edge_pixels: int = 48,
     min_edge_fill: float = 0.90,
     nodata_threshold: int = 20,
+    cancel_check=None,
 ) -> int:
     """Remove boundary tiles with significant nodata (black) at edges.
 
@@ -913,6 +918,9 @@ def erode_nodata_edges(
         for z in zoom_levels:
             removed_this_round = 1  # seed the loop
             while removed_this_round > 0:
+                if cancel_check and cancel_check():
+                    log.info("erode_nodata_edges: cancellation requested, stopping after %d tiles", total_removed)
+                    return total_removed
                 removed_this_round = 0
                 # Get current boundary tile positions
                 bounds = conn.execute(
