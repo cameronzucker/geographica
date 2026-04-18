@@ -1509,26 +1509,21 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
             # metadata at startup and won't see new tiles/bounds without a
             # restart. This is the centralized handoff point.
             if new_status == "completed" and client:
-                # WAL checkpoint on the output MBTiles
-                output_name = state_data.get("mode", "imagery")
-                mbtiles_candidates = [
-                    f"imagery_{output_name}.mbtiles",
-                    f"imagery.mbtiles",
-                    f"elevation.mbtiles",
-                    f"public-lands.mbtiles",
-                ]
-                for candidate in mbtiles_candidates:
-                    mbtiles_file = DATA_DIR / candidate
-                    if mbtiles_file.exists():
-                        try:
-                            import sqlite3 as _wal
-                            with _wal.connect(str(mbtiles_file), timeout=5) as _wc:
-                                _wc.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                                _wc.execute("PRAGMA journal_mode=DELETE")
-                            print(f"WAL checkpoint: {candidate}", flush=True)
-                        except Exception as exc:
-                            print(f"WAL checkpoint failed for {candidate}: {exc}", flush=True)
-                        break
+                # B14 fix: WAL-checkpoint the MBTiles that matches this
+                # pipeline's `type`. Previously we iterated a mode-derived
+                # candidate list, which for elevation (which doesn't set
+                # `mode`) fell through to imagery.mbtiles — checkpointing
+                # the wrong file and leaving elevation's WAL dirty.
+                mbtiles_file = _mbtiles_path_for_type(type)
+                if mbtiles_file.exists():
+                    try:
+                        import sqlite3 as _wal
+                        with _wal.connect(str(mbtiles_file), timeout=5) as _wc:
+                            _wc.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                            _wc.execute("PRAGMA journal_mode=DELETE")
+                        print(f"WAL checkpoint: {mbtiles_file.name}", flush=True)
+                    except Exception as exc:
+                        print(f"WAL checkpoint failed for {mbtiles_file.name}: {exc}", flush=True)
 
                 # Restart TileServer to pick up new metadata/bounds
                 try:
