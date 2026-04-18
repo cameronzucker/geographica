@@ -25,10 +25,43 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## What to work on next
 
-**Recently completed (2026-04-18):** Version Control Strategy.
-SemVer + Conventional Commits adopted, `release-please` GitHub Action
-live. See [VERSIONING.md](VERSIONING.md) for policy and
-[CHANGELOG.md](CHANGELOG.md) for release history.
+**Recently completed (2026-04-18):**
+- Version Control Strategy (SemVer + Conventional Commits + release-please). See [VERSIONING.md](VERSIONING.md) and [CHANGELOG.md](CHANGELOG.md).
+- **GX-01 personal hardware project** — full spec → fab-ready custom PCB → 3 implementation plans. See below + [hardware/gx01-adapter-pcb/](hardware/gx01-adapter-pcb/).
+
+### 0. GX-01 hardware project (IN PROGRESS — waiting on parts)
+
+Cameron's personal Pi 5 dev/demo unit for Geographica. Hybrid FDE PETG + bronze-anodized aluminum desk enclosure housing Pi 5 + Geekworm X1100 (SATA shield, on-order) + X1207 (PoE+UPS, installed) + 21700 cell + AI HAT+ 2 + LC29H + custom adapter HAT + SparkFun GDM12864H 128×64 KS0108B LCD + 2× 40 mm fans.
+
+**Spec:** [docs/superpowers/specs/2026-04-18-gx-01-case-design.md](docs/superpowers/specs/2026-04-18-gx-01-case-design.md) (v3, post-X1100 redesign)
+
+**Plans (ordered by lead time, not execution order):**
+1. [Plan 2 — case hardware](docs/superpowers/plans/2026-04-18-gx-01-case-hardware.md) (OpenSCAD + CNC aluminum + assembly + thermal validation)
+2. [Plan 3 — PCB fab + assembly](docs/superpowers/plans/2026-04-18-gx-01-pcb-completion.md) (upload Gerbers to OSH Park, DigiKey BOM, solder, bench test)
+3. [Plan 1 — status LCD daemon](docs/superpowers/plans/2026-04-18-gx-01-status-lcd-daemon.md) (TDD KS0108B driver, Python systemd service — doesn't need hardware for Phases 0-4)
+
+**Hardware timeline (as of 2026-04-18):**
+- Geekworm X1100 SATA shield: arriving **2026-04-19** (Amazon)
+- SparkFun LCD-00710 (GDM12864H): **~1 week**
+- Custom PCB (OSH Park) + BOM (DigiKey): TBD, order pending Plan 3 Phase 1 kick-off
+
+**Custom adapter HAT PCB:** Fully designed and auto-routed via **FreeRouting**. DRC-clean Gerbers in [hardware/gx01-adapter-pcb/gerbers/](hardware/gx01-adapter-pcb/gerbers/). To regenerate end-to-end:
+
+```bash
+cd hardware/gx01-adapter-pcb
+python3 circuit.py          # SKiDL → netlist + ERC
+python3 layout.py           # pcbnew API → placed board + GND pour
+python3 autoroute.py        # FreeRouting → fully routed board
+kicad-cli pcb export gerbers --output gerbers/ \
+    --layers "F.Cu,B.Cu,F.Mask,B.Mask,F.Silkscreen,B.Silkscreen,Edge.Cuts" \
+    gx01-adapter.kicad_pcb
+kicad-cli pcb export drill --output gerbers/ gx01-adapter.kicad_pcb
+```
+
+**Immediate next action when resuming:**
+1. When X1100 arrives (expected 2026-04-19): execute [Plan 2 Task 0.5](docs/superpowers/plans/2026-04-18-gx-01-case-hardware.md#task-05-on-x1100-arrival-measure-its-dimensions) — measure X1100 PCB, mounting-hole positions, USB3 bridge length, Pi standoff height. Update `hardware/gx01-case/parameters.scad` (create it per Plan 2 Task 1.1).
+2. In parallel: start Plan 1 Phases 0-4 (status LCD daemon TDD; no hardware needed).
+3. Once Plan 1 Phase 2 KS0108B driver is solid + X1100 is verified: order PCB (Plan 3 Phase 1) and BOM (Plan 3 Phase 2).
 
 ### 1. NOAA Pipeline Deferred Fixes (HIGH — from adversarial review)
 

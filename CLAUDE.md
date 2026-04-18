@@ -89,6 +89,42 @@ Key routing rules:
 - Always use the visual companion (browser mockups) during brainstorming — don't ask, just launch it
 - Token budget is not a concern during design phases — be thorough
 
+## Extended capabilities available on this dev Pi
+
+### `url-to-markdown` skill — fetch FULL webpages, not summaries
+
+Installed at `/home/administrator/.claude/skills/url-to-markdown/`. Invoke via the `Skill` tool (name: `url-to-markdown`) or directly:
+
+```bash
+python3 /home/administrator/.claude/skills/url-to-markdown/scripts/bootstrap.py "https://url" --json --out /tmp
+```
+
+**Prefer this over `WebFetch` whenever you need the full content of a page** (product pages, docs, wikis, articles). `WebFetch` runs the page through a summarizer that can drop critical details like dimensions, pin mappings, or spec tables. `url-to-markdown` downloads the raw content, converts to markdown with YAML frontmatter, and writes to disk so you can read it verbatim.
+
+Returns a JSON envelope; parse the `output_path` and then `Read` the resulting `.md` file. Handles Cloudflare-class bot protection via TLS fingerprint impersonation. Gracefully reports paywalls, SPAs, PDFs, and feeds instead of producing garbage.
+
+### PCB design pipeline (KiCad 9 + SKiDL + FreeRouting)
+
+Installed + proven end-to-end on the Pi. For custom hardware design — breakouts, adapter HATs, small sensor modules — run:
+
+```bash
+# From a PCB project directory (e.g. hardware/gx01-adapter-pcb/):
+python3 circuit.py          # SKiDL describes circuit; outputs netlist + ERC
+python3 layout.py           # pcbnew Python API places footprints + draws zones
+python3 autoroute.py        # FreeRouting 2.1.0 auto-routes all signals
+kicad-cli pcb drc --output drc-report.txt --format report gx01-adapter.kicad_pcb
+kicad-cli pcb export gerbers --output gerbers/ --layers "F.Cu,B.Cu,F.Mask,B.Mask,F.Silkscreen,B.Silkscreen,Edge.Cuts" gx01-adapter.kicad_pcb
+kicad-cli pcb export drill --output gerbers/ gx01-adapter.kicad_pcb
+```
+
+End-to-end ~90 seconds from Python source to DRC-clean Gerbers for a ~20-net 2-layer board. The canonical reference implementation is `hardware/gx01-adapter-pcb/` — copy its structure for new designs.
+
+**Key gotcha**: after FreeRouting's SES import, call `pcbnew.ZONE_FILLER(board).Fill(board.Zones())` before saving. Without this, the pre-routing zone fill is stale and DRC flags zone-clearance violations.
+
+**Dependencies verified installed on this machine**: `kicad` 9.0.2, `gerbv` 2.10, `default-jre-headless` 21, `skidl` 2.2.3 (via `pip install --user --break-system-packages skidl`), `pcbnew` Python bindings (ships with kicad apt package), FreeRouting 2.1.0 JAR vendored at `hardware/gx01-adapter-pcb/tools/freerouting-2.1.0.jar`.
+
+**For PCB fabrication with hand-assembly**: upload Gerbers zip to OSH Park (~$5 for 3 boards, 2-week US-domestic turnaround). For populated boards / assembly service, JLCPCB PCBA accepts KiCad Gerbers + BOM CSV (see handoff or ask for guidance).
+
 ## Project ethos
 
 Geographica is Cameron's learning sandbox for AI-assisted development
