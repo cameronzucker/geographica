@@ -42,7 +42,7 @@ Production results, test counts, any surprises.
 **Released as:** to be included in v1.1.0 (opened retroactively by
 `release-please` on first run)
 **Plan / spec:** [docs/superpowers/specs/2026-04-18-version-control-strategy-design.md](../docs/superpowers/specs/2026-04-18-version-control-strategy-design.md)
-[docs/superpowers/plans/2026-04-18-version-control-strategy.md](../docs/superpowers/plans/2026-04-18-version-control-strategy.md)
+                 [docs/superpowers/plans/2026-04-18-version-control-strategy.md](../docs/superpowers/plans/2026-04-18-version-control-strategy.md)
 **Bug hunts:** none (pure documentation + CI work)
 **Adversarial reviews:** none; CVErt-Ops reference survey informed design
 (see `Key decisions`)
