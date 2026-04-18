@@ -330,7 +330,7 @@ gnd_zone = pcbnew.ZONE(board)
 gnd_zone.SetLayer(B_CU)
 gnd_zone.SetNet(net_gnd)
 gnd_zone.SetIsFilled(True)
-gnd_zone.SetLocalClearance(MM(0.35))
+gnd_zone.SetLocalClearance(MM(0.25))  # matches board default clearance; leaves room for thermal reliefs between adjacent routed signals
 gnd_zone.SetMinThickness(MM(0.25))
 gnd_zone.SetThermalReliefGap(MM(0.35))
 gnd_zone.SetThermalReliefSpokeWidth(MM(0.35))

@@ -5,7 +5,7 @@
       "Application": "Pcbnew",
       "Version": "9.0.2+dfsg-1"
     },
-    "CreationDate": "2026-04-18T03:55:43-07:00"
+    "CreationDate": "2026-04-18T04:41:00-07:00"
   },
   "GeneralSpecs": {
     "ProjectId": {
@@ -27,9 +27,9 @@
       "PadToPad": 0.2,
       "PadToTrack": 0.2,
       "TrackToTrack": 0.2,
-      "MinLineWidth": 0.3,
-      "TrackToRegion": 0.35,
-      "RegionToRegion": 0.35
+      "MinLineWidth": 0.2,
+      "TrackToRegion": 0.25,
+      "RegionToRegion": 0.25
     }
   ],
   "FilesAttributes": [

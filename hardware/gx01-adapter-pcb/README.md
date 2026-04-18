@@ -9,31 +9,33 @@ A small passthrough HAT that sits on top of the LC29H in the GX-01 stack and bre
 **Pitch alignment:** J1 (GPIO) and J2 (LCD) share the same X origin (7.11 mm) and 2.54 mm pitch, so J1 pin pair k and J2 pin k are in the same vertical column. This makes LCD signal routing a set of short, mostly-straight drops in the GUI router.
 **Fab target:** OSH Park 2-layer (~$5 for 3 boards) or JLCPCB equivalent.
 
-## Pipeline
+## Pipeline — fully automated
 
-The design is fully programmatic — run two Python scripts and you get Gerbers ready for upload.
+The design is 100% programmatic — run three Python scripts and you get DRC-clean Gerbers ready for upload. No GUI interaction required.
 
 ```bash
 # 1. Generate netlist + run electrical rules check
 python3 circuit.py
 # → gx01-adapter.net, ERC clean
 
-# 2. Generate PCB layout (footprints, nets, GND pour)
+# 2. Generate PCB layout (footprints, nets, GND pour, minimal seed routing)
 python3 layout.py
-# → gx01-adapter.kicad_pcb
+# → gx01-adapter.kicad_pcb (15 nets unrouted, zone pour present)
 
-# 3. Open in KiCad GUI and complete signal routing interactively
-kicad gx01-adapter.kicad_pcb
-# Use pcbnew's "Route" tool to route the 14 LCD signal traces and the
-# remaining +5V distribution. The GND pour already handles all GND pads
-# via the bottom-layer zone. See "Routing completion" below.
+# 3. Auto-route all remaining signals via FreeRouting
+python3 autoroute.py --passes 50
+# → gx01-adapter.kicad_pcb (rewritten in place with all routes)
+# → gx01-adapter.dsn (Specctra DSN export — FreeRouting input)
+# → gx01-adapter.ses (Specctra session — FreeRouting output)
+# → freerouting.log (autorouter log for debugging)
 
 # 4. Run design rules check
 kicad-cli pcb drc --output drc-report.txt --format report gx01-adapter.kicad_pcb
+# Expect: 0 unconnected, 0 clearance violations, ~4 cosmetic warnings
 
-# 5. Render previews (optional but useful for review)
-kicad-cli pcb render --output gx01-adapter-top.png --side top --quality high gx01-adapter.kicad_pcb
-kicad-cli pcb render --output gx01-adapter-bottom.png --side bottom --quality high gx01-adapter.kicad_pcb
+# 5. Render previews
+kicad-cli pcb render --output gx01-adapter-top-final.png --side top --quality high gx01-adapter.kicad_pcb
+kicad-cli pcb render --output gx01-adapter-bottom-final.png --side bottom --quality high gx01-adapter.kicad_pcb
 
 # 6. Export Gerbers + drill files
 kicad-cli pcb export gerbers --output gerbers/ \
@@ -44,6 +46,10 @@ kicad-cli pcb export drill --output gerbers/ gx01-adapter.kicad_pcb
 # 7. Zip gerbers/ folder and upload to OSH Park / JLCPCB / PCBWay
 zip -r gx01-adapter-gerbers.zip gerbers/
 ```
+
+**Prerequisites:** KiCad 9.0+, Python 3.12+, `skidl` pip package, `default-jre-headless` (for FreeRouting), and the FreeRouting JAR at `tools/freerouting-2.1.0.jar` (downloadable via `gh release download v2.1.0 --repo freerouting/freerouting --pattern 'freerouting-*.jar' --dir tools/`).
+
+**Typical runtime on Pi 5:** circuit.py ≈ 2 s, layout.py ≈ 2 s, autoroute.py ≈ 15 s (50 passes on this tiny board), DRC ≈ 1 s, renders ≈ 70 s (3D ray-trace), Gerber export ≈ 2 s. End-to-end: **~90 seconds** from source files to fab-ready Gerbers.
 
 ## Circuit summary
 
@@ -67,23 +73,29 @@ Full pin-by-pin mapping is in `circuit.py` under "Pi GPIO pin mapping" and "LCD 
 
 Pins intentionally left unconnected on this v1 board: Pi 3.3V (pins 1, 17) because no component on this HAT uses 3.3V, and HAT ID EEPROM pins 27/28 (no EEPROM; future v2 upgrade).
 
-## Routing completion
+## How the routing works
 
-The programmatic pipeline handles:
-- Footprint placement with correct anchor behavior (pin 1 at known positions)
-- J1/J2 pitch-aligned placement (column-aligned pins → short GUI signal routing)
-- Net-to-pad assignment for all 20 nets
-- GND copper pour on B.Cu covering the full board with circular keepouts around mounting holes
-- Short 5V link between J1 pins 2 and 4, and J1 pin 4 straight down to J2 pin 2 (VDD)
-- VEE diagonal trace (J2 pin 18 → RV1 pin 3)
-- BLA diagonal trace (J2 pin 19 → R1 pin 2)
+**FreeRouting handles 100% of the signal routing** — an open-source Java autorouter (https://github.com/freerouting/freerouting) that takes Specctra DSN as input and produces SES session files. The `autoroute.py` orchestrator exports DSN from the unrouted board, invokes FreeRouting headlessly, imports the resulting SES back into the .kicad_pcb, and refills the GND pour so it respects the new traces.
 
-What needs finishing in KiCad's GUI (15 unconnected items):
-- **14 LCD signal traces** (RS, R/W, E, CS1, CS2, RST, DB0-DB7) from J1 odd-row pads to J2 pads. Each is a 1-2 segment trace (short descent + tiny lateral jog to dodge the opposite-row pin at the same column). The pcbnew interactive router's push-and-shove behavior handles these in ~5 minutes.
-- **1 V0 trace** (RV1 wiper → J2 pin 3). Longer path; route on B.Cu with two vias to avoid the VEE trace on F.Cu. ~1 minute.
-- **5V distribution** to remaining consumers (RV1 pin 1, R1 pin 1, C1 pin 1, J3 pin 1, J4 pin 1). All are pads flagged as connected to the +5V net but without a discrete trace; GUI router draws these with push-and-shove in ~2 minutes.
+What each script does:
 
-**Why these aren't programmatic:** the LCD signals would need an crossing-aware autorouter (each signal's direct diagonal would hit the opposite-row pin at its column). The V0 trace's natural B.Cu path passes within 0.3 mm of C1's GND plated-hole, which the router handles by small lateral nudges but programmatic layout doesn't. 5V distribution tangles with the GND pour and requires via-based detours. All three are ~10x faster in GUI than encoding the avoidance logic in the script.
+- **`layout.py`** — places footprints, assigns nets to pads, draws the GND copper pour on B.Cu with circular keepouts at each mounting hole. Does NOT attempt signal routing (naive trace-drawing creates crossings and shorts; FreeRouting does it properly).
+- **`autoroute.py`** — invokes FreeRouting on the output of `layout.py`. With 50 passes on this ~20-net design, it typically routes all 15 remaining nets in ~15 seconds with 45° bends, 0 clearance violations, and minimal vias (just 2 for the V0 trace that needs to cross from RV1's side of the board to J2's side).
+- **Zone refill post-import** — critical step: the GND pour is filled BEFORE routing, so after SES import it's stale with respect to the new traces. `ZONE_FILLER.Fill(board.Zones())` regenerates the fill with proper clearances around every route.
+
+Typical FreeRouting output for this board (see `freerouting.log`):
+- 14 LCD signal traces + V0 + 5V distribution = fully routed
+- 27 bends, all 45° (FreeRouting prefers angled routes for shorter path)
+- 2 through-hole vias (for the V0 layer-switch)
+- 0 clearance violations
+
+## Known non-issues in DRC
+
+After running the full pipeline, expect:
+- **0 unconnected items** (everything routed)
+- **0 clearance violations** (zone respects all traces)
+- **1 "courtyard overlap"** between J1 and H1 — the GPIO socket's courtyard touches the mounting hole. Fabs ignore courtyards; cosmetic advisory.
+- **3 silk warnings** — mounting hole reference labels clipped by board edge, and J1's reference label over its own copper area. Cosmetic; doesn't affect fab or function.
 
 ## Known non-issues in DRC
 
@@ -98,9 +110,14 @@ After completing routing in GUI, the ratsnest should clear and DRC should report
 
 - `circuit.py` — SKiDL circuit definition (schematic-level)
 - `layout.py` — pcbnew Python API layout generator
+- `autoroute.py` — FreeRouting orchestrator (DSN export → route → SES import → zone refill)
+- `tools/freerouting-2.1.0.jar` — FreeRouting autorouter (downloaded via `gh release download`)
 - `gx01-adapter.net` — KiCad netlist output from `circuit.py`
-- `gx01-adapter.kicad_pcb` — PCB layout file (open in KiCad to finish routing)
-- `gerbers/` — fab-ready Gerber and drill files (valid once routing is complete)
+- `gx01-adapter.kicad_pcb` — PCB layout file (routed after `autoroute.py`)
+- `gx01-adapter.dsn` — Specctra design export (FreeRouting input)
+- `gx01-adapter.ses` — Specctra session (FreeRouting output)
+- `freerouting.log` — FreeRouting run log (includes statistics JSON at end)
+- `gerbers/` — fab-ready Gerber and drill files
 - `*-top-final.png`, `*-bottom-final.png` — rendered previews
 
 ## Next versions
