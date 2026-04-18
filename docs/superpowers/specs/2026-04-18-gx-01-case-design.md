@@ -11,7 +11,9 @@ A hybrid-construction desk enclosure — printed FDE (Flat Dark Earth) PETG body
 
 Nominal exterior: **~235 × 90 × 70 mm (L × D × H).** Final dimensions to be pinned during implementation against physical measurements of the assembled hardware.
 
-A front-facing 128×64 monochrome graphical LCD (black-on-green, ST7565R or equivalent) surfaces network + GPS + battery + service status, including a live QR code to join the unit's WiFi AP. The status LCD is driven by a small Python daemon over SPI.
+A front-facing 128×64 monochrome STN LCD (SparkFun GDM12864H / LCD-00710, KS0108B controller, parallel interface, transflective for daylight readability) surfaces network + GPS + battery + service status, including a live QR code to join the unit's WiFi AP. The LCD is driven by a custom Python driver implementing the KS0108B parallel protocol.
+
+Because the KS0108B needs 14 GPIO pins and the LC29H fully covers the Pi's GPIO header, a small **custom 2-layer adapter PCB** sits on top of the LC29H, breaking out GPIOs + 5V into clean connectors for the LCD ribbon, two fan power outputs (JST-XH), and hosting passive components (contrast pot, backlight current-limit resistor, bypass cap). The PCB design lives in `hardware/gx01-adapter-pcb/` and was generated programmatically (SKiDL + pcbnew Python API); Gerbers are fab-ready for OSH Park (~$5 for 3 boards).
 
 **Active cooling** via one or two 40 mm 5V axial fans: empirical measurements on the bare board show 67 °C under sustained imagery-processing load with the Pi 5 Active Cooler fan ramped up — passive cooling alone would worsen this significantly inside an enclosure. Fans power from the Pi's GPIO 5V rail (supplied by X1207's 5A PoE conversion, ~2A of headroom available above system baseline). The X1207 does NOT provide its own fan header or auxiliary power rails; wiring taps GPIO pins 2/4 (5V) and 6 (GND) via a small custom harness with 2-pin JST-XH connectors per fan.
 
@@ -21,7 +23,7 @@ A front-facing 128×64 monochrome graphical LCD (black-on-green, ST7565R or equi
 2. Expose the Pi 5's native I/O directly through an aluminum I/O shield on the back — no USB hubs, no extension cables, no signal degradation
 3. Survive Arizona ambient temperatures (direct sun, up to ~45 °C air / ~70 °C radiant surface) with active airflow — the existing Pi 5 Active Cooler already hits 67 °C under sustained load at room ambient, so an enclosed case needs forced airflow to match or beat that baseline. Light-colored body (FDE, ~55 °C equilibrium in sun) minimizes solar gain; aluminum top plate doubles as heat spreader; one or two 40 mm fans move air through the Pi chamber
 4. Externalize the GPS antenna entirely (SMA bulkhead on the back panel → active GPS puck on coax), because the RF link budget requires ≥40 dB isolation from the Pi + PoE + USB 3.0 noise stack, which no printed enclosure can provide
-5. Present live status at a glance via a front-mounted 128×64 monochrome graphical LCD — IP address, uptime, GPS fix count, CPU temp, battery state, service health, and a scan-to-join WiFi QR code
+5. Present live status at a glance via a front-mounted 128×64 monochrome STN LCD — IP address, uptime, GPS fix count, CPU temp, battery state, service health, and a scan-to-join WiFi QR code; transflective LCD chosen so display is readable in Arizona daylight without relying on backlight
 6. Be fabricable by one person with a consumer 3D printer plus a friend with CNC capability — no injection molding, no cast metal, no custom PCBs
 7. Communicate "purposeful tool, user-serviceable" visually — FDE + bronze palette, exposed M3 fasteners, stenciled model number, etched nameplate
 
@@ -53,8 +55,13 @@ A front-facing 128×64 monochrome graphical LCD (black-on-green, ST7565R or equi
 | u.FL → SMA-F bulkhead pigtail, 10–15 cm | 1 | Standard part, ~$3 |
 | SMA-F bulkhead jack (panel-mount, D-cut or round) | 1 | Standard part |
 | Active GPS puck antenna w/ magnetic base + SMA-M on ~1–3 m coax | 1 | User-supplied or shipped with unit |
-| 128×64 monochrome graphical LCD w/ backlight (ST7565R, ST7920, or equivalent — SPI) | 1 | Front status display; green or white backlight; module ~60 × 40 mm, active area ~50 × 30 mm |
-| Smoked or tinted acrylic window, ~55 × 38 × 2 mm | 1 | Front LCD window |
+| SparkFun GDM12864H STN LCD (LCD-00710) | 1 | 128×64 mono STN with LED backlight, KS0108B parallel controller. Module 75 × 52.7 mm, active 55 × 27.5 mm. Transflective — readable in daylight without backlight |
+| Smoked or tinted acrylic window, ~60 × 33 × 2 mm | 1 | Front LCD window |
+| Custom GX-01 adapter HAT PCB (OSH Park fab) | 1 (min order: 3) | Breaks out Pi GPIO into LCD + fan + analog connectors; sits on top of LC29H |
+| 20-pin 1×20 socket strip 2.54mm pitch for LCD | 1 | Mates PCB → LCD module ribbon |
+| 20-conductor female-female DuPont jumpers or 1×20 cable assembly | 1 set | PCB J2 header → LCD module |
+| M2.5 × 8mm brass standoffs (for adapter PCB stacking) | 4 | Mount the new HAT on top of existing stack |
+| M2.5 screws (adapter PCB to standoffs above) | 4 | |
 | 12 mm illuminated green LED (power) | 1 | Front panel |
 | 12 mm illuminated blue LED (link/activity) | 1 | Front panel |
 | 12 mm illuminated amber LED (battery charging) | 1 | Front panel |
@@ -196,6 +203,8 @@ All Pi-native ports direct-expose through the shield — no jumpers. Only the GP
 
 A small Python daemon (`geographica-status-lcd`) running under systemd, refreshing the display every ~1 s.
 
+**LCD driver:** The KS0108B controller has no `luma.lcd` support; we write a ~200 LOC Python driver implementing its parallel protocol over 14 GPIO pins (8 data + 6 control). Driver exposes a clean interface (`Ks0108bDisplay` class with `init()`, `clear()`, `draw_bitmap(pil_image)`, `set_contrast()`) and is TDD-driven against a mock GPIO backend for unit tests, then integration-tested against the real LCD. Timing requirements are modest (status display updates at ~1 Hz; KS0108B's spec allows 3+ MHz bus clock, we run at 50-100 kHz via software GPIO — plenty of margin).
+
 Data sources:
 - **IP address** — `ip addr show eth0` (or the AP interface) parsed
 - **Uptime** — `/proc/uptime`
@@ -231,7 +240,7 @@ QR code sizing: a WiFi v2 QR (25×25 modules) fits as ~50×50 px (2 px/module); 
 
 Idle-timeout: backlight dims to ~20% after 2 minutes of no change, fully off after 10 minutes. Wakes on any significant change (IP, GPS fix gained/lost, battery transition) or on shutdown-button press.
 
-Python dependencies: `luma.lcd` (supports ST7565/ST7920), `Pillow`, `qrcode`, `smbus2` (for X1207 battery fuel gauge, still I²C). Add to `services/status-lcd/requirements.txt`.
+Python dependencies: `lgpio` (or `gpiozero`) for KS0108B GPIO driving, `Pillow` (PIL) for rendering, `qrcode` for the WiFi QR code, `smbus2` (for X1207 battery fuel gauge over I²C). Add to `services/status-lcd/requirements.txt`. The KS0108B driver itself lives at `services/status-lcd/driver/ks0108b.py` — pure Python, no C extensions, ~200 LOC.
 
 ## Thermal strategy
 
@@ -248,9 +257,20 @@ Mechanisms:
 
 **Fan power wiring:** the X1207 does not provide a fan header or auxiliary rails (confirmed via datasheet — delivers 5V 5A to Pi via GPIO header only). The Pi 5's own fan header is occupied by the Active Cooler. Giving up a USB port is not acceptable (SSD already consumes one; the remaining three are planned for other peripherals). The GPIO header itself sits flush inside the LC29H's 40-pin socket and is physically inaccessible without relocating the HAT.
 
-Solution: **a COTS GPIO screw-terminal breakout HAT added to the TOP of the existing stack**, above the LC29H. Stack becomes X1207(side) → AI HAT+ 2 → LC29H → GPIO breakout HAT. The breakout plugs into the LC29H's 40-pin passthrough header and exposes all 40 GPIO pins to labeled screw terminals on the side of the PCB. Fans wire to the 5V and GND terminals via standard hookup wire + 2-pin JST-XH pigtails; two fans share the same 5V/GND terminals (double-wire the screws — standard practice). Fans' PWM wire (if they're 3-pin) is left floating; fans run fixed-full-speed at 17.9 dB(A) each (Noctua NF-A4x10 5V), quieter than typical desk ambient.
+Solution: **a custom 2-layer adapter HAT added to the TOP of the existing stack**, above the LC29H. The LCD also needs 14 GPIOs for its parallel interface, which the stackable breakout PCB provides in the same package — eliminating the need for a separate GPIO breakout. Stack becomes X1207(side) → AI HAT+ 2 → LC29H → GX-01 adapter HAT.
 
-Example part: Waveshare "GPIO Screw Terminal Expansion Board" or equivalent. ~$13 COTS. Adds ~8–10 mm of stack height, which the case height budget accommodates (see "Stack height verification" in Risks).
+The adapter HAT provides:
+- 2×20 female GPIO socket at the bottom, mating with the LC29H's male top header
+- 1×20 pin header (J2) breaking out all GPIOs needed by the KS0108B LCD + VDD/VSS/contrast/Vee/BLA/BLK
+- 2× JST-XH 2-pin headers (J3, J4) for fan power (5V + GND)
+- 10 kΩ multi-turn pot (RV1) for LCD contrast trim, with the full VDD↔Vee divider standard for KS0108B
+- 10 Ω backlight current-limit resistor (R1)
+- 100 nF bypass cap (C1) on the LCD's VDD rail
+- 4× M2.5 mounting holes at standard Pi HAT positions for mechanical stacking
+
+Fab cost: ~$5 for 3 boards at OSH Park, ~2-week turnaround. All through-hole components, ~$10 BOM, hand-solderable in ~30 minutes. Design is fully generated by `circuit.py` (SKiDL) and `layout.py` (pcbnew Python API) — both committed to `hardware/gx01-adapter-pcb/`. 15 connections are left as ratsnest for ~5 minutes of GUI signal routing before Gerber export. Design generated with KiCad 9.0 on this dev machine, verified to pass DRC with only cosmetic warnings (courtyard + silk clearance).
+
+Adds ~10 mm of stack height, within case height budget (see "Stack height verification" in Risks).
 
 **Current budget:** X1207's 5V 5A output minus system baseline (Pi + HATs + SSD + LCD ≈ 3A) leaves ~2A of headroom — easily covers two 72 mA fans with >1A to spare. The Pi's current limiting at the USB-C input (the X1207's output) is sufficient protection; no separate fuse is required since overdraw would brown-out the Pi itself, providing clear failure signal.
 
@@ -259,7 +279,7 @@ Example part: Waveshare "GPIO Screw Terminal Expansion Board" or equivalent. ~$1
 ## Risks + open questions
 
 1. **Fan quantity — 1 vs. 2** — v0.1 builds with just the top-exhaust fan. The side-intake cutout is in the printed shell but blanked with a plug. If thermal testing shows the Pi exceeds ~75 °C under sustained load, pop the plug and add the intake fan. Design already accommodates both; this is a "start minimal, upgrade if needed" choice.
-2. **LC29H 40-pin passthrough completeness** — the GPIO-screw-breakout-on-top approach depends on the LC29H having full 40-pin passthrough with all pins electrically connected between its bottom female socket and top male header, including 5V (pin 2/4) and GND (pin 6/9/14/...). Most Waveshare HATs do full passthrough, but some HATs short only the pins they use. **Verify before ordering the breakout HAT:** continuity-test LC29H pins 2/4/6 top-to-bottom with a multimeter, or read the LC29H schematic on Waveshare's wiki. If passthrough is incomplete, fallback is to move the breakout between AI HAT+ 2 and LC29H (inside the stack rather than on top) — same electrical outcome, slightly harder assembly access.
+2. **LC29H 40-pin passthrough completeness** — the adapter-HAT-on-top approach depends on the LC29H having full 40-pin passthrough with all 40 pins electrically connected between its bottom female socket and top male header, including the 14 GPIOs our LCD driver uses plus 5V and GND. Most Waveshare HATs do full passthrough, but some HATs short only the pins they use. **Verify before ordering the adapter HAT fab:** continuity-test LC29H top-to-bottom on all 14 LCD signal pins + 5V + GND with a multimeter, or read the LC29H schematic on Waveshare's wiki. If passthrough is incomplete, fallback is to move the adapter HAT between AI HAT+ 2 and LC29H in the stack — same electrical outcome, slightly harder GUI/assembly access.
 3. **Stack height verification** — the breakout HAT adds ~8–10 mm to the top of the HAT stack. Current case interior height of ~65 mm (70 mm exterior minus plates minus fan clearance) must accommodate full stack + breakout. If tight, grow case height by 5 mm to 75 mm exterior. Will pin during measurement phase of the plan.
 4. **SSD chamber and case length sized to measured SSD+adapter (~125.4 mm)** — resolved. Adapter and drive measured at 5" minus ~1/16". SSD chamber sized to 132 mm internal, case to 235 mm external. No further measurement needed.
 5. **Back panel port alignment tolerance stack-up** — printed shell warp + aluminum panel hole positions + Pi PCB tolerance. Mitigation: inset the aluminum shield with ~0.5 mm slop on each side so small dimensional variation is absorbed by panel float.
