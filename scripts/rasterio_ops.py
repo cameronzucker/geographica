@@ -614,6 +614,15 @@ def _read_tile_from_array(
     if full_row_span <= 0 or full_col_span <= 0:
         return None
 
+    # B4 fix: reject tiles whose pixel range is entirely outside the source array.
+    # Without this guard, the clamps below pin row_start/col_start to the array
+    # edge but the dst_row_start arithmetic at 626-629 produces negative indices,
+    # which numpy slices legally from the end — stamping real pixels at wrong coords.
+    if raw_row_end <= 0 or raw_row_start >= data.shape[1]:
+        return None
+    if raw_col_end <= 0 or raw_col_start >= data.shape[2]:
+        return None
+
     # Clamp to array bounds
     row_start = max(0, min(data.shape[1] - 1, raw_row_start))
     row_end = max(0, min(data.shape[1], raw_row_end))
