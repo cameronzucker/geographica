@@ -696,27 +696,48 @@ async def run_pipeline(
 
             return tif_path
 
-        # Process counties with bounded concurrency
-        for idx, (fips, url_info) in enumerate(downloadable):
-            if _cancel_requested:
-                update_progress(
-                    state_path, phase="downloading", status="cancelled",
-                    items_done=len(completed), items_total=len(discovered),
-                    detail="Cancelled by user",
-                    bbox=bbox_str,
-                )
-                log.info("Cancelled after %d counties", len(completed))
-                return
+        # B16 fix: run counties concurrently up to the `concurrency` cap.
+        # _process_county already uses `async with download_sem:` which
+        # bounds simultaneous downloads; the semaphore is created at
+        # concurrency and only now wired via asyncio.gather.
+        # Checkpoint writes need their own lock because multiple
+        # _process_county completions finish concurrently.
+        checkpoint_lock = asyncio.Lock()
 
+        async def _process_and_checkpoint(fips: str, url_info: dict) -> Path | None:
+            """Process one county, then serialize the checkpoint write."""
             tif_path = await _process_county(fips, url_info)
-
-            if tif_path is not None:
-                geotiff_paths.append(tif_path)
+            if tif_path is None:
+                return None
+            async with checkpoint_lock:
                 completed.add(fips)
-
-                # Update checkpoint
                 checkpoint["completed_counties"] = list(completed)
                 save_checkpoint(staging_dir, checkpoint)
+            return tif_path
+
+        if _cancel_requested:
+            update_progress(
+                state_path, phase="downloading", status="cancelled",
+                items_done=len(completed), items_total=len(discovered),
+                detail="Cancelled by user",
+                bbox=bbox_str,
+            )
+            log.info("Cancelled after %d counties", len(completed))
+            return
+
+        # Gather all county tasks concurrently. The `download_sem` inside
+        # _process_county bounds active downloads to `concurrency`; gather
+        # itself is unbounded but each task will block on the semaphore.
+        results = await asyncio.gather(
+            *[_process_and_checkpoint(fips, info) for fips, info in downloadable],
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, Exception):
+                log.warning("County task raised: %s", result)
+                continue
+            if result is not None:
+                geotiff_paths.append(result)
 
     # --- Phase: merging ---
     if not geotiff_paths:
