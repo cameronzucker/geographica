@@ -819,6 +819,13 @@ geographica/
     └── public-lands.mbtiles    # PAD-US public lands vector tiles
 ```
 
+## Versioning
+
+Geographica follows [Semantic Versioning](https://semver.org) with
+project-specific rules described in [VERSIONING.md](VERSIONING.md). See
+[CHANGELOG.md](CHANGELOG.md) for the release history and
+[UPGRADING.md](UPGRADING.md) for upgrade instructions on MAJOR releases.
+
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
