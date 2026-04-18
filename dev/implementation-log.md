@@ -93,8 +93,8 @@ and this implementation log as the narrative companion to CHANGELOG.
 - (rollout commits to be listed after implementation)
 
 ### Outcome
-To be filled in after rollout: test counts, workflow first-run observation,
-v1.1.0 Release PR outcome.
+- 2026-04-18 regression check: 579 tests pass, 2 pre-existing M2M failures + 9 pre-existing OSM POI errors (unchanged from 2026-04-17).
+- To be filled in after rollout: workflow first-run observation, v1.1.0 Release PR outcome.
 
 ---
 
