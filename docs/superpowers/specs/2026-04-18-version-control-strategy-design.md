@@ -558,11 +558,16 @@ One implementation session, five commits, in this order:
    - Update `START.md` to remove task #1, promote NOAA deferred items to #1.
    - Single commit.
 
-All five commits are `docs:` or `ci:` types → **`release-please` will see
-them and NOT open a Release PR** (no user-visible changes). The first
-Release PR will appear when the NOAA deferred-item work begins landing
-`fix:` / `perf:` commits — the intended coaching moment where Cameron sees
-the full release lifecycle play out for the first time.
+All five commits are `docs:` or `ci:` types → **the rollout itself
+contributes no qualifying commits**. However, **`main` already contains
+several post-v1.0.0 `feat:` and `fix:` commits** (the NOAA hardening
+work completed between 2026-04-16 and 2026-04-17). When the
+`release-please` workflow first runs on `main`, it will see those
+commits and open a Release PR for **v1.1.0** retroactively covering
+them. This is a desirable side effect — it gives that body of work a
+proper CHANGELOG entry, a tag, and a GitHub Release — and it is the
+coaching moment where Cameron sees the full release lifecycle play out
+for the first time.
 
 ---
 
@@ -581,13 +586,14 @@ After rollout:
 6. `START.md` task #1 is marked complete; NOAA deferred items are task #1.
 7. `git push origin main` has been run; the rollout commits are visible on
    GitHub.
-8. GitHub Actions shows the `release-please` workflow ran successfully
-   (even though it did not open a PR, because no `feat:` / `fix:` / `perf:`
-   commits are present yet).
-9. 579 tests still pass (no regressions; purely additive changes).
-10. After the first subsequent `feat:` / `fix:` commit (from NOAA deferred
-    work), a `release-please` Release PR appears within ~1 minute. This is
-    the coaching-moment verification that the machinery works end-to-end.
+8. GitHub Actions shows the `release-please` workflow ran successfully.
+9. A `release-please` Release PR for **v1.1.0** appears within ~1 minute
+   of the merge to `main`, retroactively covering the post-v1.0.0 NOAA
+   hardening commits. This is the coaching-moment verification that the
+   machinery works end-to-end. Cameron reviews the PR and merges it when
+   ready; the bot then creates the `v1.1.0` tag, GitHub Release, and
+   CHANGELOG entry automatically.
+10. 579 tests still pass (no regressions; purely additive changes).
 
 ## Open questions
 
