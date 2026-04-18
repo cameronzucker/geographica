@@ -247,9 +247,16 @@ def reproject_to_mercator(
                     # 4 GDAL threads → 16 total on 4 cores → thrashing.
                     num_threads=1,
                     )
+
+            # B3 fix: capture dataset attributes BEFORE the `with` exits.
+            # log.debug eagerly evaluates its arguments regardless of log level,
+            # so accessing src.width / src.height after exit would raise under
+            # stricter rasterio versions and return False via the enclosing except.
+            src_width = src.width
+            src_height = src.height
         elapsed = time.monotonic() - t0
         log.debug("Reproject %s: %dx%d → %dx%d in %.1fs",
-                  src_path.name, src.width, src.height, width, height, elapsed)
+                  src_path.name, src_width, src_height, width, height, elapsed)
         return True
 
     except Exception as exc:
