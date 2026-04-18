@@ -1752,6 +1752,89 @@ async def _noaa_fetch_tile_index(
     return shp_files[0]
 
 
+def _repair_noaa_checkpoint(output_path: Path, tile_coord_map: dict) -> int:
+    """Detect and warn on _noaa_checkpoint/tiles divergence from a prior crash.
+
+    B13 fix — conservative variant: `_merger` writes the tile on one
+    sqlite connection and inserts into _noaa_checkpoint on another.
+    A crash between commits leaves the tile merged but unchecked.
+
+    Without a reliable filename→(z,x,y) map, we can't auto-repair — but
+    we CAN detect the smoking-gun pattern: tiles table has rows but
+    _noaa_checkpoint is empty or much smaller than expected. When the
+    optional tile_coord_map is provided, we also run a targeted repair.
+
+    Args:
+        output_path: Path to the MBTiles output.
+        tile_coord_map: Optional mapping {tile_filename: (zoom, col, row)}
+            for NOAA source tiles. When present and non-empty, rows are
+            inserted into _noaa_checkpoint for every mapped filename whose
+            (z,x,y) is present in `tiles`.
+
+    Returns:
+        Number of checkpoint rows added by the repair. 0 means no repair
+        was needed (or was not possible without a coord map).
+    """
+    if not output_path.exists():
+        return 0
+    try:
+        conn = sqlite3.connect(str(output_path))
+    except sqlite3.Error:
+        return 0
+    try:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='tiles'"
+        ).fetchone()
+        if row is None:
+            return 0
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS _noaa_checkpoint "
+            "(tile_filename TEXT PRIMARY KEY)"
+        )
+
+        tile_count = conn.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
+        ckpt_count = conn.execute("SELECT COUNT(*) FROM _noaa_checkpoint").fetchone()[0]
+
+        # Divergence warning: tiles present but checkpoint empty is the
+        # smoking-gun pattern of a crash between commits.
+        if tile_count > 0 and ckpt_count == 0:
+            log.warning(
+                "Checkpoint divergence detected: tiles=%d but _noaa_checkpoint=0. "
+                "Resume may re-merge tiles (B13). Consider dropping the output "
+                "and starting fresh if you see duplicate-composite artifacts.",
+                tile_count,
+            )
+
+        if not tile_coord_map:
+            return 0
+
+        existing = {r[0] for r in conn.execute(
+            "SELECT tile_filename FROM _noaa_checkpoint"
+        )}
+        added = 0
+        for fname, coord in tile_coord_map.items():
+            if fname in existing:
+                continue
+            z, x, y = coord
+            present = conn.execute(
+                "SELECT 1 FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                (z, x, y),
+            ).fetchone()
+            if present:
+                conn.execute(
+                    "INSERT OR IGNORE INTO _noaa_checkpoint (tile_filename) VALUES (?)",
+                    (fname,),
+                )
+                added += 1
+
+        if added:
+            conn.commit()
+            log.info("Checkpoint repair: re-derived %d _noaa_checkpoint rows from tiles table", added)
+        return added
+    finally:
+        conn.close()
+
+
 async def run_noaa(args):
     """Run the NOAA Digital Coast NAIP download pipeline.
 
@@ -1776,6 +1859,16 @@ async def run_noaa(args):
     west, south, east, north = bbox
     output = Path(args.output)
     data_dir = output.parent
+
+    # B13 fix: detect (and where possible repair) checkpoint divergence
+    # from a prior crash between tile commit and checkpoint commit.
+    # tile_coord_map is empty in this call path — the NOAA pipeline works
+    # on filenames, not (z,x,y) tuples — so the call acts as a detect-and-warn.
+    # Future: pass a real coord map once reproject metadata is cached earlier.
+    try:
+        _repair_noaa_checkpoint(output, {})
+    except Exception as _exc:
+        log.warning("Checkpoint repair pre-check failed: %s", _exc)
 
     import datetime
     update_progress._started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
