@@ -90,11 +90,22 @@ and this implementation log as the narrative companion to CHANGELOG.
 
 ### Commits
 - `60d6f63` — docs: add version control strategy design spec
-- (rollout commits to be listed after implementation)
+- `afb360d` — docs: correct spec prediction of first release-please run
+- `0bb6d1a` — docs: add version control strategy implementation plan
+- `5191996` — docs: adopt semver and conventional commits
+- `da8f0c3` — docs: add implementation log with seed entries
+- `627ff1e` — docs: align continuation line in 2026-04-18 implementation log entry
+- `8bcd056` — docs(claude): add project ethos, commit discipline, and mirror to AGENTS.md
+- `f1292f9` — ci: add release-please workflow for automated versioning
+- `40d8175` — docs: mark versioning strategy complete in START.md
+- `09ef5ce` — docs: record 2026-04-18 regression check in implementation log
 
 ### Outcome
 - 2026-04-18 regression check: 579 tests pass, 2 pre-existing M2M failures + 9 pre-existing OSM POI errors (unchanged from 2026-04-17).
-- To be filled in after rollout: workflow first-run observation, v1.1.0 Release PR outcome.
+- First release-please workflow run on `main` failed with `GitHub Actions is not permitted to create or approve pull requests`. Root cause: repo-level setting `can_approve_pull_request_reviews=false` (default). Fixed by `gh api -X PUT /repos/cameronzucker/geographica/actions/permissions/workflow -f default_workflow_permissions=write -F can_approve_pull_request_reviews=true`. Predictable in hindsight — called out in spec's Risks section. Worth adding to a general "Actions setup checklist" for future projects.
+- After permission fix, re-ran workflow (`gh run rerun 24600998329`) — succeeded.
+- Release PR opened: [PR #1 — chore(main): release 1.1.0](https://github.com/cameronzucker/geographica/pull/1). Retroactively covers the post-v1.0.0 NOAA hardening work: 5 Features + 9 Bug Fixes, each linked to the originating commit SHA. Left unmerged for Cameron to review and decide merge timing (immediate release v1.1.0, or bundle more NOAA deferred fixes first).
+- Machinery is live. Future `feat:` / `fix:` / `perf:` commits on `main` will be aggregated into the next Release PR automatically (release-please updates the PR in place on each push).
 
 ---
 
