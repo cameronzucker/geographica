@@ -37,6 +37,62 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-18 — NOAA Imagery Pipeline Remediation (on dev, awaiting runtime validation)
+
+**Released as:** not yet released — all 13 commits on `dev` only, pending end-to-end validation on a Flagstaff-size bbox after the current ~494-quad production pipeline finishes (~2026-04-19)
+**Plan / spec:** [dev/plans/2026-04-18-noaa-imagery-pipeline-remediation-plan.md](plans/2026-04-18-noaa-imagery-pipeline-remediation-plan.md)
+**Bug hunts:** [dev/bug-hunts/2026-04-18-noaa-imagery-pipeline-consolidated.md](bug-hunts/2026-04-18-noaa-imagery-pipeline-consolidated.md) (+ exploratory/holistic/multipass individual reports)
+**Adversarial reviews:** 5 prior reports at `dev/adversarial/2026-04-16-*.md` (used as reference only; not authoritative for this cycle)
+
+### Summary
+Fresh 3-hunter bug-hunt cycle on the imagery pipeline (5161 LOC) because OOM crashes since the 2026-04-16/17 adversarial review may have caused the then-deferred 9-item list to drift. Result: 16 confirmed bugs (11 new) + 6 design decisions. Scope-locked to 13 bugs + 3 design decisions (B6, B8 deferred for Chesterton's Fence — they'd re-touch `e7e3b32` and `1bab361` code that fixed user-observed imagery artifacts; D4/D5/D6 deferred for scope). All 13 executed via subagent-driven development on `dev`, each fix behind its own commit. Ship deferred pending runtime validation — a production NOAA run is currently blocking the Pi.
+
+### Key decisions
+- **Fresh hunt over re-validating the stale deferred list.** Prior 9 deferred items were from 2026-04-16 review; many OOM crashes since could have landed fixes without session notes. New hunt found 11 bugs absent from the old list — the instinct to re-run was right.
+- **Chesterton's Fence on B6 and B8.** Hunters flagged `merge_mbtiles` compositing and erosion-after-overview ordering, but commits `e7e3b32` and `1bab361` added those behaviors *specifically* to fix user-observed imagery loss / black quadrant artifacts. Deferred both pending visual-regression testing on a small bbox.
+- **Source-inspection tests for Phase 5 rewrite.** Task 9 combines B1 + D1 + D3 with 4 cancel-guard sites, erosion gating, WAL-mode keep-forever. Real end-to-end tests would require mocking gdaladdo + rasterio + interrupting mid-operation — out of scope for this cycle's test harness. Tests verify *code shape* (string presence) not *runtime behavior*. This is named technical debt to revisit.
+- **Don't ship to main until live-tested.** Per Cameron's judgment: 13 commits on `dev` + runtime validation later > 13 commits on `main` now + debugging the next NOAA run.
+
+### Notable bugs caught
+- **B8 (erosion-after-overview)** — matches `docs/flagstaff_rendering_issue.jpg`. Deferred pending validation.
+- **B6 (merge_mbtiles re-composites every overlap)** — progressive JPEG generation loss at quad boundaries. Deferred.
+- **B1 (cancel ignored during Phase 5)** — user-visible UX bug: cancel click ignored for 30+ minutes of post-processing. Task 9, commit `48092e6`.
+- **B9/D1 (erosion non-idempotent on resume)** — incremental bbox expansion could silently delete valid tiles. Task 9, commit `48092e6`.
+- **B14 (wrong MBTiles WAL-checkpointed for elevation)** — only bug outside `scripts/`. Task 4, commit `38b9d32`.
+- Plan's own self-inconsistency (explanatory comment contained forbidden string the test asserted against) — caught by Task 9 implementer; reviewer validated rephrase was correct.
+
+### Commits (on dev, not yet on main)
+Filtered to remediation work (Cameron's concurrent hardware commits excluded):
+- `aace75c` — fix(pipeline): capture rasterio src dims before with exits (B3)
+- `ffb93f3` — fix(pipeline): reject fully-out-of-bounds tiles in rasterize (B4)
+- `6f26ed5` — fix(pipeline): count composite errors in merge_mbtiles (B7)
+- `38b9d32` — fix(search): target WAL checkpoint by pipeline type, not mode (B14)
+- `d943968` — fix(pipeline): detect short-reads and reuse cached staging tiles (B10, B11)
+- `c619ec4` — fix(pipeline): write progress on _merger failure branches (B12)
+- `e8f5f2b` — fix(pipeline): honor cancel during M2M overview build (B2)
+- `fc7e03d` — fix(pipeline): share cancellable GDAL subprocess wrapper (B5)
+- `48092e6` — fix(pipeline): cancel guards + WAL mode + no-erode-on-resume in NOAA Phase 5 (B1, B9, D1, D3)
+- `6e253be` — fix(pipeline): add completed_partial status for NOAA runs with failures (D2)
+- `8aa827c` — fix(pipeline): detect _noaa_checkpoint divergence from tiles table (B13)
+- `b1086ab` — refactor(pipeline): write progress state once per call (B15)
+- `1f77a70` — fix(pipeline): wire NAIP --concurrency via asyncio.gather (B16)
+
+### Outcome (as of 2026-04-18)
+- **624 tests pass** on `dev` (up from 596 baseline → 28 new tests for this cycle); 2 + 9 pre-existing failures unchanged — no regressions introduced by any of the 13 fixes.
+- **Production NOAA pipeline currently running** with the *old* code (Python imports happened at startup; disk edits don't affect an in-flight process). Expected completion ~2026-04-19.
+- **Runtime validation pending:** once production pipeline finishes, run a Flagstaff-size bbox (~10 quads) with the new code, visual-diff the output against a known-good baseline, then merge `dev` → `main` to feed Release PR #2.
+- **Deferred follow-ups:** B6 + B8 (need visual-regression proofing before fixes land); D4/D5/D6 (architectural cleanups out of this cycle's scope). Fully documented in the remediation plan's appendix.
+
+### Resume instructions for tomorrow
+1. Confirm current production pipeline has completed cleanly.
+2. Run `python -m pytest tests/ services/search/tests/ -v` — expect 624 pass, 2 + 9 pre-existing.
+3. Execute a validation run on a small bbox (Flagstaff, e.g. `-112.0,35.1,-111.5,35.4`) with the new code. Verify: pipeline completes, tiles render correctly at all zooms, cancel mid-Phase-5 is honored, resume run doesn't re-erode valid tiles.
+4. If validation passes: `git switch main && git merge --ff-only dev && git push origin main`. Release PR #2 will update with the 13 new fixes.
+5. If validation reveals an issue: identify the specific task → `git revert <sha>` on dev → iterate.
+6. After v1.1.0 ships, revisit B6 + B8 with proper visual-regression tests.
+
+---
+
 ## 2026-04-18 — Version Control Strategy Adoption
 
 **Released as:** to be included in v1.1.0 (opened retroactively by
