@@ -86,7 +86,15 @@ systemctl enable docker
 echo "[5/6] Creating data directory..."
 DATA_DIR="/srv/geographica/data"
 mkdir -p "$DATA_DIR"/{pbf,nominatim,valhalla}
-chown -R "$ACTUAL_USER":"$ACTUAL_USER" /srv/geographica
+# Non-recursive chown of the top-level dir and the three immediate data subdirs.
+# Do NOT chown recursively — container-owned data (UID 1000 valhalla, UID 999 postgres)
+# would be clobbered to host-user ownership.
+chown "$ACTUAL_USER":"$ACTUAL_USER" /srv/geographica 2>/dev/null || true
+chown "$ACTUAL_USER":"$ACTUAL_USER" /srv/geographica/data 2>/dev/null || true
+for sub in pbf nominatim valhalla; do
+    [ -d "/srv/geographica/data/$sub" ] && \
+        chown "$ACTUAL_USER":"$ACTUAL_USER" "/srv/geographica/data/$sub" 2>/dev/null || true
+done
 
 echo "      Creating data symlink..."
 # Create/update ./data symlink. If a real directory exists where ./data should be,
