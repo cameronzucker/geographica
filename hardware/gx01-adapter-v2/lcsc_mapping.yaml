@@ -1,0 +1,133 @@
+# LCSC part mapping for GX-01 v2 HAT (v2b placement).
+#
+# Many codes are best-known picks not yet verified via the JLC API — run:
+#   python3 ../_shared/verify_lcsc.py --pcb gx01-adapter-v2b.kicad_pcb \
+#       --mapping lcsc_mapping.yaml
+# …before ordering to confirm stock + THT/SMD classification.
+#
+# Notes on uncertain picks:
+#   - C1 (CPH3225A supercap): custom footprint matches Seiko CPH3225A
+#     specifically. If JLC stock is thin, the drop-in substitute would
+#     be Eaton HV0820-2R5155-R (4.5 mm diameter cylindrical) — but that
+#     has a DIFFERENT footprint, so the board would need respin. For
+#     this upload, leaving as TBD with a known-compatible LCSC code.
+#   - J2 (2×10 pin header): using a generic 2×10 pin header LCSC; JLC
+#     may substitute with their own-brand equivalent during assembly.
+
+skip_patterns:
+  - "^H[0-9]+$"      # H1-H4 mounting holes
+
+parts:
+  # ─── Connectors ───
+  J1:
+    lcsc: C2977589
+    tier: extended
+    note: "2×20 female pin header, 2.54 mm pitch (from v1). Pi GPIO passthrough socket."
+
+  J2:
+    lcsc: C2691555
+    tier: extended
+    note: "2×10 male pin header, 2.54 mm pitch, vertical. Physical IDC box header preferred but this base pin header is what's stocked at JLC; mating ribbon cable will use IDC crimp on the cable side."
+
+  J3:
+    lcsc: C157112
+    tier: extended
+    note: "JST B4B-PH-K, 4-pin vertical through-hole, 2.0 mm pitch. Fan 1."
+
+  J4:
+    lcsc: C157112
+    tier: extended
+    note: "Same as J3. Fan 2."
+
+  J5:
+    lcsc: C157364
+    tier: extended
+    note: "JST SM06B-SRSS-TB, 6-pin SMT vertical, 1.0 mm pitch. Cable to Front Panel Board."
+
+  # ─── ICs ───
+  U1:
+    lcsc: C3019759
+    tier: extended
+    note: "Micro Crystal RV-3028-C7-32.768kHz-1ppm-TA-QC. SON-8 3.2×1.5 mm. TCXO I²C RTC. 31,087 in stock (verified 2026-04-19)."
+
+  U2:
+    lcsc: C87438
+    tier: extended
+    note: "Bosch BME280. LGA-8 2.5×2.5 mm. Temp/humidity/pressure sensor."
+
+  U3:
+    lcsc: C76147
+    tier: extended
+    note: "Microchip MCP9808-H/MSOP. MSOP-8. ±0.25 °C I²C temp sensor."
+
+  U4:
+    lcsc: C56663
+    tier: extended
+    note: "Microchip 24LC32AT-I/SN. SOIC-8. 4 Kibit I²C EEPROM for HAT ID."
+
+  Q1:
+    lcsc: C20917
+    tier: extended
+    note: "Alpha & Omega AO3400A. SOT-23 30V/5.8A N-FET. Low-side backlight switch."
+
+  # ─── Capacitors ───
+  C1:
+    lcsc: C520488
+    tier: extended
+    note: "Seiko CPH3225A 1F 3.3V SMD supercap, 6.8×6.8×0.9 mm. Custom footprint in layout.py matches this exact part. Verify stock before ordering."
+
+  C2:
+    lcsc: C14663
+    tier: basic
+    note: "100 nF 0603 X7R 50V (Samsung CL10B104KB8NNNC). Bypass for U1 RTC VDD."
+
+  C3:
+    lcsc: C14663
+    tier: basic
+    note: "100 nF 0603 X7R 50V. Bypass for U2 BME280 VDD."
+
+  C4:
+    lcsc: C14663
+    tier: basic
+    note: "100 nF 0603 X7R 50V. Bypass for U3 MCP9808 VDD."
+
+  C5:
+    lcsc: C14663
+    tier: basic
+    note: "100 nF 0603 X7R 50V. Bypass for U4 EEPROM VCC."
+
+  # ─── Resistors ───
+  R1:
+    lcsc: C23162
+    tier: basic
+    note: "4.7 kΩ 0603 1%. I²C1 SDA pull-up."
+
+  R2:
+    lcsc: C23162
+    tier: basic
+    note: "4.7 kΩ 0603 1%. I²C1 SCL pull-up."
+
+  R3:
+    lcsc: C26010
+    tier: basic
+    note: "3.3 kΩ 0603 1%. HAT ID I²C0 SDA pull-up (Pi HAT spec value)."
+
+  R4:
+    lcsc: C26010
+    tier: basic
+    note: "3.3 kΩ 0603 1%. HAT ID I²C0 SCL pull-up."
+
+  R5:
+    lcsc: C25804
+    tier: basic
+    note: "10 kΩ 0603 1%. Q1 gate pulldown."
+
+  R6:
+    lcsc: C25804
+    tier: basic
+    note: "10 kΩ 0603 1%. V0 contrast divider, +5V side."
+
+  R7:
+    lcsc: C25804
+    tier: basic
+    note: "10 kΩ 0603 1%. V0 contrast divider, VEE side."
