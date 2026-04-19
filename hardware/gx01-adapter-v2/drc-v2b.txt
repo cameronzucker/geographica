@@ -1,46 +1,11 @@
 ** Drc report for gx01-adapter-v2b.kicad_pcb **
-** Created on 2026-04-19T09:22:27-0700 **
+** Created on 2026-04-19T09:48:57-0700 **
 
-** Found 28 DRC violations **
-[track_dangling]: Track has unconnected end
-    Local override; warning
-    @(51.8666 mm, 40.1847 mm): Track [GND] on F.Cu, length 0.6719 mm
-[shorting_items]: Items shorting two nets (nets +3V3 and ID_SC)
-    Local override; error
-    @(16.2250 mm, 30.0000 mm): Pad 1 [+3V3] of C5 on F.Cu
-    @(15.4750 mm, 30.6350 mm): Pad 6 [ID_SC] of U4 on F.Cu
-[shorting_items]: Items shorting two nets (nets +3V3 and GND)
-    Local override; error
-    @(16.2250 mm, 30.0000 mm): Pad 1 [+3V3] of C5 on F.Cu
-    @(15.4750 mm, 29.3650 mm): Pad 7 [GND] of U4 on F.Cu
-[shorting_items]: Items shorting two nets (nets +3V3 and GND)
-    Local override; error
-    @(16.2250 mm, 40.0000 mm): Pad 1 [+3V3] of C4 on F.Cu
-    @(15.1125 mm, 40.3250 mm): Pad 6 [GND] of U3 on F.Cu
-[shorting_items]: Items shorting two nets (nets +3V3 and GND)
-    Local override; error
-    @(16.2250 mm, 40.0000 mm): Pad 1 [+3V3] of C4 on F.Cu
-    @(15.1125 mm, 39.6750 mm): Pad 7 [GND] of U3 on F.Cu
-[courtyards_overlap]: Courtyards overlap
-    Rule: board setup constraints courtyard; error
-    @(54.0000 mm, 27.0000 mm): Footprint C1
-    @(49.0000 mm, 30.0000 mm): Footprint C2
+** Found 12 DRC violations **
 [courtyards_overlap]: Courtyards overlap
     Rule: board setup constraints courtyard; error
     @(7.1100 mm, 3.5000 mm): Footprint J1
     @(3.5000 mm, 3.5000 mm): Footprint H1
-[courtyards_overlap]: Courtyards overlap
-    Rule: board setup constraints courtyard; error
-    @(7.1100 mm, 3.5000 mm): Footprint J1
-    @(7.1100 mm, 11.5000 mm): Footprint J2
-[courtyards_overlap]: Courtyards overlap
-    Rule: board setup constraints courtyard; error
-    @(17.0000 mm, 30.0000 mm): Footprint C5
-    @(13.0000 mm, 30.0000 mm): Footprint U4
-[courtyards_overlap]: Courtyards overlap
-    Rule: board setup constraints courtyard; error
-    @(17.0000 mm, 40.0000 mm): Footprint C4
-    @(13.0000 mm, 40.0000 mm): Footprint U3
 [silk_edge_clearance]: Silkscreen clipped by board edge
     Rule: board setup constraints silk; warning
     @(0.0000 mm, 0.0000 mm): Segment on Edge.Cuts
@@ -55,18 +20,10 @@
 [starved_thermal]: Thermal relief connection to zone incomplete (layer B.Cu; zone min spoke count 2; actual 1)
     Local override; error
     @(0.5000 mm, 0.5000 mm): Zone [GND] on B.Cu
-    @(17.2700 mm, 3.5000 mm): PTH pad 9 [GND] of J1
-[starved_thermal]: Thermal relief connection to zone incomplete (layer B.Cu; zone min spoke count 2; actual 1)
-    Local override; error
-    @(0.5000 mm, 0.5000 mm): Zone [GND] on B.Cu
-    @(42.6700 mm, 6.0400 mm): PTH pad 30 [GND] of J1
-[starved_thermal]: Thermal relief connection to zone incomplete (layer B.Cu; zone min spoke count 2; actual 1)
-    Local override; error
-    @(0.5000 mm, 0.5000 mm): Zone [GND] on B.Cu
     @(27.0000 mm, 51.0000 mm): PTH pad 1 [GND] of J4
 [silk_over_copper]: Silkscreen clipped by solder mask
     Local override; warning
-    @(20.0000 mm, 27.5700 mm): Reference field of R4
+    @(42.0000 mm, 22.5700 mm): Reference field of R2
 [silk_over_copper]: Silkscreen clipped by solder mask
     Local override; warning
     @(50.6000 mm, 30.4000 mm): Segment of C1 on F.Silkscreen
@@ -78,40 +35,17 @@
     @(4.3400 mm, 4.7700 mm): Reference field of J1
 [silk_over_copper]: Silkscreen clipped by solder mask
     Local override; warning
-    @(17.0000 mm, 28.5700 mm): Reference field of C5
-[silk_over_copper]: Silkscreen clipped by solder mask
-    Local override; warning
+    @(22.0000 mm, 27.5700 mm): Reference field of R4
+[silk_overlap]: Silkscreen overlap
+    Rule: board setup constraints silk; warning
+    @(21.7627 mm, 27.5225 mm): Segment of R3 on F.Silkscreen
+    @(22.0000 mm, 27.5700 mm): Reference field of R4
+[silk_overlap]: Silkscreen overlap
+    Rule: board setup constraints silk; warning
     @(42.0000 mm, 22.5700 mm): Reference field of R2
-[solder_mask_bridge]: Front solder mask aperture bridges items with different nets
-    Rule: board setup solder mask min width; error
-    @(16.2250 mm, 30.0000 mm): Pad 1 [+3V3] of C5 on F.Cu
-    @(15.4750 mm, 30.6350 mm): Pad 6 [ID_SC] of U4 on F.Cu
-[solder_mask_bridge]: Front solder mask aperture bridges items with different nets
-    Rule: board setup solder mask min width; error
-    @(16.2250 mm, 30.0000 mm): Pad 1 [+3V3] of C5 on F.Cu
-    @(15.4750 mm, 29.3650 mm): Pad 7 [GND] of U4 on F.Cu
-[solder_mask_bridge]: Front solder mask aperture bridges items with different nets
-    Rule: board setup solder mask min width; error
-    @(16.2250 mm, 40.0000 mm): Pad 1 [+3V3] of C4 on F.Cu
-    @(15.1125 mm, 40.3250 mm): Pad 6 [GND] of U3 on F.Cu
-[solder_mask_bridge]: Front solder mask aperture bridges items with different nets
-    Rule: board setup solder mask min width; error
-    @(16.2250 mm, 40.0000 mm): Pad 1 [+3V3] of C4 on F.Cu
-    @(15.1125 mm, 39.6750 mm): Pad 7 [GND] of U3 on F.Cu
-[silk_overlap]: Silkscreen overlap
-    Rule: board setup constraints silk; warning
-    @(20.0000 mm, 27.5700 mm): Reference field of R4
-    @(19.7627 mm, 27.5225 mm): Segment of R3 on F.Silkscreen
-[silk_overlap]: Silkscreen overlap
-    Rule: board setup constraints silk; warning
     @(41.7627 mm, 22.5225 mm): Segment of R1 on F.Silkscreen
-    @(42.0000 mm, 22.5700 mm): Reference field of R2
 
-** Found 7 unconnected pads **
-[unconnected_items]: Missing connection between items
-    Local override; error
-    @(42.6700 mm, 6.0400 mm): PTH pad 30 [GND] of J1
-    @(0.5000 mm, 0.5000 mm): Zone [GND] on B.Cu
+** Found 6 unconnected pads **
 [unconnected_items]: Missing connection between items
     Local override; error
     @(42.6700 mm, 6.0400 mm): PTH pad 30 [GND] of J1
@@ -122,15 +56,15 @@
     @(0.5000 mm, 0.5000 mm): Zone [GND] on B.Cu
 [unconnected_items]: Missing connection between items
     Local override; error
-    @(32.0625 mm, 21.4680 mm): Track [GND] on F.Cu, length 0.5180 mm
-    @(37.8250 mm, 18.7653 mm): Track [GND] on F.Cu, length 1.2347 mm
-[unconnected_items]: Missing connection between items
-    Local override; error
-    @(22.3500 mm, 6.0400 mm): PTH pad 14 [GND] of J1
+    @(37.5900 mm, 3.5000 mm): PTH pad 25 [GND] of J1
     @(0.5000 mm, 0.5000 mm): Zone [GND] on B.Cu
 [unconnected_items]: Missing connection between items
     Local override; error
-    @(37.5900 mm, 3.5000 mm): PTH pad 25 [GND] of J1
+    @(17.2700 mm, 3.5000 mm): PTH pad 9 [GND] of J1
+    @(0.5000 mm, 0.5000 mm): Zone [GND] on B.Cu
+[unconnected_items]: Missing connection between items
+    Local override; error
+    @(22.3500 mm, 6.0400 mm): PTH pad 14 [GND] of J1
     @(0.5000 mm, 0.5000 mm): Zone [GND] on B.Cu
 [unconnected_items]: Missing connection between items
     Local override; error

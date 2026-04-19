@@ -43,7 +43,13 @@ J1_Y_EVEN = J1_Y_ODD + PIN_PITCH
 
 # J2 (LCD IDC 2×10) — placed below J1 with clear separation. After 90°
 # rotation, its long axis runs in X and its short axis in Y.
-J2_Y_ANCHOR = 11.5
+# J2 anchor moved from 11.5 → 15.0 after JLC preview showed the real IDC
+# box header's plastic shroud (extends ~4 mm above pin 1 for the retention
+# clip) colliding with J1's socket body. The bare-footprint courtyard didn't
+# catch it; the 3D preview did. J1 socket body occupies Y≈2-8 mm including
+# its plastic skirt; giving J2's shroud top ~3 mm clearance means the shroud
+# should start at Y≈11 and the anchor (pin 1) at Y=15.
+J2_Y_ANCHOR = 15.0
 
 
 # ───────────────────────── Board + helpers ─────────────────────────
@@ -245,14 +251,19 @@ place(u2, "U2", "BME280", 53.0, 42.0)
 q1 = load_footprint("Package_TO_SOT_SMD", "SOT-23")
 place(q1, "Q1", "AO3400A", 33.0, 20.0)
 
+# Bypass caps — moved further from their ICs after DRC flagged pad overlaps
+# on C4/U3 and C5/U4 (0603 pad reaching into SOIC/MSOP pad keep-out zone).
+# Original X=17 was 4 mm from IC center (at X=13) but SOIC-8 pads extend
+# ±2.5 mm and the 0603 pad extends ±0.825 mm, leaving only 0.675 mm gap
+# which is under clearance. New X=19 gives ~3 mm of pad-edge clearance.
 c2 = load_footprint("Capacitor_SMD", "C_0603_1608Metric")
-place(c2, "C2", "100nF", 49.0, 30.0)
+place(c2, "C2", "100nF", 47.0, 30.0)    # was 49 — move 2 mm from C1 to fix courtyard overlap
 c3 = load_footprint("Capacitor_SMD", "C_0603_1608Metric")
 place(c3, "C3", "100nF", 48.0, 42.0)
 c4 = load_footprint("Capacitor_SMD", "C_0603_1608Metric")
-place(c4, "C4", "100nF", 17.0, 40.0)
+place(c4, "C4", "100nF", 19.0, 40.0)    # was 17 — clear U3 MSOP-8 pads
 c5 = load_footprint("Capacitor_SMD", "C_0603_1608Metric")
-place(c5, "C5", "100nF", 17.0, 30.0)
+place(c5, "C5", "100nF", 19.0, 30.0)    # was 17 — clear U4 SOIC-8 pads
 
 # I²C1 pull-ups near RTC (clearing the J1-J2 corridor)
 r1 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
@@ -260,11 +271,12 @@ place(r1, "R1", "4.7k", 42.0, 22.0)
 r2 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
 place(r2, "R2", "4.7k", 42.0, 24.0)
 
-# I²C0 (HAT ID) pull-ups near U4 EEPROM
+# I²C0 (HAT ID) pull-ups — moved from X=20 to X=22 after C5 shifted to X=19
+# (C5 pads reach X=19.8; R4 at X=20 put its pad at X=19.175 — 0.6 mm gap, fail).
 r3 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
-place(r3, "R3", "3.3k", 20.0, 27.0)
+place(r3, "R3", "3.3k", 22.0, 27.0)
 r4 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
-place(r4, "R4", "3.3k", 20.0, 29.0)
+place(r4, "R4", "3.3k", 22.0, 29.0)
 
 # Q1 gate pulldown
 r5 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
