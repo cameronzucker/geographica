@@ -244,8 +244,11 @@ place(c1, "C1", "CR1632 holder", 34.0, 37.0)
 u2 = load_footprint("Package_LGA", "Bosch_LGA-8_2.5x2.5mm_P0.65mm_ClockwisePinNumbering")
 place(u2, "U2", "BME280", 53.0, 42.0)
 
+# Q1 + neighbors moved from Y=20 → Y=23 after JLC preview showed the
+# J2 box header's plastic shroud extending to ~Y=21 and covering silk
+# labels. Bare PinHeader_2x10 footprint doesn't model the shroud.
 q1 = load_footprint("Package_TO_SOT_SMD", "SOT-23")
-place(q1, "Q1", "AO3400A", 33.0, 20.0)
+place(q1, "Q1", "AO3400A", 33.0, 23.0)
 
 # Bypass caps — moved further from their ICs after DRC flagged pad overlaps
 # on C4/U3 and C5/U4 (0603 pad reaching into SOIC/MSOP pad keep-out zone).
@@ -274,15 +277,15 @@ place(r3, "R3", "3.3k", 22.0, 27.0)
 r4 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
 place(r4, "R4", "3.3k", 22.0, 29.0)
 
-# Q1 gate pulldown
+# Q1 gate pulldown — Y moved from 20 → 23 (see Q1 comment above)
 r5 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
-place(r5, "R5", "10k", 37.0, 20.0)
+place(r5, "R5", "10k", 37.0, 23.0)
 
-# LCD V0 divider
+# LCD V0 divider — same J2-shroud clearance fix
 r6 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
-place(r6, "R6", "10k", 20.0, 20.0)
+place(r6, "R6", "10k", 20.0, 23.0)
 r7 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
-place(r7, "R7", "10k", 26.0, 20.0)
+place(r7, "R7", "10k", 26.0, 23.0)
 
 
 # ───────────────────────── Nets ─────────────────────────
