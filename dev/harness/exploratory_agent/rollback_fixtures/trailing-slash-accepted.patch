@@ -1,0 +1,231 @@
+diff --git a/setup/config.py b/setup/config.py
+index 5bb1839..f38a634 100644
+--- a/setup/config.py
++++ b/setup/config.py
+@@ -270,11 +270,33 @@ def _under(path: str, prefix: str) -> bool:
+     return path.startswith(sep_prefix) and len(path) > len(sep_prefix)
+ 
+ 
++def _normalize_path(path_str: str) -> str:
++    """Collapse `//+` to `/` and strip any trailing `/` (but keep `/` alone).
++
++    Mirrors the frontend's `normalizePath()` in setup.js so server-side
++    is defensive against raw user input OR programmatic callers that
++    skip the UI layer. The 2026-04-19 beta tester symptom was a user
++    typing `/srv/foo/` in the custom-path box; the server accepted it
++    and propagated the trailing-slash into `DATA_HOST_PATH` and every
++    `{data_path}/subdir` string-concat downstream, producing paths
++    like `/srv/foo//pbf` that docker-compose volume mounts don't
++    always handle correctly.
++    """
++    if not isinstance(path_str, str):
++        return path_str
++    collapsed = re.sub(r"/+", "/", path_str)
++    if len(collapsed) > 1 and collapsed.endswith("/"):
++        collapsed = collapsed[:-1]
++    return collapsed
++
++
+ def validate_path(path_str: str) -> dict:
+     """Validate a filesystem path against the ALLOWLIST.
+ 
+-    Returns a dict with 'valid' (bool) and optionally 'reason' (str),
+-    'free_gb' (float), and 'total_gb' (float).
++    Returns a dict with 'valid' (bool), 'normalized' (the canonical
++    form with `//+` collapsed and trailing `/` stripped — callers
++    should prefer this over the raw input), and optionally 'reason'
++    (str), 'free_gb' (float), and 'total_gb' (float).
+ 
+     Security rules:
+     - Path must be absolute
+@@ -290,6 +312,10 @@ def validate_path(path_str: str) -> dict:
+     if "\x00" in path_str:
+         return {"valid": False, "reason": "Path contains null bytes"}
+ 
++    # Normalize trailing / and collapsed // BEFORE any startswith / resolve
++    # checks so both validation and the 'normalized' result are consistent.
++    path_str = _normalize_path(path_str)
++
+     # Must be absolute
+     if not path_str.startswith("/"):
+         return {"valid": False, "reason": "Path must be absolute (start with /)"}
+@@ -320,7 +346,7 @@ def validate_path(path_str: str) -> dict:
+         check_path = check_path.parent
+ 
+     # Get disk space info if the path or its parent exists
+-    result: dict = {"valid": True}
++    result: dict = {"valid": True, "normalized": path_str}
+     try:
+         # Walk up to find an existing ancestor
+         check = Path(resolved)
+diff --git a/setup/main.py b/setup/main.py
+index 7d74449..452709b 100644
+--- a/setup/main.py
++++ b/setup/main.py
+@@ -19,7 +19,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPExcept
+ from fastapi.middleware.cors import CORSMiddleware
+ from fastapi.responses import HTMLResponse, JSONResponse
+ from fastapi.staticfiles import StaticFiles
+-from pydantic import BaseModel, ConfigDict
++from pydantic import BaseModel, ConfigDict, field_validator
+ 
+ from setup.config import (
+     validate_bbox, get_ram_profile, detect_host_ip,
+@@ -299,6 +299,27 @@ async def csrf_middleware(request: Request, call_next):
+ # ---------------------------------------------------------------------------
+ # Request models
+ # ---------------------------------------------------------------------------
++
++def _normalize_path_field(value: str) -> str:
++    """Pydantic field-validator body: collapse `//+` → `/` and strip a
++    trailing `/`. Central defense for every request model that carries
++    a filesystem path, so we never propagate `/srv/foo/` into a bash
++    string-concat of `f"{ctx['data_path']}/pbf"` → `/srv/foo//pbf`.
++    2026-04-19 beta tester hit `osmium merge: no such file or directory`
++    from exactly that pattern.
++
++    Accepts raw user input verbatim (empty strings, non-paths). Actual
++    validation (ALLOWLIST etc.) still happens in `validate_path()`; this
++    only normalizes the shape.
++    """
++    if not isinstance(value, str) or not value:
++        return value
++    collapsed = re.sub(r"/+", "/", value)
++    if len(collapsed) > 1 and collapsed.endswith("/"):
++        collapsed = collapsed[:-1]
++    return collapsed
++
++
+ class BboxRequest(BaseModel):
+     bbox: str
+ 
+@@ -312,6 +333,11 @@ class ConfigRequest(BaseModel):
+     tls_port: int = 443
+     stt_backend: str = "cpu"
+ 
++    @field_validator("data_path", "scripts_path", "tls_cert_dir")
++    @classmethod
++    def _norm(cls, v: str) -> str:
++        return _normalize_path_field(v)
++
+ 
+ class CredentialsRequest(BaseModel):
+     m2m_username: str = ""
+@@ -323,14 +349,29 @@ class CredentialsRequest(BaseModel):
+ class PathRequest(BaseModel):
+     path: str
+ 
++    @field_validator("path")
++    @classmethod
++    def _norm(cls, v: str) -> str:
++        return _normalize_path_field(v)
++
+ 
+ class CreateDirectoryRequest(BaseModel):
+     path: str
+ 
++    @field_validator("path")
++    @classmethod
++    def _norm(cls, v: str) -> str:
++        return _normalize_path_field(v)
++
+ 
+ class CheckpointResetRequest(BaseModel):
+     data_path: str
+ 
++    @field_validator("data_path")
++    @classmethod
++    def _norm(cls, v: str) -> str:
++        return _normalize_path_field(v)
++
+ 
+ class StartRequest(BaseModel):
+     model_config = ConfigDict(extra="forbid")
+@@ -341,6 +382,11 @@ class StartRequest(BaseModel):
+     base_imagery_zoom: int = 15
+     layer_bbox: dict = {}  # {layer: bbox_string} — empty string means "same as top-level bbox"
+ 
++    @field_validator("data_path")
++    @classmethod
++    def _norm(cls, v: str) -> str:
++        return _normalize_path_field(v)
++
+ 
+ # ---------------------------------------------------------------------------
+ # Routes
+@@ -436,6 +482,10 @@ async def post_create_directory(body: CreateDirectoryRequest):
+     """Create a directory at the specified path.
+ 
+     SECURITY: Path must pass validate_path (ALLOWLIST check).
++    The mkdir operates on the NORMALIZED form returned by validate_path
++    so `/srv/foo/` and `/srv/foo` both resolve to the same directory
++    and the trailing slash isn't baked into later string-concat paths
++    (see validate_path docstring for the 2026-04-19 context).
+     """
+     validation = validate_path(body.path)
+     if not validation.get("valid"):
+@@ -443,10 +493,11 @@ async def post_create_directory(body: CreateDirectoryRequest):
+             status_code=400,
+             detail=validation.get("reason", "Invalid path"),
+         )
++    clean_path = validation.get("normalized", body.path)
+ 
+     try:
+-        Path(body.path).mkdir(parents=True, exist_ok=True)
+-        return {"ok": True, "path": body.path}
++        Path(clean_path).mkdir(parents=True, exist_ok=True)
++        return {"ok": True, "path": clean_path}
+     except OSError as e:
+         raise HTTPException(status_code=400, detail=f"Cannot create directory: {e}")
+ 
+@@ -795,7 +846,8 @@ async def post_checkpoint_reset(body: CheckpointResetRequest):
+     validation = validate_path(body.data_path)
+     if not validation.get("valid"):
+         raise HTTPException(status_code=400, detail=validation.get("reason", "Invalid path"))
+-    ckpt_path = Path(body.data_path) / ".setup_checkpoint.json"
++    clean_path = validation.get("normalized", body.data_path)
++    ckpt_path = Path(clean_path) / ".setup_checkpoint.json"
+     if ckpt_path.exists():
+         try:
+             ckpt_path.unlink()
+diff --git a/setup/static/setup.js b/setup/static/setup.js
+index 2037b8d..01a375a 100644
+--- a/setup/static/setup.js
++++ b/setup/static/setup.js
+@@ -374,14 +374,34 @@
+   }
+ 
+   // Compute the full resolved data path from drive + subpath OR custom-path input.
++  //
++  // Both branches normalize: strip any trailing slash, collapse any internal
++  // `//` to a single `/`. The drive+subpath branch already did this by
++  // construction; the custom-path branch previously didn't, so a user who
++  // typed `/srv/foo/` got that raw string written to .env as
++  // DATA_HOST_PATH and propagated into bash commands as
++  // `{data_path}/pbf` → `/srv/foo//pbf`. POSIX tolerates `//` in most
++  // places but docker-compose volume mounts and some downstream
++  // consumers don't — 2026-04-19 beta tester report.
++  function normalizePath(p) {
++    // Collapse repeated slashes to one, then drop any trailing slash
++    // (but keep the leading `/` on absolute paths — `/` alone stays `/`).
++    var collapsed = p.replace(/\/+/g, '/');
++    if (collapsed.length > 1 && collapsed.charAt(collapsed.length - 1) === '/') {
++      collapsed = collapsed.slice(0, -1);
++    }
++    return collapsed;
++  }
++
+   function computeDataPath() {
+     var drive = $('#data-drive').value;
+     if (!drive) return '';
+     if (drive === '__other__') {
+-      return ($('#data-custom-path').value || '').trim();
++      var custom = ($('#data-custom-path').value || '').trim();
++      return custom ? normalizePath(custom) : '';
+     }
+     var subpath = ($('#data-subpath').value || 'geographica/data').trim().replace(/^\/+/, '');
+-    return drive.replace(/\/+$/, '') + '/' + subpath;
++    return normalizePath(drive + '/' + subpath);
+   }
+ 
+   // Show/hide subpath-group vs custom-group based on current drive value.

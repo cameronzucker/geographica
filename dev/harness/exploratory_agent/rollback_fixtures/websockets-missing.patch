@@ -1,0 +1,83 @@
+diff --git a/setup/requirements.txt b/setup/requirements.txt
+index a80d7e5..f4fb6f2 100644
+--- a/setup/requirements.txt
++++ b/setup/requirements.txt
+@@ -1,4 +1,12 @@
+ fastapi>=0.115.0
+ uvicorn>=0.32.0
++# Required by FastAPI's @app.websocket endpoint (setup/main.py:588 /ws/progress).
++# Without this, uvicorn's 'auto' websocket protocol resolves to nothing and
++# every client handshake fails — the wizard's progress stream never connects.
++# The frontend retries silently forever (setup.js:802 connectProgress) with
++# NO UI feedback, so the beta tester sees "pipeline starting" and then an
++# apparently frozen wizard while the background logs fill with handshake
++# errors. Regression-guarded by tests/test_setup_requirements_websockets.py.
++websockets>=12.0
+ httpx>=0.27.0
+ pytest-asyncio>=0.23
+diff --git a/setup/static/setup.js b/setup/static/setup.js
+index 13e4d45..d91ee02 100644
+--- a/setup/static/setup.js
++++ b/setup/static/setup.js
+@@ -784,10 +784,32 @@
+     });
+   }
+ 
++  // Silent retry history. If every reconnect in the last THRESHOLD
++  // attempts has failed to even open (onclose fired before onopen), the
++  // wizard is broken — almost always because `websockets` isn't in the
++  // setup venv or the endpoint doesn't exist. Surface this to the user
++  // as a banner so the pipeline appearing to freeze turns into actionable
++  // text, not silent infinite retries.
++  var wsConsecutiveFailures = 0;
++  var wsShownStuckBanner = false;
++  var WS_STUCK_THRESHOLD = 3;
++
+   function connectProgress() {
+     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+     var url = proto + '//' + location.host + '/ws/progress';
+     ws = new WebSocket(url);
++    var opened = false;
++
++    ws.onopen = function () {
++      opened = true;
++      wsConsecutiveFailures = 0;
++      if (wsShownStuckBanner) {
++        // Clear the "stuck" banner if we recover.
++        var b = document.getElementById('global-error-banner');
++        if (b) b.style.display = 'none';
++        wsShownStuckBanner = false;
++      }
++    };
+ 
+     ws.onmessage = function (e) {
+       var event;
+@@ -800,12 +822,26 @@
+     };
+ 
+     ws.onclose = function () {
+-      // Reconnect after 2 seconds
++      if (!opened) {
++        wsConsecutiveFailures += 1;
++      }
++      if (wsConsecutiveFailures >= WS_STUCK_THRESHOLD && !wsShownStuckBanner) {
++        wsShownStuckBanner = true;
++        showError(
++          'Progress stream is not connecting (' + wsConsecutiveFailures +
++          ' consecutive failures). The pipeline may still be running in ' +
++          'the background, but this wizard can\'t show updates. Most ' +
++          'commonly this means the `websockets` Python package is ' +
++          'missing from setup/.venv — check setup.sh logs and re-run ' +
++          '`./setup.sh` to reinstall requirements.'
++        );
++      }
++      // Reconnect after 2 seconds (the banner above stays up until onopen clears it).
+       setTimeout(connectProgress, 2000);
+     };
+ 
+     ws.onerror = function () {
+-      // Will trigger onclose
++      // Will trigger onclose.
+     };
+   }
+ 
