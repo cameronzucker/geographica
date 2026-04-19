@@ -23,3 +23,4 @@ def register(name: str, factory: Callable, schema: dict) -> None:
 # Import every tools/*.py module so each one can call register() at import time.
 # Order doesn't matter but the side effect is required.
 from . import browser  # noqa: F401,E402
+from . import api  # noqa: F401,E402
