@@ -485,6 +485,61 @@ async def post_launch():
     """Launch Docker Compose stack. Detects existing containers."""
     cwd = str(Path(__file__).parent.parent)
 
+    # Re-target ./data symlink to match DATA_HOST_PATH in .env (B2).
+    # The wizard writes DATA_HOST_PATH to .env; bootstrap originally created
+    # ./data → /srv/geographica/data, but users can choose a different drive
+    # in Step 1. Reconcile them here, right before we hand off to docker-compose.
+    try:
+        env_text = Path(ENV_PATH).read_text() if Path(ENV_PATH).exists() else ""
+    except OSError:
+        env_text = ""
+    data_host_path: Optional[str] = None
+    for line in env_text.splitlines():
+        line = line.strip()
+        if line.startswith("DATA_HOST_PATH="):
+            raw = line.split("=", 1)[1].strip()
+            # Strip surrounding quotes if present.
+            if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ('"', "'"):
+                raw = raw[1:-1]
+            data_host_path = raw
+            break
+    if data_host_path:
+        target = Path(data_host_path)
+        data_link = Path.cwd() / "data"
+        current_target = None
+        if data_link.is_symlink():
+            try:
+                current_target = data_link.resolve()
+            except OSError:
+                current_target = None
+        if current_target is None or current_target != target.resolve():
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+                if data_link.exists() or data_link.is_symlink():
+                    if data_link.is_symlink():
+                        data_link.unlink()
+                    elif data_link.is_dir():
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"{data_link} is a regular directory, not a symlink. "
+                                "Move or remove it manually before re-launching."
+                            ),
+                        )
+                    else:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{data_link} exists and is not a symlink — move it manually.",
+                        )
+                data_link.symlink_to(target)
+            except HTTPException:
+                raise
+            except OSError as err:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to retarget ./data symlink to {target}: {err}",
+                )
+
     # Check if containers are already running
     pre_check = await asyncio.create_subprocess_exec(
         "docker", "compose", "ps", "--format", "json",

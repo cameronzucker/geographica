@@ -362,3 +362,41 @@ class TestCreateDirectoryEndpoint:
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
         assert test_dir.exists()
+
+
+class TestLaunchReTargetsSymlink:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.client = TestClient(app)
+        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+    def test_launch_repoints_data_symlink(self, tmp_path, monkeypatch):
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        env_file = repo_root / ".env"
+        new_data = tmp_path / "custom_data"
+        new_data.mkdir()
+        env_file.write_text(f"DATA_HOST_PATH={new_data}\n")
+        old_data = tmp_path / "old_data"
+        old_data.mkdir()
+        (repo_root / "data").symlink_to(old_data)
+
+        from setup import main as mod
+        monkeypatch.setattr(mod, "ENV_PATH", str(env_file))
+
+        async def fake_run(args, cwd, on_output, env_extra=None):
+            return 0
+        monkeypatch.setattr(mod, "run_command", fake_run)
+
+        async def fake_exec(*args, **kwargs):
+            class P:
+                returncode = 0
+                async def communicate(self):
+                    return (b"", b"")
+            return P()
+        monkeypatch.setattr(mod.asyncio, "create_subprocess_exec", fake_exec)
+
+        monkeypatch.chdir(repo_root)
+        resp = self.client.post("/api/launch", headers=self.headers)
+        assert resp.status_code == 200
+        assert (repo_root / "data").resolve() == new_data.resolve()
