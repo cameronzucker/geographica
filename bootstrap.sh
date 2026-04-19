@@ -60,10 +60,20 @@ if ! grep -q pam_gnome_keyring /etc/pam.d/common-session 2>/dev/null; then
 fi
 
 # Enable cgroup memory controller for Docker memory limits
-if ! grep -q "cgroup_enable=memory" /boot/firmware/cmdline.txt 2>/dev/null; then
-    sed -i 's/$/ cgroup_enable=memory cgroup_memory=1/' /boot/firmware/cmdline.txt
-    echo "  Enabled cgroup memory controller (reboot required to take effect)"
-    NEEDS_REBOOT=1
+CMDLINE=""
+if [ -f /boot/firmware/cmdline.txt ]; then
+    CMDLINE=/boot/firmware/cmdline.txt
+elif [ -f /boot/cmdline.txt ]; then
+    CMDLINE=/boot/cmdline.txt
+fi
+if [ -n "$CMDLINE" ]; then
+    if ! grep -q "cgroup_enable=memory" "$CMDLINE"; then
+        sed -i 's/$/ cgroup_enable=memory cgroup_memory=1/' "$CMDLINE"
+        echo "  Enabled cgroup memory controller via $CMDLINE (reboot required)"
+        NEEDS_REBOOT=1
+    fi
+else
+    echo "  [skip] cgroup memory enable: no cmdline.txt found (not a Raspberry Pi OS install — Docker memory limits may not work)"
 fi
 
 echo "[3/6] Adding $ACTUAL_USER to docker group..."
