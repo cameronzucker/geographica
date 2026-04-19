@@ -7,6 +7,28 @@ project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries
 from v1.1.0 onward are generated automatically by `release-please` from
 Conventional Commits.
 
+## [1.3.0](https://github.com/cameronzucker/geographica/compare/v1.2.1...v1.3.0) (2026-04-19)
+
+
+### Features
+
+* **hardware:** GX-01 Front Panel Board — full pipeline through JLC bundle ([e5e2bc4](https://github.com/cameronzucker/geographica/commit/e5e2bc469d594754426897dd3a78b729cdc78167))
+* **hardware:** GX-01 v2 HAT — JLC bundle zip generated from v2b routed board ([2154f4a](https://github.com/cameronzucker/geographica/commit/2154f4ac8a085d56810ce80677962241828ea2a4))
+* **hardware:** GX-01 v2 HAT — placement iteration v2b routes successfully ([fadec69](https://github.com/cameronzucker/geographica/commit/fadec6922c89c2caa77e2fc1b408d9d8c6c9599d))
+* **hardware:** GX-01 v2 HAT + FPB WIP — placement done, routing blocked ([ba6de68](https://github.com/cameronzucker/geographica/commit/ba6de688a5affb7c85df653e5c414788a01c2b9c))
+* **hardware:** swap C1 supercap → CR1632 coin cell holder ([da7f7f1](https://github.com/cameronzucker/geographica/commit/da7f7f1da77bc33eb63504ad31c95199d142cfba))
+* **hardware:** wire JLC rotation-correction DB into make_jlc_bundle.py ([490ecf6](https://github.com/cameronzucker/geographica/commit/490ecf66331f3ceb37e54cedcf87cdb8d87b12a4))
+
+
+### Bug Fixes
+
+* **hardware:** correct LCSC codes for v2 HAT — all 4 rejected ICs now map to JLC-stocked parts ([ead0949](https://github.com/cameronzucker/geographica/commit/ead09498850f9e53702558c129b877e9fefc581a))
+* **hardware:** J2 + J5 LCSC codes had low JLC stock — swapped to deep-stock alternatives ([daa46e5](https://github.com/cameronzucker/geographica/commit/daa46e5b76a9f7dff210542f61e7951bf802ec7d))
+* **hardware:** J2 shroud vs J1 body collision + bypass cap pad overlaps ([4190ca1](https://github.com/cameronzucker/geographica/commit/4190ca1c044a757a3f155fe3d29e44e034c0d771))
+* **hardware:** move R5/R6/R7/Q1 from Y=20 → Y=23 to clear J2 IDC shroud ([35b9620](https://github.com/cameronzucker/geographica/commit/35b9620729b9c8ee432a83ee093d4939fd7eb601))
+* **hardware:** swap FPB switches from B3U (side-actuated) to B3S (top-actuated) ([9b70ebd](https://github.com/cameronzucker/geographica/commit/9b70ebd0f473e517ed0fcde2b23cc01df484cbb4))
+* **setup:** unblock beta testers stuck in preflight + bootstrap loops ([5e400c5](https://github.com/cameronzucker/geographica/commit/5e400c5ae00030c56e8d666ce9230d12ff1f5c47))
+
 ## [1.2.1](https://github.com/cameronzucker/geographica/compare/v1.2.0...v1.2.1) (2026-04-19)
 
 
