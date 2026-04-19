@@ -1,0 +1,102 @@
+# LCSC part mapping for GX-01 Front Panel Board.
+#
+# All LCSC codes below verified against JLC's PCBA library via the live
+# search API on 2026-04-19. Every Extended part's stock count is listed
+# in its note.
+
+skip_patterns:
+  - "^H[0-9]+$"      # H1-H4 mounting holes
+
+parts:
+  # ─── Cable to main HAT ───
+  J1:
+    lcsc: C160392
+    tier: extended
+    note: "JST BM06B-SRSS-TB(LF)(SN). 6-pin SMT vertical JST-SH, 1.0 mm pitch. Genuine JST, matches KiCad footprint. 9,211 in stock. (Same part as main HAT J5.)"
+
+  # ─── ICs ───
+  U1:
+    lcsc: C629440
+    tier: extended
+    note: "Microchip MCP23017T-E/SO. SOIC-28-300mil (matches SOIC-28W_7.5x17.9mm footprint). 16-channel I²C GPIO expander. 1,816 in stock."
+
+  U2:
+    lcsc: C504893
+    tier: extended
+    note: "Vishay VEML7700-TR. Ambient light sensor, I²C. 2,003 in stock. NOTE: JLC's spec string is 'SMD-4P' but the Vishay datasheet shows 6 pads in OPLGA-6 package — verify 3D preview matches the custom 6-pad geographica:VEML7700_OPLGA-6 footprint."
+
+  # ─── Tactile switches ───
+  SW1:
+    lcsc: C963349
+    tier: extended
+    note: "Omron B3U-3000P tactile SMD switch, 3×2.5 mm. Genuine Omron. 3,910 in stock. (Shared across SW1-SW6.)"
+  SW2:
+    lcsc: C963349
+    tier: extended
+    note: "Same as SW1."
+  SW3:
+    lcsc: C963349
+    tier: extended
+    note: "Same as SW1."
+  SW4:
+    lcsc: C963349
+    tier: extended
+    note: "Same as SW1."
+  SW5:
+    lcsc: C963349
+    tier: extended
+    note: "Same as SW1."
+  SW6:
+    lcsc: C963349
+    tier: extended
+    note: "Same as SW1."
+
+  # ─── LEDs (4 colors) ───
+  D1:
+    lcsc: C12624
+    tier: basic
+    note: "Hubei KENTO KT-0603G — 0603 green LED. 212,435 in stock. Power indicator, tied to +3V3 always-on."
+  D2:
+    lcsc: C2288
+    tier: basic
+    note: "Hubei KENTO KT-0603B — 0603 blue LED. 207,349 in stock. GPS fix indicator."
+  D3:
+    lcsc: C2287
+    tier: basic
+    note: "Hubei KENTO KT-0603Y — 0603 yellow LED. 15,497 in stock. NTP sync indicator."
+  D4:
+    lcsc: C2286
+    tier: basic
+    note: "Hubei KENTO KT-0603R — 0603 red LED. 7.2M in stock. Error indicator."
+
+  # ─── Resistors ───
+  R1:
+    lcsc: C25804
+    tier: basic
+    note: "10 kΩ 0603 1% (Yageo RC0603FR-0710KL equivalent). MCP23017 RESET pull-up."
+  R2:
+    lcsc: C21190
+    tier: basic
+    note: "1 kΩ 0603 1% (UNI-ROYAL 0603WAF1001T5E). 25.4M in stock. LED current-limit."
+  R3:
+    lcsc: C21190
+    tier: basic
+    note: "Same as R2."
+  R4:
+    lcsc: C21190
+    tier: basic
+    note: "Same as R2."
+  R5:
+    lcsc: C21190
+    tier: basic
+    note: "Same as R2."
+
+  # ─── Capacitors ───
+  C1:
+    lcsc: C14663
+    tier: basic
+    note: "100 nF 0603 X7R 50V (Samsung CL10B104KB8NNNC). Bypass for U1 MCP23017 VDD."
+  C2:
+    lcsc: C14663
+    tier: basic
+    note: "Same as C1. Bypass for U2 VEML7700 VDD."

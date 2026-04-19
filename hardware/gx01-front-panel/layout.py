@@ -6,8 +6,9 @@ Small case-front-mounted PCB carrying: MCP23017 I²C GPIO expander,
 (custom footprint — no stock KiCad part), JST-SH cable connector, and
 4 M2.5 mounting holes straight into case standoffs.
 
-Board size 65×30 mm (FPB footprint placeholder — final dimensions
-depend on case revision TBD).
+Board size 65×42 mm (expanded from initial 65×30 after first render
+showed MCP23017 SOIC-28W crowding the switches; extra Y height lets
+the D-pad cluster sit in its own row below the IC).
 
 Run with:
   python3 layout.py
@@ -25,14 +26,14 @@ from pcbnew import VECTOR2I
 
 
 BOARD_W_MM = 65.0
-BOARD_H_MM = 30.0
+BOARD_H_MM = 42.0
 BOARD_OUTLINE_WIDTH_MM = 0.15
 
 MOUNTING_HOLES_MM = [
     (3.5, 3.5),
     (61.5, 3.5),
-    (3.5, 26.5),
-    (61.5, 26.5),
+    (3.5, 38.5),
+    (61.5, 38.5),
 ]
 
 out_path = os.path.abspath("gx01-front-panel.kicad_pcb")
@@ -151,69 +152,83 @@ for i, (x, y) in enumerate(MOUNTING_HOLES_MM, start=1):
 
 # ───────────────────────── Placement ─────────────────────────
 
-# J1 — JST-SH 6-pin cable to main HAT, on the left edge
+# ─── Placement strategy ────────────────────────────────────────────────
+# Top strip (Y=3–10): status LEDs (D1–D4) spaced evenly with their R-pairs
+#                     just below; VEML7700 lives near the right-edge top
+#                     so the sensor aperture sits next to where the LCD
+#                     window will be on the case front.
+# Mid strip (Y=11–17): MCP23017 SOIC-28W, JST-SH cable connector, bypass
+#                     caps, RESET pull-up.
+# Bottom strip (Y=20–38): 6 tactile switches in a D-pad + Select + Back
+#                     layout, clear of U1's body and the mounting holes.
+
+# J1 — JST-SH 6-pin cable to main HAT, left edge mid-height
 j1 = load_footprint("Connector_JST", "JST_SH_BM06B-SRSS-TB_1x06-1MP_P1.00mm_Vertical")
-place(j1, "J1", "Cable", 9.0, 15.0)
+place(j1, "J1", "Cable", 7.0, 15.0)
 
-# U1 — MCP23017 SOIC-28W in the middle of the board
+# U1 — MCP23017 SOIC-28W, middle-right (long axis along X)
 u1 = load_footprint("Package_SO", "SOIC-28W_7.5x17.9mm_P1.27mm")
-place(u1, "U1", "MCP23017", 30.0, 15.0)
+place(u1, "U1", "MCP23017", 36.0, 14.0)
 
-# U2 — VEML7700 custom footprint, top-center (faces outward through case window)
+# U2 — VEML7700 ambient light sensor, upper right
 u2 = make_veml7700_footprint()
-place(u2, "U2", "VEML7700", 45.0, 8.0)
+place(u2, "U2", "VEML7700", 58.0, 7.0)
 
-# C1, C2 — bypass caps near U1 VDD and U2 VDD
+# C1 — bypass cap near U1 VDD (pin 9, lower-right of U1)
 c1 = load_footprint("Capacitor_SMD", "C_0603_1608Metric")
-place(c1, "C1", "100nF", 22.0, 8.0)
+place(c1, "C1", "100nF", 48.0, 11.0)
 
+# C2 — bypass cap near U2 VDD
 c2 = load_footprint("Capacitor_SMD", "C_0603_1608Metric")
-place(c2, "C2", "100nF", 49.0, 8.0)
+place(c2, "C2", "100nF", 58.0, 11.0)
 
-# R1 — RESET pull-up near J1/U1
+# R1 — RESET pull-up, between J1 and U1
 r1 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
-place(r1, "R1", "10k", 15.0, 10.0)
+place(r1, "R1", "10k", 15.0, 14.0)
 
-# SW1-SW6 — tactile switches. Lay out as D-pad + Select + Back along bottom edge.
-#   SW1 UP    (top of dpad)
-#   SW2 DOWN  (bottom of dpad)
-#   SW3 LEFT
-#   SW4 RIGHT
-#   SW5 SELECT
-#   SW6 BACK
-# Place SW3(L) SW1(U)/SW2(D) SW4(R) in a 3-wide × 2-tall cluster, then
-# SW5(Sel) and SW6(Back) as separate buttons further right.
+# ─── LEDs and current-limit resistors (top row) ────────────────────────
+# Spaced 7 mm apart along the top edge so the 3D-printed case light pipe
+# can have well-separated apertures.
+leds_y = 6.0
+resistors_y = 9.0
+# 5 mm LED pitch keeps all 4 LEDs + resistor pairs clear of U1's body
+# (U1 left edge at X≈27.05). D4/R5 at X=23 leaves ~3 mm gap.
+led_positions = [( 8, "D1", "PWR_Grn"), (13, "D2", "GPS_Blu"),
+                 (18, "D3", "NTP_Yel"), (23, "D4", "ERR_Red")]
+resistor_positions = [( 8, "R2"), (13, "R3"), (18, "R4"), (23, "R5")]
+
+d_fps = {}
+for x, ref, val in led_positions:
+    fp = load_footprint("LED_SMD", "LED_0603_1608Metric")
+    place(fp, ref, val, x, leds_y)
+    d_fps[ref] = fp
+d1, d2, d3, d4 = d_fps["D1"], d_fps["D2"], d_fps["D3"], d_fps["D4"]
+
+r_fps = {}
+for x, ref in resistor_positions:
+    fp = load_footprint("Resistor_SMD", "R_0603_1608Metric")
+    place(fp, ref, "1k", x, resistors_y)
+    r_fps[ref] = fp
+r2, r3, r4, r5 = r_fps["R2"], r_fps["R3"], r_fps["R4"], r_fps["R5"]
+
+# ─── Switches (bottom D-pad + Select + Back) ───────────────────────────
+# 6 mm tactile switches. Bodies 6×6 mm, need ~2 mm clearance per edge.
+#
+#    SW3(L)      SW1(U)     SW4(R)       SW5(SEL)   SW6(BACK)
+#                SW2(D)
+#
+# D-pad center: (14, 28). SW1 above (Y=22), SW2 below (Y=34), SW3 left
+# (X=7), SW4 right (X=21). Then SW5 / SW6 as separate buttons further right.
 btn = "SW_SPST_B3U-3000P"
 def sw(ref, val, x, y):
     return place(load_footprint("Button_Switch_SMD", btn), ref, val, x, y)
 
-sw1 = sw("SW1", "UP",     22.0, 23.0)
-sw2 = sw("SW2", "DOWN",   22.0, 27.5)
-sw3 = sw("SW3", "LEFT",   17.0, 25.5)
-sw4 = sw("SW4", "RIGHT",  27.0, 25.5)
-sw5 = sw("SW5", "SELECT", 42.0, 25.5)
-sw6 = sw("SW6", "BACK",   50.0, 25.5)
-
-# LEDs D1-D4 along the top edge, left of the VEML7700
-leds_y = 4.0
-d1 = load_footprint("LED_SMD", "LED_0603_1608Metric")
-place(d1, "D1", "PWR",  5.0, leds_y)
-d2 = load_footprint("LED_SMD", "LED_0603_1608Metric")
-place(d2, "D2", "GPS", 10.0, leds_y)
-d3 = load_footprint("LED_SMD", "LED_0603_1608Metric")
-place(d3, "D3", "NTP", 15.0, leds_y)
-d4 = load_footprint("LED_SMD", "LED_0603_1608Metric")
-place(d4, "D4", "ERR", 20.0, leds_y)
-
-# LED current-limit resistors, slightly below the LEDs
-r2 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
-place(r2, "R2", "1k", 5.0, 7.0)
-r3 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
-place(r3, "R3", "1k", 10.0, 7.0)
-r4 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
-place(r4, "R4", "1k", 15.0, 7.0)
-r5 = load_footprint("Resistor_SMD", "R_0603_1608Metric")
-place(r5, "R5", "1k", 20.0, 7.0)
+sw1 = sw("SW1", "UP",     14.0, 22.0)
+sw3 = sw("SW3", "LEFT",    7.0, 28.0)
+sw4 = sw("SW4", "RIGHT",  21.0, 28.0)
+sw2 = sw("SW2", "DOWN",   14.0, 34.0)
+sw5 = sw("SW5", "SELECT", 40.0, 28.0)
+sw6 = sw("SW6", "BACK",   53.0, 28.0)
 
 
 # ───────────────────────── Nets + pad assignments ─────────────────────────
