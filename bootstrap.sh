@@ -115,6 +115,27 @@ else
     echo "  WARNING: $REPO_DIR/scripts/requirements.txt not found — pipeline scripts will fail at import time"
 fi
 
+echo "[N/M] Installing Tippecanoe (ARM64 binary from GitHub Release)..."
+# Pin to the Geographica release tag for reproducibility. Update this version when cutting a new release.
+TIPPECANOE_RELEASE_URL="https://github.com/cameronzucker/geographica/releases/download/v1.1.0/tippecanoe-arm64"
+if command -v tippecanoe >/dev/null 2>&1; then
+    echo "  tippecanoe already installed ($(tippecanoe --version 2>&1 | head -1))"
+else
+    if wget -q --show-progress -O /tmp/tippecanoe "$TIPPECANOE_RELEASE_URL"; then
+        chmod +x /tmp/tippecanoe
+        mv /tmp/tippecanoe /usr/local/bin/tippecanoe
+        echo "  Installed tippecanoe to /usr/local/bin/tippecanoe"
+    else
+        echo "  WARNING: Could not download tippecanoe from $TIPPECANOE_RELEASE_URL"
+        echo "  Public lands pipeline will fail until you install tippecanoe manually:"
+        echo "    Option A: sudo apt install build-essential libsqlite3-dev zlib1g-dev"
+        echo "              git clone https://github.com/felt/tippecanoe.git /tmp/tippecanoe"
+        echo "              cd /tmp/tippecanoe && make -j4 && sudo make install"
+        echo "    Option B: Download a release asset from https://github.com/cameronzucker/geographica/releases"
+        echo "    Option C: Build via ./tools/build-tippecanoe.sh (see tools/README.md)"
+    fi
+fi
+
 echo "[6/6] Installing keyring agent service..."
 cp "$REPO_DIR/services/keyring-agent/geographica-keyring.service" /etc/systemd/system/
 # Update paths to match actual repo location and user
