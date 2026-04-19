@@ -669,6 +669,32 @@ class TestCheckpointResetEndpoint:
         assert not ckpt.exists()
 
 
+def test_disk_error_does_not_broadcast_pipeline_done(tmp_path, monkeypatch):
+    import shutil
+    from setup import main as mod
+    events = []
+    async def capture(evt):
+        events.append(evt)
+    monkeypatch.setattr(mod, "broadcast", capture)
+
+    monkeypatch.setattr(
+        shutil, "disk_usage",
+        lambda p: shutil._ntuple_diskusage(1, 1, 1),  # 1 byte free — far below 5 GB
+    )
+    body = mod.StartRequest(
+        bbox="-114.8,31.3,-109.0,37.0",
+        layers={"basemap": "download"},
+        data_path=str(tmp_path),
+    )
+    import asyncio as _a
+    _a.run(mod._run_pipeline(body))
+    assert not any(e.get("type") == "pipeline_done" for e in events), (
+        "disk-critically-low must NOT broadcast success"
+    )
+    assert any(e.get("type") == "error" for e in events)
+    assert mod.current_state["step"] == "error"
+
+
 def test_pipeline_error_broadcast_includes_step_and_stderr(tmp_path, monkeypatch):
     import shutil
     from setup import main as mod
