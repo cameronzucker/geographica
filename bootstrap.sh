@@ -119,18 +119,24 @@ echo "[N/M] Installing Tippecanoe (ARM64 binary from GitHub Release)..."
 # Pin to the Geographica release tag for reproducibility. Update this version when cutting a new release.
 TIPPECANOE_RELEASE_URL="https://github.com/cameronzucker/geographica/releases/download/v1.1.0/tippecanoe-arm64"
 if command -v tippecanoe >/dev/null 2>&1; then
-    echo "  tippecanoe already installed ($(tippecanoe --version 2>&1 | head -1))"
+    echo "  tippecanoe already on PATH: $(tippecanoe --version 2>&1 | head -1) — skipping install"
+    echo "  (If public-lands pipeline fails due to too-old tippecanoe: sudo rm \$(command -v tippecanoe) && re-run bootstrap)"
 else
     if wget -q --show-progress -O /tmp/tippecanoe "$TIPPECANOE_RELEASE_URL"; then
         chmod +x /tmp/tippecanoe
-        mv /tmp/tippecanoe /usr/local/bin/tippecanoe
-        echo "  Installed tippecanoe to /usr/local/bin/tippecanoe"
+        if mv /tmp/tippecanoe /usr/local/bin/tippecanoe; then
+            echo "  Installed tippecanoe to /usr/local/bin/tippecanoe"
+        else
+            echo "  WARNING: Downloaded tippecanoe but could not move to /usr/local/bin (insufficient permissions?)"
+            echo "  The binary is still at /tmp/tippecanoe — move it manually with:"
+            echo "    sudo mv /tmp/tippecanoe /usr/local/bin/tippecanoe"
+        fi
     else
         echo "  WARNING: Could not download tippecanoe from $TIPPECANOE_RELEASE_URL"
         echo "  Public lands pipeline will fail until you install tippecanoe manually:"
         echo "    Option A: sudo apt install build-essential libsqlite3-dev zlib1g-dev"
-        echo "              git clone https://github.com/felt/tippecanoe.git /tmp/tippecanoe"
-        echo "              cd /tmp/tippecanoe && make -j4 && sudo make install"
+        echo "              git clone https://github.com/felt/tippecanoe.git /tmp/tippecanoe-src"
+        echo "              cd /tmp/tippecanoe-src && make -j4 && sudo make install"
         echo "    Option B: Download a release asset from https://github.com/cameronzucker/geographica/releases"
         echo "    Option C: Build via ./tools/build-tippecanoe.sh (see tools/README.md)"
     fi
