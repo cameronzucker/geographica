@@ -91,10 +91,17 @@ def ensure_net(name: str) -> pcbnew.NETINFO_ITEM:
 
 def connect_pad(fp: pcbnew.FOOTPRINT, pad_name: str,
                 net: pcbnew.NETINFO_ITEM) -> None:
-    pad = fp.FindPadByNumber(pad_name)
-    if pad is None:
+    # Set the net on every pad matching this number — custom footprints
+    # like the CR1632 holder use duplicate pad numbers (two "1"s for +,
+    # two "2"s for −) that are internally shorted but each need the net
+    # assigned so FreeRouting routes to both physical pads.
+    matched = 0
+    for pad in fp.Pads():
+        if pad.GetNumber() == pad_name:
+            pad.SetNet(net)
+            matched += 1
+    if matched == 0:
         raise RuntimeError(f"Pad {pad_name!r} not found on {fp.GetReference()}")
-    pad.SetNet(net)
 
 
 # ───────────────────────── Custom CR1632 holder footprint ─────────────────────────

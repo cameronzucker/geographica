@@ -26,14 +26,15 @@ from pcbnew import VECTOR2I
 
 
 BOARD_W_MM = 65.0
-BOARD_H_MM = 42.0
+BOARD_H_MM = 48.0          # Was 42 mm; grown by 6 mm to accommodate the
+                            # 6.6×6 mm B3S-1000 body in a proper D-pad.
 BOARD_OUTLINE_WIDTH_MM = 0.15
 
 MOUNTING_HOLES_MM = [
     (3.5, 3.5),
     (61.5, 3.5),
-    (3.5, 38.5),
-    (61.5, 38.5),
+    (3.5, 44.5),
+    (61.5, 44.5),
 ]
 
 out_path = os.path.abspath("gx01-front-panel.kicad_pcb")
@@ -66,10 +67,18 @@ def ensure_net(name: str) -> pcbnew.NETINFO_ITEM:
 
 
 def connect(fp, pad_num, net):
-    pad = fp.FindPadByNumber(pad_num)
-    if pad is None:
+    # Set the net on every pad matching this number — footprints like the
+    # Omron B3S-1000 tactile and our CR1632 holder use duplicate pad
+    # numbers (e.g. two pads both called "1" that are internally shorted).
+    # Using FindPadByNumber returns only one; the others stay unnetted
+    # and FreeRouting won't route to them.
+    matched = 0
+    for pad in fp.Pads():
+        if pad.GetNumber() == pad_num:
+            pad.SetNet(net)
+            matched += 1
+    if matched == 0:
         raise RuntimeError(f"Pad {pad_num!r} not on {fp.GetReference()}")
-    pad.SetNet(net)
 
 
 # ───────────────────────── Custom VEML7700 OPLGA-6 footprint ─────────────────────────
@@ -219,16 +228,19 @@ r2, r3, r4, r5 = r_fps["R2"], r_fps["R3"], r_fps["R4"], r_fps["R5"]
 #
 # D-pad center: (14, 28). SW1 above (Y=22), SW2 below (Y=34), SW3 left
 # (X=7), SW4 right (X=21). Then SW5 / SW6 as separate buttons further right.
-btn = "SW_SPST_B3U-3000P"
+btn = "SW_SPST_B3S-1000"   # top-actuated 6.6×6 mm; pads at ±4×±2.25 mm
 def sw(ref, val, x, y):
     return place(load_footprint("Button_Switch_SMD", btn), ref, val, x, y)
 
-sw1 = sw("SW1", "UP",     14.0, 22.0)
-sw3 = sw("SW3", "LEFT",    7.0, 28.0)
-sw4 = sw("SW4", "RIGHT",  21.0, 28.0)
-sw2 = sw("SW2", "DOWN",   14.0, 34.0)
-sw5 = sw("SW5", "SELECT", 40.0, 28.0)
-sw6 = sw("SW6", "BACK",   53.0, 28.0)
+# D-pad with 8 mm center pitch — just clears the 6 mm body + 1 mm gap.
+# Y=30 for the horizontal row, SW1 3 mm above, SW2 3 mm below the outer
+# row edges so mounting holes (Y=44.5) are clear.
+sw3 = sw("SW3", "LEFT",    7.0, 30.0)
+sw4 = sw("SW4", "RIGHT",  23.0, 30.0)
+sw1 = sw("SW1", "UP",     15.0, 22.0)
+sw2 = sw("SW2", "DOWN",   15.0, 38.0)
+sw5 = sw("SW5", "SELECT", 38.0, 30.0)
+sw6 = sw("SW6", "BACK",   51.0, 30.0)
 
 
 # ───────────────────────── Nets + pad assignments ─────────────────────────

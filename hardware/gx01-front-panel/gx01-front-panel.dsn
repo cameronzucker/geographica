@@ -21,9 +21,9 @@
       )
     )
     (boundary
-      (path pcb 0  65000 -42000  0 -42000  0 0  65000 0  65000 -42000)
+      (path pcb 0  65000 -48000  0 -48000  0 0  65000 0  65000 -48000)
     )
-    (plane GND (polygon B.Cu 0  500 -500  64500 -500  64500 -41500  500 -41500  500 -500)
+    (plane GND (polygon B.Cu 0  500 -500  64500 -500  64500 -47500  500 -47500  500 -500)
       (window (polygon B.Cu 0  6000 -3500  5914.81 -4147.05  5665.06 -4750  5267.77 -5267.77
             4750 -5665.06  4147.05 -5914.81  3500 -6000  2852.95 -5914.81
             2250 -5665.06  1732.23 -5267.77  1334.94 -4750  1085.18 -4147.05
@@ -38,20 +38,20 @@
             60250 -1334.94  60853 -1085.18  61500 -1000  62147 -1085.18
             62750 -1334.94  63267.8 -1732.23  63665.1 -2250  63914.8 -2852.95
             64000 -3500))
-      (window (polygon B.Cu 0  6000 -38500  5914.81 -39147  5665.06 -39750  5267.77 -40267.8
-            4750 -40665.1  4147.05 -40914.8  3500 -41000  2852.95 -40914.8
-            2250 -40665.1  1732.23 -40267.8  1334.94 -39750  1085.18 -39147
-            1000 -38500  1085.18 -37853  1334.94 -37250  1732.23 -36732.2
-            2250 -36334.9  2852.95 -36085.2  3500 -36000  4147.05 -36085.2
-            4750 -36334.9  5267.77 -36732.2  5665.06 -37250  5914.81 -37853
-            6000 -38500))
-      (window (polygon B.Cu 0  64000 -38500  63914.8 -39147  63665.1 -39750  63267.8 -40267.8
-            62750 -40665.1  62147 -40914.8  61500 -41000  60853 -40914.8
-            60250 -40665.1  59732.2 -40267.8  59334.9 -39750  59085.2 -39147
-            59000 -38500  59085.2 -37853  59334.9 -37250  59732.2 -36732.2
-            60250 -36334.9  60853 -36085.2  61500 -36000  62147 -36085.2
-            62750 -36334.9  63267.8 -36732.2  63665.1 -37250  63914.8 -37853
-            64000 -38500))
+      (window (polygon B.Cu 0  6000 -44500  5914.81 -45147  5665.06 -45750  5267.77 -46267.8
+            4750 -46665.1  4147.05 -46914.8  3500 -47000  2852.95 -46914.8
+            2250 -46665.1  1732.23 -46267.8  1334.94 -45750  1085.18 -45147
+            1000 -44500  1085.18 -43853  1334.94 -43250  1732.23 -42732.2
+            2250 -42334.9  2852.95 -42085.2  3500 -42000  4147.05 -42085.2
+            4750 -42334.9  5267.77 -42732.2  5665.06 -43250  5914.81 -43853
+            6000 -44500))
+      (window (polygon B.Cu 0  64000 -44500  63914.8 -45147  63665.1 -45750  63267.8 -46267.8
+            62750 -46665.1  62147 -46914.8  61500 -47000  60853 -46914.8
+            60250 -46665.1  59732.2 -46267.8  59334.9 -45750  59085.2 -45147
+            59000 -44500  59085.2 -43853  59334.9 -43250  59732.2 -42732.2
+            60250 -42334.9  60853 -42085.2  61500 -42000  62147 -42085.2
+            62750 -42334.9  63267.8 -42732.2  63665.1 -43250  63914.8 -43853
+            64000 -44500))
     )
     (via "Via[0-1]_600:300_um")
     (rule
@@ -61,39 +61,39 @@
     )
   )
   (placement
-    (component LED_0603_1608Metric
-      (place D1 8000.000000 -6000.000000 front 0.000000 (PN PWR_Grn))
-      (place D2 13000.000000 -6000.000000 front 0.000000 (PN GPS_Blu))
-      (place D3 18000.000000 -6000.000000 front 0.000000 (PN NTP_Yel))
-      (place D4 23000.000000 -6000.000000 front 0.000000 (PN ERR_Red))
-    )
-    (component R_0603_1608Metric
-      (place R4 18000.000000 -9000.000000 front 0.000000 (PN 1k))
-      (place R1 15000.000000 -14000.000000 front 0.000000 (PN 10k))
-      (place R3 13000.000000 -9000.000000 front 0.000000 (PN 1k))
-      (place R5 23000.000000 -9000.000000 front 0.000000 (PN 1k))
-      (place R2 8000.000000 -9000.000000 front 0.000000 (PN 1k))
-    )
-    (component "SW_SPST_B3U-3000P"
-      (place SW5 40000.000000 -28000.000000 front 0.000000 (PN SELECT))
-      (place SW4 21000.000000 -28000.000000 front 0.000000 (PN RIGHT))
-      (place SW6 53000.000000 -28000.000000 front 0.000000 (PN BACK))
-      (place SW3 7000.000000 -28000.000000 front 0.000000 (PN LEFT))
-      (place SW2 14000.000000 -34000.000000 front 0.000000 (PN DOWN))
-      (place SW1 14000.000000 -22000.000000 front 0.000000 (PN UP))
-    )
     (component C_0603_1608Metric
-      (place C1 48000.000000 -11000.000000 front 0.000000 (PN 100nF))
       (place C2 58000.000000 -11000.000000 front 0.000000 (PN 100nF))
+      (place C1 48000.000000 -11000.000000 front 0.000000 (PN 100nF))
+    )
+    (component "SW_SPST_B3S-1000"
+      (place SW5 38000.000000 -30000.000000 front 0.000000 (PN SELECT))
+      (place SW6 51000.000000 -30000.000000 front 0.000000 (PN BACK))
+      (place SW4 23000.000000 -30000.000000 front 0.000000 (PN RIGHT))
+      (place SW3 7000.000000 -30000.000000 front 0.000000 (PN LEFT))
+      (place SW2 15000.000000 -38000.000000 front 0.000000 (PN DOWN))
+      (place SW1 15000.000000 -22000.000000 front 0.000000 (PN UP))
     )
     (component "JST_SH_BM06B-SRSS-TB_1x06-1MP_P1.00mm_Vertical"
       (place J1 7000.000000 -15000.000000 front 0.000000 (PN Cable))
     )
+    (component LED_0603_1608Metric
+      (place D2 13000.000000 -6000.000000 front 0.000000 (PN GPS_Blu))
+      (place D4 23000.000000 -6000.000000 front 0.000000 (PN ERR_Red))
+      (place D1 8000.000000 -6000.000000 front 0.000000 (PN PWR_Grn))
+      (place D3 18000.000000 -6000.000000 front 0.000000 (PN NTP_Yel))
+    )
     (component MountingHole_2.7mm_M2.5
-      (place H1 3500.000000 -3500.000000 front 0.000000 (PN MH_2.75))
+      (place H3 3500.000000 -44500.000000 front 0.000000 (PN MH_2.75))
       (place H2 61500.000000 -3500.000000 front 0.000000 (PN MH_2.75))
-      (place H3 3500.000000 -38500.000000 front 0.000000 (PN MH_2.75))
-      (place H4 61500.000000 -38500.000000 front 0.000000 (PN MH_2.75))
+      (place H1 3500.000000 -3500.000000 front 0.000000 (PN MH_2.75))
+      (place H4 61500.000000 -44500.000000 front 0.000000 (PN MH_2.75))
+    )
+    (component R_0603_1608Metric
+      (place R3 13000.000000 -9000.000000 front 0.000000 (PN 1k))
+      (place R4 18000.000000 -9000.000000 front 0.000000 (PN 1k))
+      (place R5 23000.000000 -9000.000000 front 0.000000 (PN 1k))
+      (place R1 15000.000000 -14000.000000 front 0.000000 (PN 10k))
+      (place R2 8000.000000 -9000.000000 front 0.000000 (PN 1k))
     )
     (component "SOIC-28W_7.5x17.9mm_P1.27mm"
       (place U1 36000.000000 -14000.000000 front 0.000000 (PN MCP23017))
@@ -103,68 +103,6 @@
     )
   )
   (library
-    (image LED_0603_1608Metric
-      (outline (path signal 120  -1485 735  -1485 -735))
-      (outline (path signal 120  -1485 -735  800 -735))
-      (outline (path signal 120  800 735  -1485 735))
-      (outline (path signal 50  -1480 730  1480 730))
-      (outline (path signal 50  -1480 -730  -1480 730))
-      (outline (path signal 50  1480 730  1480 -730))
-      (outline (path signal 50  1480 -730  -1480 -730))
-      (outline (path signal 100  -800 100  -800 -400))
-      (outline (path signal 100  -800 -400  800 -400))
-      (outline (path signal 100  -500 400  -800 100))
-      (outline (path signal 100  800 400  -500 400))
-      (outline (path signal 100  800 -400  800 400))
-      (pin RoundRect[T]Pad_875.000000x950.000000_219.582000_um_0.000000_0 1 -787.5 0)
-      (pin RoundRect[T]Pad_875.000000x950.000000_219.582000_um_0.000000_0 2 787.5 0)
-    )
-    (image R_0603_1608Metric
-      (outline (path signal 120  -237.258 522.5  237.258 522.5))
-      (outline (path signal 120  -237.258 -522.5  237.258 -522.5))
-      (outline (path signal 50  -1480 730  1480 730))
-      (outline (path signal 50  -1480 -730  -1480 730))
-      (outline (path signal 50  1480 730  1480 -730))
-      (outline (path signal 50  1480 -730  -1480 -730))
-      (outline (path signal 100  -800 412.5  800 412.5))
-      (outline (path signal 100  -800 -412.5  -800 412.5))
-      (outline (path signal 100  800 412.5  800 -412.5))
-      (outline (path signal 100  800 -412.5  -800 -412.5))
-      (pin RoundRect[T]Pad_800.000000x950.000000_200.761000_um_0.000000_0 1 -825 0)
-      (pin RoundRect[T]Pad_800.000000x950.000000_200.761000_um_0.000000_0 2 825 0)
-    )
-    (image "SW_SPST_B3U-3000P"
-      (outline (path signal 120  -1650 1400  1650 1400))
-      (outline (path signal 120  -1650 1100  -1650 1400))
-      (outline (path signal 120  -1650 -1100  -1650 -1400))
-      (outline (path signal 120  -1650 -1400  1650 -1400))
-      (outline (path signal 120  -1000 1720  -1000 1400))
-      (outline (path signal 120  -500 2100  -1000 1720))
-      (outline (path signal 120  -500 2100  500 2100))
-      (outline (path signal 120  500 2100  1000 1720))
-      (outline (path signal 120  1000 1720  1000 1400))
-      (outline (path signal 120  1650 1400  1650 1100))
-      (outline (path signal 120  1650 -1400  1650 -1100))
-      (outline (path signal 50  -2400 1650  -2400 -1650))
-      (outline (path signal 50  -2400 -1650  2400 -1650))
-      (outline (path signal 50  -1250 2350  1250 2350))
-      (outline (path signal 50  -1250 1650  -2400 1650))
-      (outline (path signal 50  -1250 1650  -1250 2350))
-      (outline (path signal 50  1250 2350  1250 1650))
-      (outline (path signal 50  1250 1650  2400 1650))
-      (outline (path signal 50  2400 -1650  2400 1650))
-      (outline (path signal 100  -1500 1250  1500 1250))
-      (outline (path signal 100  -1500 -1250  -1500 1250))
-      (outline (path signal 100  -850 1650  -450 1950))
-      (outline (path signal 100  -850 1250  -850 1650))
-      (outline (path signal 100  -450 1950  450 1950))
-      (outline (path signal 100  450 1950  850 1650))
-      (outline (path signal 100  850 1650  850 1250))
-      (outline (path signal 100  1500 1250  1500 -1250))
-      (outline (path signal 100  1500 -1250  -1500 -1250))
-      (pin Rect[T]Pad_900.000000x1700.000000_um 1 -1700 0)
-      (pin Rect[T]Pad_900.000000x1700.000000_um 2 1700 0)
-    )
     (image C_0603_1608Metric
       (outline (path signal 120  -140.58 510  140.58 510))
       (outline (path signal 120  -140.58 -510  140.58 -510))
@@ -178,6 +116,39 @@
       (outline (path signal 100  800 -400  -800 -400))
       (pin RoundRect[T]Pad_900.000000x950.000000_225.856000_um_0.000000_0 1 -775 0)
       (pin RoundRect[T]Pad_900.000000x950.000000_225.856000_um_0.000000_0 2 775 0)
+    )
+    (image "SW_SPST_B3S-1000"
+      (outline (path signal 120  -3150 3450  3150 3450))
+      (outline (path signal 120  -3150 3200  -3150 3450))
+      (outline (path signal 120  -3150 -1300  -3150 1300))
+      (outline (path signal 120  -3150 -3450  -3150 -3200))
+      (outline (path signal 120  3150 3450  3150 3200))
+      (outline (path signal 120  3150 1300  3150 -1300))
+      (outline (path signal 120  3150 -3200  3150 -3450))
+      (outline (path signal 120  3150 -3450  -3150 -3450))
+      (outline (path signal 50  -5000 3700  -5000 -3700))
+      (outline (path signal 50  -5000 -3700  5000 -3700))
+      (outline (path signal 50  5000 3700  -5000 3700))
+      (outline (path signal 50  5000 -3700  5000 3700))
+      (outline (path signal 100  -3000 3300  3000 3300))
+      (outline (path signal 100  -3000 -3300  -3000 3300))
+      (outline (path signal 100  3000 3300  3000 -3300))
+      (outline (path signal 100  3000 -3300  -3000 -3300))
+      (outline (path signal 100  1650 0  1630.66 -251.871  1573.1 -497.839  1478.67 -732.138
+            1349.58 -949.276  1188.86 -1144.16  1000.27 -1312.23  788.238 -1449.55
+            557.728 -1552.88  314.145 -1619.82  63.2 -1648.79  -189.228 -1639.11
+            -437.219 -1591.02  -674.963 -1505.63  -896.886 -1384.95  -1097.79 -1231.81
+            -1272.96 -1049.8  -1418.29 -843.181  -1530.38 -616.798  -1606.6 -375.958
+            -1645.16 -126.306  -1645.16 126.306  -1606.6 375.958  -1530.38 616.798
+            -1418.29 843.181  -1272.96 1049.8  -1097.79 1231.81  -896.886 1384.95
+            -674.963 1505.63  -437.219 1591.02  -189.228 1639.11  63.2 1648.79
+            314.145 1619.82  557.728 1552.88  788.238 1449.55  1000.27 1312.23
+            1188.86 1144.16  1349.58 949.276  1478.67 732.138  1573.1 497.839
+            1630.66 251.871  1650 0))
+      (pin Rect[T]Pad_1550.000000x1300.000000_um 1 -3975 2250)
+      (pin Rect[T]Pad_1550.000000x1300.000000_um 1@1 3975 2250)
+      (pin Rect[T]Pad_1550.000000x1300.000000_um 2 -3975 -2250)
+      (pin Rect[T]Pad_1550.000000x1300.000000_um 2@1 3975 -2250)
     )
     (image "JST_SH_BM06B-SRSS-TB_1x06-1MP_P1.00mm_Vertical"
       (outline (path signal 120  -4110 40  -4110 -1110))
@@ -211,6 +182,22 @@
       (pin RoundRect[T]Pad_1200.000000x1800.000000_250.951000_um_0.000000_0 MP -3800 1200)
       (pin RoundRect[T]Pad_1200.000000x1800.000000_250.951000_um_0.000000_0 MP@1 3800 1200)
     )
+    (image LED_0603_1608Metric
+      (outline (path signal 120  -1485 735  -1485 -735))
+      (outline (path signal 120  -1485 -735  800 -735))
+      (outline (path signal 120  800 735  -1485 735))
+      (outline (path signal 50  -1480 730  1480 730))
+      (outline (path signal 50  -1480 -730  -1480 730))
+      (outline (path signal 50  1480 730  1480 -730))
+      (outline (path signal 50  1480 -730  -1480 -730))
+      (outline (path signal 100  -800 100  -800 -400))
+      (outline (path signal 100  -800 -400  800 -400))
+      (outline (path signal 100  -500 400  -800 100))
+      (outline (path signal 100  800 400  -500 400))
+      (outline (path signal 100  800 -400  800 400))
+      (pin RoundRect[T]Pad_875.000000x950.000000_219.582000_um_0.000000_0 1 -787.5 0)
+      (pin RoundRect[T]Pad_875.000000x950.000000_219.582000_um_0.000000_0 2 787.5 0)
+    )
     (image MountingHole_2.7mm_M2.5
       (outline (path signal 150  2700 0  2681.05 -319.338  2624.46 -634.192  2531.03 -940.144
             2402.07 -1232.9  2239.39 -1508.35  2045.28 -1762.62  1822.45 -1992.15
@@ -242,6 +229,20 @@
             2778.44 991.346  2873.34 668.165  2930.77 336.275  2950 0))
       (keepout "" (circle F.Cu 3200))
       (keepout "" (circle B.Cu 3200))
+    )
+    (image R_0603_1608Metric
+      (outline (path signal 120  -237.258 522.5  237.258 522.5))
+      (outline (path signal 120  -237.258 -522.5  237.258 -522.5))
+      (outline (path signal 50  -1480 730  1480 730))
+      (outline (path signal 50  -1480 -730  -1480 730))
+      (outline (path signal 50  1480 730  1480 -730))
+      (outline (path signal 50  1480 -730  -1480 -730))
+      (outline (path signal 100  -800 412.5  800 412.5))
+      (outline (path signal 100  -800 -412.5  -800 412.5))
+      (outline (path signal 100  800 412.5  800 -412.5))
+      (outline (path signal 100  800 -412.5  -800 -412.5))
+      (pin RoundRect[T]Pad_800.000000x950.000000_200.761000_um_0.000000_0 1 -825 0)
+      (pin RoundRect[T]Pad_800.000000x950.000000_200.761000_um_0.000000_0 2 825 0)
     )
     (image "SOIC-28W_7.5x17.9mm_P1.27mm"
       (outline (path signal 120  -3860 9060  -3860 8815))
@@ -368,8 +369,8 @@
       (shape (rect F.Cu -150 -200 150 200))
       (attach off)
     )
-    (padstack Rect[T]Pad_900.000000x1700.000000_um
-      (shape (rect F.Cu -450 -850 450 850))
+    (padstack Rect[T]Pad_1550.000000x1300.000000_um
+      (shape (rect F.Cu -775 -650 775 650))
       (attach off)
     )
     (padstack "Via[0-1]_600:300_um"
@@ -380,11 +381,11 @@
   )
   (network
     (net +3V3
-      (pins D1-2 C1-1 R1-1 J1-1 C2-1 D2-2 D3-2 U1-9 U2-6 D4-2)
+      (pins C2-1 J1-1 D2-2 D4-2 D1-2 D3-2 U1-9 C1-1 R1-1 U2-6)
     )
     (net GND
-      (pins SW5-2 SW4-2 C1-2 SW6-2 SW3-2 J1-2 C2-2 SW2-2 U1-10 U1-15 U1-16 U1-17 SW1-2
-        U2-1 U2-5 R2-2)
+      (pins C2-2 SW5-2 SW5-2@1 SW6-2 SW6-2@1 J1-2 SW4-2 SW4-2@1 SW3-2 SW3-2@1 SW2-2
+        SW2-2@1 U1-10 U1-15 U1-16 U1-17 C1-2 U2-1 U2-5 SW1-2 SW1-2@1 R2-2)
     )
     (net SDA1
       (pins J1-3 U1-13 U2-2)
@@ -396,25 +397,25 @@
       (pins J1-5 U1-19)
     )
     (net MCP_RST
-      (pins R1-2 J1-6 U1-18)
+      (pins J1-6 U1-18 R1-2)
     )
     (net SW_UP
-      (pins U1-1 SW1-1)
+      (pins U1-1 SW1-1 SW1-1@1)
     )
     (net SW_DOWN
-      (pins SW2-1 U1-2)
+      (pins SW2-1 SW2-1@1 U1-2)
     )
     (net SW_LEFT
-      (pins SW3-1 U1-3)
+      (pins SW3-1 SW3-1@1 U1-3)
     )
     (net SW_RIGHT
-      (pins SW4-1 U1-4)
+      (pins SW4-1 SW4-1@1 U1-4)
     )
     (net SW_SEL
-      (pins SW5-1 U1-5)
+      (pins SW5-1 SW5-1@1 U1-5)
     )
     (net SW_BACK
-      (pins SW6-1 U1-6)
+      (pins SW6-1 SW6-1@1 U1-6)
     )
     (net LED_GPS
       (pins R3-2)
@@ -429,13 +430,13 @@
       (pins D1-1 R2-1)
     )
     (net D2_K
-      (pins R3-1 D2-1 U1-21)
+      (pins D2-1 R3-1 U1-21)
     )
     (net D3_K
       (pins R4-1 D3-1 U1-22)
     )
     (net D4_K
-      (pins U1-23 R5-1 D4-1)
+      (pins D4-1 R5-1 U1-23)
     )
     (class kicad_default +3V3 D2_K D3_K D4_K GND LED_ERR LED_GPS LED_NTP MCP_INT
       MCP_RST PWR_K SCL1 SDA1 SW_BACK SW_DOWN SW_LEFT SW_RIGHT SW_SEL SW_UP

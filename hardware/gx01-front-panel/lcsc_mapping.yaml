@@ -27,27 +27,27 @@ parts:
 
   # ─── Tactile switches ───
   SW1:
-    lcsc: C963349
+    lcsc: C180420
     tier: extended
-    note: "Omron B3U-3000P tactile SMD switch, 3×2.5 mm. Genuine Omron. 3,910 in stock. (Shared across SW1-SW6.)"
+    note: "Omron B3S-1000P — top-actuated (Z-axis) 6×6 mm SMD tactile switch, 4 pads. Genuine Omron. 4,770 in stock. Swapped from B3U-3000P which was SIDE-actuated (XY plane, unusable for front-panel buttons). (Shared across SW1-SW6.)"
   SW2:
-    lcsc: C963349
+    lcsc: C180420
     tier: extended
     note: "Same as SW1."
   SW3:
-    lcsc: C963349
+    lcsc: C180420
     tier: extended
     note: "Same as SW1."
   SW4:
-    lcsc: C963349
+    lcsc: C180420
     tier: extended
     note: "Same as SW1."
   SW5:
-    lcsc: C963349
+    lcsc: C180420
     tier: extended
     note: "Same as SW1."
   SW6:
-    lcsc: C963349
+    lcsc: C180420
     tier: extended
     note: "Same as SW1."
 

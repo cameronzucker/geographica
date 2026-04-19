@@ -2,7 +2,7 @@
   (version "D")
   (design
     (source "circuit.py")
-    (date "04/19/2026 09:00 AM")
+    (date "04/19/2026 10:52 AM")
     (tool "SKiDL (2.2.3)")
     (sheet
       (number 1)
@@ -55,7 +55,7 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "kxyZ_uZA2j")
+          (name "SKiDL Tag") "1QZVQu0LUB")
         (field
           (name "SKiDL Line") "circuit.py:126"))
       (libsource
@@ -65,7 +65,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "d044284a-bc92-551b-b478-984872b50326"))
+      (tstamps "8a1ca10f-47ac-589a-85f1-a0f8bce61844"))
     (comp
       (ref "C2")
       (value "100nF")
@@ -79,9 +79,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "l70fq3YTZp")
+          (name "SKiDL Tag") "TU5wE_X_QY")
         (field
-          (name "SKiDL Line") "circuit.py:221"))
+          (name "SKiDL Line") "circuit.py:226"))
       (libsource
         (lib "Device")
         (part "C"))
@@ -89,7 +89,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "74710ccb-8846-5837-9061-a1691377590a"))
+      (tstamps "e59727ea-d6c0-51ed-9a54-ebacaec63f25"))
     (comp
       (ref "D1")
       (value "PWR_Green")
@@ -103,9 +103,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "zpI5GdqsLr")
+          (name "SKiDL Tag") "vDrSOAf1OC")
         (field
-          (name "SKiDL Line") "circuit.py:188"))
+          (name "SKiDL Line") "circuit.py:193"))
       (libsource
         (lib "Device")
         (part "LED"))
@@ -113,7 +113,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "971546e3-20a7-5ba8-957d-485403f91d8c"))
+      (tstamps "1afa9579-9d8c-51eb-942a-f4d248568722"))
     (comp
       (ref "D2")
       (value "GPS_Blue")
@@ -127,9 +127,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "stvf3pGxeD")
+          (name "SKiDL Tag") "FkUAK8Xt8z")
         (field
-          (name "SKiDL Line") "circuit.py:188"))
+          (name "SKiDL Line") "circuit.py:193"))
       (libsource
         (lib "Device")
         (part "LED"))
@@ -137,7 +137,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "a2e2952e-a4a6-56e8-967d-995b952069b1"))
+      (tstamps "9d5837b6-f5ac-5d77-81c5-7231e2f42cff"))
     (comp
       (ref "D3")
       (value "NTP_Yellow")
@@ -151,9 +151,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "2NvMfsIMDL")
+          (name "SKiDL Tag") "Lm7wcKIh7w")
         (field
-          (name "SKiDL Line") "circuit.py:188"))
+          (name "SKiDL Line") "circuit.py:193"))
       (libsource
         (lib "Device")
         (part "LED"))
@@ -161,7 +161,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "31924580-165e-5a96-8b75-7e02ce57c54a"))
+      (tstamps "050106e0-87bf-5846-9487-79f4857f11ea"))
     (comp
       (ref "D4")
       (value "ERR_Red")
@@ -175,9 +175,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "8qaGb1s8z3")
+          (name "SKiDL Tag") "57vnPbPa_8")
         (field
-          (name "SKiDL Line") "circuit.py:188"))
+          (name "SKiDL Line") "circuit.py:193"))
       (libsource
         (lib "Device")
         (part "LED"))
@@ -185,7 +185,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "07725cd1-d0ce-58b1-9d00-0577dba89a95"))
+      (tstamps "10e02b59-af84-512a-90df-2bd506802584"))
     (comp
       (ref "H1")
       (value "MH_2.75mm")
@@ -199,9 +199,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "6sx7lNobXN")
+          (name "SKiDL Tag") "iHqD4XUIIp")
         (field
-          (name "SKiDL Line") "circuit.py:227"))
+          (name "SKiDL Line") "circuit.py:232"))
       (libsource
         (lib "Mechanical")
         (part "MountingHole"))
@@ -209,7 +209,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "c48a5b48-61f6-5e73-9236-9169658786de"))
+      (tstamps "1ecb4a13-dafe-5e6a-ab1d-4d2d762b5ab4"))
     (comp
       (ref "H2")
       (value "MH_2.75mm")
@@ -223,9 +223,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "lEG_o2Zk_e")
+          (name "SKiDL Tag") "nC3sgpWgOq")
         (field
-          (name "SKiDL Line") "circuit.py:229"))
+          (name "SKiDL Line") "circuit.py:234"))
       (libsource
         (lib "Mechanical")
         (part "MountingHole"))
@@ -233,7 +233,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "7927883f-c369-5650-b88e-607d52486a62"))
+      (tstamps "e3cce8bf-ae43-5cf7-ba69-2ce5d3bf5ad4"))
     (comp
       (ref "H3")
       (value "MH_2.75mm")
@@ -247,9 +247,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "6kfr58G0_F")
+          (name "SKiDL Tag") "godY4xSZO_")
         (field
-          (name "SKiDL Line") "circuit.py:231"))
+          (name "SKiDL Line") "circuit.py:236"))
       (libsource
         (lib "Mechanical")
         (part "MountingHole"))
@@ -257,7 +257,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "b0c867c9-f3c3-53b5-82d4-0182cb749268"))
+      (tstamps "798a4f55-3d12-504a-97ae-d4815044be2f"))
     (comp
       (ref "H4")
       (value "MH_2.75mm")
@@ -271,9 +271,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "yUFfcGDv1g")
+          (name "SKiDL Tag") "UVlxdIiRHw")
         (field
-          (name "SKiDL Line") "circuit.py:233"))
+          (name "SKiDL Line") "circuit.py:238"))
       (libsource
         (lib "Mechanical")
         (part "MountingHole"))
@@ -281,7 +281,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "0ef6b45a-5a73-53ef-a6e0-1b464432eb82"))
+      (tstamps "3ea62134-22aa-5b34-ba04-c237b9ae5621"))
     (comp
       (ref "J1")
       (value "Cable to HAT (JST-SH 6pin)")
@@ -295,7 +295,7 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "IJisgH7Weo")
+          (name "SKiDL Tag") "gUmN6bkNtF")
         (field
           (name "SKiDL Line") "circuit.py:61"))
       (libsource
@@ -305,7 +305,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "2df7b2a7-983b-5c28-bb29-dffbe712432e"))
+      (tstamps "2bc67cac-4951-531e-a84d-d4238dbb17cf"))
     (comp
       (ref "R1")
       (value "10k")
@@ -319,7 +319,7 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "dY6fLSB5LG")
+          (name "SKiDL Tag") "q705i5awhB")
         (field
           (name "SKiDL Line") "circuit.py:132"))
       (libsource
@@ -329,7 +329,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "df3d55c6-60b6-5920-aff1-22fd180721d3"))
+      (tstamps "1378171c-5830-5432-bdfa-253fb7e0a45f"))
     (comp
       (ref "R2")
       (value "1k")
@@ -343,9 +343,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "bLZYWJiV0e")
+          (name "SKiDL Tag") "95OsRSSEIl")
         (field
-          (name "SKiDL Line") "circuit.py:191"))
+          (name "SKiDL Line") "circuit.py:196"))
       (libsource
         (lib "Device")
         (part "R"))
@@ -353,7 +353,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "2b7b6f64-15c7-5581-8d1f-89223fdcdb92"))
+      (tstamps "bf39d1ac-11b4-5ab3-bf0c-02d7eb90765d"))
     (comp
       (ref "R3")
       (value "1k")
@@ -367,9 +367,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "kl4hSuAHM9")
+          (name "SKiDL Tag") "gUcajaWZzq")
         (field
-          (name "SKiDL Line") "circuit.py:191"))
+          (name "SKiDL Line") "circuit.py:196"))
       (libsource
         (lib "Device")
         (part "R"))
@@ -377,7 +377,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "eba5e7b6-0168-5105-b11a-3835106890da"))
+      (tstamps "1112f796-7476-5499-b306-533156947d18"))
     (comp
       (ref "R4")
       (value "1k")
@@ -391,9 +391,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "IbHT9LdFns")
+          (name "SKiDL Tag") "yiOizOElkb")
         (field
-          (name "SKiDL Line") "circuit.py:191"))
+          (name "SKiDL Line") "circuit.py:196"))
       (libsource
         (lib "Device")
         (part "R"))
@@ -401,7 +401,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "82617406-eb11-55fb-a06f-df9fd8bfdcb6"))
+      (tstamps "affb1e03-dc09-598d-9fb7-6d3e9f898e08"))
     (comp
       (ref "R5")
       (value "1k")
@@ -415,9 +415,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "gmQgIHhagV")
+          (name "SKiDL Tag") "AJixrLVGRy")
         (field
-          (name "SKiDL Line") "circuit.py:191"))
+          (name "SKiDL Line") "circuit.py:196"))
       (libsource
         (lib "Device")
         (part "R"))
@@ -425,23 +425,23 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "fb4da45b-4c5e-5d1c-846e-33c8907ab239"))
+      (tstamps "b32edc61-16a9-59fc-ad8c-75377eb14e3e"))
     (comp
       (ref "SW1")
       (value "UP")
       (description "Push button switch, generic, two pins")
-      (footprint "Button_Switch_SMD:SW_SPST_B3U-3000P")
+      (footprint "Button_Switch_SMD:SW_SPST_B3S-1000")
       (fields
         (field
           (name "Description") "Push button switch, generic, two pins")
         (field
-          (name "Footprint") "Button_Switch_SMD:SW_SPST_B3U-3000P")
+          (name "Footprint") "Button_Switch_SMD:SW_SPST_B3S-1000")
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "vjRJipX84Y")
+          (name "SKiDL Tag") "C34mRFd_V3")
         (field
-          (name "SKiDL Line") "circuit.py:146"))
+          (name "SKiDL Line") "circuit.py:151"))
       (libsource
         (lib "Switch")
         (part "SW_Push"))
@@ -449,23 +449,23 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "c0f2d273-6558-50bd-962b-07c2e3b6266f"))
+      (tstamps "17d9cdb9-989c-5a1f-9326-7b2a2c3340eb"))
     (comp
       (ref "SW2")
       (value "DOWN")
       (description "Push button switch, generic, two pins")
-      (footprint "Button_Switch_SMD:SW_SPST_B3U-3000P")
+      (footprint "Button_Switch_SMD:SW_SPST_B3S-1000")
       (fields
         (field
           (name "Description") "Push button switch, generic, two pins")
         (field
-          (name "Footprint") "Button_Switch_SMD:SW_SPST_B3U-3000P")
+          (name "Footprint") "Button_Switch_SMD:SW_SPST_B3S-1000")
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "uwPh1aOLBj")
+          (name "SKiDL Tag") "GgFglFJewc")
         (field
-          (name "SKiDL Line") "circuit.py:146"))
+          (name "SKiDL Line") "circuit.py:151"))
       (libsource
         (lib "Switch")
         (part "SW_Push"))
@@ -473,23 +473,23 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "df85a6e6-1f8b-55c0-a969-502aa503895f"))
+      (tstamps "99261147-9107-5dd1-b7b3-7539e97240f7"))
     (comp
       (ref "SW3")
       (value "LEFT")
       (description "Push button switch, generic, two pins")
-      (footprint "Button_Switch_SMD:SW_SPST_B3U-3000P")
+      (footprint "Button_Switch_SMD:SW_SPST_B3S-1000")
       (fields
         (field
           (name "Description") "Push button switch, generic, two pins")
         (field
-          (name "Footprint") "Button_Switch_SMD:SW_SPST_B3U-3000P")
+          (name "Footprint") "Button_Switch_SMD:SW_SPST_B3S-1000")
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "Yh7aiZADca")
+          (name "SKiDL Tag") "SR6OwyezsK")
         (field
-          (name "SKiDL Line") "circuit.py:146"))
+          (name "SKiDL Line") "circuit.py:151"))
       (libsource
         (lib "Switch")
         (part "SW_Push"))
@@ -497,23 +497,23 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "6867689a-4a50-54a1-9334-b259c7a88c28"))
+      (tstamps "71c5e107-bb5b-5f66-a115-9b69cf463efd"))
     (comp
       (ref "SW4")
       (value "RIGHT")
       (description "Push button switch, generic, two pins")
-      (footprint "Button_Switch_SMD:SW_SPST_B3U-3000P")
+      (footprint "Button_Switch_SMD:SW_SPST_B3S-1000")
       (fields
         (field
           (name "Description") "Push button switch, generic, two pins")
         (field
-          (name "Footprint") "Button_Switch_SMD:SW_SPST_B3U-3000P")
+          (name "Footprint") "Button_Switch_SMD:SW_SPST_B3S-1000")
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "CtQ4axRToB")
+          (name "SKiDL Tag") "QAC4tQAE4e")
         (field
-          (name "SKiDL Line") "circuit.py:146"))
+          (name "SKiDL Line") "circuit.py:151"))
       (libsource
         (lib "Switch")
         (part "SW_Push"))
@@ -521,23 +521,23 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "7107be71-ad67-5a43-8b15-725af97edcda"))
+      (tstamps "b0b2cd2a-c396-52ba-a202-eef88fd76211"))
     (comp
       (ref "SW5")
       (value "SELECT")
       (description "Push button switch, generic, two pins")
-      (footprint "Button_Switch_SMD:SW_SPST_B3U-3000P")
+      (footprint "Button_Switch_SMD:SW_SPST_B3S-1000")
       (fields
         (field
           (name "Description") "Push button switch, generic, two pins")
         (field
-          (name "Footprint") "Button_Switch_SMD:SW_SPST_B3U-3000P")
+          (name "Footprint") "Button_Switch_SMD:SW_SPST_B3S-1000")
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "ZyXrQZoKse")
+          (name "SKiDL Tag") "HJhC9LDRMs")
         (field
-          (name "SKiDL Line") "circuit.py:146"))
+          (name "SKiDL Line") "circuit.py:151"))
       (libsource
         (lib "Switch")
         (part "SW_Push"))
@@ -545,23 +545,23 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "c10e7481-823e-5b41-9c3d-b13c31983739"))
+      (tstamps "bc0f47d5-f55c-5b03-b07e-0f84ba69588e"))
     (comp
       (ref "SW6")
       (value "BACK")
       (description "Push button switch, generic, two pins")
-      (footprint "Button_Switch_SMD:SW_SPST_B3U-3000P")
+      (footprint "Button_Switch_SMD:SW_SPST_B3S-1000")
       (fields
         (field
           (name "Description") "Push button switch, generic, two pins")
         (field
-          (name "Footprint") "Button_Switch_SMD:SW_SPST_B3U-3000P")
+          (name "Footprint") "Button_Switch_SMD:SW_SPST_B3S-1000")
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "o_pd1aLDB0")
+          (name "SKiDL Tag") "aTy4Tal7TG")
         (field
-          (name "SKiDL Line") "circuit.py:146"))
+          (name "SKiDL Line") "circuit.py:151"))
       (libsource
         (lib "Switch")
         (part "SW_Push"))
@@ -569,7 +569,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "a6417925-6e69-583e-a84a-251468607164"))
+      (tstamps "a71a2d62-0471-5296-ac92-37493f627ef6"))
     (comp
       (ref "U1")
       (value "MCP23017")
@@ -583,7 +583,7 @@
         (field
           (name "Datasheet") "https://ww1.microchip.com/downloads/aemDocuments/documents/APID/ProductDocuments/DataSheets/MCP23017-Data-Sheet-DS20001952.pdf")
         (field
-          (name "SKiDL Tag") "U2CfEwl12N")
+          (name "SKiDL Tag") "p9NpGWOOXF")
         (field
           (name "SKiDL Line") "circuit.py:77"))
       (libsource
@@ -593,7 +593,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "96ffcfcb-af92-5d06-ade9-8d646a723b47"))
+      (tstamps "51bd3481-ed31-52bd-8a25-09d128a09f53"))
     (comp
       (ref "U2")
       (value "VEML7700")
@@ -607,9 +607,9 @@
         (field
           (name "Datasheet") "~")
         (field
-          (name "SKiDL Tag") "QL9inZnV_l")
+          (name "SKiDL Tag") "7iuJMu63rb")
         (field
-          (name "SKiDL Line") "circuit.py:207"))
+          (name "SKiDL Line") "circuit.py:212"))
       (libsource
         (lib "Connector_Generic")
         (part "Conn_01x06"))
@@ -617,7 +617,7 @@
         (names "/")
         (tstamps "/"))
       (component_classes)
-      (tstamps "3bd098b1-792a-56cf-92ba-01cfb59a4808")))
+      (tstamps "d5187e00-3131-5290-955d-56a20642f16c")))
   (nets
     (net
       (code 1)

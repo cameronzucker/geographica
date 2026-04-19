@@ -1,15 +1,18 @@
 ** Drc report for gx01-front-panel.kicad_pcb **
-** Created on 2026-04-19T10:34:40-0700 **
+** Created on 2026-04-19T10:53:19-0700 **
 
-** Found 6 DRC violations **
-[silk_edge_clearance]: Silkscreen clipped by board edge
-    Rule: board setup constraints silk; warning
-    @(0.0000 mm, 0.0000 mm): Segment on Edge.Cuts
-    @(3.5000 mm, -0.1500 mm): Reference field of H1
+** Found 7 DRC violations **
+[track_dangling]: Track has unconnected end
+    Local override; warning
+    @(33.8956 mm, 15.5809 mm): Track [+3V3] on F.Cu, length 0.0413 mm
 [silk_edge_clearance]: Silkscreen clipped by board edge
     Rule: board setup constraints silk; warning
     @(0.0000 mm, 0.0000 mm): Segment on Edge.Cuts
     @(61.5000 mm, -0.1500 mm): Reference field of H2
+[silk_edge_clearance]: Silkscreen clipped by board edge
+    Rule: board setup constraints silk; warning
+    @(0.0000 mm, 0.0000 mm): Segment on Edge.Cuts
+    @(3.5000 mm, -0.1500 mm): Reference field of H1
 [lib_footprint_issues]: The current configuration does not include the footprint library 'geographica'.
     Local override; warning
     @(58.0000 mm, 7.0000 mm): Footprint U2
@@ -18,12 +21,12 @@
     @(58.0000 mm, 7.0000 mm): Reference field of U2
 [silk_overlap]: Silkscreen overlap
     Rule: board setup constraints silk; warning
-    @(57.0000 mm, 8.0000 mm): Segment of U2 on F.Silkscreen
     @(58.0000 mm, 7.0000 mm): Reference field of U2
+    @(57.0000 mm, 8.0000 mm): Segment of U2 on F.Silkscreen
 [silk_overlap]: Silkscreen overlap
     Rule: board setup constraints silk; warning
-    @(58.0000 mm, 7.0000 mm): Reference field of U2
     @(59.0000 mm, 6.0000 mm): Segment of U2 on F.Silkscreen
+    @(58.0000 mm, 7.0000 mm): Reference field of U2
 
 ** Found 0 unconnected pads **
 

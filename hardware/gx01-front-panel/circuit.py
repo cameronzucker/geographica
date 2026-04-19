@@ -143,11 +143,16 @@ mcp_rst += R1[2]
 
 def button(ref: str, value: str, signal_net: Net) -> Part:
     global gnd
+    # Omron B3S-1000 — top-actuated (Z-axis) tactile, 6×6×5mm. Pressed
+    # perpendicular to the PCB, which is what you want for a case front
+    # panel where the user presses buttons from outside. The previous
+    # B3U-3000P was side-actuated (XY-plane) and unusable for this
+    # application.
     sw = Part(
         "Switch", "SW_Push",
         ref=ref,
         value=value,
-        footprint="Button_Switch_SMD:SW_SPST_B3U-3000P",
+        footprint="Button_Switch_SMD:SW_SPST_B3S-1000",
     )
     signal_net += sw[1]
     gnd        += sw[2]
