@@ -749,6 +749,48 @@ class TestFixDependencyRemoved:
         assert resp.status_code == 404
 
 
+def test_launch_builds_pipeline_profile_when_image_missing(tmp_path, monkeypatch):
+    from setup import main as mod
+    recorded = []
+    async def fake_run(args, cwd, on_output, env_extra=None):
+        recorded.append(args)
+        return 0
+    monkeypatch.setattr(mod, "run_command", fake_run)
+
+    # Fake `docker image inspect` to return non-zero (image missing)
+    # AND fake `docker compose ps` to return empty.
+    class _ProcMissing:
+        returncode = 1
+        async def wait(self): return None
+        async def communicate(self): return (b"", b"")
+    class _ProcOK:
+        returncode = 0
+        async def wait(self): return None
+        async def communicate(self): return (b"", b"")
+
+    async def fake_exec(*args, **kwargs):
+        # Image inspect -> missing
+        if args and args[0] == "docker" and len(args) > 2 and args[1] == "image" and args[2] == "inspect":
+            return _ProcMissing()
+        return _ProcOK()
+
+    monkeypatch.setattr(mod.asyncio, "create_subprocess_exec", fake_exec)
+
+    env = tmp_path / ".env"
+    env.write_text(f"DATA_HOST_PATH={tmp_path}\n")
+    monkeypatch.setattr(mod, "ENV_PATH", str(env))
+
+    client = TestClient(mod.app)
+    resp = client.post("/api/launch", headers={"X-CSRF-Token": mod.CSRF_TOKEN})
+    assert resp.status_code == 200
+    # At least one recorded run_command must include "--profile pipeline" + "build"
+    has_pipeline_build = any(
+        "--profile" in " ".join(c) and "pipeline" in " ".join(c) and "build" in c
+        for c in recorded
+    )
+    assert has_pipeline_build, f"No pipeline build recorded: {recorded}"
+
+
 class TestAllHealthyRegex:
     @pytest.mark.parametrize("svcs,expected,why", [
         ([{"Health": "healthy"}, {"Health": "healthy"}], True, "both healthy"),

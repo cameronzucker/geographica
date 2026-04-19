@@ -815,6 +815,22 @@ async def post_launch():
                     detail=f"Failed to retarget ./data symlink to {target}: {err}",
                 )
 
+    # Build the pipeline profile image if it doesn't exist yet (B4).
+    # Pipeline is a --profile-gated service, so `docker compose up -d` skips it.
+    # We check with `docker image inspect` (fast) and only build if missing.
+    img_check = await asyncio.create_subprocess_exec(
+        "docker", "image", "inspect", "geographica-pipeline",
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        cwd=cwd,
+    )
+    await img_check.wait()
+    if img_check.returncode != 0:
+        await run_command(
+            args=["docker", "compose", "--profile", "pipeline", "build"],
+            cwd=cwd,
+            on_output=lambda s, d: None,
+        )
+
     # Check if containers are already running
     pre_check = await asyncio.create_subprocess_exec(
         "docker", "compose", "ps", "--format", "json",
