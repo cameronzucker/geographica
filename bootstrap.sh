@@ -109,7 +109,7 @@ echo "[N/M] Installing Python packages for data pipeline..."
 if [ -f "$REPO_DIR/scripts/requirements.txt" ]; then
     # Install as the actual user (not root). break-system-packages is needed on
     # Debian Trixie+ which PEP 668 ships with an externally-managed marker.
-    sudo -u "$ACTUAL_USER" pip install --user --break-system-packages -r "$REPO_DIR/scripts/requirements.txt"
+    sudo -u "$ACTUAL_USER" -H pip install --user --break-system-packages -r "$REPO_DIR/scripts/requirements.txt"
     echo "  Pipeline Python packages installed for user $ACTUAL_USER"
 else
     echo "  WARNING: $REPO_DIR/scripts/requirements.txt not found — pipeline scripts will fail at import time"
