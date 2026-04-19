@@ -89,7 +89,13 @@ mkdir -p "$DATA_DIR"/{pbf,nominatim,valhalla}
 chown -R "$ACTUAL_USER":"$ACTUAL_USER" /srv/geographica
 
 echo "      Creating data symlink..."
-ln -sf "$DATA_DIR" "$REPO_DIR/data"
+# Create/update ./data symlink. If a real directory exists where ./data should be,
+# refuse to clobber it — require manual cleanup.
+if [ -e "$REPO_DIR/data" ] && [ ! -L "$REPO_DIR/data" ]; then
+    echo "ERROR: $REPO_DIR/data exists as a regular directory. Remove it manually before re-running bootstrap."
+    exit 1
+fi
+ln -sfn "$DATA_DIR" "$REPO_DIR/data"
 
 echo "[6/6] Installing keyring agent service..."
 cp "$REPO_DIR/services/keyring-agent/geographica-keyring.service" /etc/systemd/system/
