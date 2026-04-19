@@ -321,61 +321,6 @@ async def post_credentials(body: CredentialsRequest):
     return {"ok": True}
 
 
-@app.post("/api/tls/generate")
-async def post_tls_generate():
-    """Run TLS certificate generation script."""
-    cwd = str(Path(__file__).parent.parent)
-    output_lines: list[str] = []
-
-    def on_output(source: str, data: bytes):
-        output_lines.append(data.decode("utf-8", errors="replace"))
-
-    exit_code = await run_command(
-        args=["bash", "scripts/generate_tls.sh"],
-        cwd=cwd,
-        on_output=on_output,
-    )
-    return {"exit_code": exit_code, "output": "".join(output_lines)}
-
-
-@app.post("/api/tls/scan")
-async def post_tls_scan():
-    """Scan for TLS certificates."""
-    certs: list[dict] = []
-    search_dirs = [
-        Path("/etc/letsencrypt/live"),
-        Path("/srv/geographica/tls"),
-    ]
-    for search_dir in search_dirs:
-        if not search_dir.exists():
-            continue
-        for cert_file in search_dir.rglob("*.crt"):
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "openssl", "x509", "-noout", "-subject", "-enddate",
-                    "-in", str(cert_file),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, _ = await proc.communicate()
-                text = stdout.decode("utf-8", errors="replace")
-                subject = ""
-                enddate = ""
-                for line in text.strip().splitlines():
-                    if line.startswith("subject="):
-                        subject = line[len("subject="):].strip()
-                    elif line.startswith("notAfter="):
-                        enddate = line[len("notAfter="):].strip()
-                certs.append({
-                    "path": str(cert_file),
-                    "subject": subject,
-                    "expires": enddate,
-                })
-            except Exception:
-                continue
-    return {"certs": certs}
-
-
 @app.get("/api/status")
 async def get_status():
     """Return current pipeline state."""

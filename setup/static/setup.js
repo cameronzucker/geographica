@@ -272,35 +272,13 @@
   // TLS mode change handler
   function onTlsModeChange() {
     var mode = $('#tls-mode').value;
-    var certGroup = $('#tls-cert-group');
     var hint = $('#tls-hint');
-
-    if (mode === 'existing') {
-      certGroup.style.display = '';
-      hint.textContent = 'Scanning for certificates...';
-      api('POST', '/api/tls/scan').then(function (data) {
-        var list = $('#tls-cert-list');
-        list.textContent = '';
-        if (data.certs && data.certs.length > 0) {
-          data.certs.forEach(function (c) {
-            var div = createEl('div', 'cert-item', c.subject + ' (expires: ' + c.expires + ')');
-            list.appendChild(div);
-          });
-          hint.textContent = data.certs.length + ' certificate(s) found';
-        } else {
-          list.appendChild(createEl('span', 'field-hint', 'No certificates found'));
-          hint.textContent = 'No certificates found';
-        }
-      });
+    if (mode === 'https') {
+      hint.textContent = 'A self-signed certificate will be generated on first launch. Browsers will show a security warning you must accept.';
+    } else if (mode === 'tailscale') {
+      hint.textContent = 'Requires: sudo ./scripts/provision_tailscale_tls.sh (see README Tailscale section).';
     } else {
-      certGroup.style.display = 'none';
-      if (mode === 'self-signed') {
-        hint.textContent = 'A self-signed certificate will be generated';
-      } else if (mode === 'external') {
-        hint.textContent = 'TLS handled by external proxy (e.g. Tailscale)';
-      } else {
-        hint.textContent = '';
-      }
+      hint.textContent = '';
     }
   }
 

@@ -41,18 +41,10 @@
         <label for="tls-mode">TLS Mode</label>
         <select id="tls-mode">
           <option value="http">HTTP (no encryption)</option>
-          <option value="self-signed">Self-signed certificate</option>
-          <option value="existing">Existing certificate</option>
-          <option value="external">External proxy (Tailscale, etc.)</option>
+          <option value="https">HTTPS (self-signed cert, generated at launch)</option>
+          <option value="tailscale">Tailscale (Let's Encrypt via ts.net)</option>
         </select>
         <span class="field-hint" id="tls-hint"></span>
-      </div>
-
-      <div class="field-group" id="tls-cert-group" style="display:none">
-        <label>Available Certificates</label>
-        <div id="tls-cert-list" class="cert-list">
-          <span class="field-hint">Scanning...</span>
-        </div>
       </div>
 
       <div class="field-group">
