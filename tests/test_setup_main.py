@@ -749,6 +749,19 @@ class TestFixDependencyRemoved:
         assert resp.status_code == 404
 
 
+def test_main_binds_localhost_only():
+    import re
+    src = Path("setup/main.py").read_text()
+    m = re.search(r'if __name__ == "__main__":[\s\S]+?uvicorn\.run\([^)]+\)', src)
+    assert m, "could not find __main__ uvicorn.run"
+    block = m.group(0)
+    assert 'host="127.0.0.1"' in block or "host='127.0.0.1'" in block, \
+        "must bind 127.0.0.1"
+    assert '"0.0.0.0"' not in block, "must not bind 0.0.0.0"
+    assert "os.getenv" not in block and "os.environ" not in block, \
+        "no env-var backdoor allowed for host"
+
+
 def test_progress_buffer_maxlen_is_5000():
     from setup.main import progress_buffer
     assert progress_buffer.maxlen == 5000
