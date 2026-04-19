@@ -92,14 +92,18 @@ if TYPE_CHECKING:
 
 @dataclass
 class Component:
-    """One placed component on the board, as JLC needs to understand it."""
+    """One placed component on the board, as JLC needs to understand it.
+
+    Position / rotation / layer are deliberately absent — those are sourced
+    from `kicad-cli pcb export pos` (see `extract_positions_via_kicad_cli`)
+    so the CPL's coordinate system matches the Gerbers. pcbnew's raw
+    GetPosition() returns Y in KiCad-internal (Y-down) coordinates, which
+    doesn't match the Gerber (Y-up) convention JLC aligns against.
+    """
 
     designator: str
     value: str
     footprint: str       # KiCad library:name
-    pos_mm: tuple[float, float]
-    rotation_deg: float
-    layer: str           # "Top" or "Bottom"
     is_smd: bool
     lcsc: str | None = None
     tier: str = "unknown"   # "basic" | "extended" | "unknown"
@@ -118,17 +122,6 @@ class BundleSummary:
 
 
 # ───────────────────────── Board extraction ─────────────────────────
-
-
-def _layer_name(fp: "pcbnew.FOOTPRINT") -> str:
-    """Return JLC-style 'Top' or 'Bottom' for a footprint's layer."""
-    import pcbnew
-    layer_id = fp.GetLayer()
-    if layer_id == pcbnew.F_Cu:
-        return "Top"
-    elif layer_id == pcbnew.B_Cu:
-        return "Bottom"
-    return "Top"   # safe fallback
 
 
 def _is_smd(fp: "pcbnew.FOOTPRINT") -> bool:
@@ -152,15 +145,11 @@ def extract_components(pcb_path: Path) -> list[Component]:
     board = pcbnew.LoadBoard(str(pcb_path))
     components: list[Component] = []
     for fp in board.GetFootprints():
-        pos = fp.GetPosition()
         components.append(
             Component(
                 designator=fp.GetReference(),
                 value=fp.GetValue(),
                 footprint=fp.GetFPIDAsString(),
-                pos_mm=(pcbnew.ToMM(pos.x), pcbnew.ToMM(pos.y)),
-                rotation_deg=fp.GetOrientationDegrees(),
-                layer=_layer_name(fp),
                 is_smd=_is_smd(fp),
             )
         )
@@ -172,6 +161,74 @@ def extract_components(pcb_path: Path) -> list[Component]:
         return (c.designator, 0)
     components.sort(key=sort_key)
     return components
+
+
+@dataclass
+class Position:
+    """One component's placement as JLC expects it in the CPL."""
+    mid_x_mm: float
+    mid_y_mm: float
+    layer: str        # "Top" or "Bottom"
+    rotation_deg: float
+
+
+def extract_positions(pcb_path: Path) -> dict[str, Position]:
+    """Return a {designator: Position} map with JLC-CPL-ready coordinates.
+
+    Why this doesn't just shell out to `kicad-cli pcb export pos`:
+
+    - KiCad's footprint position is the **anchor point**, which for many
+      THT footprints (pin headers, sockets) is pin 1 — not the geometric
+      center. JLC's CPL "Mid X/Mid Y" expects the **center of the pads**
+      (the reference the pick-and-place machine uses). For a 2×20 socket,
+      anchor-vs-center differs by ~24 mm and the component lands off-board.
+    - `kicad-cli pcb export pos` passes the anchor through unchanged.
+      KiCad's GUI has a "Use pad origin as reference" toggle that computes
+      pad centroid, but kicad-cli doesn't expose it. So we compute it here.
+
+    Coordinate conventions applied:
+    - Pad-bounding-box center is computed in KiCad-internal coords.
+    - Y is negated (KiCad is Y-down, Gerber & JLC CPL are Y-up).
+    - The board's aux axis origin is subtracted so coords match Gerbers
+      exported with `--use-drill-file-origin`. If aux origin is (0,0),
+      this is a no-op.
+    """
+    import pcbnew
+    board = pcbnew.LoadBoard(str(pcb_path))
+    aux = board.GetDesignSettings().GetAuxOrigin()
+    aux_x_mm = pcbnew.ToMM(aux.x)
+    aux_y_mm = pcbnew.ToMM(aux.y)
+
+    positions: dict[str, Position] = {}
+    for fp in board.GetFootprints():
+        pad_bbox = None
+        for pad in fp.Pads():
+            b = pad.GetBoundingBox()
+            if pad_bbox is None:
+                pad_bbox = b
+            else:
+                pad_bbox.Merge(b)
+
+        if pad_bbox is None:
+            # No pads (e.g. graphical-only footprint). Fall back to anchor.
+            anchor = fp.GetPosition()
+            cx_mm = pcbnew.ToMM(anchor.x)
+            cy_mm = pcbnew.ToMM(anchor.y)
+        else:
+            center = pad_bbox.GetCenter()
+            cx_mm = pcbnew.ToMM(center.x)
+            cy_mm = pcbnew.ToMM(center.y)
+
+        layer_id = fp.GetLayer()
+        layer = "Bottom" if layer_id == pcbnew.B_Cu else "Top"
+
+        positions[fp.GetReference()] = Position(
+            mid_x_mm=cx_mm - aux_x_mm,
+            mid_y_mm=-(cy_mm - aux_y_mm),
+            layer=layer,
+            rotation_deg=fp.GetOrientationDegrees(),
+        )
+    return positions
 
 
 # ───────────────────────── Mapping ─────────────────────────
@@ -259,18 +316,25 @@ def render_bom_csv(components: list[Component]) -> str:
     return buf.getvalue()
 
 
-def render_cpl_csv(components: list[Component]) -> str:
+def render_cpl_csv(components: list[Component], positions: dict[str, Position]) -> str:
     """JLC CPL format: Designator, Mid X, Mid Y, Layer, Rotation."""
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
     for c in components:
+        p = positions.get(c.designator)
+        if p is None:
+            raise SystemExit(
+                f"kicad-cli produced no position for {c.designator!r}. "
+                f"pcbnew and kicad-cli read the same .kicad_pcb, so this "
+                f"indicates a KiCad version mismatch or a malformed board."
+            )
         w.writerow([
             c.designator,
-            f"{c.pos_mm[0]:.3f}",
-            f"{c.pos_mm[1]:.3f}",
-            c.layer,
-            f"{c.rotation_deg:.1f}",
+            f"{p.mid_x_mm:.3f}",
+            f"{p.mid_y_mm:.3f}",
+            p.layer,
+            f"{p.rotation_deg:.1f}",
         ])
     return buf.getvalue()
 
@@ -296,8 +360,9 @@ def build_bundle(
             lines.append(f"    search: https://www.lcsc.com/search?q={des}")
         raise SystemExit("\n".join(lines))
 
+    positions = extract_positions(pcb_path)
     bom_csv = render_bom_csv(assembled)
-    cpl_csv = render_cpl_csv(assembled)
+    cpl_csv = render_cpl_csv(assembled, positions)
 
     if dry_run:
         print("─── BOM.csv ───", file=sys.stderr)

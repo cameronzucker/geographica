@@ -23,9 +23,9 @@ parts:
     note: "Yageo CFR-25JT-52-10R — 10Ω 1/4W 5% THT axial carbon film. 4,700 in stock."
 
   C1:
-    lcsc: C254085
+    lcsc: C524651
     tier: extended
-    note: "Dersonic CC1H104MC1FD3F6C10MF — 100nF 50V X7R through-hole disc ceramic. 69k stock."
+    note: "Murata RDER71H104K0S1H03A — 100nF 50V leaded MLCC, P=2.5mm (matches C_Disc_D3.0mm_W2.0mm_P2.50mm footprint). 4k stock."
 
   RV1:
     lcsc: C48641779
@@ -38,16 +38,16 @@ parts:
     note: "ZHOURI 2.54-2*20 — standard 2×20 female pin header, 2.54mm pitch. Mates with LC29H's top male header. 57k stock."
 
   J2:
-    lcsc: C124378
+    lcsc: C50981
     tier: extended
-    note: "1×20 male break-off pin header. Ribbon connects here to the GDM12864H LCD. 130k stock."
+    note: "2.54-1*20P straight pin header — exact 1×20, P=2.54mm, THT. Ribbon connects here to the GDM12864H LCD. 22k stock."
 
   J3:
-    lcsc: C146125
+    lcsc: C158012
     tier: extended
-    note: "BOOMELE XH-2P vertical, 2.50mm pitch — standard JST-XH-compatible. Mates with Noctua fan's JST-XH-to-fan pigtail."
+    note: "JST B2B-XH-A(LF)(SN) — genuine JST vertical 2-pin, P=2.5mm, THT. Mates with Noctua fan's JST-XH-to-fan pigtail. 377k stock."
 
   J4:
-    lcsc: C146125
+    lcsc: C158012
     tier: extended
     note: "Same as J3 — second fan connector."
