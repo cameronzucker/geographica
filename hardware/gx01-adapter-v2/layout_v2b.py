@@ -97,57 +97,49 @@ def connect_pad(fp: pcbnew.FOOTPRINT, pad_name: str,
     pad.SetNet(net)
 
 
-# ───────────────────────── Custom CPH3225A supercap footprint ─────────────────────────
+# ───────────────────────── Custom CR1632 holder footprint ─────────────────────────
+#
+# Swap from CPH3225A supercap (JLC doesn't stock SMT supercaps) to a
+# CR1632 coin cell holder. Cameron has CR1632s in inventory; CR1220 was
+# a one-off that'd require adding a new battery type to his parts stash.
+# CR1632 gives ~10+ years of RTC backup at 45 nA chip draw (140 mAh cell,
+# shelf-life limited).
 
-def make_cph3225a_footprint() -> pcbnew.FOOTPRINT:
-    """Create a custom footprint for the Seiko CPH3225A 1F 3.3V SMD supercap.
+def make_cr1632_holder_footprint() -> pcbnew.FOOTPRINT:
+    """Custom footprint for the G-Switch GT-CR1632-1Au SMT holder and
+    compatible CR1632 SMD 2-pin holders (MYOUNG BS-16-B4AK005 etc.).
 
-    Geometry (from Seiko CPH3225A datasheet):
-      * Body: 6.8 × 6.8 × 0.9 mm (square SMD)
-      * 4 solder pads: 2 on the +X side (cathode), 2 on the −X side (anode).
-        Each pad is 1.5 mm (X) × 2.5 mm (Y). Pads on the same side are spaced
-        2.5 mm center-to-center in Y. Pad centers are 5.6 mm apart in X.
-      * Anchor at the body center.
-
-    Electrical convention: pad number "1" for both anode pads, "2" for both
-    cathode pads. pcbnew aggregates pads with duplicate numbers into a single
-    logical pin, so `FindPadByNumber("1")` returns either — for net assignment
-    that's fine because both physically carry the same potential.
+    Approximate dimensions (common across manufacturers):
+      * Body: ~18 × 18 mm (square-ish footprint, slightly rounded)
+      * Two SMD contacts at ±8.75 mm X, each 2.5 × 3.0 mm
+      * Pad 1 is + (positive), pad 2 is −
+      * Cell height above PCB: ~5 mm
     """
     fp = pcbnew.FOOTPRINT(board)
-    fp.SetFPID(pcbnew.LIB_ID("geographica", "SuperCap_CPH3225A_6.8x6.8mm"))
+    fp.SetFPID(pcbnew.LIB_ID("geographica", "CR1632_Holder_SMT"))
 
-    pad_w_mm = 1.5
-    pad_h_mm = 2.5
-    pad_pitch_y_mm = 2.5     # same-side pad center-to-center (Y)
-    pad_span_x_mm = 5.6      # opposite-side pad center-to-center (X)
+    pad_w_mm = 2.5
+    pad_h_mm = 3.0
+    pad_span_x_mm = 17.5      # pad center-to-center along X
 
-    # Four pads: (x_offset, y_offset, pad_number)
-    pad_coords = [
-        (-pad_span_x_mm / 2, -pad_pitch_y_mm / 2, "1"),   # anode top
-        (-pad_span_x_mm / 2,  pad_pitch_y_mm / 2, "1"),   # anode bottom
-        ( pad_span_x_mm / 2, -pad_pitch_y_mm / 2, "2"),   # cathode top
-        ( pad_span_x_mm / 2,  pad_pitch_y_mm / 2, "2"),   # cathode bottom
-    ]
-
-    for dx_mm, dy_mm, num in pad_coords:
+    for dx_mm, num in [(-pad_span_x_mm / 2, "1"), (pad_span_x_mm / 2, "2")]:
         pad = pcbnew.PAD(fp)
         pad.SetNumber(num)
         pad.SetShape(pcbnew.PAD_SHAPE_RECT)
         pad.SetAttribute(pcbnew.PAD_ATTRIB_SMD)
         pad.SetSize(VECTOR2I(MM(pad_w_mm), MM(pad_h_mm)))
-        pad.SetPosition(VECTOR2I(MM(dx_mm), MM(dy_mm)))
-        pad.SetLayerSet(pad.SMDMask())   # F.Cu + F.Mask + F.Paste
+        pad.SetPosition(VECTOR2I(MM(dx_mm), 0))
+        pad.SetLayerSet(pad.SMDMask())
         fp.Add(pad)
 
-    # Silk outline on F.Silkscreen (body outline for visual reference)
-    body_half_mm = 6.8 / 2
+    # Silk outline ~18×18 mm body (CR1632 holder footprint)
+    body_half_mm = 9.0
     silk_layer = board.GetLayerID("F.Silkscreen")
     for x1, y1, x2, y2 in [
-        (-body_half_mm, -body_half_mm,  body_half_mm, -body_half_mm),  # top
-        ( body_half_mm, -body_half_mm,  body_half_mm,  body_half_mm),  # right
-        ( body_half_mm,  body_half_mm, -body_half_mm,  body_half_mm),  # bottom
-        (-body_half_mm,  body_half_mm, -body_half_mm, -body_half_mm),  # left
+        (-body_half_mm, -body_half_mm,  body_half_mm, -body_half_mm),
+        ( body_half_mm, -body_half_mm,  body_half_mm,  body_half_mm),
+        ( body_half_mm,  body_half_mm, -body_half_mm,  body_half_mm),
+        (-body_half_mm,  body_half_mm, -body_half_mm, -body_half_mm),
     ]:
         line = pcbnew.PCB_SHAPE(fp)
         line.SetShape(pcbnew.SHAPE_T_SEGMENT)
@@ -242,8 +234,12 @@ place(u3, "U3", "MCP9808", 13.0, 40.0)
 u1 = load_footprint("Package_SON", "MicroCrystal_C7_SON-8_1.5x3.2mm_P0.9mm")
 place(u1, "U1", "RV-3028-C7", 45.0, 27.0)
 
-c1 = make_cph3225a_footprint()
-place(c1, "C1", "1F 3.3V", 54.0, 27.0)
+# CR1632 holder (keeping ref "C1" to preserve circuit.py net mapping).
+# Body is ~18×18 mm — placed in the middle-ish open area of the board
+# where ±9 mm courtyard clears U3/U4 (left), U1 (right), and the other
+# passives. (34, 37) gives ~1.5 mm clearance from all neighbors.
+c1 = make_cr1632_holder_footprint()
+place(c1, "C1", "CR1632 holder", 34.0, 37.0)
 
 u2 = load_footprint("Package_LGA", "Bosch_LGA-8_2.5x2.5mm_P0.65mm_ClockwisePinNumbering")
 place(u2, "U2", "BME280", 53.0, 42.0)

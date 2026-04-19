@@ -16,11 +16,6 @@
 
 skip_patterns:
   - "^H[0-9]+$"      # H1-H4 mounting holes
-  - "^C1$"           # CPH3225A supercap — NOT STOCKED at JLC (0 results for
-                     # "CPH3225A", "supercapacitor SMD", "EDLC", "ML621",
-                     # "VL2020", "MS621FE" as of 2026-04-19). User will
-                     # hand-solder a Digi-Key/Mouser Seiko CPH3225A onto the
-                     # custom 4-pad footprint after boards arrive from JLC.
 
 parts:
   # ─── Connectors ───
@@ -77,9 +72,9 @@ parts:
 
   # ─── Capacitors ───
   C1:
-    lcsc: C520488
+    lcsc: C2829975
     tier: extended
-    note: "Seiko CPH3225A 1F 3.3V SMD supercap, 6.8×6.8×0.9 mm. Custom footprint in layout.py matches this exact part. Verify stock before ordering."
+    note: "G-Switch GT-CR1632-1Au SMT CR1632 coin cell holder (SMD, gold-plated contacts, 1,892 in stock verified 2026-04-19). CR1632 chosen to match existing inventory; gives ~10 years of RTC backup at 45 nA chip draw (140 mAh cell, shelf-life limited). Custom footprint geographica:CR1632_Holder_SMT with 2 SMD pads at ±8.75 mm X, 2.5×3 mm each. Reference kept as 'C1' to preserve circuit.py net mapping."
 
   C2:
     lcsc: C14663

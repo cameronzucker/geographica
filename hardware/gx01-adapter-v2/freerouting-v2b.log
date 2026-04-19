@@ -1,15 +1,16 @@
-2026-04-19 09:48:03.054 INFO   Freerouting v2.1.0 (build-date: 2025-04-12)
-2026-04-19 09:48:03.163 WARN   No default constructor found for field: currentLocale
-2026-04-19 09:48:03.164 INFO   Settings were loaded from freerouting.json
-2026-04-19 09:48:03.172 WARN   Couldn't get screen resolution. If you are running in a headless environment, disable the GUI by setting gui.enabled to false.
-2026-04-19 09:48:05.000 INFO   [E6DF35\273AA7] Job 'E6DF35\273AA7' started at 2026-04-19T16:48:04.999759613Z
-2026-04-19 09:48:05.200 INFO   New version available: v2.1.0
-2026-04-19 09:48:24.082 INFO   [E6DF35\273AA7] Auto-router pass #1 on board 'fde4abf3372c1d248ad8e0b048810097' was completed in 18.27 seconds with the score of 885.61 (20 unrouted), using 122.47 CPU seconds and 1790 MB memory.
-2026-04-19 09:48:33.449 INFO   [E6DF35\273AA7] Auto-router pass #2 on board 'bfe695b5a0107c36cb59dcdc3299c936' was completed in 9.18 seconds with the score of 931.11 (12 unrouted), using 268.99 CPU seconds and 2761 MB memory.
-2026-04-19 09:48:42.693 INFO   [E6DF35\273AA7] Auto-router pass #3 on board '5585643d43d64792cb28b7b047d20fa9' was completed in 9.11 seconds with the score of 959.28 (6 unrouted), using 476.10 CPU seconds and 3705 MB memory.
-2026-04-19 09:48:54.006 INFO   [E6DF35\273AA7] Auto-router pass #4 on board '31bb46e64270a020e179ae8052a173aa' was completed in 11.21 seconds with the score of 979.47 (1 unrouted), using 814.23 CPU seconds and 4788 MB memory.
-2026-04-19 09:48:54.565 INFO   [E6DF35\273AA7] Auto-router pass #5 on board '927345440f2b84fc3dd400a774a828b6' was completed in 0.44 seconds with the score of 983.56, using 849.50 CPU seconds and 4913 MB memory.
-2026-04-19 09:48:54.809 INFO   [E6DF35\273AA7] Auto-router pass #6 on board '918274783e9018831ca5d5ad603de52d' was completed in 0.02 seconds with the score of 983.56, using 849.50 CPU seconds and 4913 MB memory.
+2026-04-19 10:00:10.598 INFO   Freerouting v2.1.0 (build-date: 2025-04-12)
+2026-04-19 10:00:10.695 WARN   No default constructor found for field: currentLocale
+2026-04-19 10:00:10.696 INFO   Settings were loaded from freerouting.json
+2026-04-19 10:00:10.705 WARN   Couldn't get screen resolution. If you are running in a headless environment, disable the GUI by setting gui.enabled to false.
+2026-04-19 10:00:12.501 INFO   [FF73C4\093F1F] Job 'FF73C4\093F1F' started at 2026-04-19T17:00:12.501031758Z
+2026-04-19 10:00:12.758 INFO   New version available: v2.1.0
+2026-04-19 10:00:34.878 INFO   [FF73C4\093F1F] Auto-router pass #1 on board '1d34faa3ab4ef0adf04e32112a7273aa' was completed in 21.47 seconds with the score of 895.55 (19 unrouted), using 180.07 CPU seconds and 2224 MB memory.
+2026-04-19 10:00:44.296 INFO   [FF73C4\093F1F] Auto-router pass #2 on board '31348ffacc04a2e44c783ed7f3e01b84' was completed in 9.17 seconds with the score of 940.40 (10 unrouted), using 352.87 CPU seconds and 3153 MB memory.
+2026-04-19 10:00:52.311 INFO   [FF73C4\093F1F] Auto-router pass #3 on board '9d6606bcdfd4eacf926148f0b773ce14' was completed in 7.89 seconds with the score of 958.64 (6 unrouted), using 555.73 CPU seconds and 3955 MB memory.
+2026-04-19 10:01:02.132 INFO   [FF73C4\093F1F] Auto-router pass #4 on board '4ed59ce7fedc96e74a6adde486a9bc2f' was completed in 9.74 seconds with the score of 974.92 (2 unrouted), using 875.47 CPU seconds and 4899 MB memory.
+2026-04-19 10:01:03.655 INFO   [FF73C4\093F1F] Auto-router pass #5 on board 'bf8f18f3bc9de02d82e3d10f527daa23' was completed in 1.39 seconds with the score of 979.54 (1 unrouted), using 948.16 CPU seconds and 5109 MB memory.
+2026-04-19 10:01:05.609 INFO   [FF73C4\093F1F] Auto-router pass #6 on board 'ec5cd027fe29bc4f2cdbf0f1502b0078' was completed in 1.76 seconds with the score of 983.31, using 985.24 CPU seconds and 5182 MB memory.
+2026-04-19 10:01:05.761 INFO   [FF73C4\093F1F] Auto-router pass #7 on board '98b7e48d8ca327c2ec22fe7a262e13ae' was completed in 0.03 seconds with the score of 983.31, using 1023.14 CPU seconds and 5302 MB memory.
 {
   "host": "KiCad's Pcbnew,9.0.2+dfsg-1",
   "unit": "mm",
@@ -32,11 +33,11 @@
     "signal_count": 2
   },
   "items": {
-    "total_count": 668,
+    "total_count": 667,
     "trace_count": 139,
-    "via_count": 33,
+    "via_count": 34,
     "conduction_area_count": 1,
-    "drill_item_count": 137,
+    "drill_item_count": 135,
     "pin_count": 0,
     "component_count": 349,
     "other_count": 9
@@ -45,35 +46,35 @@
     "total_count": 26
   },
   "pads": {
-    "total_count": 137
+    "total_count": 135
   },
   "nets": {
     "total_count": 35,
     "class_count": 2
   },
   "connections": {
-    "maximum_count": 265,
+    "maximum_count": 266,
     "incomplete_count": 0
   },
   "traces": {
     "total_count": 139,
-    "total_segment_count": 382,
-    "total_length": 13344.19,
-    "total_weighted_length": 4.008032E7,
-    "average_length": 96.001366,
-    "total_vertical_length": 4355.584,
-    "total_horizontal_length": 2655.98,
-    "total_angled_length": 3938.8435
+    "total_segment_count": 396,
+    "total_length": 13484.764,
+    "total_weighted_length": 4.0503444E7,
+    "average_length": 97.01269,
+    "total_vertical_length": 3245.337,
+    "total_horizontal_length": 3292.894,
+    "total_angled_length": 4625.023
   },
   "bends": {
-    "total_count": 243,
-    "90_degree_count": 1,
-    "45_degree_count": 242,
+    "total_count": 257,
+    "90_degree_count": 2,
+    "45_degree_count": 255,
     "other_angle_count": 0
   },
   "vias": {
-    "total_count": 33,
-    "through_hole_count": 33,
+    "total_count": 34,
+    "through_hole_count": 34,
     "blind_count": 0,
     "buried_count": 0
   },
