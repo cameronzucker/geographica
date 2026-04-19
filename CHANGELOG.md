@@ -7,6 +7,20 @@ project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries
 from v1.1.0 onward are generated automatically by `release-please` from
 Conventional Commits.
 
+## [1.5.0](https://github.com/cameronzucker/geographica/compare/v1.4.0...v1.5.0) (2026-04-19)
+
+
+### Features
+
+* **harness:** exploratory_agent control + reporting tools + writers ([dd02ae2](https://github.com/cameronzucker/geographica/commit/dd02ae221794eec75f9c7770136b28e635debd23))
+* **harness:** exploratory_agent loop + CLI + wizard-ci.sh --exploratory ([173d1e8](https://github.com/cameronzucker/geographica/commit/173d1e86bb564486605e4190d4e04eeaf0b09a17))
+* **harness:** exploratory_agent system prompt + seeded bug-class list ([24febc6](https://github.com/cameronzucker/geographica/commit/24febc62ff5814640e89f59f2b0346b1e763c700))
+
+
+### Bug Fixes
+
+* **setup:** two bugs from 2026-04-20 beta tester screenshot (undefinedundefined... + missing --download) ([11ecf9d](https://github.com/cameronzucker/geographica/commit/11ecf9d2b5b0a1a11b91803464ad556841e7f941))
+
 ## [1.4.0](https://github.com/cameronzucker/geographica/compare/v1.3.3...v1.4.0) (2026-04-19)
 
 
