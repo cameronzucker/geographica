@@ -16,6 +16,11 @@
 
 skip_patterns:
   - "^H[0-9]+$"      # H1-H4 mounting holes
+  - "^C1$"           # CPH3225A supercap — NOT STOCKED at JLC (0 results for
+                     # "CPH3225A", "supercapacitor SMD", "EDLC", "ML621",
+                     # "VL2020", "MS621FE" as of 2026-04-19). User will
+                     # hand-solder a Digi-Key/Mouser Seiko CPH3225A onto the
+                     # custom 4-pad footprint after boards arrive from JLC.
 
 parts:
   # ─── Connectors ───
@@ -30,14 +35,14 @@ parts:
     note: "2×10 male pin header, 2.54 mm pitch, vertical. Physical IDC box header preferred but this base pin header is what's stocked at JLC; mating ribbon cable will use IDC crimp on the cable side."
 
   J3:
-    lcsc: C157112
+    lcsc: C131334
     tier: extended
-    note: "JST B4B-PH-K, 4-pin vertical through-hole, 2.0 mm pitch. Fan 1."
+    note: "JST B4B-PH-K-S(LF)(SN). 4-pin vertical through-hole, 2.0 mm pitch. Fan 1. 344,282 in stock (verified 2026-04-19)."
 
   J4:
-    lcsc: C157112
+    lcsc: C131334
     tier: extended
-    note: "Same as J3. Fan 2."
+    note: "Same part as J3. Fan 2."
 
   J5:
     lcsc: C157364
@@ -51,19 +56,19 @@ parts:
     note: "Micro Crystal RV-3028-C7-32.768kHz-1ppm-TA-QC. SON-8 3.2×1.5 mm. TCXO I²C RTC. 31,087 in stock (verified 2026-04-19)."
 
   U2:
-    lcsc: C87438
+    lcsc: C92489
     tier: extended
-    note: "Bosch BME280. LGA-8 2.5×2.5 mm. Temp/humidity/pressure sensor."
+    note: "Bosch BME280, LGA-8 2.5×2.5 mm. 16,762 in stock (verified 2026-04-19)."
 
   U3:
-    lcsc: C76147
+    lcsc: C94847
     tier: extended
-    note: "Microchip MCP9808-H/MSOP. MSOP-8. ±0.25 °C I²C temp sensor."
+    note: "Microchip MCP9808-E/MS. MSOP-8. E-grade (extended temp) instead of originally-specified H-grade (higher-precision), but electrically + pin-wise identical. 1,117 in stock (verified 2026-04-19)."
 
   U4:
-    lcsc: C56663
+    lcsc: C615716
     tier: extended
-    note: "Microchip 24LC32AT-I/SN. SOIC-8. 4 Kibit I²C EEPROM for HAT ID."
+    note: "Microchip 24LC32AT/SN, SOIC-8. Auto-temp-range variant of 24LC32A. 44 in stock (thin — verify before ordering). Alternative: C615215 (24LC32A/SN, 57 in stock, standard temp range, functionally equivalent for HAT ID EEPROM use)."
 
   Q1:
     lcsc: C20917
