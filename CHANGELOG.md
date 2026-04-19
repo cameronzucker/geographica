@@ -7,6 +7,13 @@ project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries
 from v1.1.0 onward are generated automatically by `release-please` from
 Conventional Commits.
 
+## [1.3.3](https://github.com/cameronzucker/geographica/compare/v1.3.2...v1.3.3) (2026-04-19)
+
+
+### Bug Fixes
+
+* **setup:** normalize paths (strip trailing /, collapse //) at frontend + backend ([1d59197](https://github.com/cameronzucker/geographica/commit/1d591971b4401cb33c0359dd9627f53d7d2a2c88))
+
 ## [1.3.2](https://github.com/cameronzucker/geographica/compare/v1.3.1...v1.3.2) (2026-04-19)
 
 
