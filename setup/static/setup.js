@@ -66,15 +66,47 @@
     return fetch(path, opts).then(function (r) {
       if (!r.ok) {
         return r.text().then(function (text) {
-          try {
-            var err = JSON.parse(text);
-            throw new Error(err.detail || 'Request failed (' + r.status + ')');
-          } catch (e) {
-            if (e.message && e.message.indexOf('Request failed') === 0) throw e;
-            throw new Error('Request failed (' + r.status + '): ' + text.substring(0, 200));
+          // Parse JSON detail without the brittle "does the message
+          // start with 'Request failed'" round-trip that the old code
+          // used. That heuristic dropped the server's detail string
+          // whenever it didn't happen to start with "Request failed",
+          // so users saw `Request failed (403): {"detail": "..."}`
+          // instead of the actual detail — e.g. the 2026-04-19 beta
+          // report `Could not create data directory: Request failed
+          // (403): {"detail":"CSRF token missing or invalid"}`.
+          var detail = null;
+          if (text) {
+            try {
+              var parsed = JSON.parse(text);
+              if (parsed && typeof parsed.detail === 'string') {
+                detail = parsed.detail;
+              }
+            } catch (e) { /* not JSON; drop through */ }
           }
+
+          // Auto-recover from stale CSRF tokens. If setup.sh restarted
+          // between page-load and this POST, the old token in our meta
+          // tag is stale. Reload the page once to fetch the new token
+          // (the backend persists it across restarts on tmpfs, so this
+          // should be rare; kept as a safety net). The guard prevents
+          // a reload loop if the backend is genuinely broken.
+          if (r.status === 403 && detail &&
+              detail.indexOf('CSRF') !== -1 &&
+              !sessionStorage.getItem('csrfReloaded')) {
+            sessionStorage.setItem('csrfReloaded', '1');
+            window.location.reload();
+            throw new Error('CSRF token stale — reloading to refresh');
+          }
+
+          throw new Error(
+            detail ||
+            ('Request failed (' + r.status + '): ' + text.substring(0, 200))
+          );
         });
       }
+      // On success, clear the reload-guard so a later CSRF failure can
+      // still recover via one reload.
+      sessionStorage.removeItem('csrfReloaded');
       return r.text().then(function (text) {
         if (!text) return {};
         try { return JSON.parse(text); }

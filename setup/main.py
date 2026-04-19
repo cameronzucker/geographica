@@ -33,8 +33,40 @@ from setup.pipeline_steps import ALL_PIPELINE_STEPS, filter_active_steps
 # Constants
 # ---------------------------------------------------------------------------
 
-# CSRF token — generated once at startup
-CSRF_TOKEN = secrets.token_hex(32)
+# CSRF token — persisted across uvicorn restarts on a reboot-cleared path
+# (tmpfs on /run). Prevents the 2026-04-19 beta symptom where a restart of
+# setup.sh regenerated the in-memory token, stranding any open browser tab
+# with a stale token that every POST then 403'd on.
+#
+# The persisted location is NOT user-visible and lives on tmpfs, so it
+# naturally clears on reboot. Permissions are 0600; the file is owned by
+# whatever user runs setup.sh. This is a local-only wizard (binds
+# 127.0.0.1), so the "token stable across restarts" risk is negligible
+# compared to "beta tester sees infinite 403 loops and gives up."
+def _load_or_create_csrf_token() -> str:
+    token_dir = Path("/run/geographica-setup")
+    token_path = token_dir / "csrf-token"
+    try:
+        if token_path.exists():
+            existing = token_path.read_text().strip()
+            if len(existing) == 64 and all(c in "0123456789abcdef" for c in existing):
+                return existing
+    except OSError:
+        pass
+    # Generate + persist. Best-effort; if /run/... is unwritable (unusual)
+    # we still return a fresh token — wizard keeps working, just loses the
+    # cross-restart survivability.
+    token = secrets.token_hex(32)
+    try:
+        token_dir.mkdir(parents=True, exist_ok=True)
+        token_path.write_text(token)
+        os.chmod(token_path, 0o600)
+    except OSError:
+        pass
+    return token
+
+
+CSRF_TOKEN = _load_or_create_csrf_token()
 
 # ---------------------------------------------------------------------------
 # .env key sets and parser
