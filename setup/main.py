@@ -86,21 +86,6 @@ def _check_cgroup_memory() -> dict:
                 "fix_hint": "Verify Docker is running: sudo systemctl start docker"}
 
 
-# FIX_REGISTRY — ONLY these dependencies can be "fixed" via the API.
-# Each entry maps a dependency name to the exact command (as a list of strings)
-# that will be executed. NEVER shell=True, NEVER accept user strings.
-FIX_REGISTRY: dict[str, list[str]] = {
-    "docker": ["sudo", "apt", "install", "-y", "docker.io"],
-    "docker-compose": ["sudo", "apt", "install", "-y", "docker-compose"],
-    "python3-venv": ["sudo", "apt", "install", "-y", "python3-venv"],
-    "gdal-bin": ["sudo", "apt", "install", "-y", "gdal-bin"],
-    "osmium-tool": ["sudo", "apt", "install", "-y", "osmium-tool"],
-    "gpsd": ["sudo", "apt", "install", "-y", "gpsd", "gpsd-clients"],
-    "wget": ["sudo", "apt", "install", "-y", "wget"],
-    "curl": ["sudo", "apt", "install", "-y", "curl"],
-    "unzip": ["sudo", "apt", "install", "-y", "unzip"],
-}
-
 # Preflight dependency checks — command to run and what constitutes success
 PREFLIGHT_CHECKS: list[dict] = [
     {"name": "docker", "check_cmd": ["docker", "--version"], "label": "Docker",
@@ -225,10 +210,6 @@ class PathRequest(BaseModel):
     path: str
 
 
-class FixDependencyRequest(BaseModel):
-    dependency: str
-
-
 class CreateDirectoryRequest(BaseModel):
     path: str
 
@@ -332,31 +313,6 @@ async def get_preflight():
         }
         results.append(result)
     return {"checks": results}
-
-
-@app.post("/api/fix-dependency")
-async def post_fix_dependency(body: FixDependencyRequest):
-    """Install a missing dependency using the FIX_REGISTRY.
-
-    SECURITY: Only dependencies in FIX_REGISTRY can be installed.
-    Uses create_subprocess_exec with argument lists, never shell=True.
-    """
-    dep = body.dependency
-    if dep not in FIX_REGISTRY:
-        raise HTTPException(status_code=400, detail=f"Unknown dependency: {dep}")
-
-    cmd = FIX_REGISTRY[dep]
-    output_lines: list[str] = []
-
-    def on_output(source: str, data: bytes):
-        output_lines.append(data.decode("utf-8", errors="replace"))
-
-    exit_code = await run_command(
-        args=cmd,
-        cwd="/tmp",
-        on_output=on_output,
-    )
-    return {"ok": exit_code == 0, "exit_code": exit_code, "output": "".join(output_lines)}
 
 
 @app.post("/api/create-directory")

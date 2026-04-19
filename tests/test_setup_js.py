@@ -67,3 +67,17 @@ def test_error_shown_in_main_panel_not_only_log():
     text = JS.read_text()
     assert "showPipelineError" in text
     assert "#error-actions" in text
+
+
+def test_js_has_no_fix_dependency_button():
+    text = JS.read_text()
+    assert "/api/fix-dependency" not in text
+    assert "fixDependency" not in text, \
+        "fixDependency still present in setup.js — Task 38 requires deletion"
+
+
+def test_js_has_no_fix_dependency_symbol():
+    text = JS.read_text()
+    for forbidden in ("fixDependency", "fix_dependency", "fixDep", "FIX_REGISTRY"):
+        assert forbidden not in text, f"{forbidden} still present in setup.js"
+    assert 'class="btn-fix"' not in text

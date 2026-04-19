@@ -657,24 +657,40 @@
         item.appendChild(createEl('span', 'preflight-name', check.label || check.name));
 
         if (check.status === 'ok') {
-          item.appendChild(createEl('span', 'preflight-version', check.version || ''));
+          item.appendChild(createEl('span', 'preflight-version', check.message || ''));
         } else {
           allOk = false;
           item.appendChild(createEl('span', 'preflight-version', check.message || 'Not available'));
-          // Add fix button if dependency is fixable
-          var actionDiv = createEl('div', 'preflight-action');
-          var fixBtn = document.createElement('button');
-          fixBtn.className = 'btn-fix';
-          fixBtn.textContent = 'Install';
-          fixBtn.setAttribute('data-dep', check.name);
-          fixBtn.addEventListener('click', function () {
-            fixDependency(check.name, fixBtn);
-          });
-          actionDiv.appendChild(fixBtn);
-          item.appendChild(actionDiv);
         }
         list.appendChild(item);
       });
+
+      if (!allOk) {
+        var remedyBox = $('#preflight-remedy');
+        if (!remedyBox) {
+          remedyBox = createEl('div', 'preflight-remedy');
+          remedyBox.id = 'preflight-remedy';
+          var preflightList = $('#preflight-list');
+          if (preflightList && preflightList.parentNode) {
+            preflightList.parentNode.insertBefore(remedyBox, preflightList);
+          }
+        }
+        remedyBox.textContent = '';
+        var msg = createEl('div', null,
+          'To install missing dependencies, run this in a terminal:');
+        var pre = createEl('pre', 'remedy-cmd', 'sudo ./bootstrap.sh');
+        var copyBtn = createEl('button', 'btn btn-secondary btn-small', 'Copy');
+        copyBtn.addEventListener('click', function () {
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText('sudo ./bootstrap.sh');
+          }
+          copyBtn.textContent = 'Copied';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 2000);
+        });
+        remedyBox.appendChild(msg);
+        remedyBox.appendChild(pre);
+        remedyBox.appendChild(copyBtn);
+      }
 
       var actionsEl = $('#preflight-actions');
       actionsEl.style.display = '';
@@ -692,25 +708,6 @@
       errItem.appendChild(createEl('span', 'preflight-name', 'Preflight check failed: ' + err.message));
       list.appendChild(errItem);
       $('#preflight-actions').style.display = '';
-    });
-  }
-
-  function fixDependency(depName, btn) {
-    btn.disabled = true;
-    btn.textContent = 'Installing...';
-
-    api('POST', '/api/fix-dependency', { dependency: depName }).then(function (data) {
-      if (data.ok) {
-        btn.textContent = 'Installed';
-        // Re-run preflight after a short delay
-        setTimeout(runPreflightChecks, 500);
-      } else {
-        btn.textContent = 'Failed';
-        btn.disabled = false;
-      }
-    }).catch(function () {
-      btn.textContent = 'Failed';
-      btn.disabled = false;
     });
   }
 

@@ -370,30 +370,6 @@ class TestPreflightEndpoint:
             assert check["status"] in ("ok", "missing", "error")
 
 
-class TestFixDependencyEndpoint:
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        self.client = TestClient(app)
-        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
-
-    def test_requires_csrf(self):
-        resp = self.client.post("/api/fix-dependency",
-            json={"dependency": "docker"})
-        assert resp.status_code == 403
-
-    def test_rejects_unknown_dependency(self):
-        resp = self.client.post("/api/fix-dependency",
-            json={"dependency": "rm -rf /"},
-            headers=self.headers)
-        assert resp.status_code == 400
-
-    def test_rejects_shell_injection(self):
-        resp = self.client.post("/api/fix-dependency",
-            json={"dependency": "docker; rm -rf /"},
-            headers=self.headers)
-        assert resp.status_code == 400
-
-
 class TestCreateDirectoryEndpoint:
     @pytest.fixture(autouse=True)
     def setup(self):
@@ -758,3 +734,16 @@ class TestPreflightCoversAllDeps:
         from setup.main import PREFLIGHT_CHECKS
         for entry in PREFLIGHT_CHECKS:
             assert "fix_hint" in entry, f"{entry.get('name','?')} missing fix_hint"
+
+
+class TestFixDependencyRemoved:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.client = TestClient(app)
+        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+    def test_fix_dependency_endpoint_returns_404(self):
+        resp = self.client.post("/api/fix-dependency",
+                                json={"dependency": "docker"},
+                                headers=self.headers)
+        assert resp.status_code == 404
