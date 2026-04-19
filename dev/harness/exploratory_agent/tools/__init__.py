@@ -24,3 +24,4 @@ def register(name: str, factory: Callable, schema: dict) -> None:
 # Order doesn't matter but the side effect is required.
 from . import browser  # noqa: F401,E402
 from . import api  # noqa: F401,E402
+from . import container  # noqa: F401,E402

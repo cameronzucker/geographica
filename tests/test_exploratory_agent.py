@@ -136,3 +136,87 @@ def test_api_request_truncates_body_at_8kb(monkeypatch):
     t = ApiTools(base_url="http://x:18099", csrf_token_getter=lambda: None)
     result = t.api_request_sync("GET", "/api/system", csrf="skip")
     assert len(result["body_text"]) == 8_192
+
+
+def test_container_tools_registered():
+    from dev.harness.exploratory_agent.tools import TOOL_REGISTRY
+    for name in ("container_run_command", "container_restart_wizard",
+                 "container_fs_write", "container_fs_read"):
+        assert name in TOOL_REGISTRY
+
+
+def test_container_run_command_shells_out_via_lxc(monkeypatch):
+    from dev.harness.exploratory_agent.tools.container import ContainerTools
+    import subprocess
+
+    captured = {}
+
+    def fake_run(argv, **kw):
+        captured["argv"] = argv
+        r = MagicMock(returncode=0, stdout=b"ok\n", stderr=b"")
+        return r
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ct = ContainerTools(container="mycontainer")
+    result = ct.container_run_command_sync("echo hi")
+    assert captured["argv"][:4] == ["lxc", "exec", "mycontainer", "--"]
+    assert "echo hi" in " ".join(captured["argv"])
+    assert result["exit"] == 0
+    assert result["stdout"] == "ok\n"
+
+
+def test_container_fs_write_refuses_paths_outside_allowed_roots():
+    from dev.harness.exploratory_agent.tools.container import ContainerTools
+    ct = ContainerTools(container="c")
+    r = ct.container_fs_write_sync("/etc/passwd", "nope")
+    assert r["ok"] is False
+    assert "not allowed" in r["error"]
+
+
+def test_container_fs_write_allows_srv_tmp_run(monkeypatch):
+    from dev.harness.exploratory_agent.tools.container import ContainerTools
+    import subprocess
+
+    def fake_run(argv, **kw):
+        r = MagicMock(returncode=0, stdout=b"", stderr=b"")
+        return r
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ct = ContainerTools(container="c")
+    for p in ("/srv/foo", "/tmp/bar", "/run/x"):
+        assert ct.container_fs_write_sync(p, "content")["ok"] is True
+
+
+def test_container_restart_wizard_stops_and_starts_unit(monkeypatch):
+    from dev.harness.exploratory_agent.tools.container import ContainerTools
+    import subprocess
+
+    calls = []
+
+    def fake_run(argv, **kw):
+        calls.append(argv)
+        return MagicMock(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ct = ContainerTools(container="c")
+    r = ct.container_restart_wizard_sync()
+    assert r["ok"] is True
+    assert len(calls) >= 1
+
+
+def test_container_restart_unit_name_matches_wizard_ci_sh():
+    """Adversarial-review 1.5: wizard-ci.sh systemd-run --unit=NAME must
+    match the WIZARD_SYSTEMD_UNIT constant in container.py. Soft-coupling
+    guard against accidental drift.
+    """
+    import re
+    from pathlib import Path
+    ci_sh = (Path(__file__).parent.parent / "dev" / "harness" / "wizard-ci.sh").read_text()
+    m = re.search(r"--unit=(\S+)", ci_sh)
+    assert m, "wizard-ci.sh no longer uses systemd-run --unit=..."
+    ci_unit = m.group(1).strip("'\"")
+    from dev.harness.exploratory_agent.tools.container import WIZARD_SYSTEMD_UNIT
+    # ci_sh may or may not include the `.service` suffix. Accept both.
+    assert ci_unit == WIZARD_SYSTEMD_UNIT or ci_unit + ".service" == WIZARD_SYSTEMD_UNIT, (
+        f"wizard-ci.sh uses unit {ci_unit!r}; ContainerTools uses {WIZARD_SYSTEMD_UNIT!r}"
+    )
