@@ -198,7 +198,7 @@ INACTIVITY_TIMEOUT = 30 * 60
 # ---------------------------------------------------------------------------
 # Progress state for WebSocket reconnect
 # ---------------------------------------------------------------------------
-progress_buffer: deque = deque(maxlen=100)
+progress_buffer: deque = deque(maxlen=5000)
 current_state: dict = {"step": "idle", "substep": None, "progress_pct": 0, "running": False}
 connected_websockets: list[WebSocket] = []
 

@@ -749,6 +749,11 @@ class TestFixDependencyRemoved:
         assert resp.status_code == 404
 
 
+def test_progress_buffer_maxlen_is_5000():
+    from setup.main import progress_buffer
+    assert progress_buffer.maxlen == 5000
+
+
 def test_launch_builds_pipeline_profile_when_image_missing(tmp_path, monkeypatch):
     from setup import main as mod
     recorded = []
