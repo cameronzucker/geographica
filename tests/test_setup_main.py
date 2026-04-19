@@ -576,3 +576,42 @@ class TestRunPipelineInvokesSubprocess:
 
         assert mod.current_state["running"] is False
         assert mod.current_state["step"] == "error"
+
+
+class TestStartTOCTOU:
+    @pytest.mark.asyncio
+    async def test_start_toctou_under_real_await(self, monkeypatch):
+        """Forces an async yield point, fires two concurrent requests,
+        asserts exactly one wins (200) + one gets 409."""
+        import asyncio as _a
+        import httpx
+        from setup.main import app, CSRF_TOKEN, current_state
+        current_state["running"] = False
+
+        monkeypatch.setattr("setup.main.validate_bbox", lambda b: True)
+
+        spawn_count = [0]
+
+        async def fake_pipeline(body):
+            spawn_count[0] += 1
+            await _a.Event().wait()  # hang so we observe both requests hit the gate
+
+        monkeypatch.setattr("setup.main._run_pipeline", fake_pipeline)
+
+        payload = {"bbox": "-124,31,-102,49", "data_path": "/tmp", "layers": {}}
+        headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+            async def fire():
+                return await c.post("/api/start", json=payload, headers=headers)
+
+            t1 = _a.create_task(fire())
+            await _a.sleep(0.05)
+            t2 = _a.create_task(fire())
+            await _a.sleep(0.05)
+            r1, r2 = await _a.gather(t1, t2)
+
+        current_state["running"] = False  # reset
+        statuses = sorted([r1.status_code, r2.status_code])
+        assert statuses == [200, 409], f"expected one 200 + one 409, got {statuses}"
+        assert spawn_count[0] == 1

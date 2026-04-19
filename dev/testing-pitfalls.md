@@ -213,3 +213,7 @@ When a coroutine iterates a shared `collections.deque` (e.g., to replay buffered
 ## Subprocess orphan: grandchildren survive wizard shutdown
 When a FastAPI app uses `asyncio.create_subprocess_exec` without `start_new_session=True`/`preexec_fn=os.setsid`, and a SIGTERM handler attempts to clean up children by signaling only direct PIDs, intermediate shells (`bash script.sh`) die but grandchildren (`openssl`, `gdal_translate`) persist, reparented to init. Tests should spawn a subprocess chain and assert that after `shutdown_children()`, `pgrep -f <grandchild>` returns empty. The fix is `start_new_session=True` + `os.killpg(pgid, SIGTERM)`.
 *Found in:* `setup/runner.py:121-127,150-156` -- `run_command` spawns with default process group; `shutdown_children` signals direct children only.
+
+## TOCTOU in async endpoints — check-then-mutate across await points
+When a FastAPI handler reads `state["running"]`, checks it, then schedules a background task via `asyncio.create_task(...)` and only THEN sets the flag to True (or sets it inside the spawned coroutine), two concurrent requests both pass the check before either writes. Tests should fire N concurrent POSTs to the gating endpoint and assert exactly one task ran (and the others returned 409). Fix: set the flag synchronously under an `asyncio.Lock` INSIDE the handler, before scheduling any task.
+*Found in:* `setup/main.py:446-455` — /api/start TOCTOU allows concurrent pipelines.

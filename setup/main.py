@@ -81,6 +81,9 @@ progress_buffer: deque = deque(maxlen=100)
 current_state: dict = {"step": "idle", "substep": None, "progress_pct": 0, "running": False}
 connected_websockets: list[WebSocket] = []
 
+# Lock guarding current_state["running"] — prevents TOCTOU on /api/start
+_start_lock = asyncio.Lock()
+
 # Track last activity
 _last_activity: float = time.time()
 
@@ -471,9 +474,11 @@ async def post_start(body: StartRequest):
     """Start the download/build pipeline as a background task."""
     if not validate_bbox(body.bbox):
         raise HTTPException(status_code=400, detail="Invalid bbox")
-    if current_state["running"]:
-        raise HTTPException(status_code=409, detail="Pipeline already running")
-
+    async with _start_lock:
+        if current_state["running"]:
+            raise HTTPException(status_code=409, detail="Pipeline already running")
+        current_state["running"] = True
+        current_state["step"] = "starting"
     asyncio.create_task(_run_pipeline(body))
     return {"ok": True, "steps": [s.id for s in ALL_PIPELINE_STEPS]}
 
