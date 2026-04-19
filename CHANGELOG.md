@@ -7,6 +7,13 @@ project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries
 from v1.1.0 onward are generated automatically by `release-please` from
 Conventional Commits.
 
+## [1.3.1](https://github.com/cameronzucker/geographica/compare/v1.3.0...v1.3.1) (2026-04-19)
+
+
+### Bug Fixes
+
+* **setup:** wizard needs `websockets` package; surface WS failures in UI; harness probes venv deps ([ef28cd8](https://github.com/cameronzucker/geographica/commit/ef28cd861259c5e5f77ab84a155024ca94998ac3))
+
 ## [1.3.0](https://github.com/cameronzucker/geographica/compare/v1.2.1...v1.3.0) (2026-04-19)
 
 
