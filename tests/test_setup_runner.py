@@ -247,3 +247,17 @@ class TestShutdownChildren:
         code = await code_future
         # Process was terminated, exit code should be negative (signal)
         assert code != 0
+
+
+# ---------------------------------------------------------------------------
+# TestPlanetilerPin
+# ---------------------------------------------------------------------------
+class TestPlanetilerPin:
+    def test_version_constant_is_pinned(self):
+        from setup.runner import PLANETILER_VERSION
+        assert PLANETILER_VERSION == "0.10.2"
+
+    def test_docker_image_tag_matches_version(self):
+        cmd = planetiler_cmd("/tmp/a.osm.pbf", "/tmp/out.mbtiles", "4g")
+        image = [a for a in cmd if "planetiler" in a][-1]
+        assert image.endswith(":0.10.2")

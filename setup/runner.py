@@ -44,6 +44,9 @@ class Checkpoint:
 # ---------------------------------------------------------------------------
 # Command builders — return list[str], NEVER shell strings
 # ---------------------------------------------------------------------------
+PLANETILER_VERSION = "0.10.2"
+
+
 def geofabrik_url(state_slug: str) -> str:
     """Return Geofabrik download URL for a US state slug."""
     return f"https://download.geofabrik.de/north-america/us/{state_slug}-latest.osm.pbf"
@@ -58,7 +61,7 @@ def planetiler_cmd(pbf_path: str, output_path: str, heap: str) -> list[str]:
         "-v", f"{pbf.parent}:/data/input",
         "-v", f"{output.parent}:/data/output",
         "-e", f"JAVA_TOOL_OPTIONS=-Xmx{heap}",
-        "ghcr.io/onthegomap/planetiler:latest",
+        f"ghcr.io/onthegomap/planetiler:{PLANETILER_VERSION}",
         "--force",
         f"--osm-path=/data/input/{pbf.name}",
         f"--output=/data/output/{output.name}",
