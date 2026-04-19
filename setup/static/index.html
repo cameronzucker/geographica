@@ -75,7 +75,7 @@
     <!-- Step 2: Region & Data -->
     <div class="step" id="step-2" style="display:none">
       <h2>Region &amp; Data</h2>
-      <p class="subtitle">Each layer has independent coverage. Configure from broadest to most detailed.</p>
+      <p class="subtitle">All layers use the bounding box above by default. Optionally customize each layer's coverage below.</p>
 
       <div class="field-group">
         <label for="preset-select">Region Preset</label>
@@ -96,7 +96,6 @@
       <div class="layer green">
         <div class="layer-header">
           <div><strong>1. Basemap Coverage</strong> <span class="layer-desc">Vector tiles + geocoding + routing</span></div>
-          <span class="badge">Broadest area</span>
         </div>
         <div class="layer-body">
           <div class="layer-info">
@@ -105,6 +104,18 @@
               <button class="source-btn active" data-layer="basemap" data-value="download">Download</button>
               <button class="source-btn" data-layer="basemap" data-value="skip">Skip</button>
             </div>
+            <details class="layer-coverage">
+              <summary>Customize coverage for this layer</summary>
+              <label>
+                <input type="checkbox" class="same-as-basemap" data-layer="basemap" checked>
+                Use global bounding box
+              </label>
+              <div class="custom-bbox-group" style="display:none">
+                <label for="bbox-basemap">Custom bbox (west,south,east,north):</label>
+                <input type="text" id="bbox-basemap" class="bbox-override" placeholder="-114.0,33.0,-112.0,34.0">
+                <span class="field-hint bbox-hint" id="bbox-hint-basemap"></span>
+              </div>
+            </details>
           </div>
         </div>
       </div>
@@ -113,7 +124,6 @@
       <div class="layer blue">
         <div class="layer-header">
           <div><strong>2. Base Imagery</strong> <span class="layer-desc">Satellite/aerial background</span></div>
-          <span class="badge">Medium area</span>
         </div>
         <div class="layer-body">
           <div class="layer-info">
@@ -128,6 +138,18 @@
               <input type="range" id="base-imagery-zoom" min="10" max="17" value="15">
               <span class="zoom-val" id="base-imagery-zoom-val">z15</span>
             </div>
+            <details class="layer-coverage">
+              <summary>Customize coverage for this layer</summary>
+              <label>
+                <input type="checkbox" class="same-as-basemap" data-layer="base_imagery" checked>
+                Use global bounding box
+              </label>
+              <div class="custom-bbox-group" style="display:none">
+                <label for="bbox-base_imagery">Custom bbox (west,south,east,north):</label>
+                <input type="text" id="bbox-base_imagery" class="bbox-override" placeholder="-112.0,35.0,-111.5,35.5">
+                <span class="field-hint bbox-hint" id="bbox-hint-base_imagery"></span>
+              </div>
+            </details>
           </div>
         </div>
       </div>
@@ -136,7 +158,6 @@
       <div class="layer purple">
         <div class="layer-header">
           <div><strong>3. Detail Imagery</strong> <span class="layer-desc">High-res via M2M or Copernicus</span></div>
-          <span class="badge">Smallest area</span>
         </div>
         <div class="layer-body">
           <div class="layer-info">
@@ -147,6 +168,18 @@
               <button class="source-btn" data-layer="detail_imagery" data-value="skip">Skip</button>
             </div>
             <div class="warning-note" id="detail-cred-warning">Requires API credentials (configured in next step)</div>
+            <details class="layer-coverage">
+              <summary>Customize coverage for this layer</summary>
+              <label>
+                <input type="checkbox" class="same-as-basemap" data-layer="detail_imagery" checked>
+                Use global bounding box
+              </label>
+              <div class="custom-bbox-group" style="display:none">
+                <label for="bbox-detail_imagery">Custom bbox (west,south,east,north):</label>
+                <input type="text" id="bbox-detail_imagery" class="bbox-override" placeholder="-112.1,35.2,-112.0,35.3">
+                <span class="field-hint bbox-hint" id="bbox-hint-detail_imagery"></span>
+              </div>
+            </details>
           </div>
         </div>
       </div>
@@ -155,7 +188,6 @@
       <div class="layer orange">
         <div class="layer-header">
           <div><strong>4. Elevation Data</strong> <span class="layer-desc">Terrain-RGB for 3D + hillshade</span></div>
-          <span class="badge">Same as basemap</span>
         </div>
         <div class="layer-body">
           <div class="layer-info">
