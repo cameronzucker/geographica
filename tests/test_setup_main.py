@@ -798,6 +798,14 @@ def test_launch_builds_pipeline_profile_when_image_missing(tmp_path, monkeypatch
     env.write_text(f"DATA_HOST_PATH={tmp_path}\n")
     monkeypatch.setattr(mod, "ENV_PATH", str(env))
 
+    # Isolate the `./data` symlink retarget to tmp_path. post_launch resolves
+    # the link path via `Path.cwd() / "data"` (so setup.sh invoked from the
+    # repo root retargets the repo's symlink). Without this chdir, pytest
+    # inherits the repo as cwd and would hijack the real ./data symlink to
+    # a pytest tmpdir that gets cleaned up after the test, leaving a
+    # dangling symlink that breaks the next `docker compose up`.
+    monkeypatch.chdir(tmp_path)
+
     client = TestClient(mod.app)
     resp = client.post("/api/launch", headers={"X-CSRF-Token": mod.CSRF_TOKEN})
     assert resp.status_code == 200
@@ -807,6 +815,18 @@ def test_launch_builds_pipeline_profile_when_image_missing(tmp_path, monkeypatch
         for c in recorded
     )
     assert has_pipeline_build, f"No pipeline build recorded: {recorded}"
+
+
+def test_launch_test_has_cwd_isolation():
+    """Regression tripwire: the Task 42 pipeline-build test MUST isolate cwd
+    via monkeypatch.chdir(tmp_path), otherwise it hijacks the real repo's
+    ./data symlink (post_launch uses Path.cwd() / "data" from Task 21)."""
+    import inspect
+    src = inspect.getsource(test_launch_builds_pipeline_profile_when_image_missing)
+    assert "monkeypatch.chdir(tmp_path)" in src, (
+        "test_launch_builds_pipeline_profile_when_image_missing must "
+        "monkeypatch.chdir(tmp_path) to prevent ./data symlink hijack."
+    )
 
 
 class TestAllHealthyRegex:
