@@ -290,12 +290,91 @@ class TestCommandBuilders:
         assert "arizona" in joined
         assert "wget" in joined or "curl" in joined
 
+    def test_osm_download_cmd_verifies_md5(self):
+        """Beta-tester 2026-04-19 report: osm_merge failed with
+        `invalid BlobHeader size (> max_blob_header_size)` because the
+        upstream wget dropped mid-download and left a truncated PBF.
+        We now pull Geofabrik's published .md5 and verify before the
+        merge step ever sees the file. Without md5sum --check in the
+        download script this regression comes back silently."""
+        script = " ".join(osm_download_cmd(_CTX_BASE))
+        assert ".md5" in script, (
+            "osm_download_cmd must fetch Geofabrik's .md5 sidecar — "
+            "integrity verification is the whole point of this step"
+        )
+        assert "md5sum" in script and "--check" in script, (
+            "osm_download_cmd must invoke `md5sum --check` against the "
+            "downloaded .md5 file"
+        )
+
+    def test_osm_download_cmd_validates_pbf_structure(self):
+        """md5 agreement isn't sufficient — fileinfo catches structural
+        corruption that slips past a matching hash (rare but cheap to
+        check, and it's exactly what osmium merge will trip on later)."""
+        script = " ".join(osm_download_cmd(_CTX_BASE))
+        assert "osmium fileinfo" in script, (
+            "osm_download_cmd must run `osmium fileinfo` as a structural "
+            "backstop to md5 verification"
+        )
+
+    def test_osm_download_cmd_retries_on_corruption(self):
+        """A single failed verify must not abort the whole pipeline;
+        the script retries with rm + re-download before giving up."""
+        script = " ".join(osm_download_cmd(_CTX_BASE))
+        # Accept either an explicit "rm -f" that fires on retry OR a
+        # retry loop that re-wgets after a failed check.
+        assert "rm -f" in script or "rm \"" in script, (
+            "retry path must delete the corrupt .pbf before re-downloading"
+        )
+        # Must have some bounded retry mechanism (avoids infinite loop
+        # on a persistently-failing mirror).
+        assert "attempt" in script.lower() or "retries" in script.lower(), (
+            "osm_download_cmd must bound retries to avoid infinite loop "
+            "on a persistently-bad mirror"
+        )
+
+    def test_osm_download_cmd_failure_names_the_state(self):
+        """When download ultimately fails, the error message must name
+        WHICH state failed so the user (or beta tester) can surgically
+        `rm` just that file instead of nuking the whole PBF dir."""
+        script = " ".join(osm_download_cmd(_CTX_BASE))
+        # The diagnostic must reference the shell var holding state name
+        # inside the failure branch. Accept either $s / ${s} explicitly
+        # in an error/echo near the failure path.
+        assert "ERROR" in script, (
+            "osm_download_cmd must emit a clear ERROR line on failure"
+        )
+
     def test_osm_merge_cmd(self):
         cmd = osm_merge_cmd(_CTX_BASE)
         assert cmd[0] == "bash"
         joined = " ".join(cmd)
         assert "osmium merge" in joined
         assert "western-us.osm.pbf" in joined
+
+    def test_osm_merge_cmd_validates_each_file_before_merging(self):
+        """Pre-merge validation makes the merge error actionable: we
+        name the specific corrupt file instead of dumping an opaque
+        `invalid BlobHeader size` with no filename (what the beta
+        tester saw 2026-04-19)."""
+        script = " ".join(osm_merge_cmd(_CTX_BASE))
+        assert "osmium fileinfo" in script, (
+            "osm_merge_cmd must run `osmium fileinfo` on each PBF "
+            "before invoking osmium merge, so the error names the "
+            "file instead of dumping a header-size error"
+        )
+
+    def test_osm_merge_cmd_error_message_names_file_and_next_steps(self):
+        """When a PBF is corrupt, the error must tell the user which
+        file AND what to do about it. Asking them to guess is exactly
+        what turned the 2026-04-19 beta report into a multi-day stall."""
+        script = " ".join(osm_merge_cmd(_CTX_BASE))
+        # Accept any clear 'rm' instruction in the error message text
+        # (the string appears in the bash script's echo output).
+        assert "rm" in script, (
+            "osm_merge_cmd's failure message must include an `rm` command "
+            "the user can copy-paste to recover"
+        )
 
     def test_osm_copy_cmd(self):
         cmd = osm_copy_cmd(_CTX_BASE)

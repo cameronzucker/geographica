@@ -185,29 +185,111 @@ def shutdown_children() -> None:
 # ---------------------------------------------------------------------------
 
 def osm_download_cmd(ctx) -> list[str]:
-    """Download Geofabrik state PBFs via a wget for-loop.
-    States are hardcoded to the 11 western US the project targets."""
+    """Download Geofabrik state PBFs with MD5 + structural verification.
+
+    Each state's .pbf is checked against Geofabrik's published .md5 and
+    structurally validated with `osmium fileinfo` before we move on. A
+    truncated or corrupt download is deleted and retried, up to 3
+    attempts per state. On persistent failure the error names the
+    offending state so a beta tester can surgically recover.
+
+    Context for why this isn't just `wget -c`: the 2026-04-19 beta
+    report was `[ERROR] Merge OSM extracts: PBF error: invalid
+    BlobHeader size (> max_blob_header_size)` — `wget -c` had resumed
+    into a truncated file from a dropped connection and left a PBF
+    that md5 would have flagged but the download step didn't check.
+    The merge step then blew up with no indication of WHICH file was
+    corrupt. Now: verify at download-time, name the state on failure.
+    """
     states = ("arizona california colorado idaho montana nevada "
               "new-mexico oregon utah washington wyoming")
     out = f"{ctx['data_path']}/pbf"
+    url_base = "https://download.geofabrik.de/north-america/us"
     script = (
-        f"set -e; mkdir -p '{out}'; cd '{out}'; "
-        f"for s in {states}; do "
-        f"  wget -c --no-verbose "
-        f"  \"https://download.geofabrik.de/north-america/us/${{s}}-latest.osm.pbf\"; "
-        f"done"
+        f"set -eu\n"
+        f"mkdir -p '{out}'\n"
+        f"cd '{out}'\n"
+        f"URL_BASE='{url_base}'\n"
+        f"STATES='{states}'\n"
+        f"MAX_ATTEMPTS=3\n"
+        f'\n'
+        f'download_and_verify() {{\n'
+        f'  local s=$1\n'
+        f'  local pbf="${{s}}-latest.osm.pbf"\n'
+        f'  local md5file="${{pbf}}.md5"\n'
+        f'  local attempt\n'
+        f'  for attempt in $(seq 1 $MAX_ATTEMPTS); do\n'
+        f'    echo "${{s}}: download attempt ${{attempt}}/${{MAX_ATTEMPTS}}"\n'
+        f'    if ! wget -c --no-verbose --tries=2 --timeout=60 '
+        f'"${{URL_BASE}}/${{pbf}}"; then\n'
+        f'      echo "${{s}}: wget failed, removing partial and retrying"\n'
+        f'      rm -f "$pbf"\n'
+        f'      continue\n'
+        f'    fi\n'
+        f'    # Always refetch the .md5 (it is small + must match the current .pbf)\n'
+        f'    if ! wget -q -O "$md5file" "${{URL_BASE}}/${{pbf}}.md5"; then\n'
+        f'      echo "${{s}}: .md5 fetch failed, retrying"\n'
+        f'      rm -f "$md5file" "$pbf"\n'
+        f'      continue\n'
+        f'    fi\n'
+        f'    # md5sum --check expects "<hash>  <filename>" format, which\n'
+        f'    # geofabrik already provides. Run --status for quiet mode.\n'
+        f'    if ! md5sum --check --status "$md5file" 2>/dev/null; then\n'
+        f'      echo "${{s}}: md5 mismatch (attempt ${{attempt}}) — redownloading"\n'
+        f'      rm -f "$pbf" "$md5file"\n'
+        f'      continue\n'
+        f'    fi\n'
+        f'    # Structural backstop. Cheap; catches the rare "md5 matches a\n'
+        f'    # file that osmium still cannot parse" case.\n'
+        f'    if ! osmium fileinfo --extended=false "$pbf" >/dev/null 2>&1; then\n'
+        f'      echo "${{s}}: fileinfo failed despite matching md5 — redownloading"\n'
+        f'      rm -f "$pbf" "$md5file"\n'
+        f'      continue\n'
+        f'    fi\n'
+        f'    echo "${{s}}: OK (attempt ${{attempt}})"\n'
+        f'    return 0\n'
+        f'  done\n'
+        f'  echo "ERROR: ${{s}}: PBF integrity check failed after '
+        f'${{MAX_ATTEMPTS}} attempts — check network / Geofabrik mirror" >&2\n'
+        f'  return 1\n'
+        f'}}\n'
+        f'\n'
+        f'for s in $STATES; do\n'
+        f'  download_and_verify "$s" || exit 1\n'
+        f'done\n'
     )
     return ["bash", "-c", script]
 
 
 def osm_merge_cmd(ctx) -> list[str]:
-    """Merge all state PBFs into western-us.osm.pbf."""
+    """Merge all state PBFs into western-us.osm.pbf.
+
+    Pre-validates each PBF with `osmium fileinfo` so the error message
+    names the specific corrupt file + the exact `rm` command to recover.
+    Without this, `osmium merge` fails with an opaque "invalid BlobHeader
+    size" and the user has to delete all 11 PBFs blind (the beta tester's
+    2026-04-19 experience).
+    """
     out = f"{ctx['data_path']}/pbf"
-    return [
-        "bash", "-c",
-        f"set -e; cd '{out}' && osmium merge *-latest.osm.pbf "
-        f"-o western-us.osm.pbf --overwrite",
-    ]
+    script = (
+        f"set -eu\n"
+        f"cd '{out}'\n"
+        f'\n'
+        f'# Pre-validate every input so the error message is actionable.\n'
+        f'for f in *-latest.osm.pbf; do\n'
+        f'  if ! osmium fileinfo --extended=false "$f" >/dev/null 2>&1; then\n'
+        f'    echo "ERROR: corrupt PBF: {out}/${{f}}" >&2\n'
+        f'    echo "  Recover with:" >&2\n'
+        f'    echo "    rm \'{out}/\'${{f}} \'{out}/\'${{f}}.md5" >&2\n'
+        f'    echo "    rm \'{ctx["data_path"]}/.setup_checkpoint.json\'" >&2\n'
+        f'    echo "    ./setup.sh   # re-runs the wizard; download step will refetch" >&2\n'
+        f'    exit 1\n'
+        f'  fi\n'
+        f'done\n'
+        f'\n'
+        f"osmium merge *-latest.osm.pbf -o western-us.osm.pbf --overwrite\n"
+    )
+    return ["bash", "-c", script]
 
 
 def osm_copy_cmd(ctx) -> list[str]:
