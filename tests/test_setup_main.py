@@ -157,55 +157,48 @@ class TestConfigEndpoint:
 
 @pytest.fixture
 def fake_keyring_socket(tmp_path):
+    """Unix-socket mock for the keyring agent — matches the real agent's
+    one-message-per-connection protocol."""
     import socket
     import threading
     socket_path = tmp_path / "keyring.sock"
     captured = []
     stop_event = threading.Event()
 
-    def handle_conn(conn):
-        """Handle one connection: read newline-delimited messages until EOF."""
-        buf = b""
-        try:
-            while True:
-                chunk = conn.recv(4096)
-                if not chunk:
-                    break
-                buf += chunk
-                while b"\n" in buf:
-                    line, buf = buf.split(b"\n", 1)
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        msg = json.loads(line.decode())
-                        captured.append(msg)
-                        conn.sendall(b'{"ok":true}\n')
-                    except Exception:
-                        conn.sendall(b'{"ok":false,"error":"bad_json"}\n')
-        finally:
-            conn.close()
-
     def server():
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         srv.bind(str(socket_path))
         srv.listen(5)
         srv.settimeout(0.1)
-        while not stop_event.is_set():
-            try:
-                conn, _ = srv.accept()
-                t = threading.Thread(target=handle_conn, args=(conn,), daemon=True)
-                t.start()
-            except socket.timeout:
-                continue
-            except OSError:
-                break
-        srv.close()
+        try:
+            while not stop_event.is_set():
+                try:
+                    conn, _ = srv.accept()
+                except socket.timeout:
+                    continue
+                try:
+                    data = b""
+                    while b"\n" not in data:
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        data += chunk
+                    try:
+                        msg = json.loads(data.decode().strip())
+                        captured.append(msg)
+                        conn.sendall(b'{"ok":true}\n')
+                    except Exception:
+                        conn.sendall(b'{"ok":false,"error":"bad_json"}\n')
+                finally:
+                    conn.close()
+        finally:
+            srv.close()
 
     thread = threading.Thread(target=server, daemon=True)
     thread.start()
     yield socket_path, captured
     stop_event.set()
+    thread.join(timeout=2.0)
 
 
 class TestCredentialsEndpointKeyring:

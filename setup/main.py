@@ -312,12 +312,15 @@ async def post_config(body: ConfigRequest):
     return {"ok": True}
 
 
-async def _write_to_keyring(cred_type: str, fields: dict[str, str]) -> None:
-    """Send store-actions to the keyring agent over its Unix socket.
+async def _store_one(cred_type: str, key: str, value: str) -> None:
+    """Send a single store-action to the keyring agent (one connection per request).
 
-    Raises HTTPException(503) if the socket is unavailable — surfaces the
-    'did you forget to start the keyring agent?' case to the user.
-    Raises HTTPException(500) if the agent responds with ok=False.
+    Matches the agent's one-request-per-connection protocol (services/keyring-agent/agent.py)
+    and mirrors the canonical sync client at services/search/keyring_client.py::_request.
+
+    Raises HTTPException(503) if the socket is unavailable (actionable: points at
+    systemctl). Raises HTTPException(500) if the agent responds with ok=False or
+    closes unexpectedly.
     """
     try:
         reader, writer = await asyncio.open_unix_connection(KEYRING_SOCKET_PATH)
@@ -326,37 +329,54 @@ async def _write_to_keyring(cred_type: str, fields: dict[str, str]) -> None:
             status_code=503,
             detail=(
                 f"Keyring agent not reachable at {KEYRING_SOCKET_PATH} ({e}). "
-                "Start it with: sudo systemctl start geographica-keyring"
+                "Open a terminal and run: sudo systemctl start geographica-keyring"
             ),
         )
     try:
-        for key, value in fields.items():
-            if not value:
-                continue  # skip empty values — don't clobber the stored entry
-            msg = json.dumps({
-                "action": "store",
-                "type": cred_type,
-                "key": key,
-                "value": value,
-            }) + "\n"
-            writer.write(msg.encode("utf-8"))
-            await writer.drain()
-            resp_line = await reader.readline()
-            if not resp_line:
-                raise HTTPException(status_code=500,
-                                    detail=f"keyring agent closed socket mid-write ({cred_type}/{key})")
+        msg = json.dumps({
+            "action": "store",
+            "type": cred_type,
+            "key": key,
+            "value": value,
+        }) + "\n"
+        writer.write(msg.encode("utf-8"))
+        await writer.drain()
+        resp_line = await reader.readline()
+        if not resp_line:
+            raise HTTPException(
+                status_code=500,
+                detail=f"keyring agent closed socket without responding ({cred_type}/{key})",
+            )
+        try:
             resp = json.loads(resp_line.decode("utf-8"))
-            if not resp.get("ok"):
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"keyring agent rejected {cred_type}/{key}: {resp.get('error', 'unknown')}",
-                )
+        except json.JSONDecodeError as err:
+            raise HTTPException(
+                status_code=500,
+                detail=f"keyring agent returned invalid JSON ({cred_type}/{key}): {err}",
+            )
+        if not resp.get("ok"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"keyring agent rejected {cred_type}/{key}: {resp.get('error', 'unknown')}",
+            )
     finally:
         writer.close()
         try:
             await writer.wait_closed()
-        except Exception:
+        except (ConnectionResetError, BrokenPipeError, OSError):
             pass
+
+
+async def _write_to_keyring(cred_type: str, fields: dict[str, str]) -> None:
+    """Store each non-empty field with one-connection-per-store.
+
+    Empty values are skipped so partial form fills don't clobber previously
+    stored entries.
+    """
+    for key, value in fields.items():
+        if not value:
+            continue
+        await _store_one(cred_type, key, value)
 
 
 @app.post("/api/credentials")
