@@ -37,6 +37,49 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-19 — Setup process remediation (v1.2 cycle)
+
+**Scope:** 48 confirmed bugs (B1-B48) + 8 design decisions (D1-D8) + 3
+out-of-scope items (O1-O3) across setup/main.py, setup/config.py,
+setup/runner.py, setup/static/*, bootstrap.sh, docker-compose.yml,
+nginx/entrypoint.sh, README.md.
+
+**Outcome:** Wizard path is now end-to-end working on a fresh Debian
+Trixie LXD container (verified via dev/harness/wizard-ci.sh --smoke).
+Every .env VAR that docker-compose.yml references is emitted by
+generate_env. TLS vocabulary canonicalized to http|https|tailscale.
+Credentials flow through the keyring Unix socket (no more JSON
+plaintext). PIPELINE_STEPS lifted to a frozen dataclass registry with
+per-step command builders. Install-location UI finally wired through
+to the running stack via symlink re-target on launch.
+
+**Highlights:**
+- New dev/harness/{wizard-ci.sh, drive-wizard.mjs} for regression
+  testing the full setup flow in LXD.
+- tools/build-tippecanoe.sh + bootstrap asset-download to eliminate
+  the public-lands CAPTCHA + tippecanoe-from-source blockers.
+- Shared showError helper in setup.js; all saves now awaited before
+  navigation.
+- Preflight now covers tippecanoe, python pipeline deps, keyring
+  agent socket, cgroup memory, openssl. No more /api/fix-dependency
+  (users re-run sudo ./bootstrap.sh with copy-paste).
+- Memory profile retuned to "good neighbor" ceilings leaving 3-4 GB
+  host headroom (Cameron's architectural call during execution).
+- Process rigor (3-agent subagent-driven-development workflow) caught
+  several plan-level inconsistencies: tippecanoe 2.80.0 upstream-
+  missing, sudo -H missing for pip --user, test-class misclassification,
+  keyring socket protocol mismatch.
+
+**Deferred to v1.2 appendix (B44-B48):** response-shape unification,
+preflight row-level UI nit, stderr color coding, tls-scan tool-missing
+signal, post_credentials empty-field semantics (partially covered
+already by skip-empty in Task 23).
+
+**Pitfalls added to dev/testing-pitfalls.md:** TOCTOU in async
+endpoints (from Task 30).
+
+---
+
 ## 2026-04-19 — GX-01 adapter HAT: JLC bundle correctness + mechanical design paused
 
 **Released as:** ongoing (internal hardware work; no user-facing release)
