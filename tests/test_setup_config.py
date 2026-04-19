@@ -314,6 +314,18 @@ class TestValidatePath:
             result = validate_path(path)
             assert result["valid"] is False, f"Expected {path!r} to be rejected, got {result}"
 
+    def test_rejects_symlink_under_home(self, tmp_path, monkeypatch):
+        import config as cfg
+        monkeypatch.setattr(cfg, "ALLOWED_PATH_PREFIXES",
+                            tuple(list(cfg.ALLOWED_PATH_PREFIXES) + [str(tmp_path)]))
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        link = tmp_path / "link"
+        link.symlink_to(real_dir)
+        res = cfg.validate_path(str(link / "data"))
+        assert res["valid"] is False
+        assert "symlink" in res["reason"].lower()
+
 
 def _parse(env_text: str) -> dict[str, str]:
     return dict(l.split("=", 1) for l in env_text.strip().splitlines()

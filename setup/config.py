@@ -308,8 +308,12 @@ def validate_path(path_str: str) -> dict:
     if not any(_under(path_str, prefix) for prefix in ALLOWED_PATH_PREFIXES):
         return {"valid": False, "reason": f"Path not in allowed prefixes: {', '.join(ALLOWED_PATH_PREFIXES)}"}
 
-    # Reject symlinks — check each existing component
-    check_path = Path(resolved)
+    # Reject symlinks — walk the ORIGINAL path's components, not the resolved path.
+    # `resolve()` has already followed symlinks away, so checking the resolved
+    # path's ancestors would never detect a symlink. Walk from the original
+    # `path_str` outward and check each ancestor that actually exists on disk.
+    original = Path(path_str)
+    check_path = original
     while str(check_path) != check_path.root:
         if check_path.exists() and check_path.is_symlink():
             return {"valid": False, "reason": "Path contains a symlink, which is not allowed"}
