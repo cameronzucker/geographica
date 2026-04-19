@@ -80,7 +80,7 @@ REGION_PRESETS: dict[str, dict] = {
 # ---------------------------------------------------------------------------
 # RAM profiles
 # ---------------------------------------------------------------------------
-RAM_PROFILE_16GB = {
+RAM_PROFILE_16GB: dict[str, str] = {
     "nominatim_memory": "8G",
     "postgres_shared_buffers": "2GB",
     "postgres_maintenance_work_mem": "1GB",
@@ -96,7 +96,7 @@ RAM_PROFILE_16GB = {
     "planetiler_heap": "4g",
 }
 
-RAM_PROFILE_8GB = {
+RAM_PROFILE_8GB: dict[str, str] = {
     "nominatim_memory": "4G",
     "postgres_shared_buffers": "1GB",
     "postgres_maintenance_work_mem": "512MB",
@@ -322,7 +322,7 @@ def generate_env(
     bbox: str,
     data_path: str,
     scripts_path: str,
-    ram_profile: dict,
+    ram_profile: dict[str, str],
     tls_cert_dir: str = "./tls",
     tls_port: int = 443,
     stt_backend: str = "cpu",

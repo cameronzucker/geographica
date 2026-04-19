@@ -241,6 +241,43 @@ class TestValidatePath:
         result = validate_path("data/relative")
         assert result["valid"] is False
 
+    def test_rejects_path_traversal(self):
+        from config import validate_path
+        result = validate_path("/srv/../etc/passwd")
+        assert result["valid"] is False
+
+    def test_rejects_empty_string(self):
+        from config import validate_path
+        result = validate_path("")
+        assert result["valid"] is False
+
+    def test_rejects_symlink(self, tmp_path):
+        from config import validate_path
+        # Create a symlink inside an allowed prefix
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        link_path = tmp_path / "link"
+        link_path.symlink_to(real_dir)
+        # Even if path starts with /home, symlinks are rejected
+        result = validate_path(str(link_path))
+        # The path starts with /tmp which is not allowed
+        assert result["valid"] is False
+
+    def test_rejects_null_bytes(self):
+        from config import validate_path
+        result = validate_path("/srv/data\x00evil")
+        assert result["valid"] is False
+
+    def test_warns_low_disk_space(self, tmp_path):
+        from config import validate_path
+        # tmp_path is under /tmp which is not in allowlist
+        # This test verifies a valid path returns disk info
+        result = validate_path("/srv/geographica/data")
+        assert result["valid"] is True
+        # If the path parent exists, we should get disk info
+        if "free_gb" in result:
+            assert isinstance(result["free_gb"], (int, float))
+
 
 def _parse(env_text: str) -> dict[str, str]:
     return dict(l.split("=", 1) for l in env_text.strip().splitlines()
@@ -333,40 +370,3 @@ class TestEnvGenerationFull:
 
     def test_does_not_emit_host_ip(self):
         assert "HOST_IP=" not in self._env()
-
-    def test_rejects_path_traversal(self):
-        from config import validate_path
-        result = validate_path("/srv/../etc/passwd")
-        assert result["valid"] is False
-
-    def test_rejects_empty_string(self):
-        from config import validate_path
-        result = validate_path("")
-        assert result["valid"] is False
-
-    def test_rejects_symlink(self, tmp_path):
-        from config import validate_path
-        # Create a symlink inside an allowed prefix
-        real_dir = tmp_path / "real"
-        real_dir.mkdir()
-        link_path = tmp_path / "link"
-        link_path.symlink_to(real_dir)
-        # Even if path starts with /home, symlinks are rejected
-        result = validate_path(str(link_path))
-        # The path starts with /tmp which is not allowed
-        assert result["valid"] is False
-
-    def test_rejects_null_bytes(self):
-        from config import validate_path
-        result = validate_path("/srv/data\x00evil")
-        assert result["valid"] is False
-
-    def test_warns_low_disk_space(self, tmp_path):
-        from config import validate_path
-        # tmp_path is under /tmp which is not in allowlist
-        # This test verifies a valid path returns disk info
-        result = validate_path("/srv/geographica/data")
-        assert result["valid"] is True
-        # If the path parent exists, we should get disk info
-        if "free_gb" in result:
-            assert isinstance(result["free_gb"], (int, float))
