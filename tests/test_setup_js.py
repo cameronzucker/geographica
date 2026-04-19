@@ -23,3 +23,24 @@ def test_debounced_validate_path():
 
 def test_no_host_ip_in_config_object():
     assert "host_ip:" not in JS.read_text()
+
+
+def test_completion_link_uses_location_hostname():
+    assert "location.hostname" in JS.read_text()
+
+
+def test_completion_link_http_port_8093():
+    assert ":8093" in JS.read_text()
+
+
+def test_completion_link_https_no_explicit_port():
+    # https mode uses default :443 — no hardcoded explicit port required.
+    text = JS.read_text()
+    # Must branch on tls_mode when adding port
+    assert "config.tls_mode" in text
+
+
+def test_completion_link_no_config_host_ip():
+    """Task 22 removed the dead `config.host_ip ||` fallback."""
+    text = JS.read_text()
+    assert "config.host_ip" not in text
