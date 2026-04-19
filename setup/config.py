@@ -228,6 +228,15 @@ def detect_storage() -> list[dict]:
                     continue
                 seen_devices.add(device)
 
+                # Filter to paths the wizard will actually accept
+                if mount_path != "/":
+                    allowed = any(
+                        mount_path == p or mount_path.startswith(p + os.sep)
+                        for p in ALLOWED_PATH_PREFIXES
+                    )
+                    if not allowed:
+                        continue
+
                 try:
                     usage = shutil.disk_usage(mount_path)
                     results.append({

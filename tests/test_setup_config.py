@@ -370,3 +370,20 @@ class TestEnvGenerationFull:
 
     def test_does_not_emit_host_ip(self):
         assert "HOST_IP=" not in self._env()
+
+
+class TestStorageDetectionAllowlist:
+    def test_no_mounts_fail_validate_path(self):
+        from config import detect_storage, validate_path
+        for entry in detect_storage():
+            candidate = (
+                entry["path"] if entry["path"] != "/"
+                else "/srv/geographica/data"
+            )
+            test_path = (candidate + "/geographica/data"
+                         if candidate != "/srv/geographica/data"
+                         else candidate)
+            res = validate_path(test_path)
+            assert res["valid"], (
+                f"unusable mount {entry['path']}: {res}"
+            )
