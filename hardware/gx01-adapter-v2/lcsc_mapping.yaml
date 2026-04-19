@@ -30,9 +30,9 @@ parts:
     note: "2×20 female pin header, 2.54 mm pitch (from v1). Pi GPIO passthrough socket."
 
   J2:
-    lcsc: C2691555
+    lcsc: C3405
     tier: extended
-    note: "2×10 male pin header, 2.54 mm pitch, vertical. Physical IDC box header preferred but this base pin header is what's stocked at JLC; mating ribbon cable will use IDC crimp on the cable side."
+    note: "BOOMELE 2.54-2*10P IDC box header (shrouded with polarization key). 2.54 mm pitch, vertical, through-hole. 39,906 in stock (verified 2026-04-19). Physical part is the shrouded box header we actually want; it drops onto the bare PinHeader_2x10_P2.54mm_Vertical footprint cleanly (same 2×10 pad pattern)."
 
   J3:
     lcsc: C131334
@@ -45,9 +45,9 @@ parts:
     note: "Same part as J3. Fan 2."
 
   J5:
-    lcsc: C157364
+    lcsc: C160392
     tier: extended
-    note: "JST SM06B-SRSS-TB, 6-pin SMT vertical, 1.0 mm pitch. Cable to Front Panel Board."
+    note: "JST BM06B-SRSS-TB(LF)(SN). 6-pin SMT vertical, 1.0 mm pitch. Genuine JST, matches the KiCad footprint exactly. 9,211 in stock (verified 2026-04-19)."
 
   # ─── ICs ───
   U1:
