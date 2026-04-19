@@ -3,7 +3,7 @@
 # Run this on a Pi or ARM64 VM. Output: ./tippecanoe-arm64 ready to upload.
 set -euo pipefail
 
-TIPPECANOE_VERSION="${TIPPECANOE_VERSION:-2.80.0}"
+TIPPECANOE_VERSION="${TIPPECANOE_VERSION:-2.79.0}"
 BUILD_DIR="${BUILD_DIR:-/tmp/tippecanoe-build}"
 OUTPUT_DIR="${OUTPUT_DIR:-$(pwd)}"
 

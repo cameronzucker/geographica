@@ -29,11 +29,13 @@ the upstream supplier for that artifact.
 ### Usage
 
 ```bash
-# Default: build Tippecanoe 2.80.0 in /tmp, output to current directory
+# Default: build Tippecanoe 2.79.0 in /tmp, output to current directory
 ./tools/build-tippecanoe.sh
 
 # Override version or output directory
-TIPPECANOE_VERSION=2.81.0 OUTPUT_DIR=/tmp/release ./tools/build-tippecanoe.sh
+TIPPECANOE_VERSION=2.80.0 OUTPUT_DIR=/tmp/release ./tools/build-tippecanoe.sh
+
+# Verify the tag exists at https://github.com/felt/tippecanoe/tags before running — upstream does not pre-create future tags.
 ```
 
 The script will:
@@ -53,10 +55,10 @@ After the build succeeds:
 
 ```bash
 # 1. Create a GitHub release and upload both artifacts
-gh release create v2.80.0 \
+gh release create v2.79.0 \
     ./tippecanoe-arm64 \
-    ./tippecanoe-2.80.0-linux-aarch64.tar.gz \
-    --title "Tippecanoe v2.80.0 (ARM64)" \
+    ./tippecanoe-2.79.0-linux-aarch64.tar.gz \
+    --title "Tippecanoe v2.79.0 (ARM64)" \
     --notes "Pre-built ARM64 Tippecanoe binary for Geographica bootstrap."
 
 # 2. Copy the asset URL from the gh output, then update bootstrap.sh:
@@ -70,7 +72,7 @@ After updating `bootstrap.sh`, open a PR so the new binary URL lands in
 
 ```bash
 ./tippecanoe-arm64 --version
-# Expected output: tippecanoe v2.80.0
+# Expected output: tippecanoe v2.79.0
 ```
 
 ---
