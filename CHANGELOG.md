@@ -7,6 +7,13 @@ project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries
 from v1.1.0 onward are generated automatically by `release-please` from
 Conventional Commits.
 
+## [1.2.1](https://github.com/cameronzucker/geographica/compare/v1.2.0...v1.2.1) (2026-04-19)
+
+
+### Bug Fixes
+
+* **setup:** purge Debian-native docker packages before docker-ce install ([59f00b5](https://github.com/cameronzucker/geographica/commit/59f00b5bfc4a503c8592f68b0687c81e4689a232))
+
 ## [1.2.0](https://github.com/cameronzucker/geographica/compare/v1.1.0...v1.2.0) (2026-04-19)
 
 
