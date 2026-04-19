@@ -759,6 +759,13 @@
         preflightPassed = true;
         $('#preflight-section').style.display = 'none';
         $('#pipeline-section').style.display = '';
+        // Refresh btn-next label. setup.js:124 set it to 'Run Checks'
+        // when Step 4 was first entered (before preflight returned);
+        // now that preflight has passed, the button's action is
+        // Start Pipeline, not Run Checks. 2026-04-20 beta tester
+        // reported the stale label as misleading.
+        var btnNextEl = $('#btn-next');
+        if (btnNextEl) btnNextEl.textContent = 'Start Pipeline';
       }
     }).catch(function (err) {
       list.textContent = '';

@@ -56,6 +56,35 @@ def test_frontend_output_handler_does_not_rely_solely_on_event_text():
     )
 
 
+def test_frontend_btn_next_text_refreshes_when_preflight_passes():
+    """2026-04-20 beta-tester report: the button on Step 4 read
+    `Run Checks` even after preflight went green, which the user
+    (reasonably) thought meant clicking it would re-run checks, not
+    start the download pipeline. Behaviour is correct (startPipeline()
+    reads preflightPassed at click time) but the label is stale
+    because it's only set on Step 4 entry (setup.js:124).
+
+    Fix: when preflight's response flips preflightPassed to true,
+    also refresh #btn-next.textContent to 'Start Pipeline'."""
+    js = SETUP_JS.read_text()
+    # Find the "if (allOk) { preflightPassed = true; ... }" block.
+    m = re.search(
+        r"if\s*\(\s*allOk\s*\)\s*\{([^}]+)\}",
+        js,
+        re.DOTALL,
+    )
+    assert m, "setup.js no longer has the `if (allOk)` preflight-passed block"
+    block = m.group(1)
+    assert "btn-next" in block, (
+        "the allOk block must refresh #btn-next.textContent to "
+        "'Start Pipeline' so the button label matches the action "
+        "once preflight passes"
+    )
+    assert "Start Pipeline" in block, (
+        "the allOk block must set #btn-next text to 'Start Pipeline'"
+    )
+
+
 def test_backend_output_broadcast_still_uses_data_field():
     """Canary — if setup/main.py starts sending a different field,
     this test fails and directs the maintainer to update both sides."""

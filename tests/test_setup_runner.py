@@ -376,14 +376,27 @@ class TestCommandBuilders:
             "downloaded .md5 file"
         )
 
-    def test_osm_download_cmd_validates_pbf_structure(self):
-        """md5 agreement isn't sufficient — fileinfo catches structural
-        corruption that slips past a matching hash (rare but cheap to
-        check, and it's exactly what osmium merge will trip on later)."""
+    def test_osm_download_cmd_does_not_invoke_osmium_fileinfo(self):
+        """Download step MUST NOT run `osmium fileinfo`. MD5 against
+        Geofabrik's published .md5 is the authoritative integrity
+        check; a fileinfo failure despite matching md5 is a sign the
+        local `osmium` version can't parse the PBF — retrying 295 MB
+        of download won't fix that, it just wastes bandwidth.
+
+        2026-04-20 beta tester symptom: 3 download attempts each of
+        a 295 MB file, each md5-verified, each then rejected by
+        fileinfo and re-downloaded, ending in 'integrity check failed'
+        when the file was actually fine (local osmium was the
+        problem). Fixed by deferring fileinfo validation to the
+        merge step, which already does it and has a clearer error
+        message."""
         script = " ".join(osm_download_cmd(_CTX_BASE))
-        assert "osmium fileinfo" in script, (
-            "osm_download_cmd must run `osmium fileinfo` as a structural "
-            "backstop to md5 verification"
+        assert "osmium fileinfo" not in script, (
+            "osm_download_cmd must NOT run osmium fileinfo — local "
+            "osmium version skew can reject md5-verified downloads "
+            "and trap the user in an infinite re-download loop. "
+            "Defer structural validation to osm_merge_cmd which has "
+            "a clearer error message and runs once, not per retry."
         )
 
     def test_osm_download_cmd_retries_on_corruption(self):
@@ -436,6 +449,21 @@ class TestCommandBuilders:
         for unexpected in ("california", "colorado", "nevada", "utah"):
             assert f"{unexpected}-latest.osm.pbf" not in joined, \
                 f"osm_merge should not reference {unexpected} for Phoenix bbox"
+
+    def test_osm_merge_cmd_surfaces_osmium_error_detail(self):
+        """When fileinfo fails at merge time, the error must include
+        osmium's actual stderr AND the osmium --version output. That
+        lets a user (or Claude) distinguish 'PBF is corrupt' from
+        'local osmium can't parse this PBF format' — a bare 'corrupt
+        PBF, delete and rerun' message would send the user into an
+        infinite re-download loop if the real problem is an osmium
+        version mismatch."""
+        script = " ".join(osm_merge_cmd(_CTX_BASE))
+        assert "osmium --version" in script, (
+            "osm_merge_cmd must include `osmium --version` in its "
+            "error output so users can see whether their osmium is "
+            "too old to parse the PBF (vs. the PBF being corrupt)"
+        )
 
     def test_osm_merge_cmd_validates_each_file_before_merging(self):
         """Pre-merge validation makes the merge error actionable: we
