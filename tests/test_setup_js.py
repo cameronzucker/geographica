@@ -81,3 +81,19 @@ def test_js_has_no_fix_dependency_symbol():
     for forbidden in ("fixDependency", "fix_dependency", "fixDep", "FIX_REGISTRY"):
         assert forbidden not in text, f"{forbidden} still present in setup.js"
     assert 'class="btn-fix"' not in text
+
+
+def test_js_has_shared_showError():
+    text = JS.read_text()
+    assert "function showError" in text
+
+
+def test_js_no_silent_catch_console_error():
+    text = JS.read_text()
+    # Every `.catch(function(err){ console.error` must also call showError
+    import re
+    silent = re.findall(r"\.catch\(\s*function\s*\([^)]*\)\s*\{\s*console\.error[^}]*\}\s*\)", text)
+    assert not silent, (
+        "Each .catch that only console.errors must also call showError. "
+        f"Found silent catches: {silent[:3]}"
+    )

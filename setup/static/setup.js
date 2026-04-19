@@ -151,15 +151,20 @@
     if (n === 5) startHealthPolling();
   }
 
-  // Minimal error display — Task 39 replaces with a shared component.
-  function showError(msg) {
-    var hint = $('#data-path-hint');
-    if (hint) {
-      hint.textContent = msg;
-      hint.className = 'field-hint error';
-    } else {
-      alert(msg);
+  function showError(msg, context) {
+    var banner = document.getElementById('global-error-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'global-error-banner';
+      banner.className = 'global-error-banner';
+      document.body.insertBefore(banner, document.body.firstChild);
     }
+    banner.textContent = (context ? '[' + context + '] ' : '') + msg;
+    banner.style.display = '';
+    clearTimeout(showError._t);
+    showError._t = setTimeout(function () {
+      banner.style.display = 'none';
+    }, 10000);
   }
 
   function nextStep() {
@@ -233,8 +238,10 @@
     }
 
     if (currentStep === 3) {
-      saveConfig();
-      saveCredentials();
+      return saveConfig()
+        .then(function () { return saveCredentials(); })
+        .then(function () { showStep(currentStep + 1); })
+        .catch(function () { /* already surfaced via showError */ });
     }
 
     if (currentStep === 4) {
@@ -606,7 +613,8 @@
       tls_port: 443,
       stt_backend: 'cpu'
     }).catch(function (err) {
-      console.error('Failed to save config:', err);
+      showError('Save config failed: ' + err.message);
+      throw err;
     });
   }
 
