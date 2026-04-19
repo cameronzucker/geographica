@@ -497,3 +497,82 @@ class TestStartRequestLayerConfig:
             "random_garbage_field": "boom",
         }, headers=self.headers)
         assert resp.status_code == 422
+
+
+class TestRunPipelineInvokesSubprocess:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.client = TestClient(app)
+        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+    def test_run_pipeline_calls_run_command_per_active_step(self, tmp_path, monkeypatch):
+        import shutil
+        from setup import main as mod
+        from setup.pipeline_steps import ALL_PIPELINE_STEPS, filter_active_steps
+        calls = []
+
+        async def fake_run(args, cwd, on_output, env_extra=None):
+            calls.append(args)
+            on_output("stdout", b"")
+            return 0
+
+        monkeypatch.setattr(mod, "run_command", fake_run)
+        monkeypatch.setattr(shutil, "disk_usage",
+                            lambda p: shutil._ntuple_diskusage(100*1024**3, 10*1024**3, 90*1024**3))
+
+        body = mod.StartRequest(
+            bbox="-114.8,31.3,-109.0,37.0",
+            layers={"basemap": "download", "base_imagery": "naip",
+                    "detail_imagery": "skip", "elevation": "download"},
+            data_path=str(tmp_path),
+            base_imagery_zoom=15,
+        )
+        import asyncio as _a
+        _a.run(mod._run_pipeline(body))
+
+        expected_active = filter_active_steps(ALL_PIPELINE_STEPS, body.layers)
+        expected_active_ids = [s.id for s in expected_active]
+        assert len(expected_active_ids) == 12  # 13 total minus detail_imagery (skipped)
+        assert len(calls) == 12
+        ctx = {
+            "bbox": body.bbox,
+            "layer_bbox": {},
+            "layers": body.layers,
+            "data_path": body.data_path,
+            "scripts_path": str(Path(mod.__file__).parent.parent / "scripts"),
+            "base_imagery_zoom": body.base_imagery_zoom,
+        }
+        for step, actual in zip(expected_active, calls):
+            assert actual == step.cmd_builder(ctx), f"Step {step.id} cmd mismatch"
+
+    def test_run_pipeline_error_clears_running_flag(self, tmp_path, monkeypatch):
+        """Every exit branch (including errors) must clear running=False."""
+        import shutil
+        from setup import main as mod
+        call_count = [0]
+
+        async def fake_run(args, cwd, on_output, env_extra=None):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                on_output("stderr", b"boom")
+                return 1  # error on second step
+            on_output("stdout", b"")
+            return 0
+
+        monkeypatch.setattr(mod, "run_command", fake_run)
+        monkeypatch.setattr(shutil, "disk_usage",
+                            lambda p: shutil._ntuple_diskusage(100*1024**3, 10*1024**3, 90*1024**3))
+
+        body = mod.StartRequest(
+            bbox="-114.8,31.3,-109.0,37.0",
+            layers={"basemap": "download", "base_imagery": "naip",
+                    "detail_imagery": "skip", "elevation": "download"},
+            data_path=str(tmp_path),
+            base_imagery_zoom=15,
+        )
+        mod.current_state["running"] = True
+        import asyncio as _a
+        _a.run(mod._run_pipeline(body))
+
+        assert mod.current_state["running"] is False
+        assert mod.current_state["step"] == "error"

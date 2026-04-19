@@ -25,6 +25,7 @@ from setup.config import (
     validate_path, ALLOWED_PATH_PREFIXES,
 )
 from setup.runner import Checkpoint, run_command, shutdown_children
+from setup.pipeline_steps import ALL_PIPELINE_STEPS, filter_active_steps
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -452,11 +453,6 @@ async def ws_progress(websocket: WebSocket):
 # ---------------------------------------------------------------------------
 # Pipeline execution
 # ---------------------------------------------------------------------------
-PIPELINE_STEPS = [
-    "osm_download", "osm_merge", "osm_copy", "planetiler_pull",
-    "planetiler_build", "poi_build", "osm_pois", "public_lands",
-    "elevation", "base_imagery", "detail_imagery", "fonts", "docker_build",
-]
 
 
 async def broadcast(event: dict):
@@ -479,71 +475,114 @@ async def post_start(body: StartRequest):
         raise HTTPException(status_code=409, detail="Pipeline already running")
 
     asyncio.create_task(_run_pipeline(body))
-    return {"ok": True, "steps": PIPELINE_STEPS}
+    return {"ok": True, "steps": [s.id for s in ALL_PIPELINE_STEPS]}
 
 
-async def _run_pipeline(config: StartRequest):
-    """Execute pipeline steps sequentially."""
-    global _last_activity
+async def _run_pipeline(config: "StartRequest") -> None:
+    """Run each active pipeline step in sequence. Every branch clears running=False."""
     cwd = str(Path(__file__).parent.parent)
-    checkpoint = Checkpoint(os.path.join(config.data_path, ".setup_checkpoint.json"))
+    ctx: dict = {
+        "bbox": config.bbox,
+        "layer_bbox": config.layer_bbox or {},
+        "layers": config.layers or {},
+        "data_path": config.data_path,
+        "scripts_path": str(Path(cwd) / "scripts"),
+        "base_imagery_zoom": config.base_imagery_zoom,
+    }
+    ckpt_path = Path(config.data_path) / ".setup_checkpoint.json"
+    checkpoint = Checkpoint(str(ckpt_path))
 
-    current_state["running"] = True
-    current_state["step"] = "starting"
+    current_state["step"] = "running"
+
+    def make_on_output(step_id: str):
+        """Produce a 2-arg callback matching run_command's contract:
+            on_output(source: str, data: bytes) -> None"""
+        def _on_output(source: str, data: bytes) -> None:
+            text = data.decode("utf-8", errors="replace")
+            asyncio.create_task(broadcast({
+                "type": "output",
+                "step": step_id,
+                "source": source,
+                "data": text,
+            }))
+        return _on_output
 
     try:
-        for i, step in enumerate(PIPELINE_STEPS):
-            if checkpoint.is_completed(step):
-                await broadcast({"type": "skip", "step": step})
+        active = filter_active_steps(ALL_PIPELINE_STEPS, ctx["layers"])
+        for step in active:
+            if checkpoint.is_completed(step.id):
+                await broadcast({"type": "step_skipped", "step": step.id,
+                                 "reason": "checkpoint"})
                 continue
 
-            current_state["step"] = step
-            current_state["substep"] = None
-            current_state["progress_pct"] = int((i / len(PIPELINE_STEPS)) * 100)
-            await broadcast({
-                "type": "step_start", "step": step,
-                "progress_pct": current_state["progress_pct"],
-            })
+            await broadcast({"type": "step_start", "step": step.id,
+                             "label": step.label})
 
-            # Check disk space
             try:
                 usage = shutil.disk_usage(config.data_path)
                 free_gb = usage.free / (1024 ** 3)
-                if free_gb < 5:
-                    await broadcast({
-                        "type": "error", "step": step,
-                        "message": f"Disk space critically low: {free_gb:.1f} GB",
-                    })
-                    break
-                elif free_gb < 10:
-                    await broadcast({
-                        "type": "warning", "step": step,
-                        "message": f"Disk space low: {free_gb:.1f} GB",
-                    })
-            except OSError:
-                pass
+            except FileNotFoundError:
+                current_state["step"] = "error"
+                await broadcast({
+                    "type": "error", "step": step.id,
+                    "message": f"Data path {config.data_path} does not exist. "
+                               "Create it or rerun Step 1.",
+                })
+                return
+            if free_gb < 5:
+                current_state["step"] = "error"
+                await broadcast({
+                    "type": "error", "step": step.id,
+                    "message": f"Only {free_gb:.1f} GB free at {config.data_path}; "
+                               "need at least 5 GB to continue.",
+                })
+                return
 
-            _last_activity = time.time()
+            try:
+                cmd = step.cmd_builder(ctx)
+            except Exception as e:
+                current_state["step"] = "error"
+                await broadcast({
+                    "type": "error", "step": step.id,
+                    "message": f"cmd builder failed: {e!r}",
+                })
+                return
 
-            def on_output(source: str, data: bytes):
-                global _last_activity
-                _last_activity = time.time()
-                text = data.decode("utf-8", errors="replace")
-                event = {"type": "output", "step": step, "source": source, "text": text}
-                progress_buffer.append(event)
+            stderr_tail = bytearray()
+            step_output_cb = make_on_output(step.id)
 
-            checkpoint.mark_completed(step)
-            await broadcast({"type": "step_done", "step": step})
+            def _step_on_output(source: str, data: bytes):
+                if source == "stderr":
+                    stderr_tail.extend(data)
+                    if len(stderr_tail) > 2000:
+                        del stderr_tail[:len(stderr_tail) - 2000]
+                step_output_cb(source, data)
+
+            exit_code = await run_command(args=cmd, cwd=cwd, on_output=_step_on_output)
+            if exit_code != 0:
+                current_state["step"] = "error"
+                await broadcast({
+                    "type": "error", "step": step.id,
+                    "message": stderr_tail[-500:].decode("utf-8", errors="replace") or
+                               f"exit code {exit_code} (no stderr captured)",
+                })
+                return
+
+            checkpoint.mark_completed(step.id)
+            await broadcast({"type": "step_done", "step": step.id})
 
         current_state["step"] = "done"
-        current_state["progress_pct"] = 100
         await broadcast({"type": "pipeline_done"})
-
     except Exception as e:
         current_state["step"] = "error"
-        await broadcast({"type": "error", "message": str(e)})
+        await broadcast({
+            "type": "error",
+            "message": f"Unhandled pipeline error: {e!r}",
+        })
     finally:
         current_state["running"] = False
+        await broadcast({"type": "state", "running": False,
+                         "step": current_state["step"]})
 
 
 # ---------------------------------------------------------------------------
