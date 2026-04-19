@@ -1,0 +1,58 @@
+WARNING: KICAD6_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched. @ [/home/administrator/Code/geographica/hardware/gx01-front-panel/<frozen importlib._bootstrap_external>:1026=>/home/administrator/Code/geographica/hardware/gx01-front-panel/<frozen importlib._bootstrap>:488]
+WARNING: KICAD7_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched. @ [/home/administrator/Code/geographica/hardware/gx01-front-panel/<frozen importlib._bootstrap_external>:1026=>/home/administrator/Code/geographica/hardware/gx01-front-panel/<frozen importlib._bootstrap>:488]
+WARNING: KICAD8_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched. @ [/home/administrator/Code/geographica/hardware/gx01-front-panel/<frozen importlib._bootstrap_external>:1026=>/home/administrator/Code/geographica/hardware/gx01-front-panel/<frozen importlib._bootstrap>:488]
+WARNING: fp-lib-table file was not found. Component footprints are not available.
+WARNING: fp-lib-table file was not found. Component footprints are not available.
+WARNING: fp-lib-table file was not found. Component footprints are not available.
+WARNING: Missing tag on Conn_01x06 instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:61.
+WARNING: Random tag IJisgH7Weo generated for Conn_01x06.
+WARNING: Missing tag on MCP23017_SO instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:77.
+WARNING: Random tag U2CfEwl12N generated for MCP23017_SO.
+WARNING: Missing tag on C instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:126.
+WARNING: Random tag kxyZ_uZA2j generated for C.
+WARNING: Missing tag on R instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:132.
+WARNING: Random tag dY6fLSB5LG generated for R.
+WARNING: Missing tag on SW_Push instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:146.
+WARNING: Random tag vjRJipX84Y generated for SW_Push.
+WARNING: Missing tag on SW_Push instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:146.
+WARNING: Random tag uwPh1aOLBj generated for SW_Push.
+WARNING: Missing tag on SW_Push instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:146.
+WARNING: Random tag Yh7aiZADca generated for SW_Push.
+WARNING: Missing tag on SW_Push instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:146.
+WARNING: Random tag CtQ4axRToB generated for SW_Push.
+WARNING: Missing tag on SW_Push instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:146.
+WARNING: Random tag ZyXrQZoKse generated for SW_Push.
+WARNING: Missing tag on SW_Push instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:146.
+WARNING: Random tag o_pd1aLDB0 generated for SW_Push.
+WARNING: Missing tag on LED instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:188.
+WARNING: Random tag zpI5GdqsLr generated for LED.
+WARNING: Missing tag on R instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:191.
+WARNING: Random tag bLZYWJiV0e generated for R.
+WARNING: Missing tag on LED instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:188.
+WARNING: Random tag stvf3pGxeD generated for LED.
+WARNING: Missing tag on R instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:191.
+WARNING: Random tag kl4hSuAHM9 generated for R.
+WARNING: Missing tag on LED instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:188.
+WARNING: Random tag 2NvMfsIMDL generated for LED.
+WARNING: Missing tag on R instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:191.
+WARNING: Random tag IbHT9LdFns generated for R.
+WARNING: Missing tag on LED instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:188.
+WARNING: Random tag 8qaGb1s8z3 generated for LED.
+WARNING: Missing tag on R instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:191.
+WARNING: Random tag gmQgIHhagV generated for R.
+WARNING: Missing tag on Conn_01x06 instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:207.
+WARNING: Random tag QL9inZnV_l generated for Conn_01x06.
+WARNING: Missing tag on C instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:221.
+WARNING: Random tag l70fq3YTZp generated for C.
+WARNING: Missing tag on MountingHole instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:227.
+WARNING: Random tag 6sx7lNobXN generated for MountingHole.
+WARNING: Missing tag on MountingHole instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:229.
+WARNING: Random tag lEG_o2Zk_e generated for MountingHole.
+WARNING: Missing tag on MountingHole instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:231.
+WARNING: Random tag 6kfr58G0_F generated for MountingHole.
+WARNING: Missing tag on MountingHole instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/circuit.py:233.
+WARNING: Random tag yUFfcGDv1g generated for MountingHole.
+WARNING: Missing tag on  instantiated at /home/administrator/Code/geographica/hardware/gx01-front-panel/<frozen importlib._bootstrap>:488.
+INFO: 52 warnings found while generating netlist.
+INFO: 0 errors found while generating netlist.
+

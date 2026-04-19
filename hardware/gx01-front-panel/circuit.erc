@@ -1,0 +1,12 @@
+ERC WARNING: Unconnected pin: TRISTATE pin 20/INTA of MCP23017_SO/U1.
+ERC WARNING: Unconnected pin: BIDIRECTIONAL pin 7/GPB6 of MCP23017_SO/U1.
+ERC WARNING: Unconnected pin: OUTPUT pin 8/GPB7 of MCP23017_SO/U1.
+ERC WARNING: Unconnected pin: BIDIRECTIONAL pin 24/GPA3 of MCP23017_SO/U1.
+ERC WARNING: Unconnected pin: BIDIRECTIONAL pin 25/GPA4 of MCP23017_SO/U1.
+ERC WARNING: Unconnected pin: BIDIRECTIONAL pin 26/GPA5 of MCP23017_SO/U1.
+ERC WARNING: Unconnected pin: BIDIRECTIONAL pin 27/GPA6 of MCP23017_SO/U1.
+ERC WARNING: Unconnected pin: OUTPUT pin 28/GPA7 of MCP23017_SO/U1.
+ERC WARNING: Unconnected pin: PASSIVE pin 4/Pin_4 of Conn_01x06/U2.
+ERC INFO: 9 warnings found while running ERC.
+ERC INFO: 0 errors found while running ERC.
+

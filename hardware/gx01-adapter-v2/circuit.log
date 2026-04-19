@@ -1,0 +1,62 @@
+WARNING: KICAD6_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched. @ [/home/administrator/Code/geographica/hardware/gx01-adapter-v2/<frozen importlib._bootstrap_external>:1026=>/home/administrator/Code/geographica/hardware/gx01-adapter-v2/<frozen importlib._bootstrap>:488]
+WARNING: KICAD7_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched. @ [/home/administrator/Code/geographica/hardware/gx01-adapter-v2/<frozen importlib._bootstrap_external>:1026=>/home/administrator/Code/geographica/hardware/gx01-adapter-v2/<frozen importlib._bootstrap>:488]
+WARNING: KICAD8_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched. @ [/home/administrator/Code/geographica/hardware/gx01-adapter-v2/<frozen importlib._bootstrap_external>:1026=>/home/administrator/Code/geographica/hardware/gx01-adapter-v2/<frozen importlib._bootstrap>:488]
+WARNING: fp-lib-table file was not found. Component footprints are not available.
+WARNING: fp-lib-table file was not found. Component footprints are not available.
+WARNING: fp-lib-table file was not found. Component footprints are not available.
+WARNING: Missing tag on Conn_02x20_Odd_Even instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:102.
+WARNING: Random tag ykAtweK27i generated for Conn_02x20_Odd_Even.
+WARNING: Missing tag on Conn_02x10_Odd_Even instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:167.
+WARNING: Random tag OG98fgLDPG generated for Conn_02x10_Odd_Even.
+WARNING: Missing tag on Conn_01x04 instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:196.
+WARNING: Random tag L6bQTeWKAs generated for Conn_01x04.
+WARNING: Missing tag on Conn_01x04 instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:207.
+WARNING: Random tag t0IEH1MjH_ generated for Conn_01x04.
+WARNING: Missing tag on Conn_01x06 instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:223.
+WARNING: Random tag ZbjwwNRAWb generated for Conn_01x06.
+WARNING: Missing tag on RV-3028-C7 instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:242.
+WARNING: Random tag 603x4SMjmf generated for RV-3028-C7.
+WARNING: Missing tag on C instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:259.
+WARNING: Random tag 8M9Zyoh_65 generated for C.
+WARNING: Missing tag on C instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:269.
+WARNING: Random tag 73dk_Afjvi generated for C.
+WARNING: Missing tag on BME280 instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:282.
+WARNING: Random tag Yu3dWCLt9u generated for BME280.
+WARNING: Missing tag on C instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:300.
+WARNING: Random tag IHcarCc1mi generated for C.
+WARNING: Missing tag on MCP9808_MSOP instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:313.
+WARNING: Random tag f3yyGGiTVB generated for MCP9808_MSOP.
+WARNING: Missing tag on C instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:329.
+WARNING: Random tag Z2yRzf28YZ generated for C.
+WARNING: Missing tag on 24LC32 instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:344.
+WARNING: Random tag 1UNFc4QkLh generated for 24LC32.
+WARNING: Missing tag on C instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:360.
+WARNING: Random tag CcRPwmaiGf generated for C.
+WARNING: Missing tag on AO3400A instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:375.
+WARNING: Random tag Vo37umGY5J generated for AO3400A.
+WARNING: Missing tag on R instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:391.
+WARNING: Random tag XTCYXRwW8E generated for R.
+WARNING: Missing tag on R instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:404.
+WARNING: Random tag AbF9OFl04t generated for R.
+WARNING: Missing tag on R instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:411.
+WARNING: Random tag d2s2aWtXMx generated for R.
+WARNING: Missing tag on R instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:423.
+WARNING: Random tag kcdqmrVaoZ generated for R.
+WARNING: Missing tag on R instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:430.
+WARNING: Random tag p_P46FmRgL generated for R.
+WARNING: Missing tag on R instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:442.
+WARNING: Random tag PoThRGuil4 generated for R.
+WARNING: Missing tag on R instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:449.
+WARNING: Random tag Inhz8Ky5LW generated for R.
+WARNING: Missing tag on MountingHole instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:460.
+WARNING: Random tag QFeZx17Laj generated for MountingHole.
+WARNING: Missing tag on MountingHole instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:462.
+WARNING: Random tag ED6PgVrSs1 generated for MountingHole.
+WARNING: Missing tag on MountingHole instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:464.
+WARNING: Random tag BLgW0amcRe generated for MountingHole.
+WARNING: Missing tag on MountingHole instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/circuit.py:466.
+WARNING: Random tag e5P0qQr9eR generated for MountingHole.
+WARNING: Missing tag on  instantiated at /home/administrator/Code/geographica/hardware/gx01-adapter-v2/<frozen importlib._bootstrap>:488.
+INFO: 56 warnings found while generating netlist.
+INFO: 0 errors found while generating netlist.
+

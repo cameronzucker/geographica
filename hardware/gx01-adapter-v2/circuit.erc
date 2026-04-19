@@ -1,0 +1,15 @@
+ERC WARNING: Merging two named nets (LCD_BLA and +5V) into LCD_BLA.
+ERC WARNING: Only one pin (PASSIVE pin 8/Pin_8 of Conn_02x20_Odd_Even/J1) attached to net UART_TX.
+ERC WARNING: Only one pin (PASSIVE pin 6/Pin_6 of Conn_01x06/J5) attached to net FPB_RST.
+ERC WARNING: Only one pin (PASSIVE pin 12/Pin_12 of Conn_02x20_Odd_Even/J1) attached to net PPS.
+ERC WARNING: Insufficient drive current on net VBACKUP for pin POWER-IN pin 6/VBACKUP of RV-3028-C7/U1.
+ERC WARNING: Only one pin (PASSIVE pin 10/Pin_10 of Conn_02x20_Odd_Even/J1) attached to net UART_RX.
+ERC WARNING: Unconnected pin: PASSIVE pin 21/Pin_21 of Conn_02x20_Odd_Even/J1.
+ERC WARNING: Unconnected pin: PASSIVE pin 24/Pin_24 of Conn_02x20_Odd_Even/J1.
+ERC WARNING: Unconnected pin: INPUT pin 8/EVI of RV-3028-C7/U1.
+ERC WARNING: Unconnected pin: OPEN-COLLECTOR pin 2/~{INT} of RV-3028-C7/U1.
+ERC WARNING: Unconnected pin: OUTPUT pin 1/CLKOUT of RV-3028-C7/U1.
+ERC WARNING: Unconnected pin: OUTPUT pin 3/Alert of MCP9808_MSOP/U3.
+ERC INFO: 12 warnings found while running ERC.
+ERC INFO: 0 errors found while running ERC.
+
