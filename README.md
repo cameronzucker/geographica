@@ -125,7 +125,9 @@ The manual setup steps below are still available for advanced users or automatio
 
 ---
 
-## Manual setup guide
+## Manual setup (advanced / AI-agent reference)
+
+> **The browser-based setup wizard (launched via `./setup.sh` after `sudo ./bootstrap.sh`) is the recommended path.** This manual section exists for debugging and automated-deployment purposes — follow these steps only if the wizard fails on your system, or if you're driving installation from a script.
 
 This guide walks through a complete deployment from a fresh Pi. The process has
 two phases: **data acquisition** (requires internet, takes several hours) and
@@ -465,19 +467,19 @@ Once all services show healthy in `docker compose ps`:
 
 ```bash
 # Tile serving
-curl -s http://localhost:8090/health
+curl -s http://localhost:8093/tiles/data/southwest5.json | python3 -m json.tool | head -20
 
 # Geocoding
-curl -s "http://localhost:8092/search?q=Phoenix&format=json" | python3 -m json.tool | head -20
+curl -s "http://localhost:8093/nominatim/search?q=Phoenix&format=json" | python3 -m json.tool | head -20
 
 # Routing
-curl -s -X POST http://localhost:8094/route \
+curl -s -X POST http://localhost:8093/valhalla/route \
   -H "Content-Type: application/json" \
   -d '{"locations":[{"lat":33.45,"lon":-112.07},{"lat":34.05,"lon":-111.09}],"costing":"auto"}' \
   | python3 -m json.tool | head -20
 
 # Unified search
-curl -s "http://localhost:8096/search?q=Grand+Canyon" | python3 -m json.tool | head -20
+curl -s "http://localhost:8093/search/search?q=Grand+Canyon" | python3 -m json.tool | head -20
 
 # Speech-to-text
 curl -s http://localhost:8093/stt/health | python3 -m json.tool
