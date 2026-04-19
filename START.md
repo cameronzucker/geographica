@@ -25,6 +25,13 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## What to work on next
 
+**Recently completed (2026-04-19):**
+- **GX-01 adapter HAT — JLC bundle correctness + Path C deferral.** Three iterative rounds with the JLCPCB 3D preview surfaced CPL coordinate bugs (Y-flip + pad-anchor-vs-center), 4 LCSC physical-dimension mismatches, and a mechanical clearance issue with the adapter HAT in the current case. All CPL/LCSC issues fixed; mechanical design (Path A taller case vs. Path C sandwich) formally paused pending X1100 + LCD arrival. See [hardware/gx01-path-c-mockup.html](hardware/gx01-path-c-mockup.html) + [docs/superpowers/plans/2026-04-18-gx-01-pcb-completion.md](docs/superpowers/plans/2026-04-18-gx-01-pcb-completion.md) (Status block at top).
+- **Hardware workflow captured as user-level skills** at `~/.claude/skills/`:
+  - `jlc-pcba` — triggered by JLCPCB PCBA submission tasks, CPL generation, LCSC part verification. Catches the three pitfall classes from this session (CPL geometry, LCSC physical mismatch, 3D preview interpretation).
+  - `kicad-scripted-pcb` — triggered by scripted PCB design with SKiDL/pcbnew/FreeRouting. End-to-end pipeline reference.
+  - Both deployed via the RED-GREEN TDD protocol from `superpowers:writing-skills`; cold-agent baseline tests confirmed `jlc-pcba` prevents the pad-anchor bug that would otherwise ship broken CPLs.
+
 **Recently completed (2026-04-18):**
 - Version Control Strategy (SemVer + Conventional Commits + release-please). See [VERSIONING.md](VERSIONING.md) and [CHANGELOG.md](CHANGELOG.md).
 - **GX-01 personal hardware project** — full spec → fab-ready custom PCB → 3 implementation plans. See below + [hardware/gx01-adapter-pcb/](hardware/gx01-adapter-pcb/).
@@ -46,7 +53,7 @@ Cameron's personal Pi 5 dev/demo unit for Geographica. Hybrid FDE PETG + bronze-
 - SparkFun LCD-00710 (GDM12864H): **~1 week**
 - Custom PCB (OSH Park) + BOM (DigiKey): TBD, order pending Plan 3 Phase 1 kick-off
 
-**Custom adapter HAT PCB:** Fully designed and auto-routed via **FreeRouting**. DRC-clean Gerbers in [hardware/gx01-adapter-pcb/gerbers/](hardware/gx01-adapter-pcb/gerbers/). To regenerate end-to-end:
+**Custom adapter HAT PCB:** Fully designed and auto-routed via **FreeRouting**. DRC-clean Gerbers in [hardware/gx01-adapter-pcb/gerbers/](hardware/gx01-adapter-pcb/gerbers/). JLC PCBA bundle at [hardware/gx01-adapter-pcb/jlc_bundle.zip](hardware/gx01-adapter-pcb/jlc_bundle.zip) — verified against JLC's catalog (7/7 parts clean) but **do NOT order yet** pending the Path A vs Path C decision (see Plan 3's "Status: PAUSED" block). To regenerate end-to-end:
 
 ```bash
 cd hardware/gx01-adapter-pcb
@@ -57,12 +64,23 @@ kicad-cli pcb export gerbers --output gerbers/ \
     --layers "F.Cu,B.Cu,F.Mask,B.Mask,F.Silkscreen,B.Silkscreen,Edge.Cuts" \
     gx01-adapter.kicad_pcb
 kicad-cli pcb export drill --output gerbers/ gx01-adapter.kicad_pcb
+python3 ../_shared/verify_lcsc.py --pcb gx01-adapter.kicad_pcb --mapping lcsc_mapping.yaml
+python3 ../_shared/make_jlc_bundle.py --pcb gx01-adapter.kicad_pcb --mapping lcsc_mapping.yaml --gerbers gerbers/ --output jlc_bundle.zip
 ```
+
+**Skills cover this workflow:** when starting any PCB task, relevant skills auto-surface via trigger match — `kicad-scripted-pcb` for the design pipeline, `jlc-pcba` for the JLC handoff. Claude will invoke them via the Skill tool without needing to be told.
+
+**Mechanical clearance decision pending:** the current adapter HAT, as designed to stack on top of the LC29H, has ~11 mm of vertical connector height (J2 + ribbon plug) but the case has only ~10 mm of top-plate clearance. Two paths; neither decided:
+- **Path A**: grow case height 95 → 115 mm, keep the current PCB (zero fab cost).
+- **Path C sandwich**: flip J2 to B.Cu, hard-solder LCD directly to the HAT (requires PCB respin ~$80 + ~14 days at JLC).
+
+The browser mockup at [hardware/gx01-path-c-mockup.html](hardware/gx01-path-c-mockup.html) has the dimensional analysis; open it locally (or re-start a Python HTTP server) when hardware arrives. Plan 3's Status block has the 5-item resumption checklist.
 
 **Immediate next action when resuming:**
 1. When X1100 arrives (expected 2026-04-19): execute [Plan 2 Task 0.5](docs/superpowers/plans/2026-04-18-gx-01-case-hardware.md#task-05-on-x1100-arrival-measure-its-dimensions) — measure X1100 PCB, mounting-hole positions, USB3 bridge length, Pi standoff height. Update `hardware/gx01-case/parameters.scad` (create it per Plan 2 Task 1.1).
-2. In parallel: start Plan 1 Phases 0-4 (status LCD daemon TDD; no hardware needed).
-3. Once Plan 1 Phase 2 KS0108B driver is solid + X1100 is verified: order PCB (Plan 3 Phase 1) and BOM (Plan 3 Phase 2).
+2. **Also measure** the 5 items in the Plan 3 Status block to settle Path A vs Path C.
+3. In parallel: start Plan 1 Phases 0-4 (status LCD daemon TDD; no hardware needed).
+4. Once Plan 1 Phase 2 KS0108B driver is solid + X1100 is verified + Path decision made: order PCB (Plan 3 Phase 1) and BOM (Plan 3 Phase 2).
 
 ### 1. NOAA Pipeline Remediation — ship to main (BLOCKED on production pipeline finishing)
 
