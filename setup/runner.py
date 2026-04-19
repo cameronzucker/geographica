@@ -68,8 +68,8 @@ def planetiler_cmd(pbf_path: str, output_path: str, heap: str) -> list[str]:
     ]
 
 
-def poi_build_cmd(bbox: str, states: str, output: str) -> list[str]:
-    """Command to run build_poi_index.py."""
+def poi_build_cmd_v1(bbox: str, states: str, output: str) -> list[str]:
+    """Legacy positional-arg command to run build_poi_index.py (pre-PipelineContext)."""
     return [
         "python3", "scripts/build_poi_index.py",
         "--bbox", bbox,
@@ -78,8 +78,8 @@ def poi_build_cmd(bbox: str, states: str, output: str) -> list[str]:
     ]
 
 
-def osm_pois_cmd(pbf_path: str, output: str, bbox: str) -> list[str]:
-    """Command to run build_osm_pois.py."""
+def osm_pois_cmd_v1(pbf_path: str, output: str, bbox: str) -> list[str]:
+    """Legacy positional-arg command to run build_osm_pois.py (pre-PipelineContext)."""
     return [
         "python3", "scripts/build_osm_pois.py",
         "--pbf", pbf_path,
@@ -88,8 +88,8 @@ def osm_pois_cmd(pbf_path: str, output: str, bbox: str) -> list[str]:
     ]
 
 
-def elevation_cmd(bbox: str, output: str) -> list[str]:
-    """Command to run download_elevation.py."""
+def elevation_cmd_v1(bbox: str, output: str) -> list[str]:
+    """Legacy positional-arg command to run download_elevation.py (pre-PipelineContext)."""
     return [
         "python3", "scripts/download_elevation.py",
         "--bbox", bbox,
@@ -157,3 +157,165 @@ def shutdown_children() -> None:
             proc.send_signal(signal.SIGTERM)
         except ProcessLookupError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Pipeline step command builders (Task 25)
+# Each takes ctx: PipelineContext (dict shape — see setup/pipeline_steps.py)
+# and returns list[str] suitable for asyncio.create_subprocess_exec / run_command.
+# ---------------------------------------------------------------------------
+
+def osm_download_cmd(ctx) -> list[str]:
+    """Download Geofabrik state PBFs via a wget for-loop.
+    States are hardcoded to the 11 western US the project targets."""
+    states = ("arizona california colorado idaho montana nevada "
+              "new-mexico oregon utah washington wyoming")
+    out = f"{ctx['data_path']}/pbf"
+    script = (
+        f"set -e; mkdir -p '{out}'; cd '{out}'; "
+        f"for s in {states}; do "
+        f"  wget -c --no-verbose "
+        f"  \"https://download.geofabrik.de/north-america/us/${{s}}-latest.osm.pbf\"; "
+        f"done"
+    )
+    return ["bash", "-c", script]
+
+
+def osm_merge_cmd(ctx) -> list[str]:
+    """Merge all state PBFs into western-us.osm.pbf."""
+    out = f"{ctx['data_path']}/pbf"
+    return [
+        "bash", "-c",
+        f"set -e; cd '{out}' && osmium merge *-latest.osm.pbf "
+        f"-o western-us.osm.pbf --overwrite",
+    ]
+
+
+def osm_copy_cmd(ctx) -> list[str]:
+    """Stage OSM PBF into valhalla/ subdir for the valhalla container."""
+    src = f"{ctx['data_path']}/pbf/western-us.osm.pbf"
+    dst_dir = f"{ctx['data_path']}/valhalla"
+    return [
+        "bash", "-c",
+        f"set -e; mkdir -p '{dst_dir}' && cp '{src}' '{dst_dir}/western-us.osm.pbf'",
+    ]
+
+
+def planetiler_pull_cmd(ctx=None) -> list[str]:
+    return ["docker", "pull", f"ghcr.io/onthegomap/planetiler:{PLANETILER_VERSION}"]
+
+
+def planetiler_build_cmd(ctx) -> list[str]:
+    return [
+        "docker", "run", "--rm",
+        "-v", f"{ctx['data_path']}:/data",
+        f"ghcr.io/onthegomap/planetiler:{PLANETILER_VERSION}",
+        "--area=custom",
+        "--osm-path=/data/pbf/western-us.osm.pbf",
+        "--output=/data/basemap.mbtiles",
+        "--force",
+    ]
+
+
+def poi_build_cmd(ctx) -> list[str]:
+    return [
+        "python3", f"{ctx['scripts_path']}/build_poi_index.py",
+        "--bbox", ctx.get("layer_bbox", {}).get("basemap") or ctx["bbox"],
+        "--output", f"{ctx['data_path']}/poi.sqlite",
+    ]
+
+
+def osm_pois_cmd(ctx) -> list[str]:
+    return [
+        "python3", f"{ctx['scripts_path']}/build_osm_pois.py",
+        "--pbf", f"{ctx['data_path']}/pbf/western-us.osm.pbf",
+        "--output", f"{ctx['data_path']}/poi.sqlite",
+        "--bbox", ctx.get("layer_bbox", {}).get("basemap") or ctx["bbox"],
+    ]
+
+
+def public_lands_cmd(ctx) -> list[str]:
+    return [
+        "python3", f"{ctx['scripts_path']}/build_public_lands.py",
+        "--bbox", ctx.get("layer_bbox", {}).get("basemap") or ctx["bbox"],
+        "--output", f"{ctx['data_path']}/public_lands.mbtiles",
+        "--cache-dir", f"{ctx['data_path']}/cache/public_lands",
+    ]
+
+
+def elevation_cmd(ctx) -> list[str]:
+    return [
+        "python3", f"{ctx['scripts_path']}/download_elevation.py",
+        "--bbox", ctx.get("layer_bbox", {}).get("basemap") or ctx["bbox"],
+        "--zoom", "0-14",
+        "--output", f"{ctx['data_path']}/elevation.mbtiles",
+    ]
+
+
+def base_imagery_cmd(ctx) -> list[str]:
+    """Dispatch on ctx['layers']['base_imagery'] in {naip, sentinel, noaa, tnmaccess}."""
+    source = ctx["layers"]["base_imagery"]
+    if source == "skip":
+        raise ValueError("base_imagery_cmd invoked with source='skip' — filter_active_steps should have removed this step")
+    bbox = ctx.get("layer_bbox", {}).get("base_imagery") or ctx["bbox"]
+    output = f"{ctx['data_path']}/imagery.mbtiles"
+    zoom = ctx.get("base_imagery_zoom", 15)
+    if source == "sentinel":
+        return [
+            "python3", f"{ctx['scripts_path']}/acquire_sentinel.py",
+            "--bbox", bbox, "--zoom", str(zoom), "--output", output,
+        ]
+    # naip / noaa / tnmaccess all use acquire_imagery.py with --mode
+    return [
+        "python3", f"{ctx['scripts_path']}/acquire_imagery.py",
+        "--mode", source, "--bbox", bbox,
+        "--zoom", f"0-{zoom}", "--output", output,
+    ]
+
+
+def detail_imagery_cmd(ctx) -> list[str]:
+    """Dispatch on ctx['layers']['detail_imagery'] in {m2m, copernicus}."""
+    source = ctx["layers"]["detail_imagery"]
+    if source == "skip":
+        raise ValueError("detail_imagery_cmd invoked with source='skip' — filter_active_steps bug")
+    bbox = ctx.get("layer_bbox", {}).get("detail_imagery") or ctx["bbox"]
+    output = f"{ctx['data_path']}/imagery_detail.mbtiles"
+    if source == "copernicus":
+        return [
+            "python3", f"{ctx['scripts_path']}/acquire_sentinel.py",
+            "--bbox", bbox, "--detail", "--output", output,
+        ]
+    return [
+        "python3", f"{ctx['scripts_path']}/acquire_imagery.py",
+        "--mode", "m2m", "--bbox", bbox, "--output", output,
+    ]
+
+
+def fonts_cmd(ctx) -> list[str]:
+    dst = "tileserver/fonts-served"
+    return [
+        "bash", "-c",
+        f"set -e; mkdir -p '{dst}' && cd '{dst}' && "
+        f"wget -q -O fonts.zip "
+        f"'https://github.com/openmaptiles/fonts/releases/download/v2.0/fonts.zip' && "
+        f"unzip -o -q fonts.zip && rm fonts.zip",
+    ]
+
+
+def styles_cmd(ctx) -> list[str]:
+    return [
+        "bash", "-c",
+        "set -e; "
+        "for style in positron dark-matter; do "
+        "  mkdir -p tileserver/styles/$style/icons; "
+        "  git clone --depth=1 "
+        "    https://github.com/openmaptiles/$style-gl-style.git "
+        "    /tmp/$style-style-$$; "
+        "  cp -r /tmp/$style-style-$$/icons/* tileserver/styles/$style/icons/ || true; "
+        "  rm -rf /tmp/$style-style-$$; "
+        "done",
+    ]
+
+
+def docker_build_cmd(ctx=None) -> list[str]:
+    return ["docker", "compose", "build"]

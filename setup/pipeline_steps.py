@@ -2,6 +2,13 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Tuple, TypedDict
+from setup.runner import (
+    osm_download_cmd, osm_merge_cmd, osm_copy_cmd,
+    planetiler_pull_cmd, planetiler_build_cmd,
+    poi_build_cmd, osm_pois_cmd, public_lands_cmd, elevation_cmd,
+    base_imagery_cmd, detail_imagery_cmd,
+    fonts_cmd, docker_build_cmd,
+)
 
 
 class PipelineContext(TypedDict):
@@ -32,44 +39,31 @@ class PipelineStep:
 
 
 ALL_PIPELINE_STEPS: Tuple[PipelineStep, ...] = (
-    PipelineStep("osm_download", "Download OSM data",
-                 _raise("cmd builder for osm_download not yet implemented — see Task 25"),
+    PipelineStep("osm_download", "Download OSM data", osm_download_cmd,
                  ("wget",), (), ("basemap",)),
-    PipelineStep("osm_merge", "Merge OSM extracts",
-                 _raise("cmd builder for osm_merge not yet implemented — see Task 25"),
+    PipelineStep("osm_merge", "Merge OSM extracts", osm_merge_cmd,
                  ("osmium-tool",), (), ("basemap",)),
-    PipelineStep("osm_copy", "Stage OSM data",
-                 _raise("cmd builder for osm_copy not yet implemented — see Task 25"),
+    PipelineStep("osm_copy", "Stage OSM data", osm_copy_cmd,
                  (), (), ("basemap",)),
-    PipelineStep("planetiler_pull", "Pull Planetiler image",
-                 _raise("cmd builder for planetiler_pull not yet implemented — see Task 25"),
+    PipelineStep("planetiler_pull", "Pull Planetiler image", planetiler_pull_cmd,
                  ("docker",), (), ("basemap",)),
-    PipelineStep("planetiler_build", "Build basemap tiles",
-                 _raise("cmd builder for planetiler_build not yet implemented — see Task 25"),
+    PipelineStep("planetiler_build", "Build basemap tiles", planetiler_build_cmd,
                  ("docker",), (), ("basemap",)),
-    PipelineStep("poi_build", "Build POI index",
-                 _raise("cmd builder for poi_build not yet implemented — see Task 25"),
+    PipelineStep("poi_build", "Build POI index", poi_build_cmd,
                  ("python3",), (), ("basemap",)),
-    PipelineStep("osm_pois", "Extract OSM POIs",
-                 _raise("cmd builder for osm_pois not yet implemented — see Task 25"),
+    PipelineStep("osm_pois", "Extract OSM POIs", osm_pois_cmd,
                  ("osmium-tool", "python3"), (), ("basemap",)),
-    PipelineStep("public_lands", "Process public lands",
-                 _raise("cmd builder for public_lands not yet implemented — see Task 25"),
+    PipelineStep("public_lands", "Process public lands", public_lands_cmd,
                  ("tippecanoe", "python3"), (), ("basemap",)),
-    PipelineStep("elevation", "Download elevation data",
-                 _raise("cmd builder for elevation not yet implemented — see Task 25"),
+    PipelineStep("elevation", "Download elevation data", elevation_cmd,
                  ("python3",), (), ("elevation",)),
-    PipelineStep("base_imagery", "Download base imagery",
-                 _raise("cmd builder for base_imagery not yet implemented — see Task 25"),
+    PipelineStep("base_imagery", "Download base imagery", base_imagery_cmd,
                  ("python3",), (), ("base_imagery",)),
-    PipelineStep("detail_imagery", "Download detail imagery",
-                 _raise("cmd builder for detail_imagery not yet implemented — see Task 25"),
+    PipelineStep("detail_imagery", "Download detail imagery", detail_imagery_cmd,
                  ("python3",), ("m2m", "copernicus"), ("detail_imagery",)),
-    PipelineStep("fonts", "Download map fonts",
-                 _raise("cmd builder for fonts not yet implemented — see Task 25"),
+    PipelineStep("fonts", "Download map fonts", fonts_cmd,
                  (), (), ("basemap",)),
-    PipelineStep("docker_build", "Build Docker images",
-                 _raise("cmd builder for docker_build not yet implemented — see Task 25"),
+    PipelineStep("docker_build", "Build Docker images", docker_build_cmd,
                  ("docker",), (), ()),
 )
 
