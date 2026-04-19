@@ -30,14 +30,6 @@
       <p class="subtitle">Auto-detected system configuration. Override values if needed.</p>
 
       <div class="field-group">
-        <label for="host-ip">Host IP Address</label>
-        <div class="field-row">
-          <input type="text" id="host-ip" placeholder="Detecting...">
-          <span class="field-hint" id="host-ip-hint">Auto-detected</span>
-        </div>
-      </div>
-
-      <div class="field-group">
         <label for="tls-mode">TLS Mode</label>
         <select id="tls-mode">
           <option value="http">HTTP (no encryption)</option>
@@ -56,11 +48,27 @@
       </div>
 
       <div class="field-group">
-        <label for="data-path">Data Storage Path</label>
-        <select id="data-path">
-          <option value="/srv/geographica/data">/srv/geographica/data (default)</option>
+        <label for="data-drive">Data Storage — Drive</label>
+        <select id="data-drive">
+          <option value="">Detecting drives...</option>
         </select>
-        <div id="storage-info" class="storage-info"></div>
+        <span class="field-hint">Select the filesystem where Geographica will store ~50-100 GB of imagery, tiles, and OSM data.</span>
+      </div>
+
+      <div class="field-group" id="data-subpath-group">
+        <label for="data-subpath">Subpath on drive</label>
+        <input type="text" id="data-subpath" value="geographica/data" placeholder="geographica/data">
+        <span class="field-hint">Created on Next if it doesn't exist. Relative to the selected drive.</span>
+      </div>
+
+      <div class="field-group" id="data-custom-group" style="display:none">
+        <label for="data-custom-path">Custom absolute path</label>
+        <input type="text" id="data-custom-path" placeholder="/srv/geographica/data">
+        <span class="field-hint">Enter a full absolute path. Must be under /srv, /mnt, /media, or /home.</span>
+      </div>
+
+      <div class="field-group">
+        <span class="field-hint" id="data-path-hint"></span>
       </div>
     </div>
 
