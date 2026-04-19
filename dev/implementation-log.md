@@ -37,6 +37,114 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-19 NIGHT — Beta-tester preflight unblocker + wizard harness rebuild
+
+**Released as:** `fix(setup): unblock beta testers stuck in preflight + bootstrap loops` (commit `5e400c5` on main). Harness rewrite lands with this commit on main.
+**Plan / spec:** none — single-session debug off a beta-tester screenshot (docs/123_1 (7).jpeg).
+**Bug hunts:** none — all found through the harness rewrite.
+**Adversarial reviews:** none.
+
+### Summary
+Every beta tester attempting to set up Geographica since the 2026-04-19
+setup-remediation landing hit a hard wizard-level block: preflight's
+"Python pipeline deps" check reported `Missing: rasterio, shapely, scipy,
+numpy` on every Pi, regardless of bootstrap success or reboot. The
+wizard's "remedy" box told them to re-run `sudo ./bootstrap.sh` in what
+was effectively an infinite loop. One beta tester looped this ~16 times
+before giving up; another rebooted and still hit the same error.
+
+Root cause (confirmed against beta tester's screenshot + end-to-end LXD
+reproduction): the wizard's preflight check used in-process
+`__import__('rasterio')`, which runs inside `setup/.venv` — the venv
+setup.sh creates. That venv does NOT inherit the user's `~/.local/...`
+where bootstrap's `pip install --user --break-system-packages` places
+those packages. So the check ALWAYS reported missing on every Pi, forever.
+
+Fix: preflight now shells out to `/usr/bin/python3 -c 'import <pkg>'` so
+the check reflects the actual user environment bootstrap targeted, not
+the venv. 6 regression tests in `tests/test_preflight_python_deps.py`
+guard against the bug coming back.
+
+Also shipped alongside:
+- **bootstrap.sh curl/gpg prereq.** Bootstrap consumed `curl` + `gpg`
+  for Docker repo setup BEFORE installing them. Fine on raspios Full
+  (preinstalled) but broke on minimal Debian / raspios Lite.
+- **bootstrap.sh completion-message overhaul.** Beta tester literally
+  reported "exiting a screen and opening a new one counts as logging
+  out, right?" — it doesn't. New message spells out 4 concrete options
+  (reboot / ssh exit+reconnect / console logout / `newgrp docker`)
+  and names what does NOT count. Includes a `groups` verification step.
+- **setup.sh diagnostic message.** Distinguishes "Docker not installed"
+  from "installed but your shell isn't in the docker group" and gives
+  a specific fix for each (previously offered both as a list, asking
+  the beta tester to guess).
+
+Post-fix, the LXD harness got the rebuild it's needed since v1.0:
+
+- **`dev/harness/drive-wizard.mjs` full rewrite.** Before: waited for
+  `#step-4` selector, exited 0. Asserted nothing. After: asserts no
+  error banners at any step boundary, no raw Python tracebacks in
+  the DOM, preflight all dots are `.ok` (with a named exclusion for
+  known-environmentally-unavoidable failures), `#btn-next` enabled
+  + text appropriate, no pageerror / console.error events. RED-tested
+  by injecting a bogus package into the preflight list — harness
+  correctly failed with `ASSERT FAIL: 1 preflight check(s) failing`.
+- **`dev/harness/wizard-ci.sh` fixes.** Four LXD-version bugs
+  discovered during the rewrite: `lxc file push -r` syntax changed
+  (swapped for `git ls-files | tar`); `lxc exec ... & ` never
+  detaches (swapped for `systemd-run --unit=...`); setup.sh binds
+  127.0.0.1 inside container, unreachable from host (added LXD proxy
+  device on port 18099); cloud-init wait blocked on raspios
+  (non-cloud-init images — now handles `done`/`disabled`/missing +
+  installs systemd-networkd if eth0 has no IPv4).
+- **`--image=ALIAS` + `--pre-state=NAME` flags** let the same harness
+  run against Debian cloud, raspios, or arbitrary pre-conditioned
+  environments.
+- **`dev/harness/import-raspios.sh`**: one-shot importer that
+  downloads latest raspios-lite-arm64, extracts the root partition,
+  creates an LXD metadata tarball, imports as alias `raspios-trixie-lite`.
+  Idempotent; cached.
+- **`dev/harness/wizard-matrix.sh`**: iterates every `pre-states/*.sh`,
+  runs a full wizard walkthrough per pre-state, fail-surfaces all
+  failures in one run.
+- **`.github/workflows/wizard-ci.yml` upgraded** from manual-dispatch
+  only to: smoke mode on every push/PR to `main` or `dev` touching
+  the setup code paths, plus manual-dispatch for `matrix`,
+  `matrix-raspios`, and `full` modes.
+
+### Notable bugs caught
+
+- **Preflight python-deps infinite loop** (beta-blocker, 5e400c5).
+- **LXD bridge down, NAT flushed by Docker** — the harness wouldn't
+  run on this Pi AT ALL. Fixed with a `DOCKER-USER` ACCEPT rule +
+  systemd unit for persistence (`lxd-docker-bridge.service`).
+- **Old harness claimed to exercise the wizard but didn't.** Smoke
+  mode exited as soon as `#step-4` rendered — never read any status.
+  Every preflight regression since v1.0 would have slipped past.
+
+### Why the 50-task setup-remediation missed the preflight bug
+
+That plan focused on making bootstrap CORRECT; it assumed the wizard's
+preflight check (set up well before the plan) was already correct.
+In the beta-tester failure mode, bootstrap actually worked — the
+wizard's check was broken. No number of bootstrap-focused tests would
+catch it, and our LXD harness didn't assert anything beyond DOM-load.
+The rewrite fixes the class — any future preflight regression will
+fail CI instead of beta.
+
+### Commits
+
+- `5e400c5 fix(setup): unblock beta testers stuck in preflight + bootstrap loops` — setup/main.py + tests + bootstrap.sh curl prereq + completion msg + setup.sh diagnostic (on main).
+- (this commit) `test(harness): real assertion-bearing wizard harness + raspios + pre-state matrix + CI gating` — harness rewrite + import-raspios.sh + wizard-matrix.sh + workflow update.
+
+### Outcome
+
+- **Beta testers unblocked**: 5e400c5 is on main. `git pull && sudo ./bootstrap.sh` (or just `./setup.sh` if bootstrap already succeeded) now proceeds past preflight.
+- **Harness on the gate**: push to `main`/`dev` now runs the assertion-bearing smoke mode. Before: manual dispatch only + smoke-mode that passed even on the broken wizard.
+- **One concrete known-limitation surfaced to a follow-up**: `--image=raspios-trixie-lite` launches the container fine and bootstrap's apt phase completes, but `systemctl start docker` inside raspios-LXD fails with "Job for docker.service canceled" after bootstrap edits `/boot/cmdline.txt` for cgroup_enable=memory. Does not affect the Debian-cloud smoke gate. Deferred for separate debug session.
+
+---
+
 ## 2026-04-19 EVE — Trixie docker file-conflict: fix + pre-state harness
 
 **Released as:** fix on `dev` (commit `59f00b5`); matrix landing with this commit.

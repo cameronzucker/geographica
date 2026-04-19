@@ -1,32 +1,82 @@
 name: wizard-ci
 
-# Manual dispatch only for now. To add a nightly schedule later, uncomment the
-# schedule block below (cron: 7 AM UTC = midnight Pacific).
+# Smoke-mode harness runs on every push to main + dev and on every PR
+# targeting them. This is the gate that should have caught the
+# 2026-04-19 beta-tester reports (raw tracebacks, repeated
+# "run bootstrap" prompts, preflight failures).
 #
-# schedule:
-#   - cron: '0 7 * * *'
+# Full-pipeline mode (~8 hr) stays manual-dispatch only — we don't want
+# to block every push on a multi-hour tile build.
+#
+# The runner is the Pi itself (self-hosted) because LXD is not available
+# on GitHub-hosted runners and the wizard exercises systemd + ports.
 
 on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'bootstrap.sh'
+      - 'setup.sh'
+      - 'setup/**'
+      - 'dev/harness/**'
+      - '.github/workflows/wizard-ci.yml'
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'bootstrap.sh'
+      - 'setup.sh'
+      - 'setup/**'
+      - 'dev/harness/**'
+      - '.github/workflows/wizard-ci.yml'
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Harness mode (smoke runs ~3 min, full runs ~8 hr)'
+        description: 'Harness mode'
         required: true
         default: 'smoke'
         type: choice
-        options: [smoke, full]
+        options: [smoke, full, matrix, matrix-raspios]
+      image:
+        description: 'LXD image alias (smoke/full only)'
+        required: false
+        default: 'images:debian/trixie/cloud'
+        type: string
 
 jobs:
   wizard-ci:
-    runs-on: self-hosted   # LXD requires root + local kernel; self-hosted Pi
+    runs-on: self-hosted   # LXD + Playwright both need the local Pi
     steps:
       - uses: actions/checkout@v4
+
       - name: Install harness deps
         working-directory: dev/harness
         run: |
           npm install
           npx playwright install chromium --with-deps
-      - name: Run wizard harness
+
+      # Push- and PR-triggered runs: smoke mode on Debian cloud (fast,
+      # deterministic). This is the gate.
+      - name: Run wizard smoke (push/PR trigger)
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        run: ./dev/harness/wizard-ci.sh --smoke
+
+      # Manual dispatch — plumb inputs through env to avoid workflow
+      # injection (per GitHub's guidance).
+      - name: Run wizard — manual smoke/full
+        if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'smoke' || inputs.mode == 'full')
         env:
-          HARNESS_MODE: ${{ github.event.inputs.mode }}
-        run: ./dev/harness/wizard-ci.sh --"$HARNESS_MODE"
+          MODE: ${{ inputs.mode }}
+          IMAGE: ${{ inputs.image }}
+        run: |
+          ./dev/harness/wizard-ci.sh "--$MODE" "--image=$IMAGE"
+
+      - name: Run wizard — pre-state matrix (Debian cloud)
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'matrix'
+        run: ./dev/harness/wizard-matrix.sh
+
+      - name: Run wizard — pre-state matrix (raspios)
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'matrix-raspios'
+        run: |
+          # Ensure the raspios LXD image exists; import if not.
+          ./dev/harness/import-raspios.sh
+          ./dev/harness/wizard-matrix.sh --image=raspios-trixie-lite
