@@ -37,6 +37,37 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-19 — GX-01 adapter HAT: JLC bundle correctness + mechanical design paused
+
+**Released as:** ongoing (internal hardware work; no user-facing release)
+**Plan / spec:** [docs/superpowers/plans/2026-04-18-gx-01-pcb-completion.md](../docs/superpowers/plans/2026-04-18-gx-01-pcb-completion.md) (Phase 0 paused; see Status block)
+**Design doc:** [hardware/gx01-path-c-mockup.html](../hardware/gx01-path-c-mockup.html) (open in a browser)
+
+### Summary
+User attempted to upload `hardware/gx01-adapter-pcb/jlc_bundle.zip` to JLCPCB; three rounds of 3D preview review caught distinct issues: (1) all components offset ~60 mm above the board outline due to Y-sign in CPL, (2) J1/J2 large headers placed ~24 mm off due to using footprint anchor instead of pad-bbox-center, (3) four LCSC parts physically mismatched their footprints (lead pitch, pin count, B2B-vs-S2B sub-variant). All three classes fixed. Final bundle verifies clean and ships 7/7 parts correctly placed in JLC's viewer. Then a mechanical concern surfaced: the adapter HAT's top-surface connectors (J2 at ~11 mm + ribbon) exceed the case's ~10 mm top-plate clearance. Iterative mockup and dimensional analysis produced two viable paths (A: taller case, C: flip J2 to B.Cu and sandwich with LCD); decision formally deferred until X1100 (arriving 2026-04-19) and SparkFun LCD-00710 (~1 week) are in hand to measure.
+
+### Key decisions
+- **CPL positions come from `pcbnew` pad-bbox centers, not `kicad-cli pcb export pos`.** `kicad-cli` passes the footprint anchor through unchanged; the KiCad GUI has a "Use pad origin as reference" toggle that isn't exposed in the CLI. For JLC CPL "Mid X/Mid Y" correctness, we must compute pad bbox centers ourselves in `pcbnew`.
+- **Trust the JLC catalog description over the 3D preview.** R1's preview rendering looked suspicious but the description (`Plugin,D2.4xL6.3mm`) confirms it matches our DIN0207 footprint. Placeholder 3D models are common for Extended-tier THT parts. Kept C1370997 unchanged.
+- **Design decision deferred pending hardware.** Both Path A (case +20 mm height, keep PCB) and Path C (flip J2 to B.Cu, LCD+HAT sandwich) are mechanically viable. Committing to Path C costs a PCB refab (~$80, ~14 days); Path A costs case proportions. Decision needs physical measurements of X1100 + LCD to confirm the vertical void budget above the X1207 battery cradle.
+- **Don't delete the bug-hunt evidence.** JLC 3D preview screenshots (`hardware/jlc_misalignment_v{2,3,4}.jpg`) committed as design history — they're the only record of what the three misalignment classes looked like.
+
+### Notable bugs caught
+- **CPL Y-sign flip** — KiCad internal coords are Y-down, Gerbers and JLC CPL expect Y-up. Components rendered ~60 mm above the board outline in the JLC viewer. Fixed by applying `Y = -Y` in the CPL generator.
+- **Anchor-vs-center offset for THT headers** — `pcbnew.FOOTPRINT.GetPosition()` returns the anchor (pin 1), but JLC's "Mid X/Mid Y" expects the geometric pad center. For a 2×20 header this was 24 mm off. Fixed by iterating pads and merging bounding boxes.
+- **LCSC part mismatch against footprint (×4)** — `verify_lcsc.py`'s THT-vs-SMD heuristic doesn't check pin count, lead pitch, or connector sub-variant. C254085 (5.08 mm pitch vs our 2.5 mm), C124378 (4-pin vs 1×20), C146125 (S-series side-entry vs B-series top-entry). All 4 were clean per the existing verification; all 4 physically wouldn't have fit. `verify_lcsc.py` hardening noted as follow-up.
+
+### Commits
+- `fix(hardware): correct JLC bundle CPL geometry and LCSC part selections` — pad-bbox-center computation, Y-axis flip, 4 LCSC part swaps (C254085→C524651, C124378→C50981, C146125→C158012 for J3 and J4)
+- `docs(hardware): pause GX-01 PCB completion pending X1100+LCD arrival` — Plan 3 status block, Path C mockup, JLC preview screenshots, this implementation-log entry
+
+### Outcome
+- 7/7 parts verify clean against JLC's live catalog via `verify_lcsc.py`.
+- `jlc_bundle.zip` regenerated (33 KB, 11 files); BOM and CPL confirmed matching via diff against `kicad-cli pcb export pos`.
+- PCB work paused for ≤1 week awaiting hardware; resumption criteria documented in [session handoff memory](../../../home/administrator/.claude/projects/-home-administrator-Code-geographica/memory/handoff_20260419_gx01_cpl_path_c.md) (out-of-repo).
+
+---
+
 ## 2026-04-18 — NOAA Imagery Pipeline Remediation (on dev, awaiting runtime validation)
 
 **Released as:** not yet released — all 13 commits on `dev` only, pending end-to-end validation on a Flagstaff-size bbox after the current ~494-quad production pipeline finishes (~2026-04-19)

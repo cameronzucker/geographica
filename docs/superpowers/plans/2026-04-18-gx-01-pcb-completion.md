@@ -2,6 +2,44 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Status as of 2026-04-19: PAUSED pending hardware arrival
+
+Phase 0 (pipeline verification dry-run) was attempted; iterative uploads to JLCPCB's PCBA preview revealed three classes of issues, all fixed on `dev`:
+1. CPL coordinate system — Y-axis flip + pad-bbox-center (not anchor) — fixed in `hardware/_shared/make_jlc_bundle.py`.
+2. Four LCSC part numbers physically mismatched their footprints — corrected in `hardware/gx01-adapter-pcb/lcsc_mapping.yaml`.
+3. **Mechanical clearance problem surfaced**: adapter HAT's vertical connectors (J2 at ~11 mm + ribbon connector) exceed the case's ~10 mm top-plate gap. The PCB is electrically correct but cannot occupy its planned "top of HAT stack" position in the current case.
+
+Two paths forward, no decision yet:
+
+- **Path A** — grow the case height by ~20 mm (95 → 115 mm), keep the current PCB and `jlc_bundle.zip` exactly as designed. Zero PCB cost; chunkier case proportions.
+- **Path C (sandwich)** — flip J2 to the B.Cu side, hard-solder the LCD directly onto the adapter HAT to form a unified "display module" that mounts to the front panel interior. Fits the current case (via the vertical void above X1207's battery cradle). Requires a PCB respin (~$80, ~14 days at JLC) and makes the LCD non-field-replaceable.
+
+**Decision criteria needing parts in hand:**
+
+1. X1100 shield dimensions + mounting holes (Geekworm wiki was down last check; must measure the shipped unit — arriving 2026-04-19 per Amazon).
+2. USB3 bridge length, Pi standoff height (affects stack Z-heights and the vertical void).
+3. 21700 cell exact position in X1207 cradle (confirms D=56-80 front-depth void above it).
+4. SparkFun LCD-00710 mounting-hole positions (for the Path C bracket, if chosen).
+5. Whether the LCD ships bare or with a pre-soldered pin header.
+
+**Artifacts produced this cycle:**
+
+- Mockup: [hardware/gx01-path-c-mockup.html](../../../hardware/gx01-path-c-mockup.html) — exploded side view, full-case cross-section, case-interior HAT view, dimensional analysis, Path A-vs-B-vs-C tradeoff table. Open in a browser.
+- JLC debug history: [hardware/jlc_misalignment_v2.jpg](../../../hardware/jlc_misalignment_v2.jpg), [v3](../../../hardware/jlc_misalignment_v3.jpg), [v4](../../../hardware/jlc_misalignment_v4.jpg).
+- Implementation log entry: [dev/implementation-log.md](../../../dev/implementation-log.md) (2026-04-19).
+
+**Resumption — in order:**
+
+1. Measure the items in the decision criteria list.
+2. Plug numbers into the dimensional analysis section of the mockup HTML.
+3. Commit to Path A or Path C.
+4. If A: return to Phase 0 Task 0.1 below; the existing `jlc_bundle.zip` is ready to upload.
+5. If C: update `layout.py` (J2 → B.Cu, add test pads, maybe move J1 to back edge), re-run the full pipeline, regenerate the bundle, then resume Phase 0.
+
+**Known follow-up independent of A/C decision:** harden `hardware/_shared/verify_lcsc.py` to check pin count and lead pitch against the footprint name, not just THT-vs-SMD substrings. Should land before any future custom-PCB respin.
+
+---
+
 **Goal:** Order the GX-01 adapter HAT PCB from a fab house, procure the through-hole BOM, solder the board, and bench-verify it works before installation into the case (Plan 2 Phase 3).
 
 **Architecture:** The PCB design is already complete and fully auto-routed (see `hardware/gx01-adapter-pcb/`). This plan covers the post-design workflow: verify the pipeline still runs clean → upload Gerbers to OSH Park → order through-hole parts from DigiKey → solder on receipt → bench-test with a multimeter and a Pi before integration.
