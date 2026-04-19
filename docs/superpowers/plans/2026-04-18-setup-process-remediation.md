@@ -22,6 +22,56 @@ Baseline command: `python -m pytest tests/ services/search/tests/ -v`
 
 > **Note on setup.js line numbers:** Tasks 14, 20, 22, 23, 29, 34, 35, 38, 39, 40 all modify `setup/static/setup.js`. Line numbers in task descriptions are pre-refactor. When dispatched, subagents should locate edit sites by SYMBOL NAME (function, variable, event handler) rather than line range. Each task's Files section lists symbols where possible.
 
+## Execution environment preamble (applies to all tasks)
+
+**Python environment:** All `python -m pytest` and `python -m <module>` commands below assume the setup-wizard virtualenv is activated. Before dispatching tasks, ensure:
+```
+cd /home/administrator/Code/geographica
+python3 -m venv setup/.venv  # if not already present
+source setup/.venv/bin/activate
+pip install -r setup/requirements.txt pytest pytest-asyncio httpx
+```
+Every Step 2 and Step 4 pytest invocation uses this venv. If `pytest-asyncio` is missing, add it here before dispatching Task 30.
+
+**Commit conventions (Conventional Commits):**
+| Prefix | Use for |
+|---|---|
+| `feat(scope):` | new feature |
+| `fix(scope):` | bug fix |
+| `refactor(scope):` | non-behavior code change |
+| `test(scope):` | test-only change |
+| `docs(scope):` | documentation |
+| `ci(scope):` | CI/tooling change |
+| `chore(scope):` | maintenance |
+
+Scopes in this cycle: `setup`, `bootstrap`, `pipeline`, `config`, `runner`, `frontend`, `docs`, `tests`, `harness`.
+
+Every commit ends with: `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`
+
+**Test baseline:** The `dev` branch baseline before this plan starts has `2 pre-existing M2M test failures + 9 pre-existing OSM POI test errors`. Every Task's Completion Check compares against that baseline. Any new failure beyond that is a regression that MUST be resolved before the task is marked complete.
+
+**sys.path preamble for new test files:** New pytest files in `tests/` must include this at the top:
+```python
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+# If the test imports from setup/, also:
+sys.path.insert(0, str(Path(__file__).parent.parent / "setup"))
+```
+This matches the existing pattern in `tests/test_setup_*.py`.
+
+**File contention / dispatch ordering:** Many tasks mutate the same files. Subagent-driven-development must NOT dispatch these in parallel:
+- `setup/main.py` (19 tasks): T11, T14, T21, T23, T26, T27, T30, T31, T33, T34, T35, T36, T37, T38, T40, T41, T42, T43, T44
+- `setup/static/setup.js` (10 tasks): T14, T20, T22, T23, T29, T34, T35, T38, T39, T40
+- `setup/static/index.html` (6 tasks): T14, T19, T23, T28, T35, T38
+- `bootstrap.sh` (8 tasks): T1, T3, T4, T5, T6, T7, T9, T10
+- `tests/test_setup_main.py` (19 tasks): same set as setup/main.py
+- `tests/test_setup_js.py` (6 tasks): T20, T22, T29, T34, T38, T39
+- `setup/config.py` (4 tasks): T11, T16, T17, T18
+- `setup/runner.py` (4 tasks): T13, T25, T32, T35
+
+Execute tasks sequentially within phases (and across phases for tasks sharing a file). A task dispatched while another task editing the same file is in flight MUST be deferred.
+
 ## Phase 0 — Unblock beta tester (docs only)
 
 ### Task 1: Fix `cdzucker` clone-URL typos + dev-Pi path reference
@@ -33,6 +83,8 @@ Baseline command: `python -m pytest tests/ services/search/tests/ -v`
 - Modify: `README.md:588` (replace `~/Code/geographica` with `~/geographica`)
 - Modify: `bootstrap.sh:24` (world-writable warning)
 - Test: `tests/test_docs_urls.py` (NEW)
+
+**Scope fence (do NOT):** Modify ONLY the 5 enumerated lines. Do NOT grep-rename across the repo. If `grep -rn cdzucker .` finds additional hits, STOP and report them back instead of editing.
 
 **TDD preamble:** Read `/home/administrator/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/skills/test-driven-development/SKILL.md`. Review testing-pitfalls entry "Multi-layer enum values diverge silently" — cross-file string drift is the same class.
 
@@ -102,6 +154,8 @@ MSG
 **Files:**
 - Modify: `README.md:466-484`
 - Test: extend `tests/test_docs_urls.py`
+
+**Scope fence (do NOT):** Preserve §12 narrative verbatim. Only URLs may be edited. Do NOT restructure headings or bullets.
 
 **TDD preamble:** Read TDD skill. Same pitfall as Task 1.
 
@@ -274,6 +328,8 @@ Update your private journal. Then proceed to Phase 1.
 - Modify: `bootstrap.sh:28-35`
 - Test: `tests/test_bootstrap_docker_install.py` (NEW)
 
+**Scope fence (do NOT):** ONLY modify the apt-install line and the docker-repo setup block. Do NOT remove existing apt packages or modify the `[2/6]`-`[6/6]` section numbering (a later pass renumbers bootstrap headers).
+
 **TDD preamble:** Read TDD skill. Review pitfall "Preflight/fix registries with parallel keys that drift".
 
 - [ ] **Step 1: Write failing test**
@@ -409,6 +465,8 @@ MSG
 - Modify: `bootstrap.sh:69-70`
 - Test: `tests/test_bootstrap_symlink.py` (NEW)
 
+**Scope fence (do NOT):** Update the symlink creation ONLY. Do NOT touch `chown`, `mkdir`, or any other bootstrap step.
+
 **TDD preamble:** Read TDD skill.
 
 - [ ] **Step 1: Write failing test**
@@ -474,6 +532,8 @@ MSG
 **Files:**
 - Modify: `bootstrap.sh:64-67`
 - Test: extend `tests/test_bootstrap_symlink.py`
+
+**Scope fence (do NOT):** Modify the chown line ONLY. Do NOT restructure surrounding bootstrap flow.
 
 **TDD preamble:** Read TDD skill.
 
@@ -661,6 +721,18 @@ MSG
 - Modify: `bootstrap.sh` (add step before keyring)
 - Test: `tests/test_bootstrap_tippecanoe.py` (NEW)
 
+**Scope fence (do NOT):** Add the tippecanoe-install block ONLY. Do NOT renumber step headers (that's a separate final-pass task). Pre-dispatch: operator must have uploaded the release asset — see the block at the top of this task.
+
+**Pre-dispatch: operator must upload the release asset before Task 9 is dispatched.**
+
+Run these on an ARM64 host (the dev Pi itself qualifies):
+```bash
+cd /home/administrator/Code/geographica/tools
+./build-tippecanoe.sh   # creates ./tippecanoe-arm64 (Task 8 must be complete)
+gh release upload v1.1.0 ./tippecanoe-arm64
+```
+Task 9 Step 1's test will assert the URL is reachable via HEAD — if Task 9's dispatching subagent sees a 404 at Step 2, escalate back to the operator. Do NOT proceed without the asset.
+
 **TDD preamble:** Read TDD skill. Pitfall: "Streaming download lacks Content-Length short-read detection" — use `curl -fL` to error on HTTP failures.
 
 - [ ] **Step 1: Write failing test**
@@ -685,12 +757,30 @@ def test_bootstrap_installs_to_usr_local_bin():
 
 def test_bootstrap_tippecanoe_has_fallback_message():
     assert "build-tippecanoe.sh" in BOOTSTRAP.read_text()
+
+
+def _extract_tippecanoe_release_url():
+    """Pull TIPPECANOE_RELEASE_URL from bootstrap.sh."""
+    import re
+    m = re.search(r'TIPPECANOE_RELEASE_URL="([^"]+)"', BOOTSTRAP.read_text())
+    assert m, "TIPPECANOE_RELEASE_URL not found in bootstrap.sh"
+    return m.group(1)
+
+
+def test_tippecanoe_release_url_is_reachable():
+    """Confirms the release asset uploaded via gh release upload exists.
+    If this fails, see Task 9 pre-dispatch — operator must upload the binary."""
+    import urllib.request
+    url = _extract_tippecanoe_release_url()
+    req = urllib.request.Request(url, method="HEAD")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        assert resp.status == 200, f"Release asset not reachable: {url} (HTTP {resp.status})"
 ```
 
 - [ ] **Step 2: Run to verify FAIL**
 
 Run: `python -m pytest tests/test_bootstrap_tippecanoe.py -v`
-Expected: 3 FAIL.
+Expected: 3 FAIL (+ reachability test will only pass once the operator has uploaded the asset).
 
 - [ ] **Step 3: Modify bootstrap.sh**
 
@@ -747,6 +837,8 @@ MSG
 **Files:**
 - Modify: `bootstrap.sh` (add step)
 - Test: `tests/test_bootstrap_python_deps.py` (NEW)
+
+**Scope fence (do NOT):** Add pip-install block ONLY. Do NOT modify the bootstrap apt list or other steps.
 
 **TDD preamble:** Read TDD skill.
 
@@ -824,6 +916,10 @@ Update your private journal. Then proceed to Phase 2.
 - Modify: `.env.example`
 - Test: extend `tests/test_setup_config.py` with `TestEnvGenerationFull`; update legacy tests
 
+**Scope fence (do NOT):** Before editing, run `grep -rn 'generate_env' .` and list every caller. If any caller exists OUTSIDE `setup/main.py::post_config`, STOP and report. Do NOT delete any test — adapt bodies in place. Do NOT modify `.env.example` beyond the 21-key schema swap.
+
+**Context note:** New test files must start with the sys.path preamble at the top of the plan (Execution environment preamble §"sys.path preamble for new test files").
+
 **TDD preamble:** Read TDD skill. Review pitfall "Hardcoded dev-machine paths as docker-compose env defaults" + "Multi-layer enum values diverge silently".
 
 - [ ] **Step 1: Write failing test**
@@ -831,6 +927,23 @@ Update your private journal. Then proceed to Phase 2.
 Append to `tests/test_setup_config.py`:
 
 ```python
+def _parse(env_text: str) -> dict[str, str]:
+    return dict(l.split("=", 1) for l in env_text.strip().splitlines()
+                if "=" in l and not l.startswith("#"))
+
+EXPECTED_21_KEYS = {
+    "TLS_MODE", "TLS_CERT_DIR", "TLS_PORT", "BBOX",
+    "DATA_HOST_PATH", "SCRIPTS_HOST_PATH", "STT_BACKEND",
+    "NOMINATIM_MEMORY", "POSTGRES_SHARED_BUFFERS",
+    "POSTGRES_MAINTENANCE_WORK_MEM", "POSTGRES_EFFECTIVE_CACHE_SIZE",
+    "POSTGRES_WORK_MEM", "POSTGRES_AUTOVACUUM_WORK_MEM",
+    "VALHALLA_MEMORY", "VALHALLA_THREADS",
+    "TILESERVER_MEMORY", "STT_MEMORY",
+    "PIPELINE_MEMORY", "PIPELINE_GDAL_CACHE", "PLANETILER_HEAP",
+    "GPS_DEVICE",
+}
+
+
 class TestEnvGenerationFull:
     def _env(self):
         from config import generate_env, RAM_PROFILE_16GB
@@ -844,6 +957,34 @@ class TestEnvGenerationFull:
             tls_port=443,
             stt_backend="cpu",
         )
+
+    def test_env_16gb_values(self):
+        from config import generate_env, RAM_PROFILE_16GB
+        env = _parse(generate_env(
+            tls_mode="http", bbox="-124,31,-102,49",
+            data_path="/srv/geographica/data",
+            scripts_path="/home/administrator/Code/geographica/scripts",
+            ram_profile=RAM_PROFILE_16GB,
+        ))
+        assert set(env.keys()) == EXPECTED_21_KEYS
+        assert env["POSTGRES_WORK_MEM"] == "32MB"
+        assert env["POSTGRES_AUTOVACUUM_WORK_MEM"] == "256MB"
+        assert env["NOMINATIM_MEMORY"] == "8G"
+        assert env["VALHALLA_THREADS"] == "4"
+        assert env["DATA_HOST_PATH"] == "/srv/geographica/data"
+        assert env["SCRIPTS_HOST_PATH"].endswith("/scripts")
+
+    def test_env_8gb_values(self):
+        from config import generate_env, RAM_PROFILE_8GB
+        env = _parse(generate_env(
+            tls_mode="http", bbox="-124,31,-102,49",
+            data_path="/srv/geographica/data",
+            scripts_path="/home/administrator/Code/geographica/scripts",
+            ram_profile=RAM_PROFILE_8GB,
+        ))
+        assert env["POSTGRES_WORK_MEM"] == "16MB"
+        assert env["POSTGRES_AUTOVACUUM_WORK_MEM"] == "128MB"
+        assert env["NOMINATIM_MEMORY"] == "4G"
 
     def test_has_data_host_path(self):
         assert "DATA_HOST_PATH=/srv/geographica/data" in self._env()
@@ -1150,6 +1291,8 @@ Update your private journal. Then proceed to Phase 3.
 - Verify: `.env.example` already uses canonical values from Task 11
 - Test: `tests/test_tls_mode_roundtrip.py` (NEW)
 
+**Scope fence (do NOT):** Delete ONLY classes whose name begins with `TestTlsGenerate` or `TestTlsScan` AND whose body references the deleted endpoints. Do NOT delete adjacent `TestTls*Integration` unless explicitly tied to the deleted endpoints.
+
 **TDD preamble:** Read TDD skill. Review pitfall "Multi-layer enum values diverge silently" — this task implements the round-trip test the pitfall prescribes.
 
 - [ ] **Step 1: Write failing test**
@@ -1201,6 +1344,21 @@ def test_generate_env_roundtrip():
             tls_port=443, stt_backend="cpu",
         )
         assert f"TLS_MODE={mode}" in env
+
+
+def test_generate_env_emits_exactly_one_tls_mode():
+    """Structural assertion: exactly one TLS_MODE line, with the right value.
+    Prevents the 'substring passes but two lines are present' class of bugs."""
+    from setup.config import generate_env, RAM_PROFILE_16GB
+    for mode in ("http", "https", "tailscale"):
+        env = generate_env(
+            tls_mode=mode, bbox="0,0,1,1",
+            data_path="/srv/geographica/data",
+            scripts_path="/home/administrator/Code/geographica/scripts",
+            ram_profile=RAM_PROFILE_16GB,
+        )
+        tls_lines = [l for l in env.splitlines() if l.startswith("TLS_MODE=")]
+        assert tls_lines == [f"TLS_MODE={mode}"], f"expected exactly one TLS_MODE={mode} line, got {tls_lines}"
 ```
 
 - [ ] **Step 2: Run to verify FAIL**
@@ -1429,12 +1587,32 @@ Append to `TestValidatePath`:
     def test_accepts_srv_subpath(self):
         from config import validate_path
         assert validate_path("/srv/anything")["valid"] is True
+
+    def test_validate_path_rejects_sibling_prefixes(self):
+        """Adversarial path table covering every boundary-class the allowlist must reject."""
+        from config import validate_path
+        ADVERSARIAL_REJECT = [
+            "",                    # empty
+            "/",                   # root
+            "/srv",                # allowed prefix alone
+            "/srv/",               # trailing slash on allowed prefix
+            "/srvattacker/x",      # sibling of /srv
+            "/srv/../etc/passwd",  # traversal (resolve should catch)
+            "/srv\x00malicious",   # null byte
+            "//srv/x",             # double-slash
+            "../srv/x",            # relative
+            "/homeroot/x",         # sibling of /home
+            "/mntfoo/x",           # sibling of /mnt
+        ]
+        for path in ADVERSARIAL_REJECT:
+            result = validate_path(path)
+            assert result["valid"] is False, f"Expected {path!r} to be rejected, got {result}"
 ```
 
 - [ ] **Step 2: Run to verify FAIL**
 
 Run: `python -m pytest tests/test_setup_config.py::TestValidatePath -v`
-Expected: FAIL on 3 of 4.
+Expected: FAIL on several paths.
 
 - [ ] **Step 3: Fix validate_path**
 
@@ -1523,6 +1701,8 @@ MSG
 - Modify: `setup/static/index.html:27-73`
 - Test: `tests/test_setup_index_html.py` (NEW)
 
+**Scope fence (do NOT):** Step 1 HTML only. Do NOT touch Step 2, 3, 4, 5 HTML. Do NOT rename any existing IDs outside the data-* family.
+
 **TDD preamble:** Read TDD skill.
 
 - [ ] **Step 1: Write failing test**
@@ -1589,6 +1769,8 @@ MSG
 **Files:**
 - Modify: `setup/static/setup.js:21-33, 154-164, 222-270, 500-509`
 - Test: `tests/test_setup_js.py` (NEW)
+
+**Scope fence (do NOT):** Touch ONLY saveConfig, the new onDataDriveChange / computeDataPath / debouncedValidatePath helpers, and the Step 1 branch of nextStep. Do NOT touch saveCredentials, credentials inputs, or any Step 2+ logic. Task 23 owns credentials.
 
 **TDD preamble:** Read TDD skill. Review pitfall "Fire-and-forget async save from UI that silently swallows server errors" — block Next until validate-path resolves.
 
@@ -1812,6 +1994,8 @@ Expected: FAIL.
 
 Before the pre_check subprocess call, parse `.env` for `DATA_HOST_PATH=`, and if found: unlink existing `./data` (symlink or directory, guarded), `mkdir -p` the target path, `symlink_to(target)`. Raise HTTPException 500 on OSError with the target in the detail.
 
+**Context note — monkeypatch targets:** `setup.main` does `import asyncio` at module top, so `monkeypatch.setattr('setup.main.asyncio', fake_mod)` patches the module-global reference. To patch just `create_subprocess_exec`, use `monkeypatch.setattr('asyncio.create_subprocess_exec', fake_exec)` which is reverted cleanly by monkeypatch.
+
 - [ ] **Step 4: Run to verify PASS**
 
 Run: `python -m pytest tests/test_setup_main.py::TestLaunchReTargetsSymlink -v`
@@ -1838,6 +2022,8 @@ MSG
 **Files:**
 - Verify: `setup/static/setup.js:879-888` (changed in Task 14)
 - Test: extend `tests/test_setup_js.py`
+
+**Scope fence (do NOT):** Verify-only task. If `renderHealth` already constructs the link via `window.location.hostname` with the three-way TLS branch, report success and do NOT edit. Only edit if the function still references `config.host_ip`.
 
 **TDD preamble:** Read TDD skill.
 
@@ -1906,17 +2092,107 @@ Update your private journal. Then proceed to Phase 5.
 - Modify: `setup/static/setup.js:489-528`
 - Test: rewrite `tests/test_setup_main.py::TestCredentialsEndpoint` as `TestCredentialsEndpointKeyring`
 
+**Scope fence (do NOT):** Touch ONLY post_credentials, CredentialsRequest, saveCredentials, and the credentials input IDs. Do NOT touch saveConfig, Step 1/Step 2 logic, or any other handler.
+
 **TDD preamble:** Read TDD skill. Pitfall reference: `dev/testing-pitfalls.md` — "Fire-and-forget async save from UI that silently swallows server errors" (the `.catch → showError` wiring in Step 3 is exactly this pitfall's prescribed fix).
 
 - [ ] **Step 1: Write failing test**
 
-Replace the old `TestCredentialsEndpoint` with a `TestCredentialsEndpointKeyring` class that: spins up a fake Unix-socket agent in a background thread, monkeypatches `setup.main.KEYRING_SOCKET_PATH`, and asserts:
+Replace the old `TestCredentialsEndpoint` with a `TestCredentialsEndpointKeyring` class. Use this concrete fixture + test bodies (paste verbatim into `tests/test_setup_main.py`):
 
-- `test_credentials_go_to_keyring_socket` — POST with all four fields results in four store actions `(m2m,username), (m2m,token), (copernicus,username), (copernicus,password)`.
-- `test_credentials_skips_empty_values` — POST with only m2m_username results in exactly one store action.
-- `test_credentials_surfaces_socket_failure` — when socket path doesn't exist, endpoint returns 503 with "systemctl" in detail.
+```python
+import asyncio
+import json
+import socket
+import threading
+import pytest
+
+@pytest.fixture
+def fake_keyring_socket(tmp_path):
+    socket_path = tmp_path / "keyring.sock"
+    captured = []
+    stop_event = threading.Event()
+
+    def server():
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(socket_path))
+        srv.listen(5)
+        srv.settimeout(0.1)
+        while not stop_event.is_set():
+            try:
+                conn, _ = srv.accept()
+                data = b""
+                while b"\n" not in data:
+                    chunk = conn.recv(4096)
+                    if not chunk: break
+                    data += chunk
+                msg = json.loads(data.decode().strip())
+                captured.append(msg)
+                conn.sendall(b'{"ok":true}\n')
+                conn.close()
+            except socket.timeout:
+                continue
+        srv.close()
+
+    thread = threading.Thread(target=server, daemon=True)
+    thread.start()
+    yield socket_path, captured
+    stop_event.set()
+
+
+def test_post_credentials_writes_each_field(fake_keyring_socket, monkeypatch):
+    socket_path, captured = fake_keyring_socket
+    monkeypatch.setattr("setup.main.KEYRING_SOCKET_PATH", str(socket_path))
+    client = TestClient(app)
+    resp = client.post(
+        "/api/credentials",
+        json={"m2m_username": "alice", "m2m_token": "t0k3n",
+              "copernicus_username": "bob", "copernicus_password": "secret"},
+        headers={"X-CSRF-Token": CSRF_TOKEN},
+    )
+    assert resp.status_code == 200
+    # Must write exactly 4 store actions with specific fields
+    assert len(captured) == 4
+    stored = {(m["type"], m["key"]): m["value"] for m in captured}
+    assert stored[("m2m", "username")] == "alice"
+    assert stored[("m2m", "token")] == "t0k3n"
+    assert stored[("copernicus", "username")] == "bob"
+    assert stored[("copernicus", "password")] == "secret"
+
+
+def test_post_credentials_skips_empty_fields(fake_keyring_socket, monkeypatch):
+    socket_path, captured = fake_keyring_socket
+    monkeypatch.setattr("setup.main.KEYRING_SOCKET_PATH", str(socket_path))
+    client = TestClient(app)
+    resp = client.post(
+        "/api/credentials",
+        json={"m2m_username": "alice", "m2m_token": "",
+              "copernicus_username": "", "copernicus_password": ""},
+        headers={"X-CSRF-Token": CSRF_TOKEN},
+    )
+    assert resp.status_code == 200
+    # Only m2m/username should have been written; blanks skipped
+    assert len(captured) == 1
+    assert captured[0]["type"] == "m2m"
+    assert captured[0]["key"] == "username"
+
+
+def test_post_credentials_surfaces_socket_failure(monkeypatch, tmp_path):
+    missing = tmp_path / "does-not-exist.sock"
+    monkeypatch.setattr("setup.main.KEYRING_SOCKET_PATH", str(missing))
+    client = TestClient(app)
+    resp = client.post(
+        "/api/credentials",
+        json={"m2m_username": "alice", "m2m_token": "t"},
+        headers={"X-CSRF-Token": CSRF_TOKEN},
+    )
+    assert resp.status_code == 503
+    assert "systemctl" in resp.json()["detail"]
+```
 
 Also remove the top-of-file `from setup.main import ... CREDENTIALS_PATH ...` since the constant no longer exists.
+
+**Context note (import update):** Update the top-of-file import in `tests/test_setup_main.py` from `from setup.main import app, CSRF_TOKEN, CREDENTIALS_PATH, current_state` to `from setup.main import app, CSRF_TOKEN, current_state  # CREDENTIALS_PATH removed in Task 23`.
 
 - [ ] **Step 2: Run to verify FAIL**
 
@@ -2186,7 +2462,7 @@ class PipelineStep:
     cmd_builder: Callable[[PipelineContext], list[str]]
     required_deps: Tuple[str, ...]
     required_creds: Tuple[str, ...]
-    skippable_by: Tuple[str, ...]  # layer keys; if any == 'skip', omit step
+    skippable_by: Tuple[str, ...]  # layer keys; see filter_active_steps for exact semantics
 
 
 ALL_PIPELINE_STEPS: Tuple[PipelineStep, ...] = (
@@ -2288,11 +2564,13 @@ MSG
 - Modify: `setup/pipeline_steps.py` (wire real cmd_builder fns)
 - Test: `tests/test_setup_runner.py` (extend)
 
+**Scope fence (do NOT):** Add command builders to runner.py ONLY. Do NOT modify pipeline_steps.py — Task 24 owns that. Do NOT add scripts to scripts/ — every builder must invoke an EXISTING script (verified present: acquire_imagery.py, acquire_sentinel.py, build_public_lands.py, build_poi_index.py, build_osm_pois.py, download_elevation.py).
+
 **TDD preamble:** Read TDD skill.
 
 - [ ] **Step 1: Write failing test**
 
-Append to `tests/test_setup_runner.py`:
+Append to `tests/test_setup_runner.py`. Use **index-based structural assertions** (`cmd.index(flag)`) rather than substring checks — substring matches pass even when the flag is part of a path or a different option's value.
 
 ```python
 from setup.runner import (
@@ -2308,20 +2586,25 @@ class TestCommandBuilders:
             geofabrik_slugs=["arizona"],
             output_dir="/srv/geographica/data/pbf",
         )
-        assert "wget" in cmd[0] or "curl" in cmd[0]
-        assert any("arizona" in part for part in cmd)
+        assert cmd[0] == "bash"
+        joined = " ".join(cmd)
+        assert "arizona" in joined
+        assert "wget" in joined or "curl" in joined
 
     def test_osm_merge_cmd(self):
         cmd = osm_merge_cmd(
             input_paths=["/a.osm.pbf", "/b.osm.pbf"],
             output="/merged.osm.pbf",
         )
-        assert "osmium" in cmd[0]
-        assert "/merged.osm.pbf" in cmd
+        assert cmd[0] == "bash"
+        joined = " ".join(cmd)
+        assert "osmium merge" in joined
+        assert "/merged.osm.pbf" in joined
 
     def test_osm_copy_cmd(self):
         cmd = osm_copy_cmd("/src.osm.pbf", "/dst.osm.pbf")
-        assert "cp" in cmd[0]
+        assert cmd[0] == "bash"
+        assert "cp " in " ".join(cmd)
 
     def test_planetiler_pull_cmd(self):
         cmd = planetiler_pull_cmd()
@@ -2330,20 +2613,41 @@ class TestCommandBuilders:
         assert cmd[-1].endswith(":0.10.2")
 
     def test_base_imagery_cmd_naip(self):
-        cmd = base_imagery_cmd(source="naip", bbox="-114,31,-109,37", zoom=15,
-                               output="/srv/geographica/data/imagery.mbtiles")
-        assert "scripts/acquire_imagery.py" in " ".join(cmd) or \
-               "acquire_imagery.py" in " ".join(cmd)
+        ctx = {"layers": {"base_imagery": "naip"}, "bbox": "-114,31,-109,37",
+               "data_path": "/srv/geographica/data",
+               "scripts_path": "/home/administrator/Code/geographica/scripts",
+               "base_imagery_zoom": 15}
+        cmd = base_imagery_cmd(ctx)
+        assert cmd[0] == "python3"
+        assert cmd[1].endswith("/acquire_imagery.py")
+        assert "--mode" in cmd
+        assert cmd[cmd.index("--mode") + 1] == "naip"
+        assert "--bbox" in cmd
+        assert cmd[cmd.index("--bbox") + 1] == "-114,31,-109,37"
+        assert "--zoom" in cmd
+        assert cmd[cmd.index("--zoom") + 1] == "0-15"
+        assert "--output" in cmd
+        assert cmd[cmd.index("--output") + 1].endswith("imagery.mbtiles")
 
     def test_detail_imagery_cmd_m2m(self):
-        cmd = detail_imagery_cmd(source="m2m", bbox="-114,31,-109,37",
-                                 output="/srv/geographica/data/imagery_detail.mbtiles")
-        assert "m2m" in " ".join(cmd) or "acquire_imagery.py" in " ".join(cmd)
+        ctx = {"layers": {"detail_imagery": "m2m"}, "bbox": "-114,31,-109,37",
+               "data_path": "/srv/geographica/data",
+               "scripts_path": "/home/administrator/Code/geographica/scripts"}
+        cmd = detail_imagery_cmd(ctx)
+        assert cmd[0] == "python3"
+        assert cmd[1].endswith("/acquire_imagery.py")
+        assert cmd[cmd.index("--mode") + 1] == "m2m"
+        assert cmd[cmd.index("--bbox") + 1] == "-114,31,-109,37"
+        assert cmd[cmd.index("--output") + 1].endswith("imagery_detail.mbtiles")
 
     def test_public_lands_cmd(self):
-        cmd = public_lands_cmd(bbox="-114,31,-109,37",
-                               output="/srv/geographica/data/public_lands.mbtiles")
-        assert "build_public_lands.py" in " ".join(cmd)
+        ctx = {"bbox": "-114,31,-109,37",
+               "data_path": "/srv/geographica/data",
+               "scripts_path": "/home/administrator/Code/geographica/scripts"}
+        cmd = public_lands_cmd(ctx)
+        assert cmd[0] == "python3"
+        assert cmd[1].endswith("/build_public_lands.py")
+        assert cmd[cmd.index("--bbox") + 1] == "-114,31,-109,37"
 
     def test_fonts_cmd(self):
         cmd = fonts_cmd(output="/srv/geographica/data/fonts")
@@ -2590,6 +2894,10 @@ MSG
 - Modify: `setup/main.py:428-519` (PIPELINE_STEPS + `_run_pipeline`)
 - Test: extend `tests/test_setup_main.py`
 
+**Scope fence (do NOT):** Rewrite _run_pipeline body ONLY. Do NOT touch pipeline_steps.py (Task 24), runner.py (Task 25), or StartRequest schema (Task 27). Do NOT add new API endpoints.
+
+**Context note (runner signature):** `setup/runner.py::run_command` has signature `async def run_command(args: list[str], cwd: str, on_output: Callable[[str, bytes], None], env_extra: Optional[dict[str, str]] = None) -> int`. The callback takes exactly 2 args (source, data) — NOT 3. A 3-arg `_on_output` wrapper will crash with TypeError when `run_command` invokes it. Use a per-step closure factory instead.
+
 **TDD preamble:** Read TDD skill. Pitfall references: `dev/testing-pitfalls.md` — "Orchestrator loops that iterate steps without invoking subprocess" AND "Progress-state updates skipped in failure paths leave the UI stuck" (the `try/finally` in Step 3 prevents the stuck-UI class — every branch must clear `running=False` and broadcast a final state).
 
 - [ ] **Step 1: Write failing test**
@@ -2604,15 +2912,24 @@ class TestRunPipelineInvokesSubprocess:
         self.headers = {"X-CSRF-Token": CSRF_TOKEN}
 
     def test_run_pipeline_calls_run_command_per_active_step(self, tmp_path, monkeypatch):
+        import shutil
         from setup import main as mod
+        from setup.pipeline_steps import ALL_PIPELINE_STEPS, filter_active_steps
         calls = []
 
+        # run_command's real signature is (args, cwd, on_output, env_extra=None);
+        # on_output takes exactly 2 args (source, data).
         async def fake_run(args, cwd, on_output, env_extra=None):
             calls.append(args)
+            # Exercise the 2-arg callback to catch any TypeError in the wrapper.
+            on_output("stdout", b"")
             return 0
 
         monkeypatch.setattr(mod, "run_command", fake_run)
-        # Use a temp data_path so checkpoint doesn't collide
+        # Bypass real disk_usage — point it at a guaranteed value.
+        monkeypatch.setattr(shutil, "disk_usage",
+                            lambda p: shutil._ntuple_diskusage(100*1024**3, 10*1024**3, 90*1024**3))
+
         body = mod.StartRequest(
             bbox="-114.8,31.3,-109.0,37.0",
             layers={"basemap": "download", "base_imagery": "naip",
@@ -2622,9 +2939,24 @@ class TestRunPipelineInvokesSubprocess:
         )
         import asyncio as _a
         _a.run(mod._run_pipeline(body))
-        # At least one call per active step; detail_imagery skipped.
-        assert len(calls) >= 10
-        assert not any("acquire_imagery.py" in " ".join(c) and "detail" in " ".join(c) for c in calls)
+
+        # Structural assertion: exactly the active-step count was invoked, in order,
+        # with the exact argv each builder would produce given ctx.
+        expected_active = filter_active_steps(ALL_PIPELINE_STEPS, body.layers)
+        expected_active_ids = [s.id for s in expected_active]
+        # 13 total steps minus detail_imagery (skipped) = 12 active
+        assert len(expected_active_ids) == 12
+        assert len(calls) == 12
+        ctx = {
+            "bbox": body.bbox,
+            "layer_bbox": {},
+            "layers": body.layers,
+            "data_path": body.data_path,
+            "scripts_path": "/home/administrator/Code/geographica/scripts",
+            "base_imagery_zoom": body.base_imagery_zoom,
+        }
+        for step, actual in zip(expected_active, calls):
+            assert actual == step.cmd_builder(ctx), f"Step {step.id} cmd mismatch"
 ```
 
 - [ ] **Step 2: Run to verify FAIL**
@@ -2661,14 +2993,19 @@ async def _run_pipeline(config: "StartRequest") -> None:
 
     current_state["step"] = "running"
 
-    def _on_output(step_id: str, source: str, data: bytes):
-        text = data.decode("utf-8", errors="replace")
-        asyncio.create_task(broadcast({
-            "type": "output",
-            "step": step_id,
-            "source": source,  # "stdout" | "stderr"
-            "data": text,
-        }))
+    def make_on_output(step_id: str):
+        """Produce a 2-arg callback matching run_command's contract:
+            on_output(source: str, data: bytes) -> None
+        The 3-arg form would crash at runtime when run_command invokes it."""
+        def _on_output(source: str, data: bytes) -> None:
+            text = data.decode("utf-8", errors="replace")
+            asyncio.create_task(broadcast({
+                "type": "output",
+                "step": step_id,
+                "source": source,  # "stdout" | "stderr"
+                "data": text,
+            }))
+        return _on_output
 
     try:
         active = filter_active_steps(ALL_PIPELINE_STEPS, ctx["layers"])
@@ -2716,13 +3053,14 @@ async def _run_pipeline(config: "StartRequest") -> None:
                 return
 
             stderr_tail = bytearray()
+            step_output_cb = make_on_output(step.id)
 
-            def _step_on_output(source, data, _step_id=step.id):
+            def _step_on_output(source: str, data: bytes):
                 if source == "stderr":
                     stderr_tail.extend(data)
                     if len(stderr_tail) > 2000:
                         del stderr_tail[:len(stderr_tail) - 2000]
-                _on_output(_step_id, source, data)
+                step_output_cb(source, data)
 
             exit_code = await run_command(args=cmd, cwd=cwd, on_output=_step_on_output)
             if exit_code != 0:
@@ -2779,6 +3117,8 @@ MSG
 **Files:**
 - Modify: `setup/main.py:155-159` (`StartRequest`)
 - Test: extend `tests/test_setup_main.py`
+
+**Depends on:** Tasks 11, 26 committed in this branch.
 
 **TDD preamble:** Read TDD skill. Pitfall: "Pydantic request models silently drop fields the client sends" — set `extra="forbid"`.
 
@@ -2950,6 +3290,8 @@ MSG
 - Modify: `setup/static/setup.js` (nextStep Step 2 branch + init wiring + startPipeline payload)
 - Test: extend `tests/test_setup_js.py`
 
+**Scope fence (do NOT):** Step 2 UI only. Do NOT touch Step 1 saveConfig/onDataDriveChange (Task 20) or credentials (Task 23).
+
 **TDD preamble:** Read TDD skill.
 
 - [ ] **Step 1: Write failing test**
@@ -3008,6 +3350,8 @@ MSG
 - Modify: `setup/main.py:446-455`
 - Test: extend `tests/test_setup_main.py`
 
+**Scope fence (do NOT):** Modify ONLY post_start + add the module-level lock. Do NOT modify _run_pipeline — Task 26 owns it. Do NOT touch the frontend.
+
 **TDD preamble:** Read TDD skill. Pitfall: "TOCTOU in async endpoints" (new one to add).
 
 Also append a new testing-pitfalls entry — append this text to `/home/administrator/Code/geographica/dev/testing-pitfalls.md`:
@@ -3056,6 +3400,50 @@ async def test_start_toctou_race(monkeypatch):
 ```
 
 Requires `pytest-asyncio` in the dev dependencies. If not present, add it to `tests/requirements.txt` (or top-level) and note the addition in the commit.
+
+**Additional stronger test — forces a real await point so the race is observable** (two concurrent requests with asyncio.gather may not interleave — this version forces it):
+
+```python
+@pytest.mark.asyncio
+async def test_start_toctou_under_real_await(monkeypatch):
+    """Forces an async yield point between bbox validate and the running-flag gate,
+    then fires two concurrent requests and asserts exactly one wins."""
+    from setup.main import app, CSRF_TOKEN, current_state
+    current_state["running"] = False
+
+    gate = asyncio.Event()
+    # Bypass sync bbox validate so we control the only await point.
+    monkeypatch.setattr("setup.main.validate_bbox", lambda b: True)
+
+    spawn_count = [0]
+
+    async def fake_pipeline(body):
+        spawn_count[0] += 1
+        await asyncio.Event().wait()  # hang forever — shows pipeline was spawned
+
+    monkeypatch.setattr("setup.main._run_pipeline", fake_pipeline)
+
+    payload = {"bbox": "-124,31,-102,49", "data_path": "/tmp", "layers": {}}
+    headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+    async with httpx.AsyncClient(app=app, base_url="http://test") as c:
+        async def fire():
+            return await c.post("/api/start", json=payload, headers=headers)
+
+        t1 = asyncio.create_task(fire())
+        await asyncio.sleep(0.05)  # let t1 enter the handler
+        t2 = asyncio.create_task(fire())
+        await asyncio.sleep(0.05)  # let t2 enter the handler
+        gate.set()
+        r1, r2 = await asyncio.gather(t1, t2)
+
+    current_state["running"] = False  # reset shared state
+    statuses = sorted([r1.status_code, r2.status_code])
+    assert statuses == [200, 409], f"expected one 200 + one 409, got {statuses}"
+    assert spawn_count[0] == 1, "exactly one pipeline should have spawned"
+```
+
+**Context note (pytest-asyncio):** Before running the test, ensure `pytest-asyncio>=0.23` is installed in the venv: `pip install pytest-asyncio>=0.23`. Also add `pytest-asyncio>=0.23` to `setup/requirements.txt` as a dev dep.
 
 - [ ] **Step 2: Run to verify FAIL**
 
@@ -3116,8 +3504,35 @@ MSG
 Append:
 
 ```python
-def test_ws_progress_snapshots_buffer(monkeypatch):
-    """Verify the iteration uses list(progress_buffer), not raw deque."""
+@pytest.mark.asyncio
+async def test_ws_replay_survives_concurrent_append(monkeypatch):
+    """Behavioral test: mutate progress_buffer during WS replay and assert no crash."""
+    from setup.main import app, progress_buffer
+    progress_buffer.clear()
+    for i in range(50):
+        progress_buffer.append({"type": "output", "text": f"line {i}"})
+
+    appended_during_iter = []
+    orig_append = progress_buffer.append
+
+    def spy_append(item):
+        appended_during_iter.append(item)
+        return orig_append(item)
+
+    monkeypatch.setattr(progress_buffer, "append", spy_append)
+
+    client = TestClient(app)
+    with client.websocket_connect("/ws/progress") as ws:
+        # Trigger a broadcast during replay; must not RuntimeError the iteration.
+        await asyncio.sleep(0)
+        progress_buffer.append({"type": "output", "text": "mid-iter"})
+        ws.close()
+    # If implementation still iterates the raw deque, the test will have raised
+    # RuntimeError: deque mutated during iteration.
+
+
+def test_ws_progress_snapshots_buffer():
+    """Belt-and-suspenders source check — the real behavioral test above is authoritative."""
     from setup import main as mod
     import inspect
     src = inspect.getsource(mod.ws_progress)
@@ -3172,7 +3587,36 @@ Append:
 
 ```python
 class TestShutdownKillsGrandchildren:
+    def test_shutdown_children_kills_grandchildren(self, tmp_path):
+        """Behavioral: spawn a child that spawns a grandchild, then shutdown_children
+        — assert the grandchild was killed before it could touch a marker file."""
+        import os, time, asyncio as _a
+        from setup.runner import run_command, shutdown_children
+
+        marker = tmp_path / "grandchild-alive"
+        script = tmp_path / "spawn.sh"
+        script.write_text(f"#!/bin/bash\n(sleep 5; touch {marker}) &\nsleep 5\n")
+        script.chmod(0o755)
+
+        async def run_and_kill():
+            task = _a.create_task(run_command(
+                args=[str(script)], cwd=str(tmp_path),
+                on_output=lambda s, d: None,
+            ))
+            await _a.sleep(0.2)  # let script spawn grandchild
+            shutdown_children()
+            try:
+                await _a.wait_for(task, timeout=1.0)
+            except _a.TimeoutError:
+                pass
+
+        _a.run(run_and_kill())
+        time.sleep(1)  # give any survivor a moment to touch the marker
+        assert not marker.exists(), \
+            "grandchild survived shutdown_children — process group not set up"
+
     def test_run_command_uses_start_new_session(self, monkeypatch):
+        """Belt-and-suspenders source grep."""
         from setup import runner
         import inspect
         src = inspect.getsource(runner.run_command)
@@ -3241,6 +3685,8 @@ MSG
 - Modify: `setup/main.py:435-443`
 - Test: extend `tests/test_setup_main.py`
 
+**Scope fence (do NOT):** Modify ONLY broadcast and its immediate helpers. Do NOT touch progress_buffer mutation logic — Task 31 owns that.
+
 **TDD preamble:** Read TDD skill. Pitfall reference: `dev/testing-pitfalls.md` — "Deque/list iteration during async-concurrent mutation" (snapshotting the socket set before the gather is the same mitigation this pitfall describes for progress_buffer).
 
 - [ ] **Step 1: Write failing test**
@@ -3248,7 +3694,42 @@ MSG
 Append:
 
 ```python
+import time
+
+@pytest.mark.asyncio
+async def test_broadcast_drops_hanging_socket():
+    """Behavioral: a hanging socket must not stall the broadcast — fast peers
+    receive the event within the per-socket timeout, hanging peer is dropped."""
+    from setup.main import broadcast, connected_websockets
+
+    class HangingWS:
+        async def send_json(self, event):
+            await asyncio.Event().wait()  # hang forever
+
+    class FastWS:
+        def __init__(self):
+            self.received = []
+        async def send_json(self, event):
+            self.received.append(event)
+
+    hanging = HangingWS()
+    fast = FastWS()
+    connected_websockets.clear()
+    connected_websockets.extend([hanging, fast])
+
+    start = time.monotonic()
+    await broadcast({"type": "test", "text": "hello"})
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 3.0, f"broadcast took {elapsed}s — hanging socket stalled pipeline"
+    assert fast.received == [{"type": "test", "text": "hello"}], \
+        "fast socket should have received the event"
+    assert hanging not in connected_websockets, \
+        "hanging socket should have been dropped"
+
+
 def test_broadcast_uses_gather_with_timeout():
+    """Belt-and-suspenders source grep."""
     from setup import main as mod
     import inspect
     src = inspect.getsource(mod.broadcast)
@@ -3309,6 +3790,8 @@ MSG
 - Modify: `setup/main.py::_run_pipeline` (except branch + non-zero exit branch)
 - Modify: `setup/static/setup.js::handleProgressEvent` error branch
 - Test: extend `tests/test_setup_main.py` (behavioral) + `tests/test_setup_js.py`
+
+**Scope fence (do NOT):** Modify ONLY the error-broadcast shape in _run_pipeline and the frontend's error-render path. Do NOT touch the happy-path broadcast (step_start/step_done).
 
 **TDD preamble:** Read TDD skill.
 
@@ -3394,6 +3877,8 @@ MSG
 - Modify: `setup/static/index.html` (Step 4 reset button)
 - Modify: `setup/static/setup.js` (reset handler)
 - Test: `tests/test_setup_runner.py` (extend) + `tests/test_setup_main.py` (extend)
+
+**Scope fence (do NOT):** Modify Checkpoint class + add /api/checkpoint/reset endpoint + add Step 4 reset button. Do NOT modify _run_pipeline's checkpoint call sites. Do NOT touch pipeline_steps.py.
 
 **TDD preamble:** Read TDD skill. Pitfall: "Non-atomic checkpoint writes lose all progress on crash".
 
@@ -3608,11 +4093,13 @@ Update your private journal. Then proceed to Phase 7.
 - Modify: `setup/main.py:52-62` (PREFLIGHT_CHECKS)
 - Test: extend `tests/test_setup_main.py`
 
+**Scope fence (do NOT):** Add to PREFLIGHT_CHECKS list only. Do NOT modify existing entries. Do NOT add new API endpoints beyond /api/preflight enhancements.
+
 **TDD preamble:** Read TDD skill. Pitfall: "Preflight/fix registries with parallel keys that drift" — new check items should include actionable fix_hint strings.
 
 - [ ] **Step 1: Write failing test**
 
-Append:
+Append. Use **behavioral assertions** (manipulate PATH/sys.modules to force a missing-dep case, then assert the endpoint surfaces it) rather than just name-in-list — otherwise a check that always returns ok passes the test.
 
 ```python
 class TestPreflightCoversAllDeps:
@@ -3649,6 +4136,67 @@ class TestPreflightCoversAllDeps:
         from setup.main import PREFLIGHT_CHECKS
         for entry in PREFLIGHT_CHECKS:
             assert "fix_hint" in entry, f"{entry['name']} missing fix_hint"
+
+    def test_preflight_reports_tippecanoe_missing(self, monkeypatch):
+        """Behavioral: force tippecanoe to appear missing, assert the status flips."""
+        monkeypatch.setenv("PATH", "/nonexistent")  # make all binary checks fail
+        resp = self.client.get("/api/preflight")
+        assert resp.status_code == 200
+        checks = {c["name"]: c for c in resp.json()["checks"]}
+        assert checks["tippecanoe"]["status"] != "ok"
+        hint = checks["tippecanoe"].get("fix_hint", "").lower()
+        assert "bootstrap" in hint
+
+    def test_preflight_reports_python_deps_missing(self, monkeypatch):
+        """Behavioral: poison sys.modules so rasterio import fails."""
+        import sys
+        monkeypatch.setitem(sys.modules, "rasterio", None)
+        resp = self.client.get("/api/preflight")
+        checks = {c["name"]: c for c in resp.json()["checks"]}
+        assert checks["python-pipeline-deps"]["status"] != "ok"
+```
+
+**Helper function skeletons (paste verbatim into setup/main.py):**
+
+```python
+def _check_python_pipeline_deps() -> dict:
+    """Verify rasterio/shapely/scipy/numpy importable."""
+    missing = []
+    for pkg in ("rasterio", "shapely", "scipy", "numpy"):
+        try:
+            __import__(pkg)
+        except ImportError:
+            missing.append(pkg)
+    if missing:
+        return {"status": "missing", "message": f"Missing: {', '.join(missing)}",
+                "fix_hint": "Run: sudo ./bootstrap.sh (installs scripts/requirements.txt)"}
+    return {"status": "ok", "message": "rasterio, shapely, scipy, numpy all importable"}
+
+async def _check_keyring_socket() -> dict:
+    """Verify keyring agent responds on Unix socket."""
+    try:
+        reader, writer = await asyncio.open_unix_connection("/run/geographica/keyring.sock")
+        writer.write(b'{"action":"ping"}\n')
+        await writer.drain()
+        resp = await asyncio.wait_for(reader.readline(), timeout=2.0)
+        writer.close()
+        await writer.wait_closed()
+        return {"status": "ok", "message": "keyring agent responsive"}
+    except Exception as e:
+        return {"status": "error", "message": f"Keyring unreachable: {e}",
+                "fix_hint": "Run: sudo systemctl start geographica-keyring"}
+
+def _check_cgroup_memory() -> dict:
+    """Verify Docker has cgroup memory limit support (required for memory: in compose)."""
+    try:
+        proc = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=5)
+        if "No memory limit support" in proc.stdout or "No memory limit support" in proc.stderr:
+            return {"status": "error",
+                    "message": "Docker cgroup memory support disabled",
+                    "fix_hint": "Run: sudo ./bootstrap.sh then reboot (edits /boot/firmware/cmdline.txt)"}
+        return {"status": "ok", "message": "cgroup memory limits supported"}
+    except Exception as e:
+        return {"status": "error", "message": f"docker info failed: {e}"}
 ```
 
 - [ ] **Step 2: Run to verify FAIL**
@@ -3700,6 +4248,8 @@ MSG
 - Modify: `setup/static/setup.js::runPreflightChecks::fixDependency` (delete button + function)
 - Test: update `tests/test_setup_main.py` (delete `TestFixDependencyEndpoint`, add skip-trace test)
 
+**Scope fence (do NOT):** Delete code per spec. Do NOT move adjacent functions for 'cleanliness'. Do NOT rename any surviving symbols.
+
 **TDD preamble:** Read TDD skill.
 
 - [ ] **Step 1: Write failing test**
@@ -3731,6 +4281,15 @@ def test_js_has_no_fix_dependency_button():
     assert "/api/fix-dependency" not in text
     assert "fixDependency" not in text, \
         "fixDependency still present in setup.js — Task 38 requires deletion, not commenting-out"
+
+
+def test_js_has_no_fix_dependency_symbol():
+    """Forbid any rename-escape variant of the removed symbol."""
+    text = JS.read_text()
+    for forbidden in ("fixDependency", "fix_dependency", "fixDep", "FIX_REGISTRY"):
+        assert forbidden not in text, f"{forbidden} still present in setup.js"
+    # Forbid the Install button class
+    assert 'class="btn-fix"' not in text
 ```
 
 - [ ] **Step 2: Run to verify FAIL**
@@ -3805,6 +4364,8 @@ Update your private journal. Then proceed to Phase 8.
 **Files:**
 - Modify: `setup/static/setup.js` (add showError helper, wire into catch branches, await saves in nextStep)
 - Test: extend `tests/test_setup_js.py`
+
+**Scope fence (do NOT):** Add showError helper + wire it into existing catch branches. Do NOT refactor nextStep beyond adding `await` and `.catch`. Do NOT add new UI components beyond the error toast/banner.
 
 **TDD preamble:** Read TDD skill. Pitfall: "Fire-and-forget async save from UI".
 
@@ -3909,6 +4470,8 @@ MSG
 - Modify: `setup/static/setup.js::loadSystemInfo` (pre-fill from parsed)
 - Test: extend `tests/test_setup_main.py`
 
+**Scope fence (do NOT):** Modify ONLY get_system (.env parse) + post_config (merge write). Do NOT touch generate_env (Task 11 owns it). Do NOT modify .env.example.
+
 **TDD preamble:** Read TDD skill. Pitfall references: `dev/testing-pitfalls.md` — "UI message promises behavior the code doesn't implement" AND "Non-atomic checkpoint writes lose all progress on crash" (the atomic-write pattern in Step 3 applies that pitfall's prescribed fix to `.env` rewrites — a crash mid-write can't leave an empty/truncated .env).
 
 - [ ] **Step 1: Write failing test**
@@ -3990,10 +4553,10 @@ WIZARD_KEYS = {
 }
 ```
 
-The atomic-write pattern (use instead of a naive `write_text` that can truncate on crash):
+The atomic-write pattern (use instead of a naive `write_text` that can truncate on crash). **Bug fix:** `Path("/x/.env").with_suffix(".tmp")` yields `/x/.tmp` (because `.env` is already a "suffix"), not `/x/.env.tmp`. Use string concatenation instead:
 
 ```python
-tmp_path = Path(ENV_PATH).with_suffix(".tmp")
+tmp_path = Path(str(ENV_PATH) + ".tmp")
 tmp_path.write_text(merged_content)
 tmp_path.replace(ENV_PATH)
 ```
@@ -4027,6 +4590,8 @@ MSG
 - Modify: `setup/main.py::post_launch` (all_healthy logic)
 - Test: extend `tests/test_setup_main.py` with parametrized cases
 
+**Scope fence (do NOT):** Factor healthy-check into `_is_all_healthy` ONLY. Do NOT refactor other parts of post_launch (build, launch, state reporting). Do NOT change the endpoint's return shape.
+
 **TDD preamble:** Read TDD skill. Pitfall: "Substring matching on status strings".
 
 - [ ] **Step 1: Write failing test**
@@ -4037,22 +4602,23 @@ Append:
 import re
 
 class TestAllHealthyRegex:
-    @pytest.mark.parametrize("svcs,expected", [
+    @pytest.mark.parametrize("svcs,expected,why", [
         # All healthy
-        ([{"Health": "healthy"}, {"Health": "healthy"}], True),
+        ([{"Health": "healthy"}, {"Health": "healthy"}], True, "both healthy"),
         # One unhealthy
-        ([{"Health": "healthy"}, {"Health": "unhealthy"}], False),
+        ([{"Health": "healthy"}, {"Health": "unhealthy"}], False, "one unhealthy"),
         # Status field variants
-        ([{"Status": "Up 2 days (healthy)"}, {"Status": "Up 2 days (healthy)"}], True),
-        ([{"Status": "Up 2 days (unhealthy)"}], False),
-        ([{"Status": "Up 2 days (health: starting)"}], False),
-        ([{"Status": "Up 5 minutes"}], False),
-        ([{"Status": "Exited (1)"}], False),
-        ([{}], False),
+        ([{"Status": "Up 2 days (healthy)"}, {"Status": "Up 2 days (healthy)"}], True, "status healthy"),
+        ([{"Status": "Up 2 days (unhealthy)"}], False, "status unhealthy"),
+        ([{"Status": "Up 2 days (health: starting)"}], False, "starting is not healthy"),
+        ([{"Status": "Up 5 minutes"}], False, "no health annotation"),
+        ([{"Status": "Exited (1)"}], False, "exited"),
+        ([{}], False, "no fields at all"),
+        ([], False, "empty services list is not healthy"),
     ])
-    def test_all_healthy_classifier(self, svcs, expected):
+    def test_all_healthy_classifier(self, svcs, expected, why):
         from setup.main import _is_all_healthy
-        assert _is_all_healthy(svcs) is expected
+        assert _is_all_healthy(svcs) is expected, why
 ```
 
 - [ ] **Step 2: Run to verify FAIL**
@@ -4209,6 +4775,8 @@ MSG
 - Modify: `setup/main.py:79`
 - Test: extend `tests/test_setup_main.py`
 
+**Scope fence (do NOT):** ONE-line change: deque maxlen. Do NOT audit other deques in the codebase. Do NOT add any other config knobs.
+
 **TDD preamble:** Read TDD skill.
 
 - [ ] **Step 1: Write failing test**
@@ -4257,6 +4825,8 @@ MSG
 - Modify: `setup/main.py:596-598`
 - Test: extend `tests/test_setup_main.py`
 
+**Scope fence (do NOT):** ONE-line change: host=127.0.0.1. Do NOT modify uvicorn.run kwargs beyond host. Do NOT add env-var backdoors.
+
 **TDD preamble:** Read TDD skill. Pitfall reference: `docs/pitfalls/implementation-pitfalls.md` — "Config panel localhost-only" entry (the wizard is authenticated only by CSRF token in the same browser session; exposing it on 0.0.0.0 would let any peer on the LAN/AREDN mesh POST to /api/launch and take over the stack).
 
 - [ ] **Step 1: Write failing test**
@@ -4272,6 +4842,19 @@ def test_main_entrypoint_binds_loopback():
     # Find the final uvicorn.run(...) call
     assert 'host="127.0.0.1"' in src or "host='127.0.0.1'" in src
     assert 'host="0.0.0.0"' not in src and "host='0.0.0.0'" not in src
+
+
+def test_main_binds_localhost_only():
+    """Structural: parse the __main__ block, forbid any env-var backdoor."""
+    import re
+    src = Path("setup/main.py").read_text()
+    m = re.search(r'if __name__ == "__main__":[\s\S]+?uvicorn\.run\([^)]+\)', src)
+    assert m, "could not find __main__ uvicorn.run"
+    block = m.group(0)
+    assert 'host="127.0.0.1"' in block, "must bind 127.0.0.1"
+    assert '"0.0.0.0"' not in block, "must not bind 0.0.0.0"
+    assert "os.getenv" not in block and "os.environ" not in block, \
+        "no env-var backdoor allowed for host"
 ```
 
 - [ ] **Step 2: Run to verify FAIL**
@@ -4316,6 +4899,8 @@ Update your private journal. Then proceed to Phase 9.
 **Files:**
 - Create: `dev/harness/wizard-ci.sh`
 - Test: `tests/test_wizard_ci_script.py` (NEW)
+
+**Pre-run note:** LXD must be installed on the host: `sudo apt install lxd && sudo lxd init --minimal`. This is NOT part of bootstrap.sh — it's a separate CI-host setup. Document in dev/harness/README.md.
 
 **TDD preamble:** Read TDD skill.
 
@@ -4630,6 +5215,8 @@ MSG
 **Files:**
 - Create: `.github/workflows/wizard-ci.yml`
 - Test: `tests/test_wizard_ci_workflow.py` (NEW)
+
+**Pre-run note:** `runs-on: self-hosted` requires a GitHub Actions self-hosted runner configured on the dev Pi. Setup: https://docs.github.com/en/actions/hosting-your-own-runners. Alternative: change to `runs-on: ubuntu-latest` with LXD install step in the workflow (adds ~2 minutes per run).
 
 **TDD preamble:** Read TDD skill.
 
