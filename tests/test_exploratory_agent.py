@@ -377,3 +377,207 @@ def test_bug_classes_includes_pipeline_artifact_scope():
     assert "pipeline artifact scope" in body
     assert "silent over-download" in body
     assert "_states_intersecting" in body or "states_intersecting" in body
+
+
+def test_agent_loop_auto_stops_at_max_turns(monkeypatch):
+    """If the agent never calls stop, the loop terminates at max_turns."""
+    from dev.harness.exploratory_agent.agent_loop import run_session, SessionContext
+
+    call_count = {"n": 0}
+
+    class FakeMessages:
+        @staticmethod
+        def create(**kw):
+            call_count["n"] += 1
+            # MagicMock block with type="text" and a real .text string
+            block = MagicMock()
+            block.type = "text"
+            block.text = "thinking..."
+            resp = MagicMock()
+            resp.content = [block]
+            resp.stop_reason = "end_turn"
+            resp.usage = MagicMock(input_tokens=1, output_tokens=1)
+            return resp
+
+    class FakeClient:
+        messages = FakeMessages()
+
+    reporting = MagicMock()
+    reporting.findings = []
+    reporting.stop_reason = None
+
+    ctx = SessionContext(
+        client=FakeClient(),
+        system_prompt="x",
+        browser=None, api=None, container=None, control=None,
+        reporting=reporting,
+        transcript=MagicMock(log=MagicMock(), close=MagicMock()),
+        max_turns=3,
+        deadline_epoch=9_999_999_999,
+    )
+    run_session(ctx)
+    assert call_count["n"] == 3
+
+
+def test_agent_loop_stops_on_stop_tool(monkeypatch):
+    """stop() tool sets reporting.stop_reason; loop breaks after."""
+    from dev.harness.exploratory_agent.agent_loop import run_session, SessionContext
+
+    class FakeMessages:
+        @staticmethod
+        def create(**kw):
+            block = MagicMock()
+            block.type = "tool_use"
+            block.id = "t1"
+            block.name = "stop"
+            block.input = {"reason": "test done"}
+            resp = MagicMock()
+            resp.content = [block]
+            resp.stop_reason = "tool_use"
+            resp.usage = MagicMock(input_tokens=10, output_tokens=5)
+            return resp
+
+    class FakeClient:
+        messages = FakeMessages()
+
+    class FakeReporting:
+        def __init__(self):
+            self.findings = []
+            self.stop_reason = None
+        def stop_sync(self, reason):
+            self.stop_reason = reason
+            return {"stopped": True}
+
+    rep = FakeReporting()
+
+    class FakeCtrl:
+        pass
+
+    ctx = SessionContext(
+        client=FakeClient(),
+        system_prompt="x",
+        browser=None, api=None, container=None, control=FakeCtrl(),
+        reporting=rep,
+        transcript=MagicMock(log=MagicMock(), close=MagicMock()),
+        max_turns=10,
+        deadline_epoch=9_999_999_999,
+    )
+    run_session(ctx)
+    assert rep.stop_reason == "test done"
+
+
+def test_agent_loop_rejects_invalid_tool_input_via_schema(monkeypatch):
+    """MUST-FIX 1.2: bad input against schema produces tool_result
+    with ok=False, error contains 'schema violation', and the loop does
+    NOT call the handler."""
+    from dev.harness.exploratory_agent.agent_loop import run_session, SessionContext
+
+    handler_called = {"n": 0}
+
+    class BadBrowser:
+        def page_goto_sync(self, **kw):
+            handler_called["n"] += 1
+            return {"status": 200, "final_url": "ok"}
+
+    turns = {"n": 0}
+
+    class FakeMessages:
+        @staticmethod
+        def create(**kw):
+            turns["n"] += 1
+            if turns["n"] == 1:
+                # Call page_goto WITHOUT required "url" key
+                b = MagicMock()
+                b.type = "tool_use"
+                b.id = "t1"
+                b.name = "page_goto"
+                b.input = {"not_url": "x"}
+                resp = MagicMock()
+                resp.content = [b]
+                resp.stop_reason = "tool_use"
+                resp.usage = MagicMock(input_tokens=10, output_tokens=5)
+                return resp
+            # Second turn: stop
+            b = MagicMock()
+            b.type = "tool_use"
+            b.id = "t2"
+            b.name = "stop"
+            b.input = {"reason": "done"}
+            resp = MagicMock()
+            resp.content = [b]
+            resp.stop_reason = "tool_use"
+            resp.usage = MagicMock(input_tokens=10, output_tokens=5)
+            return resp
+
+    class FakeClient:
+        messages = FakeMessages()
+
+    class FakeReporting:
+        def __init__(self):
+            self.findings = []
+            self.stop_reason = None
+        def stop_sync(self, reason):
+            self.stop_reason = reason
+            return {"stopped": True}
+
+    logs = []
+
+    class FakeTranscript:
+        def log(self, event): logs.append(event)
+        def close(self): pass
+
+    ctx = SessionContext(
+        client=FakeClient(),
+        system_prompt="x",
+        browser=BadBrowser(),
+        api=None, container=None, control=None,
+        reporting=FakeReporting(),
+        transcript=FakeTranscript(),
+        max_turns=5,
+        deadline_epoch=9_999_999_999,
+    )
+    run_session(ctx)
+    assert handler_called["n"] == 0, "handler must not run on invalid input"
+    violations = [e for e in logs if e.get("event") == "schema_violation"]
+    assert len(violations) == 1
+    assert "url" in violations[0]["error"].lower() or "required" in violations[0]["error"].lower()
+
+
+def test_agent_loop_stops_on_input_token_cap():
+    """MUST-FIX 2.1: cumulative_input_tokens > max stops the loop."""
+    from dev.harness.exploratory_agent.agent_loop import run_session, SessionContext
+
+    calls = {"n": 0}
+
+    class FakeMessages:
+        @staticmethod
+        def create(**kw):
+            calls["n"] += 1
+            b = MagicMock()
+            b.type = "text"
+            b.text = "thinking..."
+            resp = MagicMock()
+            resp.content = [b]
+            resp.stop_reason = "end_turn"
+            # Each turn reports 100 input tokens; cap at 150 => should stop after 2 turns
+            resp.usage = MagicMock(input_tokens=100, output_tokens=10)
+            return resp
+
+    class FakeClient:
+        messages = FakeMessages()
+
+    ctx = SessionContext(
+        client=FakeClient(),
+        system_prompt="x",
+        browser=None, api=None, container=None, control=None,
+        reporting=MagicMock(findings=[], stop_reason=None),
+        transcript=MagicMock(log=MagicMock(), close=MagicMock()),
+        max_turns=1_000,
+        deadline_epoch=9_999_999_999,
+        max_input_tokens=150,
+        max_output_tokens=10_000,
+    )
+    run_session(ctx)
+    # After turn 1: 100 < 150 keep going. After turn 2: 200 > 150 stop.
+    # Loop checks cap BEFORE the call, so turn N+1 never runs if cap hit at N.
+    assert calls["n"] == 2

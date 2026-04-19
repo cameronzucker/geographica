@@ -10,6 +10,10 @@
 #                    in pipeline scripts, broken /ws/progress, silent pipeline
 #                    failures. Container teardown is the cancel.
 #   --full           run the full pipeline + wait for stack healthy (~8 hr)
+#   --exploratory    Claude-driven exploratory QA session instead of the
+#                    deterministic Playwright walk. Requires ANTHROPIC_API_KEY.
+#                    Output path controlled by EXPLORATORY_OUTPUT env var
+#                    (default: dev/harness/findings/YYYYMMDD-HHMM.md).
 #   --image=X     LXD image alias to launch from (default: images:debian/trixie/cloud).
 #                 Use `raspios-trixie-lite` to mirror the actual beta-tester
 #                 environment. See dev/harness/import-raspios.sh to create that
@@ -28,11 +32,12 @@ for arg in "$@"; do
         --smoke)          MODE="smoke" ;;
         --pipeline-start) MODE="pipeline-start" ;;
         --full)           MODE="full"  ;;
+        --exploratory)    MODE="exploratory" ;;
         --image=*)        IMAGE="${arg#--image=}" ;;
         --pre-state=*)    PRE_STATE="${arg#--pre-state=}" ;;
         *)
             echo "unknown arg: $arg"
-            echo "usage: $0 [--smoke|--pipeline-start|--full] [--image=ALIAS] [--pre-state=NAME]"
+            echo "usage: $0 [--smoke|--pipeline-start|--full|--exploratory] [--image=ALIAS] [--pre-state=NAME]"
             exit 2
             ;;
     esac
@@ -201,6 +206,33 @@ if [ -n "$MISSING_DEPS" ]; then
     exit 1
 fi
 echo "[$(date +%H:%M:%S)]   all critical deps importable in venv"
+
+# Exploratory mode replaces the deterministic Playwright walk with a
+# Claude-driven exploratory session. Reuses the same container + wizard
+# setup; just a different driver.
+if [ "$MODE" = "exploratory" ]; then
+    if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+        echo "FAIL: --exploratory requires ANTHROPIC_API_KEY env var" >&2
+        exit 2
+    fi
+    OUTPUT_PATH="${EXPLORATORY_OUTPUT:-dev/harness/findings/$(date +%Y-%m-%d-%H%M).md}"
+    MAX_MIN="${EXPLORATORY_MAX_MINUTES:-15}"
+    mkdir -p "$(dirname "$OUTPUT_PATH")"
+    echo "[$(date +%H:%M:%S)] Driving wizard (mode=exploratory, max-minutes=$MAX_MIN) ..."
+    RC=0
+    (cd "$REPO_ROOT" && setup/.venv/bin/python3 -m dev.harness.exploratory_agent \
+        --url="$WIZARD_URL" \
+        --container="$CONTAINER" \
+        --max-minutes="$MAX_MIN" \
+        --output="$OUTPUT_PATH") || RC=$?
+    if [ "${RC:-0}" -eq 0 ]; then
+        echo "[$(date +%H:%M:%S)] Exploratory session complete — findings at $OUTPUT_PATH"
+    else
+        echo "FAIL: exploratory agent exited $RC" >&2
+        lxc exec "$CONTAINER" -- cat /tmp/setup.log 2>/dev/null | tail -40 || true
+    fi
+    exit "${RC:-0}"
+fi
 
 echo "[$(date +%H:%M:%S)] Driving wizard (mode=$MODE)..."
 RC=0
