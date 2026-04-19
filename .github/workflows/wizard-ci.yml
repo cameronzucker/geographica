@@ -35,7 +35,7 @@ on:
         required: true
         default: 'smoke'
         type: choice
-        options: [smoke, full, matrix, matrix-raspios]
+        options: [smoke, pipeline-start, full, matrix, matrix-raspios]
       image:
         description: 'LXD image alias (smoke/full only)'
         required: false
@@ -54,16 +54,26 @@ jobs:
           npm install
           npx playwright install chromium --with-deps
 
-      # Push- and PR-triggered runs: smoke mode on Debian cloud (fast,
-      # deterministic). This is the gate.
+      # Push- and PR-triggered runs: smoke + pipeline-start on Debian
+      # cloud. Smoke catches preflight / UI regressions (~5 min);
+      # pipeline-start catches post-Start-Pipeline regressions
+      # (missing venv deps, broken /ws/progress, pipeline scripts
+      # that ImportError at first-run, tracebacks streamed over the
+      # WebSocket `output` event that never reach the DOM). Smoke
+      # runs first; if it fails we skip pipeline-start to save Pi
+      # time since the failure is already obvious.
       - name: Run wizard smoke (push/PR trigger)
         if: github.event_name == 'push' || github.event_name == 'pull_request'
         run: ./dev/harness/wizard-ci.sh --smoke
 
+      - name: Run wizard pipeline-start (push/PR trigger)
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        run: ./dev/harness/wizard-ci.sh --pipeline-start
+
       # Manual dispatch — plumb inputs through env to avoid workflow
       # injection (per GitHub's guidance).
-      - name: Run wizard — manual smoke/full
-        if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'smoke' || inputs.mode == 'full')
+      - name: Run wizard — manual smoke/pipeline-start/full
+        if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'smoke' || inputs.mode == 'pipeline-start' || inputs.mode == 'full')
         env:
           MODE: ${{ inputs.mode }}
           IMAGE: ${{ inputs.image }}
