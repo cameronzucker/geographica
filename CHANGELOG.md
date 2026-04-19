@@ -7,6 +7,20 @@ project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries
 from v1.1.0 onward are generated automatically by `release-please` from
 Conventional Commits.
 
+## [1.4.0](https://github.com/cameronzucker/geographica/compare/v1.3.3...v1.4.0) (2026-04-19)
+
+
+### Features
+
+* **harness:** exploratory_agent api_request tool ([5a730a3](https://github.com/cameronzucker/geographica/commit/5a730a39f64e38b2379fec5108beffc50e3314de))
+* **harness:** exploratory_agent browser tools (Playwright wrappers) ([3e78d9a](https://github.com/cameronzucker/geographica/commit/3e78d9ae29ee0233539782932a6fe806e4eab464))
+* **harness:** scaffold exploratory_agent package + deps + test shell ([16903be](https://github.com/cameronzucker/geographica/commit/16903be75bad7aeb3bc63c48f02cdc7954321ea5))
+
+
+### Bug Fixes
+
+* **pipeline:** osm_download + osm_merge filter states by user bbox ([5fb6583](https://github.com/cameronzucker/geographica/commit/5fb6583e9a731f8a0b430e536726ac9f579173ae))
+
 ## [1.3.3](https://github.com/cameronzucker/geographica/compare/v1.3.2...v1.3.3) (2026-04-19)
 
 
