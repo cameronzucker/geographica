@@ -290,6 +290,75 @@ class TestCommandBuilders:
         assert "arizona" in joined
         assert "wget" in joined or "curl" in joined
 
+    def test_osm_download_cmd_filters_states_by_bbox(self):
+        """Beta-tester 2026-04-20 report: user picked a tiny area in Phoenix
+        and saw all 11 western-US states download anyway. osm_download_cmd
+        was hard-coded to the full state list and ignored ctx['bbox'].
+        Now: filter to states whose bbox intersects the user's bbox."""
+        from setup.runner import _states_intersecting
+
+        # Tiny Phoenix bbox — should resolve to Arizona only.
+        ctx = dict(_CTX_BASE, bbox="-112.5,33.3,-111.5,33.8")
+        cmd = osm_download_cmd(ctx)
+        joined = " ".join(cmd)
+        assert "arizona" in joined
+        # California / Colorado / etc. must NOT be in the STATES variable.
+        # Use shell-word-boundary aware check: look for the word surrounded
+        # by quotes or spaces, not merely a substring match (avoids false
+        # positives on comments or other state names that contain another).
+        for unexpected in ("california", "colorado", "idaho", "montana",
+                            "nevada", "new-mexico", "oregon", "utah",
+                            "washington", "wyoming"):
+            assert f" {unexpected} " not in joined and \
+                   f"{unexpected}'" not in joined, \
+                f"Phoenix bbox should NOT pull {unexpected}; got script:\n{joined}"
+
+    def test_osm_download_cmd_includes_all_intersecting_states(self):
+        from setup.runner import _states_intersecting
+
+        # Bbox spanning AZ + NM — should include BOTH.
+        ctx = dict(_CTX_BASE, bbox="-110,33,-105,35")
+        cmd = osm_download_cmd(ctx)
+        joined = " ".join(cmd)
+        assert "arizona" in joined
+        assert "new-mexico" in joined
+
+    def test_states_intersecting_phoenix(self):
+        from setup.runner import _states_intersecting
+        assert _states_intersecting("-112.5,33.3,-111.5,33.8") == ["arizona"]
+
+    def test_states_intersecting_la(self):
+        from setup.runner import _states_intersecting
+        # Interior of LA metro, well south of nevada/arizona borders.
+        assert _states_intersecting("-118.5,33.7,-118.0,34.2") == ["california"]
+
+    def test_states_intersecting_az_nm_border(self):
+        from setup.runner import _states_intersecting
+        result = _states_intersecting("-110,32,-105,35")
+        assert "arizona" in result
+        assert "new-mexico" in result
+
+    def test_states_intersecting_malformed_falls_back_to_all(self):
+        """Conservative: rather than fail a wizard run on a bbox parse
+        error, download everything and let the merge + downstream step
+        surface the real issue with specific context."""
+        from setup.runner import _states_intersecting, STATE_BBOXES
+        result = _states_intersecting("not,a,valid,bbox")
+        assert set(result) == set(STATE_BBOXES.keys())
+
+    def test_states_intersecting_empty_bbox_falls_back_to_all(self):
+        from setup.runner import _states_intersecting, STATE_BBOXES
+        result = _states_intersecting("")
+        assert set(result) == set(STATE_BBOXES.keys())
+
+    def test_states_intersecting_outside_all_states_falls_back_to_all(self):
+        """Bbox over New York — not in any of the 11 western states.
+        Fall back to the full list rather than silently download
+        nothing (user's bbox is probably wrong)."""
+        from setup.runner import _states_intersecting, STATE_BBOXES
+        result = _states_intersecting("-75,40,-73,42")
+        assert set(result) == set(STATE_BBOXES.keys())
+
     def test_osm_download_cmd_verifies_md5(self):
         """Beta-tester 2026-04-19 report: osm_merge failed with
         `invalid BlobHeader size (> max_blob_header_size)` because the
@@ -351,6 +420,22 @@ class TestCommandBuilders:
         joined = " ".join(cmd)
         assert "osmium merge" in joined
         assert "western-us.osm.pbf" in joined
+
+    def test_osm_merge_cmd_uses_bbox_filtered_state_list(self):
+        """osm_merge must pass an EXPLICIT list of state PBFs matching the
+        user's bbox, not a `*-latest.osm.pbf` glob. Rationale: if a
+        previous run downloaded all 11 states and the current run only
+        needs Arizona, the glob would pull all 11 stale PBFs into the
+        merge — wasting ~4 GB of RAM/disk for valhalla+planetiler
+        downstream. Related to the 2026-04-20 beta-tester bbox bug."""
+        ctx = dict(_CTX_BASE, bbox="-112.5,33.3,-111.5,33.8")
+        cmd = osm_merge_cmd(ctx)
+        joined = " ".join(cmd)
+        assert "arizona-latest.osm.pbf" in joined
+        # Must NOT merge any non-intersecting state.
+        for unexpected in ("california", "colorado", "nevada", "utah"):
+            assert f"{unexpected}-latest.osm.pbf" not in joined, \
+                f"osm_merge should not reference {unexpected} for Phoenix bbox"
 
     def test_osm_merge_cmd_validates_each_file_before_merging(self):
         """Pre-merge validation makes the merge error actionable: we

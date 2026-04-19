@@ -184,8 +184,78 @@ def shutdown_children() -> None:
 # and returns list[str] suitable for asyncio.create_subprocess_exec / run_command.
 # ---------------------------------------------------------------------------
 
+# Axis-aligned bboxes for each Geofabrik state extract the project supports.
+# Source: US Census TIGER bboxes, rounded out. Values are intentionally
+# slightly larger than the true state boundary so that a user bbox that
+# scrapes a state edge still matches — losing a few POIs to a missing state
+# is worse than the cost of one extra state download.
+#
+# Format: (west, south, east, north) in decimal degrees.
+# Keys must match Geofabrik's filename stems (e.g., `new-mexico` not `new_mexico`).
+STATE_BBOXES: dict[str, tuple[float, float, float, float]] = {
+    "arizona":      (-114.82, 31.33, -109.05, 37.00),
+    "california":   (-124.48, 32.53, -114.13, 42.01),
+    "colorado":     (-109.06, 37.00, -102.04, 41.00),
+    "idaho":        (-117.24, 41.99, -111.05, 49.00),
+    "montana":      (-116.05, 44.36, -104.04, 49.00),
+    "nevada":       (-120.01, 35.00, -114.04, 42.00),
+    "new-mexico":   (-109.05, 31.33, -103.00, 37.00),
+    "oregon":       (-124.57, 41.99, -116.46, 46.29),
+    "utah":         (-114.05, 37.00, -109.04, 42.00),
+    "washington":   (-124.77, 45.54, -116.92, 49.00),
+    "wyoming":      (-111.06, 40.99, -104.05, 45.01),
+}
+
+
+def _states_intersecting(bbox_str: str) -> list[str]:
+    """Return the subset of STATE_BBOXES that overlap ``bbox_str``.
+
+    ``bbox_str`` is the Geographica-canonical ``"west,south,east,north"``
+    form. Return order is the insertion order of ``STATE_BBOXES`` (stable).
+
+    Behavior on pathological input:
+    - Malformed bbox (not 4 parseable floats) → return ALL states.
+    - Empty string → return ALL states.
+    - Valid bbox that doesn't overlap any of the 11 western states
+      (e.g. New York) → return ALL states.
+
+    The fallback choice is deliberately conservative: a silent "downloaded
+    nothing" would leave valhalla/planetiler with an empty PBF and fail
+    opaquely further down. Downloading the full set and letting the user
+    see the extra time lets them correct their bbox before the pipeline
+    commits more minutes to downstream work.
+
+    Context for the feature: the 2026-04-20 beta tester picked a tiny
+    area in Phoenix and saw all 11 western-US state extracts download —
+    ~4 GB of bandwidth for data the pipeline wouldn't use. Before the
+    fix, osm_download_cmd had the state list hard-coded.
+    """
+    try:
+        parts = [p.strip() for p in bbox_str.split(",")]
+        if len(parts) != 4:
+            return list(STATE_BBOXES.keys())
+        w, s, e, n = (float(x) for x in parts)
+    except (ValueError, AttributeError):
+        return list(STATE_BBOXES.keys())
+
+    matching: list[str] = []
+    for state, (sw, ss, se, sn) in STATE_BBOXES.items():
+        # Axis-aligned bbox intersection.
+        if sw <= e and se >= w and ss <= n and sn >= s:
+            matching.append(state)
+
+    if not matching:
+        return list(STATE_BBOXES.keys())
+    return matching
+
+
 def osm_download_cmd(ctx) -> list[str]:
     """Download Geofabrik state PBFs with MD5 + structural verification.
+
+    Only downloads states whose bbox intersects ``ctx['bbox']`` (see
+    ``_states_intersecting``). This makes a "tiny Phoenix" bbox pull
+    ~800 MB (Arizona alone) instead of ~4 GB (all 11 western states) —
+    the 2026-04-20 beta report.
 
     Each state's .pbf is checked against Geofabrik's published .md5 and
     structurally validated with `osmium fileinfo` before we move on. A
@@ -201,8 +271,7 @@ def osm_download_cmd(ctx) -> list[str]:
     The merge step then blew up with no indication of WHICH file was
     corrupt. Now: verify at download-time, name the state on failure.
     """
-    states = ("arizona california colorado idaho montana nevada "
-              "new-mexico oregon utah washington wyoming")
+    states = " ".join(_states_intersecting(ctx.get("bbox", "")))
     out = f"{ctx['data_path']}/pbf"
     url_base = "https://download.geofabrik.de/north-america/us"
     script = (
@@ -262,21 +331,35 @@ def osm_download_cmd(ctx) -> list[str]:
 
 
 def osm_merge_cmd(ctx) -> list[str]:
-    """Merge all state PBFs into western-us.osm.pbf.
+    """Merge bbox-relevant state PBFs into western-us.osm.pbf.
+
+    Uses the SAME bbox → state list as osm_download_cmd (see
+    ``_states_intersecting``). This avoids a subtle footgun: if a prior
+    run downloaded all 11 states and the current run only needs Arizona,
+    a glob-based merge would drag 10 stale PBFs into the merged file and
+    bloat the input for valhalla/planetiler downstream. Explicitly
+    enumerating the current run's state files keeps the merge scoped
+    to this run's bbox.
 
     Pre-validates each PBF with `osmium fileinfo` so the error message
     names the specific corrupt file + the exact `rm` command to recover.
     Without this, `osmium merge` fails with an opaque "invalid BlobHeader
-    size" and the user has to delete all 11 PBFs blind (the beta tester's
+    size" and the user has to delete all PBFs blind (the beta tester's
     2026-04-19 experience).
     """
     out = f"{ctx['data_path']}/pbf"
+    state_files = [f"{s}-latest.osm.pbf"
+                   for s in _states_intersecting(ctx.get("bbox", ""))]
+    # Quote each file name for the bash for-loop; all names are ASCII
+    # identifier-safe so no escaping surprises.
+    files_sh = " ".join(f"'{f}'" for f in state_files)
     script = (
         f"set -eu\n"
         f"cd '{out}'\n"
+        f"FILES=({files_sh})\n"
         f'\n'
         f'# Pre-validate every input so the error message is actionable.\n'
-        f'for f in *-latest.osm.pbf; do\n'
+        f'for f in "${{FILES[@]}}"; do\n'
         f'  if ! osmium fileinfo --extended=false "$f" >/dev/null 2>&1; then\n'
         f'    echo "ERROR: corrupt PBF: {out}/${{f}}" >&2\n'
         f'    echo "  Recover with:" >&2\n'
@@ -287,7 +370,7 @@ def osm_merge_cmd(ctx) -> list[str]:
         f'  fi\n'
         f'done\n'
         f'\n'
-        f"osmium merge *-latest.osm.pbf -o western-us.osm.pbf --overwrite\n"
+        f'osmium merge "${{FILES[@]}}" -o western-us.osm.pbf --overwrite\n'
     )
     return ["bash", "-c", script]
 
