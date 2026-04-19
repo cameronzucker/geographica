@@ -26,9 +26,21 @@ if [ "${PERMS: -1}" -ge 6 ]; then
 fi
 
 echo "[1/6] Installing system packages..."
+# Add Docker's official apt repository (idempotent — skipped if key already present)
+if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/debian/gpg \
+    | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  chmod a+r /etc/apt/keyrings/docker.gpg
+  echo \
+    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+https://download.docker.com/linux/debian \
+$(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+    > /etc/apt/sources.list.d/docker.list
+fi
 apt update
 apt install -y \
-  docker.io docker-compose \
+  docker-ce docker-ce-cli containerd.io docker-compose-plugin \
   python3 python3-venv python3-pip \
   gdal-bin osmium-tool \
   gpsd gpsd-clients \
