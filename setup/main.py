@@ -820,10 +820,10 @@ async def post_launch():
     # We check with `docker image inspect` (fast) and only build if missing.
     img_check = await asyncio.create_subprocess_exec(
         "docker", "image", "inspect", "geographica-pipeline",
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
     )
-    await img_check.wait()
+    await img_check.communicate()
     if img_check.returncode != 0:
         await run_command(
             args=["docker", "compose", "--profile", "pipeline", "build"],
