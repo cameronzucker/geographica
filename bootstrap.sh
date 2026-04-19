@@ -26,8 +26,12 @@ if [ "${PERMS: -1}" -ge 6 ]; then
 fi
 
 echo "[1/6] Installing system packages..."
-# Add Docker's official apt repository (idempotent — skipped if key already present)
-if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
+# Add Docker's official apt repository (idempotent).
+# Guard on BOTH .gpg (our convention) and .asc (Docker's current get.docker.com
+# installer convention) — otherwise a Pi that previously followed Docker's
+# official install docs would get a duplicate keyring + duplicate sources.list
+# entry when bootstrap runs.
+if [ ! -f /etc/apt/keyrings/docker.gpg ] && [ ! -f /etc/apt/keyrings/docker.asc ]; then
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/debian/gpg \
     | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
