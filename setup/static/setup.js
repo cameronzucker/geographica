@@ -19,10 +19,10 @@
 
   // Accumulated config
   var config = {
-    host_ip: '',
     tls_mode: 'http',
-    data_path: '/srv/geographica/data',
+    data_path: '',
     bbox: '',
+    layer_bbox: { basemap: '', base_imagery: '', detail_imagery: '' },
     layers: {
       basemap: 'download',
       base_imagery: 'naip',
@@ -151,16 +151,42 @@
     if (n === 5) startHealthPolling();
   }
 
+  // Minimal error display — Task 39 replaces with a shared component.
+  function showError(msg) {
+    var hint = $('#data-path-hint');
+    if (hint) {
+      hint.textContent = msg;
+      hint.className = 'field-hint error';
+    } else {
+      alert(msg);
+    }
+  }
+
   function nextStep() {
     if (currentStep === 1) {
-      config.host_ip = $('#host-ip').value.trim();
       config.tls_mode = $('#tls-mode').value;
-      config.data_path = $('#data-path').value;
-      if (!config.host_ip) {
-        $('#host-ip-hint').textContent = 'Required';
-        $('#host-ip-hint').className = 'field-hint error';
+      var path = computeDataPath();
+      if (!path) {
+        showError('Please select a data drive and enter a subpath (or choose "Other" and enter a custom path).');
         return;
       }
+      return api('POST', '/api/validate-path', { path: path })
+        .then(function (res) {
+          if (!res.valid) {
+            showError('Invalid data path: ' + (res.reason || 'path rejected'));
+            throw new Error('validate-path rejected');
+          }
+          return api('POST', '/api/create-directory', { path: path });
+        })
+        .then(function () {
+          config.data_path = path;
+          showStep(currentStep + 1);
+        })
+        .catch(function (err) {
+          if (!/rejected/.test(err.message)) {
+            showError('Could not create data directory: ' + err.message);
+          }
+        });
     }
 
     if (currentStep === 2) {
@@ -225,9 +251,6 @@
   function loadSystemInfo() {
     api('GET', '/api/system').then(function (data) {
       systemInfo = data;
-      $('#host-ip').value = data.host_ip || '';
-      config.host_ip = data.host_ip || '';
-      $('#host-ip-hint').textContent = data.host_ip ? 'Auto-detected' : 'Could not detect';
 
       var ramMb = data.ram_mb || 0;
       var ramGb = (ramMb / 1024).toFixed(1);
@@ -235,38 +258,119 @@
       var profileLabel = ramMb >= 12000 ? '16 GB profile' : '8 GB profile';
       $('#ram-profile-hint').textContent = profileLabel;
 
-      // Storage options
-      var sel = $('#data-path');
-      sel.textContent = '';
+      // Populate drive select from detect_storage output
+      var driveSel = $('#data-drive');
+      driveSel.textContent = '';
+      var emptyOpt = document.createElement('option');
+      emptyOpt.value = '';
+      emptyOpt.textContent = '-- Select a drive --';
+      driveSel.appendChild(emptyOpt);
       if (data.storage && data.storage.length > 0) {
         data.storage.forEach(function (s) {
           var opt = document.createElement('option');
-          var path = s.path === '/' ? '/srv/geographica/data' : s.path + '/geographica/data';
-          opt.value = path;
-          opt.textContent = s.device + ' - ' + s.path + ' (' + s.free_gb + ' GB free of ' + s.total_gb + ' GB)';
-          sel.appendChild(opt);
+          // For root mount, use /srv as the "drive" since /srv is the allowlist entry.
+          var driveVal = s.path === '/' ? '/srv' : s.path;
+          opt.value = driveVal;
+          opt.textContent = driveVal + ' (' + s.free_gb + ' GB free of ' + s.total_gb + ' GB — ' + s.fstype + ')';
+          driveSel.appendChild(opt);
         });
       }
-      // Always include default
-      var hasDefault = false;
-      for (var i = 0; i < sel.options.length; i++) {
-        if (sel.options[i].value === '/srv/geographica/data') { hasDefault = true; break; }
-      }
-      if (!hasDefault) {
-        var dopt = document.createElement('option');
-        dopt.value = '/srv/geographica/data';
-        dopt.textContent = '/srv/geographica/data (default)';
-        sel.insertBefore(dopt, sel.firstChild);
-      }
-      sel.value = config.data_path;
+      // Always append the "Other / custom path" sentinel.
+      var otherOpt = document.createElement('option');
+      otherOpt.value = '__other__';
+      otherOpt.textContent = 'Other (enter custom path)';
+      driveSel.appendChild(otherOpt);
 
-      if (data.existing_env) {
-        $('#host-ip-hint').textContent = 'Existing .env found - values pre-filled';
+      // Pre-fill from existing_env_parsed if present (Task 40 adds this field).
+      if (data.existing_env_parsed) {
+        var env = data.existing_env_parsed;
+        if (env.TLS_MODE) $('#tls-mode').value = env.TLS_MODE;
+        if (env.DATA_HOST_PATH) {
+          // Best-effort: if DATA_HOST_PATH is under a known drive, split it;
+          // otherwise fall back to custom path.
+          var match = null;
+          if (data.storage) {
+            data.storage.forEach(function (s) {
+              var driveVal = s.path === '/' ? '/srv' : s.path;
+              if (env.DATA_HOST_PATH.indexOf(driveVal + '/') === 0) {
+                match = { drive: driveVal, subpath: env.DATA_HOST_PATH.slice(driveVal.length + 1) };
+              }
+            });
+          }
+          if (match) {
+            $('#data-drive').value = match.drive;
+            $('#data-subpath').value = match.subpath;
+          } else {
+            $('#data-drive').value = '__other__';
+            $('#data-custom-path').value = env.DATA_HOST_PATH;
+          }
+        }
       }
+
+      onDataDriveChange();
     }).catch(function (err) {
-      $('#host-ip-hint').textContent = 'Detection failed: ' + err.message;
-      $('#host-ip-hint').className = 'field-hint error';
+      var hint = $('#data-path-hint');
+      if (hint) {
+        hint.textContent = 'System detection failed: ' + err.message;
+        hint.className = 'field-hint error';
+      }
     });
+  }
+
+  // Compute the full resolved data path from drive + subpath OR custom-path input.
+  function computeDataPath() {
+    var drive = $('#data-drive').value;
+    if (!drive) return '';
+    if (drive === '__other__') {
+      return ($('#data-custom-path').value || '').trim();
+    }
+    var subpath = ($('#data-subpath').value || 'geographica/data').trim().replace(/^\/+/, '');
+    return drive.replace(/\/+$/, '') + '/' + subpath;
+  }
+
+  // Show/hide subpath-group vs custom-group based on current drive value.
+  function onDataDriveChange() {
+    var drive = $('#data-drive').value;
+    var subpathGroup = $('#data-subpath-group');
+    var customGroup = $('#data-custom-group');
+    if (drive === '__other__') {
+      subpathGroup.style.display = 'none';
+      customGroup.style.display = '';
+    } else {
+      subpathGroup.style.display = '';
+      customGroup.style.display = 'none';
+    }
+    debouncedValidatePath();
+  }
+
+  // 400ms-debounced POST to /api/validate-path. Writes the result to
+  // #data-path-hint with an ok/warning/error CSS class.
+  var _validatePathTimer = null;
+  function debouncedValidatePath() {
+    if (_validatePathTimer) clearTimeout(_validatePathTimer);
+    _validatePathTimer = setTimeout(function () {
+      var path = computeDataPath();
+      var hint = $('#data-path-hint');
+      if (!path) {
+        hint.textContent = '';
+        hint.className = 'field-hint';
+        return;
+      }
+      api('POST', '/api/validate-path', { path: path })
+        .then(function (res) {
+          if (res.valid) {
+            hint.textContent = 'Path OK — will be created on Next if missing.';
+            hint.className = 'field-hint ok';
+          } else {
+            hint.textContent = 'Invalid: ' + (res.reason || 'path not allowed');
+            hint.className = 'field-hint error';
+          }
+        })
+        .catch(function (err) {
+          hint.textContent = 'Validation check failed: ' + err.message;
+          hint.className = 'field-hint warning';
+        });
+    }, 400);
   }
 
   // TLS mode change handler
@@ -476,11 +580,14 @@
   }
 
   function saveConfig() {
-    api('POST', '/api/config', {
-      host_ip: config.host_ip,
+    return api('POST', '/api/config', {
       tls_mode: config.tls_mode,
       bbox: config.bbox,
-      data_path: config.data_path
+      data_path: config.data_path,
+      scripts_path: '',
+      tls_cert_dir: './tls',
+      tls_port: 443,
+      stt_backend: 'cpu'
     }).catch(function (err) {
       console.error('Failed to save config:', err);
     });
@@ -990,6 +1097,9 @@
 
     // TLS mode change
     $('#tls-mode').addEventListener('change', onTlsModeChange);
+    $('#data-drive').addEventListener('change', onDataDriveChange);
+    $('#data-subpath').addEventListener('input', debouncedValidatePath);
+    $('#data-custom-path').addEventListener('input', debouncedValidatePath);
 
     // Preset change
     $('#preset-select').addEventListener('change', onPresetChange);
