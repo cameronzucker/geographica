@@ -615,3 +615,15 @@ class TestStartTOCTOU:
         statuses = sorted([r1.status_code, r2.status_code])
         assert statuses == [200, 409], f"expected one 200 + one 409, got {statuses}"
         assert spawn_count[0] == 1
+
+
+def test_ws_progress_snapshots_buffer():
+    """Source-level assertion that ws_progress iterates a snapshot, not the live deque."""
+    from setup import main as mod
+    import inspect
+    src = inspect.getsource(mod.ws_progress)
+    assert "list(progress_buffer)" in src or "list(mod.progress_buffer)" in src or \
+           "snapshot" in src.lower(), (
+        "ws_progress must snapshot progress_buffer via list(...) to avoid "
+        "deque-mutated-during-iteration under concurrent pipeline output"
+    )

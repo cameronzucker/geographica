@@ -439,8 +439,8 @@ async def ws_progress(websocket: WebSocket):
     await websocket.accept()
     connected_websockets.append(websocket)
     try:
-        # Send buffered events on connect
-        for event in progress_buffer:
+        # Send buffered events on connect — snapshot to avoid deque-mutated-during-iteration
+        for event in list(progress_buffer):
             await websocket.send_json(event)
         await websocket.send_json(current_state)
         # Keep alive, waiting for disconnect
