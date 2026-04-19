@@ -338,3 +338,42 @@ def test_transcript_writer_appends_jsonl(tmp_path):
     lines = p.read_text().strip().splitlines()
     assert len(lines) == 2
     assert json.loads(lines[0])["event"] == "tool_call"
+
+
+def test_system_prompt_exists_and_has_required_sections():
+    from dev.harness.exploratory_agent.prompts import build_system_prompt
+    p = build_system_prompt(wizard_url="http://x", container="c",
+                             max_minutes=15, max_turns=200)
+    assert "bug-bounty" in p.lower() or "bug bounty" in p.lower() \
+        or "exploratory" in p.lower() or "adversarial beta-tester" in p.lower()
+    assert "http://x" in p
+    assert "c" in p  # container name appears somewhere
+    assert "15" in p
+    assert "200" in p
+    # Known bugs block is injected from bug_classes.md
+    assert "trailing" in p.lower()  # one of the seeded classes
+
+
+def test_bug_classes_file_exists_and_is_nonempty():
+    from pathlib import Path
+    import dev.harness.exploratory_agent as pkg
+    p = Path(pkg.__file__).parent / "bug_classes.md"
+    assert p.exists()
+    body = p.read_text()
+    # Spot-check: each of the 5 April classes is named.
+    for marker in ("Trixie docker-buildx", "websockets", "PBF",
+                   "CSRF", "trailing slash"):
+        assert marker.lower() in body.lower(), f"missing seed: {marker}"
+
+
+def test_bug_classes_includes_pipeline_artifact_scope():
+    """New class added 2026-04-20 for the STATE_BBOXES / osm_download
+    over-download finding. Verifies the seed stays in sync with known
+    regressions.
+    """
+    from pathlib import Path
+    import dev.harness.exploratory_agent as pkg
+    body = (Path(pkg.__file__).parent / "bug_classes.md").read_text().lower()
+    assert "pipeline artifact scope" in body
+    assert "silent over-download" in body
+    assert "_states_intersecting" in body or "states_intersecting" in body
