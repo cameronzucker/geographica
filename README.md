@@ -107,7 +107,7 @@ TileServer GL style/TileJSON endpoints.
 For a guided setup experience, use the setup wizard:
 
 ```bash
-git clone https://github.com/cdzucker/geographica.git
+git clone https://github.com/cameronzucker/geographica.git
 cd geographica
 sudo ./bootstrap.sh    # Install system prerequisites
 # Log out and back in so the docker group takes effect, then:
@@ -182,7 +182,7 @@ GNOME Keyring (not plaintext files).
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/cdzucker/geographica.git
+git clone https://github.com/cameronzucker/geographica.git
 cd geographica
 ```
 
@@ -573,7 +573,7 @@ Visit `https://<your-tailscale-hostname>` — green padlock, GPS works.
 ## Companion data utility
 
 For faster imagery downloads on hardware with more bandwidth and CPU (desktop,
-laptop), use the [Geographica Companion](https://github.com/cdzucker/geographica-companion)
+laptop), use the [Geographica Companion](https://github.com/cameronzucker/geographica-companion)
 utility. It runs the same NOAA NAIP pipeline on your desktop, then transfers the
 finished MBTiles to the Pi via SCP. This is significantly faster than running the
 pipeline on the Pi itself — a desktop with 8+ cores and no swap pressure processes
@@ -585,7 +585,7 @@ and register it with TileServer:
 
 ```bash
 scp imagery_noaa.mbtiles user@pi-ip:/srv/geographica/data/
-ssh user@pi-ip "cd ~/Code/geographica && python3 scripts/tileserver_config.py add tileserver/config.json imagery_noaa /srv/data/imagery_noaa.mbtiles && docker compose restart tileserver"
+ssh user@pi-ip "cd ~/geographica && python3 scripts/tileserver_config.py add tileserver/config.json imagery_noaa /srv/data/imagery_noaa.mbtiles && docker compose restart tileserver"
 ```
 
 ## Customizing coverage area

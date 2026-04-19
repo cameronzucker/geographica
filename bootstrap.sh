@@ -21,7 +21,7 @@ PERMS=$(stat -c %a "$REPO_DIR")
 if [ "${PERMS: -1}" -ge 6 ]; then
   echo "WARNING: Repository directory ($REPO_DIR) is world-writable."
   echo "This is a security risk. Clone into your home directory instead."
-  echo "  git clone https://github.com/cdzucker/geographica.git ~/geographica"
+  echo "  git clone https://github.com/cameronzucker/geographica.git ~/geographica"
   exit 1
 fi
 
