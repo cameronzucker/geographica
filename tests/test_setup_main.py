@@ -136,11 +136,22 @@ class TestConfigEndpoint:
         env_path = tmp_path / ".env"
         monkeypatch.setattr("setup.main.ENV_PATH", str(env_path))
         resp = self.client.post("/api/config", json={
-            "tls_mode": "none",
+            "tls_mode": "http",
             "bbox": "not-a-bbox",
             "data_path": "/srv/geographica/data",
         }, headers=self.headers)
         assert resp.status_code == 400
+
+    def test_config_rejects_deprecated_tls_mode(self):
+        """Stale clients POSTing pre-canonicalization TLS_MODE values should 400."""
+        for bad in ("self-signed", "external", "existing", "acme", ""):
+            resp = self.client.post("/api/config", json={
+                "tls_mode": bad,
+                "bbox": "-124.8,31.3,-102.0,49.0",
+                "data_path": "/srv/geographica/data",
+            }, headers=self.headers)
+            assert resp.status_code == 400, f"expected 400 for tls_mode={bad!r}, got {resp.status_code}"
+            assert "tls_mode" in resp.json().get("detail", "").lower()
 
 
 class TestCredentialsEndpoint:

@@ -287,6 +287,12 @@ async def post_create_directory(body: CreateDirectoryRequest):
 @app.post("/api/config")
 async def post_config(body: ConfigRequest):
     """Generate and write .env file."""
+    ALLOWED_TLS_MODES = {"http", "https", "tailscale"}
+    if body.tls_mode not in ALLOWED_TLS_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"tls_mode must be one of {sorted(ALLOWED_TLS_MODES)}"
+        )
     if not validate_bbox(body.bbox):
         raise HTTPException(status_code=400, detail="Invalid bbox")
     scripts_path = body.scripts_path or str(Path(__file__).parent.parent / "scripts")

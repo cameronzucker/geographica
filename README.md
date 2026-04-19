@@ -32,6 +32,9 @@ isolated LAN or standalone device.
 - **Print/export directions** (Mapquest-style printable page)
 - **ATAK integration** — serves as a WMS map source for TAK clients
 - **TLS support** — three modes: HTTP, HTTPS (self-signed), or Tailscale (Let's Encrypt)
+
+> **Upgrading from before the 1.2 TLS canonicalization?** If your `.env` has `TLS_MODE=self-signed`, `external`, or `existing`, the nginx entrypoint will print a deprecation warning and alias to the new vocabulary (`https`, `tailscale`, or fall back to `http` for the removed `existing` mode). The old values still work but you should update `.env` to the canonical names.
+
 - **Mobile-optimized navigation** — collapsible search bar during nav, correct z-ordering, touch-friendly popup close buttons, GPS follow pauses during search
 - **Credential security** — API keys stored in GNOME Keyring via host-side daemon, shared with containers over tmpfs (no plaintext credential files)
 - **No build step** — vanilla JS + MapLibre GL JS frontend, no bundler required
