@@ -374,14 +374,34 @@
   }
 
   // Compute the full resolved data path from drive + subpath OR custom-path input.
+  //
+  // Both branches normalize: strip any trailing slash, collapse any internal
+  // `//` to a single `/`. The drive+subpath branch already did this by
+  // construction; the custom-path branch previously didn't, so a user who
+  // typed `/srv/foo/` got that raw string written to .env as
+  // DATA_HOST_PATH and propagated into bash commands as
+  // `{data_path}/pbf` → `/srv/foo//pbf`. POSIX tolerates `//` in most
+  // places but docker-compose volume mounts and some downstream
+  // consumers don't — 2026-04-19 beta tester report.
+  function normalizePath(p) {
+    // Collapse repeated slashes to one, then drop any trailing slash
+    // (but keep the leading `/` on absolute paths — `/` alone stays `/`).
+    var collapsed = p.replace(/\/+/g, '/');
+    if (collapsed.length > 1 && collapsed.charAt(collapsed.length - 1) === '/') {
+      collapsed = collapsed.slice(0, -1);
+    }
+    return collapsed;
+  }
+
   function computeDataPath() {
     var drive = $('#data-drive').value;
     if (!drive) return '';
     if (drive === '__other__') {
-      return ($('#data-custom-path').value || '').trim();
+      var custom = ($('#data-custom-path').value || '').trim();
+      return custom ? normalizePath(custom) : '';
     }
     var subpath = ($('#data-subpath').value || 'geographica/data').trim().replace(/^\/+/, '');
-    return drive.replace(/\/+$/, '') + '/' + subpath;
+    return normalizePath(drive + '/' + subpath);
   }
 
   // Show/hide subpath-group vs custom-group based on current drive value.

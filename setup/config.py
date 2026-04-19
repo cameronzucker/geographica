@@ -270,11 +270,33 @@ def _under(path: str, prefix: str) -> bool:
     return path.startswith(sep_prefix) and len(path) > len(sep_prefix)
 
 
+def _normalize_path(path_str: str) -> str:
+    """Collapse `//+` to `/` and strip any trailing `/` (but keep `/` alone).
+
+    Mirrors the frontend's `normalizePath()` in setup.js so server-side
+    is defensive against raw user input OR programmatic callers that
+    skip the UI layer. The 2026-04-19 beta tester symptom was a user
+    typing `/srv/foo/` in the custom-path box; the server accepted it
+    and propagated the trailing-slash into `DATA_HOST_PATH` and every
+    `{data_path}/subdir` string-concat downstream, producing paths
+    like `/srv/foo//pbf` that docker-compose volume mounts don't
+    always handle correctly.
+    """
+    if not isinstance(path_str, str):
+        return path_str
+    collapsed = re.sub(r"/+", "/", path_str)
+    if len(collapsed) > 1 and collapsed.endswith("/"):
+        collapsed = collapsed[:-1]
+    return collapsed
+
+
 def validate_path(path_str: str) -> dict:
     """Validate a filesystem path against the ALLOWLIST.
 
-    Returns a dict with 'valid' (bool) and optionally 'reason' (str),
-    'free_gb' (float), and 'total_gb' (float).
+    Returns a dict with 'valid' (bool), 'normalized' (the canonical
+    form with `//+` collapsed and trailing `/` stripped — callers
+    should prefer this over the raw input), and optionally 'reason'
+    (str), 'free_gb' (float), and 'total_gb' (float).
 
     Security rules:
     - Path must be absolute
@@ -289,6 +311,10 @@ def validate_path(path_str: str) -> dict:
     # Reject null bytes
     if "\x00" in path_str:
         return {"valid": False, "reason": "Path contains null bytes"}
+
+    # Normalize trailing / and collapsed // BEFORE any startswith / resolve
+    # checks so both validation and the 'normalized' result are consistent.
+    path_str = _normalize_path(path_str)
 
     # Must be absolute
     if not path_str.startswith("/"):
@@ -320,7 +346,7 @@ def validate_path(path_str: str) -> dict:
         check_path = check_path.parent
 
     # Get disk space info if the path or its parent exists
-    result: dict = {"valid": True}
+    result: dict = {"valid": True, "normalized": path_str}
     try:
         # Walk up to find an existing ancestor
         check = Path(resolved)

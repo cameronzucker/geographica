@@ -19,7 +19,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPExcept
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from setup.config import (
     validate_bbox, get_ram_profile, detect_host_ip,
@@ -299,6 +299,27 @@ async def csrf_middleware(request: Request, call_next):
 # ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
+
+def _normalize_path_field(value: str) -> str:
+    """Pydantic field-validator body: collapse `//+` → `/` and strip a
+    trailing `/`. Central defense for every request model that carries
+    a filesystem path, so we never propagate `/srv/foo/` into a bash
+    string-concat of `f"{ctx['data_path']}/pbf"` → `/srv/foo//pbf`.
+    2026-04-19 beta tester hit `osmium merge: no such file or directory`
+    from exactly that pattern.
+
+    Accepts raw user input verbatim (empty strings, non-paths). Actual
+    validation (ALLOWLIST etc.) still happens in `validate_path()`; this
+    only normalizes the shape.
+    """
+    if not isinstance(value, str) or not value:
+        return value
+    collapsed = re.sub(r"/+", "/", value)
+    if len(collapsed) > 1 and collapsed.endswith("/"):
+        collapsed = collapsed[:-1]
+    return collapsed
+
+
 class BboxRequest(BaseModel):
     bbox: str
 
@@ -312,6 +333,11 @@ class ConfigRequest(BaseModel):
     tls_port: int = 443
     stt_backend: str = "cpu"
 
+    @field_validator("data_path", "scripts_path", "tls_cert_dir")
+    @classmethod
+    def _norm(cls, v: str) -> str:
+        return _normalize_path_field(v)
+
 
 class CredentialsRequest(BaseModel):
     m2m_username: str = ""
@@ -323,13 +349,28 @@ class CredentialsRequest(BaseModel):
 class PathRequest(BaseModel):
     path: str
 
+    @field_validator("path")
+    @classmethod
+    def _norm(cls, v: str) -> str:
+        return _normalize_path_field(v)
+
 
 class CreateDirectoryRequest(BaseModel):
     path: str
 
+    @field_validator("path")
+    @classmethod
+    def _norm(cls, v: str) -> str:
+        return _normalize_path_field(v)
+
 
 class CheckpointResetRequest(BaseModel):
     data_path: str
+
+    @field_validator("data_path")
+    @classmethod
+    def _norm(cls, v: str) -> str:
+        return _normalize_path_field(v)
 
 
 class StartRequest(BaseModel):
@@ -340,6 +381,11 @@ class StartRequest(BaseModel):
     data_path: str = "/srv/geographica/data"
     base_imagery_zoom: int = 15
     layer_bbox: dict = {}  # {layer: bbox_string} — empty string means "same as top-level bbox"
+
+    @field_validator("data_path")
+    @classmethod
+    def _norm(cls, v: str) -> str:
+        return _normalize_path_field(v)
 
 
 # ---------------------------------------------------------------------------
@@ -436,6 +482,10 @@ async def post_create_directory(body: CreateDirectoryRequest):
     """Create a directory at the specified path.
 
     SECURITY: Path must pass validate_path (ALLOWLIST check).
+    The mkdir operates on the NORMALIZED form returned by validate_path
+    so `/srv/foo/` and `/srv/foo` both resolve to the same directory
+    and the trailing slash isn't baked into later string-concat paths
+    (see validate_path docstring for the 2026-04-19 context).
     """
     validation = validate_path(body.path)
     if not validation.get("valid"):
@@ -443,10 +493,11 @@ async def post_create_directory(body: CreateDirectoryRequest):
             status_code=400,
             detail=validation.get("reason", "Invalid path"),
         )
+    clean_path = validation.get("normalized", body.path)
 
     try:
-        Path(body.path).mkdir(parents=True, exist_ok=True)
-        return {"ok": True, "path": body.path}
+        Path(clean_path).mkdir(parents=True, exist_ok=True)
+        return {"ok": True, "path": clean_path}
     except OSError as e:
         raise HTTPException(status_code=400, detail=f"Cannot create directory: {e}")
 
@@ -795,7 +846,8 @@ async def post_checkpoint_reset(body: CheckpointResetRequest):
     validation = validate_path(body.data_path)
     if not validation.get("valid"):
         raise HTTPException(status_code=400, detail=validation.get("reason", "Invalid path"))
-    ckpt_path = Path(body.data_path) / ".setup_checkpoint.json"
+    clean_path = validation.get("normalized", body.data_path)
+    ckpt_path = Path(clean_path) / ".setup_checkpoint.json"
     if ckpt_path.exists():
         try:
             ckpt_path.unlink()
