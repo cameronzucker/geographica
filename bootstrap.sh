@@ -26,6 +26,16 @@ if [ "${PERMS: -1}" -ge 6 ]; then
 fi
 
 echo "[1/6] Installing system packages..."
+# Prerequisites that this script itself consumes (curl + gpg + ca-certs) —
+# must be installed BEFORE the Docker repo setup below, which curls
+# download.docker.com and pipes through gpg --dearmor. Raspberry Pi OS Full
+# ships these, but Raspberry Pi OS Lite and minimal Debian cloud images
+# do not, and beta testers on those images would hit
+#   ./bootstrap.sh: line 36: curl: command not found
+# at this exact step. Idempotent; apt skips already-installed packages.
+apt update
+apt install -y ca-certificates curl gpg
+
 # Add Docker's official apt repository (idempotent).
 # Guard on BOTH .gpg (our convention) and .asc (Docker's current get.docker.com
 # installer convention) — otherwise a Pi that previously followed Docker's
@@ -185,18 +195,54 @@ echo "============================================"
 echo "Bootstrap complete."
 echo "============================================"
 echo ""
-echo "Next step:"
+echo "WHY YOU NEED AN EXTRA STEP:"
+echo "  Your user '$ACTUAL_USER' was just added to the 'docker' group. Linux only"
+echo "  applies that new membership when you start a fresh login session — the"
+echo "  shell you're currently typing into still thinks you're NOT in the docker"
+echo "  group, so ./setup.sh would fail with permission errors."
+echo ""
+echo "  IMPORTANT: 'exiting screen/tmux and opening a new one' is NOT enough."
+echo "  'Closing a terminal tab and opening a new one' is NOT enough either."
+echo "  Group membership is set when you LOG IN to the machine, not when you"
+echo "  start a new shell. You must fully disconnect and reconnect, OR reboot."
+echo ""
+
 if [ "${NEEDS_REBOOT:-0}" = "1" ]; then
-    echo "  A reboot is required (cgroup memory controller was enabled)."
+    echo "HOW TO FINISH (reboot required anyway — the cgroup memory setting needs one):"
     echo ""
     echo "  1. sudo reboot"
-    echo "  2. Log out and back in before running ./setup.sh (docker group membership needs to take effect)."
-    echo "  3. cd \"$REPO_DIR\" && ./setup.sh"
+    echo "  2. Wait ~1 minute for the Pi to come back."
+    echo "  3. Log in again (SSH back in, or sit down at the keyboard and log in)."
+    echo "  4. cd \"$REPO_DIR\" && ./setup.sh"
     echo ""
-    echo "If you're connected over SSH, reconnect after the reboot and re-run ./setup.sh."
 else
-    echo "  Log out and back in before running ./setup.sh (docker group membership needs to take effect)."
-    echo "  Then: cd \"$REPO_DIR\" && ./setup.sh"
+    echo "HOW TO FINISH (pick ONE of these — they all work):"
     echo ""
-    echo "If you're connected over SSH, you can log out and reconnect to the same session."
+    echo "  Option A — easiest, works for everyone:"
+    echo "    1. sudo reboot"
+    echo "    2. Wait ~1 minute, then log in again (SSH or console)."
+    echo "    3. cd \"$REPO_DIR\" && ./setup.sh"
+    echo ""
+    echo "  Option B — SSH users, no reboot:"
+    echo "    1. Type 'exit' to close your SSH session."
+    echo "    2. Open a new SSH connection to the Pi (e.g., 'ssh pi@<host>')."
+    echo "    3. cd \"$REPO_DIR\" && ./setup.sh"
+    echo ""
+    echo "  Option C — console/keyboard users, no reboot:"
+    echo "    1. Log out of the desktop (or the text console)."
+    echo "    2. Log back in as the same user."
+    echo "    3. cd \"$REPO_DIR\" && ./setup.sh"
+    echo ""
+    echo "  Option D — advanced users only:"
+    echo "    newgrp docker"
+    echo "    cd \"$REPO_DIR\" && ./setup.sh"
+    echo "    (This starts a new shell with the docker group active. Only in"
+    echo "     that new shell does setup.sh work — quit the shell and you lose it.)"
+    echo ""
 fi
+
+echo "HOW TO CHECK YOU DID IT RIGHT:"
+echo "  After logging back in, run:   groups"
+echo "  You should see 'docker' in the list. If you don't, you did NOT fully"
+echo "  log out. Reboot and try again (Option A)."
+echo ""

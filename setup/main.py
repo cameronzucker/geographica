@@ -102,12 +102,32 @@ def _is_all_healthy(services: list[dict]) -> bool:
 # ---------------------------------------------------------------------------
 
 def _check_python_pipeline_deps() -> dict:
-    """Verify rasterio/shapely/scipy/numpy importable."""
+    """Verify rasterio/shapely/scipy/numpy importable from the system Python.
+
+    bootstrap.sh installs scripts/requirements.txt via
+        sudo -u "$ACTUAL_USER" -H pip install --user ...
+    which lands packages in ~/.local/lib/pythonX.Y/site-packages. That
+    location is auto-imported by /usr/bin/python3 but NOT by this process,
+    which setup.sh runs inside setup/.venv — a fresh venv that inherits
+    no user site-packages. A bare __import__('rasterio') inside this
+    process therefore ALWAYS fails on a clean bootstrap, regardless of
+    whether bootstrap.sh succeeded; that's the '2026-04-19 beta tester
+    stuck at preflight' report.
+
+    Test via an explicit /usr/bin/python3 subprocess so the check
+    reflects the actual user environment bootstrap targeted, not this
+    venv.
+    """
     missing = []
     for pkg in ("rasterio", "shapely", "scipy", "numpy"):
         try:
-            __import__(pkg)
-        except ImportError:
+            proc = subprocess.run(
+                ["/usr/bin/python3", "-c", f"import {pkg}"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if proc.returncode != 0:
+                missing.append(pkg)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
             missing.append(pkg)
     if missing:
         return {"status": "missing", "message": f"Missing: {', '.join(missing)}",
