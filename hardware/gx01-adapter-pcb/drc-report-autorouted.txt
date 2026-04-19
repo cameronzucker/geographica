@@ -1,0 +1,25 @@
+** Drc report for gx01-adapter.kicad_pcb **
+** Created on 2026-04-18T04:39:19-0700 **
+
+** Found 4 DRC violations **
+[courtyards_overlap]: Courtyards overlap
+    Rule: board setup constraints courtyard; error
+    @(7.1100 mm, 3.5000 mm): Footprint J1
+    @(3.5000 mm, 3.5000 mm): Footprint H1
+[silk_edge_clearance]: Silkscreen clipped by board edge
+    Rule: board setup constraints silk; warning
+    @(0.0000 mm, 0.0000 mm): Segment on Edge.Cuts
+    @(61.5000 mm, -0.1500 mm): Reference field of H2
+[silk_edge_clearance]: Silkscreen clipped by board edge
+    Rule: board setup constraints silk; warning
+    @(0.0000 mm, 0.0000 mm): Segment on Edge.Cuts
+    @(3.5000 mm, -0.1500 mm): Reference field of H1
+[silk_over_copper]: Silkscreen clipped by solder mask
+    Local override; warning
+    @(4.3400 mm, 4.7700 mm): Reference field of J1
+
+** Found 0 unconnected pads **
+
+** Found 0 Footprint errors **
+
+** End of Report **

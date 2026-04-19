@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>GX-01 Path C — LCD/HAT sandwich display module</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         max-width: 1200px; margin: 2em auto; padding: 0 1.5em; color: #222;
+         background: #fafaf7; line-height: 1.5; }
+  h1 { border-bottom: 2px solid #555; padding-bottom: 0.3em; }
+  h2 { margin-top: 2em; color: #333; border-bottom: 1px solid #ddd; padding-bottom: 0.2em; }
+  h3 { margin-top: 1.5em; color: #444; }
+  .diagram { margin: 2em 0; padding: 1em; background: white;
+             border: 1px solid #ddd; border-radius: 6px; }
+  svg { display: block; margin: 0 auto; background: #f5f4ef; }
+  .caption { font-style: italic; color: #555; margin-top: 0.8em;
+             padding: 0 1em; }
+  .key { display: flex; gap: 1.5em; flex-wrap: wrap; margin: 1em 0;
+         font-size: 0.9em; }
+  .key-item { display: flex; gap: 0.4em; align-items: center; }
+  .swatch { width: 20px; height: 14px; border: 1px solid #333; }
+  table { border-collapse: collapse; margin: 1em 0; width: 100%; }
+  th, td { padding: 0.5em 0.8em; border: 1px solid #ccc; text-align: left; vertical-align: top; }
+  th { background: #eee; }
+  .note { background: #fffae0; border-left: 4px solid #e6b800;
+          padding: 0.8em 1em; margin: 1em 0; border-radius: 3px; }
+  .good { background: #e8f8e6; border-left-color: #28a045; }
+  .bad { background: #ffe6e6; border-left-color: #c44; }
+  code { background: #f0eee6; padding: 0.1em 0.3em; border-radius: 3px;
+         font-size: 0.92em; }
+  .pro-con { display: grid; grid-template-columns: 1fr 1fr; gap: 1em; margin: 1em 0; }
+  .pro-con > div { padding: 1em; border-radius: 4px; }
+  .pros { background: #e8f8e6; }
+  .cons { background: #ffe6e6; }
+  ul.tight { margin: 0.3em 0; padding-left: 1.5em; }
+  ul.tight li { margin: 0.2em 0; }
+</style>
+</head>
+<body>
+
+<h1>GX-01 Path C — LCD/HAT sandwich display module</h1>
+
+<p><b>Concept:</b> J2 moves from the top (F.Cu) to the bottom (B.Cu) side of the adapter HAT. The LCD hard-solders directly onto those flipped J2 pins. LCD + J2 + HAT become a single rigid assembly — the <i>display module</i> — which mounts to the inside of the front panel as one piece. All other connectors (J1 GPIO ribbon port, J3/J4 fans, RV1 contrast pot, R1, C1) live on the case-interior side of the HAT, accessible without disturbing the LCD.</p>
+
+<div class="key">
+  <div class="key-item"><div class="swatch" style="background:#d8c8a8"></div> FDE PETG case wall</div>
+  <div class="key-item"><div class="swatch" style="background:#b5aa90"></div> Aluminum panel / plate</div>
+  <div class="key-item"><div class="swatch" style="background:#2a6b3e"></div> PCB substrate</div>
+  <div class="key-item"><div class="swatch" style="background:#2a2a2a"></div> LCD module / connectors</div>
+  <div class="key-item"><div class="swatch" style="background:#e85d20"></div> 40-pin IDC ribbon</div>
+  <div class="key-item"><div class="swatch" style="background:#a040b0"></div> JST-XH fan leads</div>
+  <div class="key-item"><div class="swatch" style="background:#ddc080"></div> solder joint / pin</div>
+  <div class="key-item"><div class="swatch" style="background:rgba(255,100,100,0.35)"></div> acrylic window</div>
+</div>
+
+<!-- ============================================================ -->
+<div class="diagram">
+<h2>1. Exploded side view of the display module</h2>
+
+<svg width="1100" height="480" viewBox="0 0 1100 480">
+  <defs>
+    <pattern id="aluminum" patternUnits="userSpaceOnUse" width="3" height="3">
+      <rect width="3" height="3" fill="#b5aa90" />
+      <line x1="0" y1="0" x2="3" y2="3" stroke="#a09580" stroke-width="0.3" />
+    </pattern>
+    <pattern id="fdePattern" patternUnits="userSpaceOnUse" width="4" height="4">
+      <rect width="4" height="4" fill="#d8c8a8" />
+      <circle cx="2" cy="2" r="0.4" fill="#b5a580" />
+    </pattern>
+    <pattern id="pcbGreen" patternUnits="userSpaceOnUse" width="8" height="8">
+      <rect width="8" height="8" fill="#2a6b3e" />
+      <circle cx="4" cy="4" r="0.5" fill="#1a4a28" />
+    </pattern>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#1a4a8a" />
+    </marker>
+    <marker id="arrow-gray" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#666" />
+    </marker>
+  </defs>
+
+  <text x="550" y="22" text-anchor="middle" font-size="14" font-weight="bold">Display module (cross-section, case front on the left) — exploded to show layers</text>
+
+  <!-- USER direction -->
+  <text x="50" y="250" text-anchor="middle" font-size="12" fill="#aa6600">← USER</text>
+  <text x="1050" y="250" text-anchor="middle" font-size="12" fill="#aa6600">CASE INTERIOR →</text>
+
+  <!-- 1. Front panel -->
+  <rect x="130" y="90" width="28" height="300" fill="url(#fdePattern)" stroke="#9a7d47" stroke-width="1.5" />
+  <text x="144" y="75" text-anchor="middle" font-size="11" font-weight="bold">front panel</text>
+  <text x="144" y="410" text-anchor="middle" font-size="10" fill="#666">FDE PETG · 3 mm</text>
+
+  <!-- LCD window cutout shown as lighter stripe in front panel -->
+  <rect x="130" y="180" width="28" height="120" fill="rgba(255,255,255,0.5)" stroke="none" />
+
+  <!-- 2. Smoked acrylic -->
+  <rect x="172" y="170" width="8" height="140" fill="rgba(255,100,100,0.35)" stroke="#803030" stroke-width="1" />
+  <text x="176" y="155" text-anchor="middle" font-size="10">smoked</text>
+  <text x="176" y="165" text-anchor="middle" font-size="10">acrylic</text>
+  <text x="176" y="330" text-anchor="middle" font-size="9" fill="#666">2 mm</text>
+
+  <!-- 3. LCD module -->
+  <rect x="200" y="130" width="80" height="220" fill="#2a2a2a" stroke="#000" stroke-width="1" />
+  <rect x="205" y="150" width="70" height="160" fill="#4a9e6a" />    <!-- display -->
+  <text x="240" y="200" text-anchor="middle" font-size="11" fill="white">128×64</text>
+  <text x="240" y="215" text-anchor="middle" font-size="11" fill="white">STN LCD</text>
+  <text x="240" y="230" text-anchor="middle" font-size="9" fill="#ccc">(GDM12864H)</text>
+  <text x="240" y="118" text-anchor="middle" font-size="11" font-weight="bold">LCD module</text>
+  <text x="240" y="370" text-anchor="middle" font-size="10" fill="#666">75 × 52.7 × ~10 mm</text>
+
+  <!-- LCD driver IC on back -->
+  <rect x="250" y="260" width="25" height="40" fill="#111" />
+  <text x="262" y="285" text-anchor="middle" font-size="8" fill="#ccc">driver IC</text>
+
+  <!-- LCD 20-pin through-holes (on back side, facing HAT) -->
+  <g fill="#444">
+    <rect x="276" y="150" width="4" height="8" />
+    <rect x="276" y="162" width="4" height="8" />
+    <rect x="276" y="174" width="4" height="8" />
+    <rect x="276" y="186" width="4" height="8" />
+    <rect x="276" y="198" width="4" height="8" />
+    <rect x="276" y="210" width="4" height="8" />
+    <rect x="276" y="222" width="4" height="8" />
+    <rect x="276" y="234" width="4" height="8" />
+    <rect x="276" y="246" width="4" height="8" />
+    <rect x="276" y="320" width="4" height="8" />
+    <rect x="276" y="332" width="4" height="8" />
+  </g>
+  <text x="285" y="145" font-size="8">20-pin</text>
+  <text x="285" y="156" font-size="8">THT holes</text>
+
+  <!-- 4. J2 pin header (FLIPPED - sits between LCD back and HAT's B.Cu) -->
+  <rect x="300" y="140" width="12" height="200" fill="#2a2a2a" stroke="#000" />
+  <!-- gold pins extending both ways -->
+  <g stroke="#ddc080" stroke-width="1.4">
+    <line x1="290" y1="152" x2="322" y2="152" />
+    <line x1="290" y1="164" x2="322" y2="164" />
+    <line x1="290" y1="176" x2="322" y2="176" />
+    <line x1="290" y1="188" x2="322" y2="188" />
+    <line x1="290" y1="200" x2="322" y2="200" />
+    <line x1="290" y1="212" x2="322" y2="212" />
+    <line x1="290" y1="224" x2="322" y2="224" />
+    <line x1="290" y1="236" x2="322" y2="236" />
+    <line x1="290" y1="248" x2="322" y2="248" />
+    <line x1="290" y1="260" x2="322" y2="260" />
+    <line x1="290" y1="272" x2="322" y2="272" />
+    <line x1="290" y1="284" x2="322" y2="284" />
+    <line x1="290" y1="296" x2="322" y2="296" />
+    <line x1="290" y1="308" x2="322" y2="308" />
+    <line x1="290" y1="320" x2="322" y2="320" />
+    <line x1="290" y1="332" x2="322" y2="332" />
+  </g>
+  <text x="306" y="118" text-anchor="middle" font-size="11" font-weight="bold">J2 (flipped)</text>
+  <text x="306" y="105" text-anchor="middle" font-size="10">1×20 male header</text>
+  <text x="306" y="370" text-anchor="middle" font-size="9" fill="#666">on HAT B.Cu side</text>
+
+  <!-- 5. Adapter HAT PCB -->
+  <rect x="330" y="110" width="16" height="260" fill="url(#pcbGreen)" stroke="#1a4a28" />
+  <text x="338" y="98" text-anchor="middle" font-size="11" font-weight="bold">adapter HAT</text>
+  <text x="338" y="385" text-anchor="middle" font-size="10" fill="#666">65 × 56.5 × 1.6 mm</text>
+
+  <!-- 6. Components on HAT top side (case-interior facing) — extending RIGHT in this view -->
+
+  <!-- J1 - 40-pin GPIO socket -->
+  <rect x="350" y="130" width="30" height="130" fill="#2a2a2a" stroke="#000" />
+  <!-- gold pins -->
+  <g stroke="#ddc080" stroke-width="1.3">
+    <line x1="348" y1="140" x2="353" y2="140" />
+    <line x1="348" y1="148" x2="353" y2="148" />
+    <line x1="348" y1="156" x2="353" y2="156" />
+    <line x1="348" y1="164" x2="353" y2="164" />
+    <line x1="348" y1="172" x2="353" y2="172" />
+    <line x1="348" y1="180" x2="353" y2="180" />
+    <line x1="348" y1="188" x2="353" y2="188" />
+    <line x1="348" y1="196" x2="353" y2="196" />
+    <line x1="348" y1="204" x2="353" y2="204" />
+    <line x1="348" y1="212" x2="353" y2="212" />
+    <line x1="348" y1="220" x2="353" y2="220" />
+    <line x1="348" y1="228" x2="353" y2="228" />
+    <line x1="348" y1="236" x2="353" y2="236" />
+    <line x1="348" y1="244" x2="353" y2="244" />
+    <line x1="348" y1="252" x2="353" y2="252" />
+  </g>
+  <text x="365" y="195" text-anchor="middle" font-size="9" fill="white">J1</text>
+  <text x="365" y="207" text-anchor="middle" font-size="9" fill="white">2×20</text>
+  <text x="365" y="219" text-anchor="middle" font-size="9" fill="white">socket</text>
+
+  <!-- 40-pin IDC ribbon about to plug into J1 -->
+  <rect x="378" y="135" width="30" height="120" fill="#e85d20" stroke="#5a1e00" />
+  <text x="393" y="270" text-anchor="middle" font-size="10" fill="#5a1e00">IDC male plug</text>
+  <text x="393" y="283" text-anchor="middle" font-size="9" fill="#5a1e00">(ribbon end)</text>
+  <!-- ribbon body extending right -->
+  <path d="M 408 195 L 490 190 L 550 215 L 620 230"
+        stroke="#e85d20" stroke-width="12" fill="none" stroke-linejoin="round" />
+  <text x="510" y="255" font-size="10" fill="#5a1e00">40-pin IDC ribbon → LC29H passthrough</text>
+
+  <!-- Other components on HAT far side: stacked vertically for clarity -->
+  <!-- J3 JST-XH -->
+  <rect x="350" y="280" width="14" height="14" fill="#f8f0c0" stroke="#aa8830" />
+  <text x="370" y="291" font-size="10">J3 (fan 1)</text>
+  <!-- J4 -->
+  <rect x="350" y="305" width="14" height="14" fill="#f8f0c0" stroke="#aa8830" />
+  <text x="370" y="316" font-size="10">J4 (fan 2)</text>
+
+  <!-- Fan leads -->
+  <path d="M 364 287 Q 430 287 520 230" stroke="#a040b0" stroke-width="2" stroke-dasharray="4,3" fill="none" />
+  <path d="M 364 312 Q 450 312 540 260" stroke="#a040b0" stroke-width="2" stroke-dasharray="4,3" fill="none" />
+
+  <!-- RV1 contrast pot -->
+  <rect x="350" y="335" width="25" height="12" fill="#2060c4" stroke="#103070" />
+  <circle cx="362" cy="341" r="3" fill="#f0c040" />
+  <text x="380" y="344" font-size="10">RV1 (contrast, accessible)</text>
+
+  <!-- R1 -->
+  <rect x="350" y="358" width="20" height="6" fill="#f0c080" stroke="#806030" />
+  <text x="380" y="364" font-size="10">R1 (BL limit)</text>
+
+  <!-- C1 -->
+  <circle cx="360" cy="120" r="6" fill="#d48820" stroke="#aa6510" />
+  <text x="375" y="122" font-size="10">C1 (bypass)</text>
+
+  <!-- ======= Dimensional callouts ======= -->
+  <g stroke="#1a4a8a" stroke-width="1" fill="#1a4a8a">
+    <!-- depth stack markers -->
+    <line x1="158" y1="430" x2="346" y2="430" marker-end="url(#arrow-blue)" marker-start="url(#arrow-blue)" />
+    <text x="252" y="445" text-anchor="middle" font-size="10">display-module depth: ~22-25 mm (front panel inner face → HAT top side)</text>
+
+    <line x1="346" y1="455" x2="408" y2="455" marker-end="url(#arrow-blue)" marker-start="url(#arrow-blue)" />
+    <text x="377" y="470" text-anchor="middle" font-size="10">J1 + ribbon plug: ~20 mm</text>
+  </g>
+
+  <!-- Mounting standoffs (printed bracket concept) -->
+  <g stroke="#805520" stroke-width="1" fill="#ddc58a" >
+    <rect x="130" y="90" width="180" height="6" />
+    <rect x="130" y="384" width="180" height="6" />
+  </g>
+  <text x="220" y="88" text-anchor="middle" font-size="9" fill="#805520">printed bracket (mounts LCD+HAT to front panel)</text>
+
+  <!-- Section labels at bottom -->
+  <g font-size="10" fill="#444" text-anchor="middle">
+    <text x="144" y="455">①</text>
+    <text x="176" y="455">②</text>
+    <text x="240" y="455">③</text>
+    <text x="306" y="455">④</text>
+    <text x="338" y="455">⑤</text>
+    <text x="380" y="455">⑥</text>
+  </g>
+</svg>
+
+<div class="caption">Layer-by-layer: ① printed front panel (FDE PETG, 3 mm); ② smoked acrylic window; ③ LCD module with display facing user; ④ flipped J2 pin header — its pins pass through both the LCD's back-side through-holes and the HAT's B.Cu side pads, with solder joints on both PCBs (this is the mechanical/electrical backbone of the assembly); ⑤ adapter HAT PCB (F.Cu side faces the case interior); ⑥ case-interior-facing components — J1 receives the 40-pin ribbon from the HAT stack, J3/J4 host fan leads, RV1 is adjusted through a service hole/port. A printed bracket holds the assembly to the front panel interior at the top and bottom edges.</div>
+</div>
+
+<!-- ============================================================ -->
+<div class="diagram">
+<h2>2. The whole case — display module + HAT stack + cables</h2>
+
+<svg width="1100" height="520" viewBox="0 0 1100 520">
+  <defs>
+    <pattern id="ribbon2" patternUnits="userSpaceOnUse" width="3" height="3">
+      <rect width="3" height="3" fill="#e85d20" />
+    </pattern>
+  </defs>
+
+  <text x="550" y="22" text-anchor="middle" font-size="14" font-weight="bold">Side cross-section of the full case — front on the right</text>
+
+  <!-- Case outline -->
+  <rect x="80" y="50" width="940" height="440" fill="#fcf9f0" stroke="#9a7d47" stroke-width="4" rx="6" />
+  <text x="78" y="275" text-anchor="end" font-size="10" fill="#9a7d47" transform="rotate(-90 78 275)">back panel (Al)</text>
+  <text x="1028" y="275" font-size="10" fill="#9a7d47" transform="rotate(90 1028 275)">front panel (printed)</text>
+
+  <!-- Top plate + fan -->
+  <rect x="80" y="50" width="940" height="8" fill="#b5aa90" />
+  <rect x="320" y="50" width="120" height="8" fill="#fcf9f0" stroke="#666" />
+  <rect x="325" y="62" width="110" height="28" fill="#2a2a2a" rx="3" />
+  <circle cx="380" cy="76" r="13" fill="none" stroke="#888" />
+  <text x="380" y="80" text-anchor="middle" font-size="8" fill="white">FAN 1</text>
+
+  <!-- Bottom tray -->
+  <rect x="80" y="482" width="940" height="8" fill="#d8c8a8" />
+
+  <!-- HAT STACK (left/middle) -->
+  <!-- X1100 + SSD -->
+  <rect x="130" y="430" width="520" height="45" fill="#2a6b3e" stroke="#1a4a28" />
+  <rect x="170" y="440" width="380" height="22" fill="#8a8a8a" />
+  <text x="240" y="457" font-size="10" fill="white">X1100 + 2.5" SSD</text>
+  <!-- USB3 bridge stub -->
+  <rect x="440" y="405" width="20" height="25" fill="#888" />
+
+  <!-- Pi 5 -->
+  <rect x="140" y="385" width="420" height="22" fill="#2a6b3e" stroke="#1a4a28" />
+  <text x="220" y="400" font-size="10" fill="white">Pi 5</text>
+  <rect x="380" y="378" width="110" height="8" fill="#2a2a2a" />
+
+  <!-- X1207 + cell -->
+  <rect x="140" y="355" width="420" height="27" fill="#2a6b3e" stroke="#1a4a28" />
+  <text x="200" y="373" font-size="10" fill="white">X1207 PoE/UPS</text>
+  <!-- 21700 cell -->
+  <rect x="550" y="345" width="100" height="40" fill="#8a6048" rx="2" />
+  <text x="600" y="370" text-anchor="middle" font-size="10" fill="white">21700 cell</text>
+  <rect x="380" y="347" width="110" height="8" fill="#2a2a2a" />
+
+  <!-- AI HAT+ -->
+  <rect x="140" y="320" width="420" height="27" fill="#2a6b3e" stroke="#1a4a28" />
+  <text x="210" y="338" font-size="10" fill="white">AI HAT+ 2</text>
+  <rect x="210" y="307" width="90" height="15" fill="#444" />
+  <text x="255" y="318" text-anchor="middle" font-size="8" fill="white">Hailo</text>
+  <rect x="380" y="312" width="110" height="8" fill="#2a2a2a" />
+
+  <!-- LC29H (top of stack) -->
+  <rect x="140" y="285" width="420" height="27" fill="#2a6b3e" stroke="#1a4a28" />
+  <text x="210" y="303" font-size="10" fill="white">LC29H GPS (top of stack)</text>
+  <!-- u.FL -->
+  <circle cx="540" cy="295" r="3" fill="#ccc" stroke="#666" />
+  <!-- Passthrough male pins -->
+  <rect x="380" y="275" width="110" height="10" fill="#2a2a2a" />
+  <g stroke="#ddc080" stroke-width="1">
+    <line x1="383" y1="275" x2="383" y2="270" /><line x1="388" y1="275" x2="388" y2="270" />
+    <line x1="393" y1="275" x2="393" y2="270" /><line x1="398" y1="275" x2="398" y2="270" />
+    <line x1="403" y1="275" x2="403" y2="270" /><line x1="408" y1="275" x2="408" y2="270" />
+    <line x1="413" y1="275" x2="413" y2="270" /><line x1="418" y1="275" x2="418" y2="270" />
+    <line x1="423" y1="275" x2="423" y2="270" /><line x1="428" y1="275" x2="428" y2="270" />
+    <line x1="433" y1="275" x2="433" y2="270" /><line x1="438" y1="275" x2="438" y2="270" />
+    <line x1="443" y1="275" x2="443" y2="270" /><line x1="448" y1="275" x2="448" y2="270" />
+  </g>
+  <text x="435" y="264" text-anchor="middle" font-size="9">LC29H GPIO passthrough (male)</text>
+
+  <!-- Clearance space above LC29H -->
+  <line x1="570" y1="58" x2="570" y2="275" stroke="#28a045" stroke-width="1" stroke-dasharray="3,3" />
+  <text x="582" y="170" font-size="10" fill="#28a045">clear</text>
+
+  <!-- ======= DISPLAY MODULE (right side, against front panel) ======= -->
+
+  <!-- Front panel inner surface at x=1000 -->
+  <rect x="1000" y="50" width="20" height="432" fill="url(#fdePattern)" />
+
+  <!-- Smoked acrylic in window region -->
+  <rect x="992" y="140" width="8" height="180" fill="rgba(255,100,100,0.35)" stroke="#803030" />
+
+  <!-- LCD module -->
+  <rect x="950" y="120" width="42" height="220" fill="#2a2a2a" />
+  <rect x="955" y="135" width="32" height="150" fill="#4a9e6a" />
+  <text x="971" y="205" text-anchor="middle" font-size="10" fill="white">LCD</text>
+  <text x="971" y="220" text-anchor="middle" font-size="10" fill="white">128×64</text>
+
+  <!-- J2 pin header in between -->
+  <rect x="940" y="135" width="10" height="180" fill="#2a2a2a" />
+  <g stroke="#ddc080" stroke-width="1">
+    <line x1="936" y1="145" x2="954" y2="145" /><line x1="936" y1="155" x2="954" y2="155" />
+    <line x1="936" y1="165" x2="954" y2="165" /><line x1="936" y1="175" x2="954" y2="175" />
+    <line x1="936" y1="185" x2="954" y2="185" /><line x1="936" y1="195" x2="954" y2="195" />
+    <line x1="936" y1="205" x2="954" y2="205" /><line x1="936" y1="215" x2="954" y2="215" />
+    <line x1="936" y1="225" x2="954" y2="225" /><line x1="936" y1="235" x2="954" y2="235" />
+    <line x1="936" y1="245" x2="954" y2="245" /><line x1="936" y1="255" x2="954" y2="255" />
+    <line x1="936" y1="265" x2="954" y2="265" /><line x1="936" y1="275" x2="954" y2="275" />
+    <line x1="936" y1="285" x2="954" y2="285" /><line x1="936" y1="295" x2="954" y2="295" />
+    <line x1="936" y1="305" x2="954" y2="305" />
+  </g>
+
+  <!-- Adapter HAT PCB -->
+  <rect x="924" y="105" width="14" height="290" fill="url(#pcbGreen)" stroke="#1a4a28" />
+  <text x="931" y="98" text-anchor="middle" font-size="10" font-weight="bold">adapter HAT</text>
+
+  <!-- Components on HAT case-interior side -->
+  <!-- J1 socket -->
+  <rect x="895" y="200" width="29" height="90" fill="#2a2a2a" />
+  <text x="910" y="250" text-anchor="middle" font-size="9" fill="white">J1</text>
+  <!-- IDC male plug in J1 -->
+  <rect x="878" y="215" width="20" height="62" fill="#e85d20" stroke="#5a1e00" />
+
+  <!-- 40-pin IDC ribbon path -->
+  <path d="M 878 245 Q 720 240 495 260 Q 470 263 425 270"
+        stroke="#e85d20" stroke-width="10" fill="none" stroke-linejoin="round" />
+  <text x="700" y="230" font-size="10" fill="#5a1e00">40-pin IDC ribbon (~10 cm)</text>
+  <!-- ribbon plug on LC29H -->
+  <rect x="382" y="255" width="108" height="20" fill="#e85d20" stroke="#5a1e00" />
+  <text x="436" y="269" text-anchor="middle" font-size="9" fill="white">IDC female on LC29H passthrough</text>
+
+  <!-- RV1 -->
+  <rect x="905" y="120" width="19" height="12" fill="#2060c4" />
+  <text x="880" y="130" text-anchor="end" font-size="9">RV1</text>
+
+  <!-- J3/J4 -->
+  <rect x="905" y="310" width="19" height="12" fill="#f8f0c0" stroke="#aa8830" />
+  <rect x="905" y="330" width="19" height="12" fill="#f8f0c0" stroke="#aa8830" />
+  <text x="880" y="319" text-anchor="end" font-size="9">J3</text>
+  <text x="880" y="339" text-anchor="end" font-size="9">J4</text>
+
+  <!-- R1 / C1 (tiny, just dots) -->
+  <rect x="905" y="355" width="19" height="6" fill="#f0c080" />
+  <circle cx="915" cy="375" r="4" fill="#d48820" />
+
+  <!-- Fan leads -->
+  <path d="M 905 316 Q 600 260 430 90 Q 380 70 380 90" stroke="#a040b0" stroke-width="2" stroke-dasharray="4,3" fill="none" />
+  <text x="500" y="145" font-size="10" fill="#70106a">JST-XH to exhaust fan</text>
+  <!-- Front intake fan -->
+  <rect x="986" y="420" width="34" height="60" fill="#2a2a2a" />
+  <circle cx="1003" cy="450" r="12" fill="none" stroke="#888" />
+  <text x="970" y="475" text-anchor="end" font-size="9">FAN 2 (intake)</text>
+  <path d="M 905 336 Q 940 360 990 440" stroke="#a040b0" stroke-width="2" stroke-dasharray="4,3" fill="none" />
+
+  <!-- Printed bracket holding assembly to front panel -->
+  <rect x="930" y="95" width="72" height="6" fill="#ddc58a" stroke="#805520" />
+  <rect x="930" y="398" width="72" height="6" fill="#ddc58a" stroke="#805520" />
+  <text x="960" y="90" text-anchor="middle" font-size="9" fill="#805520">printed bracket</text>
+
+  <!-- Annotations -->
+  <g font-size="10" fill="#28a045" text-anchor="middle">
+    <text x="700" y="480">↑ all three cables horizontal, within case interior voids ↑</text>
+  </g>
+</svg>
+
+<div class="caption">The HAT stack ends at LC29H — no adapter HAT above it, so the 10 mm clearance under the exhaust fan is preserved. The display module (LCD + flipped J2 + HAT + back-side components) is a unitary slab against the inside of the front panel. A 40-pin IDC ribbon runs horizontally from LC29H's passthrough to J1 on the HAT's case-interior face. Fan leads exit J3/J4 and route to the top exhaust fan and the front intake fan.</div>
+</div>
+
+<!-- ============================================================ -->
+<div class="diagram">
+<h2>3. Case-interior view of the display module (looking at the HAT's back)</h2>
+
+<svg width="1100" height="460" viewBox="0 0 1100 460">
+  <text x="550" y="22" text-anchor="middle" font-size="14" font-weight="bold">What you see when the case is open — HAT component side faces you; LCD is on the other side</text>
+
+  <!-- HAT outline (viewed from case interior) -->
+  <rect x="300" y="60" width="500" height="340" fill="url(#pcbGreen)" stroke="#1a4a28" stroke-width="2" rx="3" />
+  <text x="550" y="50" text-anchor="middle" font-size="12" font-weight="bold">adapter HAT PCB (65 × 56.5 mm) — F.Cu / case-interior side</text>
+
+  <!-- 4 mounting holes -->
+  <circle cx="320" cy="80" r="6" fill="none" stroke="#555" stroke-width="1.5" />
+  <circle cx="780" cy="80" r="6" fill="none" stroke="#555" stroke-width="1.5" />
+  <circle cx="320" cy="380" r="6" fill="none" stroke="#555" stroke-width="1.5" />
+  <circle cx="780" cy="380" r="6" fill="none" stroke="#555" stroke-width="1.5" />
+
+  <!-- Hint of LCD behind (dashed, since it's on the other side) -->
+  <rect x="280" y="45" width="540" height="370" fill="none" stroke="#aa6666" stroke-width="1" stroke-dasharray="4,3" />
+  <text x="290" y="40" font-size="9" fill="#aa6666">LCD module (on the other side — 75 × 52.7 mm)</text>
+
+  <!-- J1 — 40-pin GPIO socket (large) -->
+  <rect x="330" y="220" width="180" height="44" fill="#2a2a2a" stroke="#000" />
+  <g fill="#ddc080">
+    <rect x="335" y="228" width="2" height="6" /><rect x="345" y="228" width="2" height="6" />
+    <rect x="355" y="228" width="2" height="6" /><rect x="365" y="228" width="2" height="6" />
+    <rect x="375" y="228" width="2" height="6" /><rect x="385" y="228" width="2" height="6" />
+    <rect x="395" y="228" width="2" height="6" /><rect x="405" y="228" width="2" height="6" />
+    <rect x="415" y="228" width="2" height="6" /><rect x="425" y="228" width="2" height="6" />
+    <rect x="435" y="228" width="2" height="6" /><rect x="445" y="228" width="2" height="6" />
+    <rect x="455" y="228" width="2" height="6" /><rect x="465" y="228" width="2" height="6" />
+    <rect x="475" y="228" width="2" height="6" /><rect x="485" y="228" width="2" height="6" />
+    <rect x="495" y="228" width="2" height="6" /><rect x="505" y="228" width="2" height="6" />
+    <rect x="335" y="250" width="2" height="6" /><rect x="345" y="250" width="2" height="6" />
+    <rect x="355" y="250" width="2" height="6" /><rect x="365" y="250" width="2" height="6" />
+    <rect x="375" y="250" width="2" height="6" /><rect x="385" y="250" width="2" height="6" />
+    <rect x="395" y="250" width="2" height="6" /><rect x="405" y="250" width="2" height="6" />
+    <rect x="415" y="250" width="2" height="6" /><rect x="425" y="250" width="2" height="6" />
+    <rect x="435" y="250" width="2" height="6" /><rect x="445" y="250" width="2" height="6" />
+    <rect x="455" y="250" width="2" height="6" /><rect x="465" y="250" width="2" height="6" />
+    <rect x="475" y="250" width="2" height="6" /><rect x="485" y="250" width="2" height="6" />
+    <rect x="495" y="250" width="2" height="6" /><rect x="505" y="250" width="2" height="6" />
+  </g>
+  <text x="420" y="248" text-anchor="middle" font-size="11" fill="white">J1 — 2×20 female socket</text>
+  <text x="420" y="280" text-anchor="middle" font-size="10" fill="#1a4a28">40-pin IDC ribbon plugs in here</text>
+
+  <!-- Incoming ribbon -->
+  <rect x="180" y="215" width="150" height="55" fill="#e85d20" stroke="#5a1e00" />
+  <rect x="160" y="220" width="22" height="45" fill="#5a1e00" />
+  <text x="255" y="246" text-anchor="middle" font-size="11" fill="white" font-weight="bold">40-pin IDC ribbon</text>
+  <text x="255" y="263" text-anchor="middle" font-size="9" fill="white">→ to LC29H in HAT stack</text>
+
+  <!-- J3 — fan -->
+  <rect x="560" y="330" width="45" height="30" fill="#f8f0c0" stroke="#aa8830" />
+  <text x="582" y="348" text-anchor="middle" font-size="10">J3</text>
+  <text x="582" y="375" text-anchor="middle" font-size="9" fill="#1a4a28">fan 1</text>
+
+  <!-- J4 — fan -->
+  <rect x="625" y="330" width="45" height="30" fill="#f8f0c0" stroke="#aa8830" />
+  <text x="647" y="348" text-anchor="middle" font-size="10">J4</text>
+  <text x="647" y="375" text-anchor="middle" font-size="9" fill="#1a4a28">fan 2</text>
+
+  <!-- RV1 contrast pot — prominent because serviceable -->
+  <rect x="560" y="90" width="80" height="30" fill="#2060c4" stroke="#103070" stroke-width="2" />
+  <circle cx="572" cy="105" r="5" fill="#f0c040" stroke="#aa6000" />
+  <text x="605" y="108" text-anchor="middle" font-size="11" fill="white" font-weight="bold">RV1</text>
+  <text x="600" y="135" text-anchor="middle" font-size="9" fill="#1a4a28">Bourns 3296W — 25-turn contrast trim</text>
+
+  <!-- Callout showing adjustment direction -->
+  <g stroke="#aa6000" stroke-width="1.5">
+    <path d="M 572 90 L 572 70 L 695 70" fill="none" marker-end="url(#arrow-gray)" />
+  </g>
+  <text x="700" y="73" font-size="9" fill="#aa6000">adjust with jeweler's screwdriver through service hole in side wall (see note below)</text>
+
+  <!-- R1 (axial resistor) -->
+  <rect x="700" y="190" width="60" height="20" fill="#f0c080" stroke="#806030" />
+  <circle cx="695" cy="200" r="4" fill="#999" />
+  <circle cx="765" cy="200" r="4" fill="#999" />
+  <text x="730" y="203" text-anchor="middle" font-size="9">R1 10Ω</text>
+
+  <!-- C1 bypass cap -->
+  <circle cx="360" cy="130" r="16" fill="#d48820" stroke="#aa6510" />
+  <text x="360" y="134" text-anchor="middle" font-size="9">C1</text>
+  <text x="360" y="165" text-anchor="middle" font-size="8" fill="#1a4a28">100 nF bypass</text>
+
+  <!-- Ghost traces -->
+  <g stroke="#3a8a4c" stroke-width="1" opacity="0.5" fill="none">
+    <path d="M 425 220 Q 500 180 530 135 Q 545 105 560 105" />
+    <path d="M 480 220 Q 520 200 580 190 Q 640 175 700 200" />
+    <path d="M 400 264 Q 450 300 520 330 Q 540 335 560 340" />
+    <path d="M 440 264 Q 520 295 600 335" />
+  </g>
+</svg>
+
+<div class="caption">The case-interior side of the HAT. J1 is front and center — where the 40-pin IDC ribbon plugs in from the HAT stack. J3 and J4 host the fan cables. R1, C1, RV1 are all accessible. The 2×20 pad array of J2 is behind the PCB and not visible from this side (the LCD is directly behind, on the other side of the board). The dashed rectangle shows the LCD's footprint — note it extends slightly past the HAT top & bottom edges since the LCD is 75×52.7 mm vs the HAT's 65×56.5 mm.</div>
+</div>
+
+<!-- ============================================================ -->
+<h2>4. Dimensional analysis</h2>
+
+<h3>Display-module depth budget</h3>
+<table>
+<tr><th>Layer</th><th>Depth (mm)</th><th>Running total</th><th>Notes</th></tr>
+<tr><td>Front panel (FDE PETG)</td><td>3</td><td>3</td><td>Wall thickness</td></tr>
+<tr><td>Smoked acrylic window</td><td>2</td><td>5</td><td>In LCD-window region only</td></tr>
+<tr><td>LCD module (GDM12864H)</td><td>10</td><td>15</td><td>Module thickness incl. PCB + bezel + display</td></tr>
+<tr><td>J2 pin header (flipped)</td><td>2.5–5</td><td>17.5–20</td><td>Depends on pin height — use short pins since both ends hard-soldered</td></tr>
+<tr><td>Adapter HAT PCB substrate</td><td>1.6</td><td>19.1–21.6</td><td>Standard FR4</td></tr>
+<tr><td>Tallest component on case-interior side</td><td>11 (J1 with ribbon plug)</td><td>30.1–32.6</td><td>J1 socket ~8 mm body + ribbon plug ~3 mm backing</td></tr>
+</table>
+<p><b>Total display-module depth:</b> ~30-33 mm from the outer surface of the front panel to the deepest component protrusion on the case-interior side.</p>
+
+<h3>Case depth check</h3>
+<table>
+<tr><th>Item</th><th>Value (mm)</th></tr>
+<tr><td>Case exterior depth (current spec)</td><td>100</td></tr>
+<tr><td>Wall thickness front + back</td><td>3 + 3 = 6</td></tr>
+<tr><td>Interior depth</td><td>94</td></tr>
+<tr><td>Display module depth</td><td>30–33</td></tr>
+<tr><td>X1100 short-edge depth</td><td>85</td></tr>
+<tr><td>Minimum required interior depth if HAT stack and display module don't overlap vertically</td><td>85 + 0 (gap allowed, they're at different heights) = 85</td></tr>
+<tr><td>Interior depth AVAILABLE for HAT stack if display module takes its depth</td><td>94 − 33 = 61</td></tr>
+</table>
+
+<div class="note bad">
+<b>It still doesn't fit as a simple side-by-side layout.</b> If both the display module AND the HAT stack occupy the <i>same vertical region</i> of the case (bottom-to-top), they collide. The display module's 33 mm of front-depth + the HAT stack's 85 mm of depth + walls = 127 mm, but the case is 100 mm deep.
+</div>
+
+<h3>How this actually works: the vertical void you identified</h3>
+
+<p>The reason this concept still works is that the display module and the HAT stack <b>don't need to share vertical space</b>. Looking at the side cross-section (diagram 2 above):</p>
+
+<ul>
+  <li>The HAT stack sits at the bottom of the case, occupying roughly H=0-65 mm vertically (from X1100 at the bottom up through LC29H at the top).</li>
+  <li>The LCD window is in the upper portion of the front panel. The display module can mount with its vertical center at ~H=55-65 mm, spanning H=28-80 mm (LCD is 52.7 mm tall).</li>
+  <li><b>In the overlap region</b> (roughly H=28-65 where both the display module and the HAT stack want to occupy space), the HAT stack is narrower in D than the case. Specifically: the <b>AI HAT+ and LC29H are only 56 mm deep</b>, while X1100 (below them) is 85 mm. So at heights above X1207 (~H=30 upward), the stack only needs 56 mm of depth.</li>
+  <li>That leaves <b>94 − 56 = 38 mm of free depth at the front of the case</b> for H ≥ ~30 mm. The display module's ~33 mm fits with ~5 mm to spare.</li>
+  <li>Below H≈30 (where X1100 and Pi are): only <b>94 − 85 = 9 mm free at the front</b>. Display module does not extend into this band. Front intake fan fits here.</li>
+</ul>
+
+<div class="note good">
+<b>Verdict: yes, it fits.</b> The display module occupies the upper-front region of the case (roughly H=28-80 mm, D=0-33 mm from front), exactly where the HAT stack is narrower. The lower-front region (H=0-30 mm) hosts the intake fan. The rear region (D=33-89 mm) hosts the X1100 + full HAT stack.
+</div>
+
+<h3>Still-open measurements for when X1100 arrives</h3>
+<table>
+<tr><th>Measurement</th><th>Why</th><th>Value if wrong</th></tr>
+<tr><td>X1100 exact L × D footprint</td><td>Confirms case L × D sizing</td><td>Case may need to grow ±5 mm</td></tr>
+<tr><td>X1100 mounting hole positions</td><td>Bottom tray standoff layout</td><td>Bottom tray redesign</td></tr>
+<tr><td>USB3 bridge exact position and length</td><td>Where the Pi sits above X1100; vertical stack height</td><td>Display module H placement shifts</td></tr>
+<tr><td>21700 cell position in X1207 cradle</td><td>Confirms the void above battery</td><td>Fan 2 cable routing may need change</td></tr>
+<tr><td>LCD mounting hole positions (per SparkFun datasheet)</td><td>Does the printed bracket grab both PCBs, or only the LCD?</td><td>Bracket design changes</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>5. Tradeoffs vs the other paths</h2>
+
+<table>
+<tr>
+  <th>&nbsp;</th>
+  <th>Path A<br/>taller case</th>
+  <th>Path B<br/>right-angle J2</th>
+  <th>Path C (sandwich) — this one</th>
+</tr>
+<tr>
+  <td><b>PCB change required?</b></td>
+  <td>No</td>
+  <td>Yes (new J2 footprint + reroute)</td>
+  <td>Yes (flip J2 side + reroute)</td>
+</tr>
+<tr>
+  <td><b>Current jlc_bundle.zip status</b></td>
+  <td>Still ships</td>
+  <td>Wasted</td>
+  <td>Wasted (but cheap — $80 for 5 boards)</td>
+</tr>
+<tr>
+  <td><b>Fab round-trip delay</b></td>
+  <td>None</td>
+  <td>10-14 days at JLC</td>
+  <td>10-14 days at JLC</td>
+</tr>
+<tr>
+  <td><b>Case size impact</b></td>
+  <td>Height +20 mm<br/>(95 → 115 mm)</td>
+  <td>Height +5 mm, small cable-routing slot</td>
+  <td>None — fits current case</td>
+</tr>
+<tr>
+  <td><b>LCD ribbon cable</b></td>
+  <td>1× (20-pin F-F)</td>
+  <td>1× (20-pin F-F)</td>
+  <td>None — direct solder</td>
+</tr>
+<tr>
+  <td><b>Cable failure points</b></td>
+  <td>J2 pins (DuPont) + LCD pins + splittable ribbon</td>
+  <td>J2 IDC + ribbon + LCD pins</td>
+  <td>20 solder joints only (no removable connector)</td>
+</tr>
+<tr>
+  <td><b>LCD replaceability</b></td>
+  <td>Easy (unplug ribbon)</td>
+  <td>Easy (unplug ribbon)</td>
+  <td>Hard — desolder 20 joints on both PCBs</td>
+</tr>
+<tr>
+  <td><b>RV1 contrast access</b></td>
+  <td>Stack disassembly</td>
+  <td>Stack disassembly</td>
+  <td>Service hole in side wall → jeweler's screwdriver</td>
+</tr>
+<tr>
+  <td><b>Assembly sequence complexity</b></td>
+  <td>Same as today</td>
+  <td>Same as today</td>
+  <td>Solder LCD to HAT first, then mount assembly to panel</td>
+</tr>
+<tr>
+  <td><b>Mechanical rigidity of display</b></td>
+  <td>LCD mounted to front panel only</td>
+  <td>LCD mounted to front panel only</td>
+  <td>LCD mounted + structurally bonded to HAT (20 solder joints)</td>
+</tr>
+</table>
+
+<div class="pro-con">
+  <div class="pros">
+    <b>Path C (sandwich) — pros</b>
+    <ul class="tight">
+      <li>Fits in the current case footprint (no dimension bump)</li>
+      <li>Eliminates the LCD ribbon cable — removes a whole class of "did you plug it in right?" failure modes</li>
+      <li>The LCD+HAT assembly is structurally rigid; vibration and handling don't loosen anything</li>
+      <li>Only one external connection to the display module (the 40-pin IDC ribbon); serviceable as a unit</li>
+      <li>Aesthetic: slab + clean case, nothing chunky</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <b>Path C (sandwich) — cons</b>
+    <ul class="tight">
+      <li>PCB refab: current jlc_bundle.zip is wasted ($80 cost, 10-14 days delay)</li>
+      <li>LCD replacement becomes surgery, not a swap — desolder 20 through-hole joints on both boards</li>
+      <li>Assembly sequence is more specialized: must solder LCD to HAT before mounting to panel; testing the LCD pre-assembly is harder</li>
+      <li>Mounting bracket design: need a printed piece that holds the LCD flush with the window and the HAT at the right standoff distance; one more part to design and print</li>
+      <li>RV1 adjustment needs a side-wall service hole (rubber grommet plug) — small aesthetic scar on the case</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>6. Open design questions to settle before committing</h2>
+
+<div class="note">
+<ol>
+  <li><b>LCD mounting-hole alignment.</b> SparkFun LCD-00710's datasheet shows the board dimensions; I haven't confirmed the mounting-hole positions vs our adapter HAT's MH positions (H1–H4 at 3.5/61.5 × 3.5/52.5 mm). If they don't align, the printed bracket grips each board independently. That's fine but adds a layer.</li>
+  <li><b>J2 pin length.</b> Short straight pins (~2.5 mm both sides) minimize depth but require the LCD to sit nearly flush against the HAT. Longer pins (~8 mm both sides) give a 3-4 mm service gap for solder cleaning and visual inspection but eat depth. Probably 5 mm total height is the sweet spot.</li>
+  <li><b>J1 position on the HAT case-interior side.</b> Currently J1 is on F.Cu at the top of the board (rotated 90°, pins along the top edge). For Path C's sandwich, J1 stays on F.Cu (which is now the case-interior side since the board is flipped relative to the stack). The ribbon entering J1 wants to exit <i>toward the back of the case</i> — so J1 may want to move to the back edge of the HAT (opposite edge from the fan connectors). This is a layout revision inside the same PCB footprint.</li>
+  <li><b>Test-point access after assembly.</b> Once the LCD is soldered on, probing the J2 signals for debugging requires pogo pins or probe holes in the HAT's case-interior side. Worth adding a few test pads next to R1, RV1, and the LCD control signals while we're already respinning.</li>
+  <li><b>Service-hole for RV1.</b> A 4-5 mm diameter hole in the case side wall, with a rubber grommet plug, aligned with RV1's adjustment screw. Trivial to print.</li>
+  <li><b>Thermal path.</b> The HAT had previously been a "top of stack" component with good airflow from the exhaust fan. In Path C, it sits tight against the front panel with the LCD sandwich. RV1 and J1 dissipate essentially nothing, so no thermal problem — but worth calling out for completeness.</li>
+</ol>
+</div>
+
+<h2>7. Recommended next steps</h2>
+
+<ol>
+  <li>When X1100 arrives, measure the stack heights and overhangs to confirm the display module's vertical position fits the void math above.</li>
+  <li>Fetch LCD-00710 mounting hole positions from SparkFun's datasheet to finalize the printed bracket design.</li>
+  <li>Decide on Path A vs C. If C: commit to the PCB refab (~$80, ~14 days); if A: order the current jlc_bundle.zip and extend the case height.</li>
+  <li>If Path C: update <code>layout.py</code> to place J2 on B.Cu, add test pads, possibly move J1 to the opposite edge. Re-run circuit/layout/autoroute/fab pipeline.</li>
+  <li>If Path C: update the case spec (§ construction, § assembly sequence) to describe the display module, bracket, and service hole.</li>
+</ol>
+
+</body>
+</html>

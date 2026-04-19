@@ -247,9 +247,16 @@ def reproject_to_mercator(
                     # 4 GDAL threads → 16 total on 4 cores → thrashing.
                     num_threads=1,
                     )
+
+            # B3 fix: capture dataset attributes BEFORE the `with` exits.
+            # log.debug eagerly evaluates its arguments regardless of log level,
+            # so accessing src.width / src.height after exit would raise under
+            # stricter rasterio versions and return False via the enclosing except.
+            src_width = src.width
+            src_height = src.height
         elapsed = time.monotonic() - t0
         log.debug("Reproject %s: %dx%d → %dx%d in %.1fs",
-                  src_path.name, src.width, src.height, width, height, elapsed)
+                  src_path.name, src_width, src_height, width, height, elapsed)
         return True
 
     except Exception as exc:
@@ -607,6 +614,15 @@ def _read_tile_from_array(
     if full_row_span <= 0 or full_col_span <= 0:
         return None
 
+    # B4 fix: reject tiles whose pixel range is entirely outside the source array.
+    # Without this guard, the clamps below pin row_start/col_start to the array
+    # edge but the dst_row_start arithmetic at 626-629 produces negative indices,
+    # which numpy slices legally from the end — stamping real pixels at wrong coords.
+    if raw_row_end <= 0 or raw_row_start >= data.shape[1]:
+        return None
+    if raw_col_end <= 0 or raw_col_start >= data.shape[2]:
+        return None
+
     # Clamp to array bounds
     row_start = max(0, min(data.shape[1] - 1, raw_row_start))
     row_end = max(0, min(data.shape[1], raw_row_end))
@@ -796,6 +812,7 @@ def inpaint_nodata_pixels(
     mbtiles_path: Path,
     nodata_threshold: int = 20,
     max_nodata_ratio: float = 0.5,
+    cancel_check=None,
 ) -> int:
     """Replace near-black (nodata) pixels with nearest valid imagery.
 
@@ -826,6 +843,9 @@ def inpaint_nodata_pixels(
         fixed = 0
         batch = cursor.fetchmany(500)
         while batch:
+            if cancel_check and cancel_check():
+                log.info("inpaint_nodata_pixels: cancellation requested, stopping after %d tiles", fixed)
+                break
             for z, x, y, data in batch:
                 with rasterio.MemoryFile(data) as mf:
                     with mf.open() as ds:
@@ -870,6 +890,7 @@ def erode_nodata_edges(
     edge_pixels: int = 48,
     min_edge_fill: float = 0.90,
     nodata_threshold: int = 20,
+    cancel_check=None,
 ) -> int:
     """Remove boundary tiles with significant nodata (black) at edges.
 
@@ -897,6 +918,9 @@ def erode_nodata_edges(
         for z in zoom_levels:
             removed_this_round = 1  # seed the loop
             while removed_this_round > 0:
+                if cancel_check and cancel_check():
+                    log.info("erode_nodata_edges: cancellation requested, stopping after %d tiles", total_removed)
+                    return total_removed
                 removed_this_round = 0
                 # Get current boundary tile positions
                 bounds = conn.execute(

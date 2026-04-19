@@ -1,0 +1,32 @@
+name: wizard-ci
+
+# Manual dispatch only for now. To add a nightly schedule later, uncomment the
+# schedule block below (cron: 7 AM UTC = midnight Pacific).
+#
+# schedule:
+#   - cron: '0 7 * * *'
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Harness mode (smoke runs ~3 min, full runs ~8 hr)'
+        required: true
+        default: 'smoke'
+        type: choice
+        options: [smoke, full]
+
+jobs:
+  wizard-ci:
+    runs-on: self-hosted   # LXD requires root + local kernel; self-hosted Pi
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install harness deps
+        working-directory: dev/harness
+        run: |
+          npm install
+          npx playwright install chromium --with-deps
+      - name: Run wizard harness
+        env:
+          HARNESS_MODE: ${{ github.event.inputs.mode }}
+        run: ./dev/harness/wizard-ci.sh --"$HARNESS_MODE"

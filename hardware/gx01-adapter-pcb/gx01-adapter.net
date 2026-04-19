@@ -1,0 +1,605 @@
+(export 
+  (version "D")
+  (design
+    (source "circuit.py")
+    (date "04/18/2026 03:46 AM")
+    (tool "SKiDL (2.2.3)")
+    (sheet
+      (number 1)
+      (name "/")
+      (tstamps "/")
+      (title_block
+        (title)
+        (company)
+        (rev)
+        (date)
+        (source "circuit.py")
+        (comment
+          (number "1")
+          (value ""))
+        (comment
+          (number "2")
+          (value ""))
+        (comment
+          (number "3")
+          (value ""))
+        (comment
+          (number "4")
+          (value ""))
+        (comment
+          (number "5")
+          (value ""))
+        (comment
+          (number "6")
+          (value ""))
+        (comment
+          (number "7")
+          (value ""))
+        (comment
+          (number "8")
+          (value ""))
+        (comment
+          (number "9")
+          (value "")))))
+  (components
+    (comp
+      (ref "C1")
+      (value "100nF")
+      (description "Unpolarized capacitor")
+      (footprint "Capacitor_THT:C_Disc_D3.0mm_W2.0mm_P2.50mm")
+      (fields
+        (field
+          (name "Description") "Unpolarized capacitor")
+        (field
+          (name "Footprint") "Capacitor_THT:C_Disc_D3.0mm_W2.0mm_P2.50mm")
+        (field
+          (name "Datasheet") "~")
+        (field
+          (name "SKiDL Tag") "jABZZVVZU2")
+        (field
+          (name "SKiDL Line") "circuit.py:122"))
+      (libsource
+        (lib "Device")
+        (part "C"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "d707bfda-2007-5668-a126-2cde3dfeacc0"))
+    (comp
+      (ref "H1")
+      (value "MH_2.75mm")
+      (description "Mounting Hole without connection")
+      (footprint "MountingHole:MountingHole_2.7mm_M2.5")
+      (fields
+        (field
+          (name "Description") "Mounting Hole without connection")
+        (field
+          (name "Footprint") "MountingHole:MountingHole_2.7mm_M2.5")
+        (field
+          (name "Datasheet") "~")
+        (field
+          (name "SKiDL Tag") "XqGlbHisRe")
+        (field
+          (name "SKiDL Line") "circuit.py:131"))
+      (libsource
+        (lib "Mechanical")
+        (part "MountingHole"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "7d6b2bf1-10e0-5111-b6a6-250581203919"))
+    (comp
+      (ref "H2")
+      (value "MH_2.75mm")
+      (description "Mounting Hole without connection")
+      (footprint "MountingHole:MountingHole_2.7mm_M2.5")
+      (fields
+        (field
+          (name "Description") "Mounting Hole without connection")
+        (field
+          (name "Footprint") "MountingHole:MountingHole_2.7mm_M2.5")
+        (field
+          (name "Datasheet") "~")
+        (field
+          (name "SKiDL Tag") "FjUp9dn5TP")
+        (field
+          (name "SKiDL Line") "circuit.py:133"))
+      (libsource
+        (lib "Mechanical")
+        (part "MountingHole"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "9c416a90-4bff-5b04-be2c-37e29896f427"))
+    (comp
+      (ref "H3")
+      (value "MH_2.75mm")
+      (description "Mounting Hole without connection")
+      (footprint "MountingHole:MountingHole_2.7mm_M2.5")
+      (fields
+        (field
+          (name "Description") "Mounting Hole without connection")
+        (field
+          (name "Footprint") "MountingHole:MountingHole_2.7mm_M2.5")
+        (field
+          (name "Datasheet") "~")
+        (field
+          (name "SKiDL Tag") "wYZcyJdDbE")
+        (field
+          (name "SKiDL Line") "circuit.py:135"))
+      (libsource
+        (lib "Mechanical")
+        (part "MountingHole"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "941f2ad3-915d-54f0-8e13-f7d426494467"))
+    (comp
+      (ref "H4")
+      (value "MH_2.75mm")
+      (description "Mounting Hole without connection")
+      (footprint "MountingHole:MountingHole_2.7mm_M2.5")
+      (fields
+        (field
+          (name "Description") "Mounting Hole without connection")
+        (field
+          (name "Footprint") "MountingHole:MountingHole_2.7mm_M2.5")
+        (field
+          (name "Datasheet") "~")
+        (field
+          (name "SKiDL Tag") "wJ101jb6i3")
+        (field
+          (name "SKiDL Line") "circuit.py:137"))
+      (libsource
+        (lib "Mechanical")
+        (part "MountingHole"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "b103d44a-1761-51aa-a50f-790763c81f3e"))
+    (comp
+      (ref "J1")
+      (value "Pi GPIO 40-pin socket")
+      (description "Generic connector, double row, 02x20, odd/even pin numbering scheme (row 1 odd numbers, row 2 even numbers), script generated (kicad-library-utils/schlib/autogen/connector/)")
+      (footprint "Connector_PinSocket_2.54mm:PinSocket_2x20_P2.54mm_Vertical")
+      (fields
+        (field
+          (name "Description") "Generic connector, double row, 02x20, odd/even pin numbering scheme (row 1 odd numbers, row 2 even numbers), script generated (kicad-library-utils/schlib/autogen/connector/)")
+        (field
+          (name "Footprint") "Connector_PinSocket_2.54mm:PinSocket_2x20_P2.54mm_Vertical")
+        (field
+          (name "Datasheet") "~")
+        (field
+          (name "SKiDL Tag") "2McCkDLcKw")
+        (field
+          (name "SKiDL Line") "circuit.py:69"))
+      (libsource
+        (lib "Connector_Generic")
+        (part "Conn_02x20_Odd_Even"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "5d16cffb-6289-59e3-af49-91b8018a13cb"))
+    (comp
+      (ref "J2")
+      (value "LCD 20-pin header")
+      (description "Generic connector, single row, 01x20, script generated (kicad-library-utils/schlib/autogen/connector/)")
+      (footprint "Connector_PinHeader_2.54mm:PinHeader_1x20_P2.54mm_Vertical")
+      (fields
+        (field
+          (name "Description") "Generic connector, single row, 01x20, script generated (kicad-library-utils/schlib/autogen/connector/)")
+        (field
+          (name "Footprint") "Connector_PinHeader_2.54mm:PinHeader_1x20_P2.54mm_Vertical")
+        (field
+          (name "Datasheet") "~")
+        (field
+          (name "SKiDL Tag") "vsJp12biPP")
+        (field
+          (name "SKiDL Line") "circuit.py:79"))
+      (libsource
+        (lib "Connector_Generic")
+        (part "Conn_01x20"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "ba16f35c-a61a-536d-8dd3-02bfb84af264"))
+    (comp
+      (ref "J3")
+      (value "Fan 1 (JST-XH 2pin)")
+      (description "Generic connector, single row, 01x02, script generated (kicad-library-utils/schlib/autogen/connector/)")
+      (footprint "Connector_JST:JST_XH_B2B-XH-A_1x02_P2.50mm_Vertical")
+      (fields
+        (field
+          (name "Description") "Generic connector, single row, 01x02, script generated (kicad-library-utils/schlib/autogen/connector/)")
+        (field
+          (name "Footprint") "Connector_JST:JST_XH_B2B-XH-A_1x02_P2.50mm_Vertical")
+        (field
+          (name "Datasheet") "~")
+        (field
+          (name "SKiDL Tag") "teFSQtSALJ")
+        (field
+          (name "SKiDL Line") "circuit.py:88"))
+      (libsource
+        (lib "Connector_Generic")
+        (part "Conn_01x02"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "a6eb40b8-829e-5cea-82df-8c87e976f022"))
+    (comp
+      (ref "J4")
+      (value "Fan 2 (JST-XH 2pin)")
+      (description "Generic connector, single row, 01x02, script generated (kicad-library-utils/schlib/autogen/connector/)")
+      (footprint "Connector_JST:JST_XH_B2B-XH-A_1x02_P2.50mm_Vertical")
+      (fields
+        (field
+          (name "Description") "Generic connector, single row, 01x02, script generated (kicad-library-utils/schlib/autogen/connector/)")
+        (field
+          (name "Footprint") "Connector_JST:JST_XH_B2B-XH-A_1x02_P2.50mm_Vertical")
+        (field
+          (name "Datasheet") "~")
+        (field
+          (name "SKiDL Tag") "zxBROqE7vy")
+        (field
+          (name "SKiDL Line") "circuit.py:95"))
+      (libsource
+        (lib "Connector_Generic")
+        (part "Conn_01x02"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "2fa0b109-f9a4-5bb9-b6b1-331903b82dca"))
+    (comp
+      (ref "R1")
+      (value "10")
+      (description "Resistor")
+      (footprint "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal")
+      (fields
+        (field
+          (name "Description") "Resistor")
+        (field
+          (name "Footprint") "Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P7.62mm_Horizontal")
+        (field
+          (name "Datasheet") "~")
+        (field
+          (name "SKiDL Tag") "1T0_ET0FIU")
+        (field
+          (name "SKiDL Line") "circuit.py:113"))
+      (libsource
+        (lib "Device")
+        (part "R"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "5d9718c3-d4a4-5e93-b17b-aa9decdc3bd9"))
+    (comp
+      (ref "RV1")
+      (value "10k")
+      (description "Potentiometer")
+      (footprint "Potentiometer_THT:Potentiometer_Bourns_3296W_Vertical")
+      (fields
+        (field
+          (name "Description") "Potentiometer")
+        (field
+          (name "Footprint") "Potentiometer_THT:Potentiometer_Bourns_3296W_Vertical")
+        (field
+          (name "Datasheet") "~")
+        (field
+          (name "SKiDL Tag") "4CvR7J6nna")
+        (field
+          (name "SKiDL Line") "circuit.py:104"))
+      (libsource
+        (lib "Device")
+        (part "R_Potentiometer"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "15e068d3-96fe-5c84-8b8d-3bc13386b295")))
+  (nets
+    (net
+      (code 1)
+      (name "+5V")
+      (class "Default")
+      (node
+        (ref "C1")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J1")
+        (pin "2")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J1")
+        (pin "4")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "2")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J3")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J4")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
+        (ref "R1")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
+        (ref "RV1")
+        (pin "1")
+        (pintype "PASSIVE")))
+    (net
+      (code 2)
+      (name "BLA")
+      (class "Default")
+      (node
+        (ref "J2")
+        (pin "19")
+        (pintype "PASSIVE"))
+      (node
+        (ref "R1")
+        (pin "2")
+        (pintype "PASSIVE")))
+    (net
+      (code 3)
+      (name "GND")
+      (class "Default")
+      (node
+        (ref "C1")
+        (pin "2")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J1")
+        (pin "14")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J1")
+        (pin "20")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J1")
+        (pin "25")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J1")
+        (pin "30")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J1")
+        (pin "34")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J1")
+        (pin "39")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J1")
+        (pin "6")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J1")
+        (pin "9")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "20")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J3")
+        (pin "2")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J4")
+        (pin "2")
+        (pintype "PASSIVE")))
+    (net
+      (code 4)
+      (name "LCD_CS1")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "33")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "15")
+        (pintype "PASSIVE")))
+    (net
+      (code 5)
+      (name "LCD_CS2")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "35")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "16")
+        (pintype "PASSIVE")))
+    (net
+      (code 6)
+      (name "LCD_DB0")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "18")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "7")
+        (pintype "PASSIVE")))
+    (net
+      (code 7)
+      (name "LCD_DB1")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "19")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "8")
+        (pintype "PASSIVE")))
+    (net
+      (code 8)
+      (name "LCD_DB2")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "22")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "9")
+        (pintype "PASSIVE")))
+    (net
+      (code 9)
+      (name "LCD_DB3")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "23")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "10")
+        (pintype "PASSIVE")))
+    (net
+      (code 10)
+      (name "LCD_DB4")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "26")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "11")
+        (pintype "PASSIVE")))
+    (net
+      (code 11)
+      (name "LCD_DB5")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "40")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "12")
+        (pintype "PASSIVE")))
+    (net
+      (code 12)
+      (name "LCD_DB6")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "29")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "13")
+        (pintype "PASSIVE")))
+    (net
+      (code 13)
+      (name "LCD_DB7")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "31")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "14")
+        (pintype "PASSIVE")))
+    (net
+      (code 14)
+      (name "LCD_E")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "15")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "6")
+        (pintype "PASSIVE")))
+    (net
+      (code 15)
+      (name "LCD_RS")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "11")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "4")
+        (pintype "PASSIVE")))
+    (net
+      (code 16)
+      (name "LCD_RST")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "37")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "17")
+        (pintype "PASSIVE")))
+    (net
+      (code 17)
+      (name "LCD_RW")
+      (class "Default")
+      (node
+        (ref "J1")
+        (pin "13")
+        (pintype "PASSIVE"))
+      (node
+        (ref "J2")
+        (pin "5")
+        (pintype "PASSIVE")))
+    (net
+      (code 18)
+      (name "V0")
+      (class "Default")
+      (node
+        (ref "J2")
+        (pin "3")
+        (pintype "PASSIVE"))
+      (node
+        (ref "RV1")
+        (pin "2")
+        (pintype "PASSIVE")))
+    (net
+      (code 19)
+      (name "VEE")
+      (class "Default")
+      (node
+        (ref "J2")
+        (pin "18")
+        (pintype "PASSIVE"))
+      (node
+        (ref "RV1")
+        (pin "3")
+        (pintype "PASSIVE")))))

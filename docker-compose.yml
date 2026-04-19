@@ -12,7 +12,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: "${TILESERVER_MEMORY:-1G}"
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8080/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""]
       interval: 30s
@@ -42,7 +42,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: "${VALHALLA_MEMORY:-4G}"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:8002/status 2>/dev/null || curl -sf http://localhost:8002/status > /dev/null"]
       interval: 30s
@@ -76,7 +76,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 8G
+          memory: "${NOMINATIM_MEMORY:-8G}"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/status 2>/dev/null || curl -sf http://localhost:8080/status > /dev/null"]
       interval: 30s
@@ -160,7 +160,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1536M
+          memory: "${STT_MEMORY:-1536M}"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
       interval: 15s
@@ -218,7 +218,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: "${PIPELINE_MEMORY:-4G}"
     # Entrypoint is set when started via docker compose run
     # Default: idle (exits immediately if no command given)
     entrypoint: ["python3"]

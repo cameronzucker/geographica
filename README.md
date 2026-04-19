@@ -32,6 +32,9 @@ isolated LAN or standalone device.
 - **Print/export directions** (Mapquest-style printable page)
 - **ATAK integration** — serves as a WMS map source for TAK clients
 - **TLS support** — three modes: HTTP, HTTPS (self-signed), or Tailscale (Let's Encrypt)
+
+> **Upgrading from before the 1.2 TLS canonicalization?** If your `.env` has `TLS_MODE=self-signed`, `external`, or `existing`, the nginx entrypoint will print a deprecation warning and alias to the new vocabulary (`https`, `tailscale`, or fall back to `http` for the removed `existing` mode). The old values still work but you should update `.env` to the canonical names.
+
 - **Mobile-optimized navigation** — collapsible search bar during nav, correct z-ordering, touch-friendly popup close buttons, GPS follow pauses during search
 - **Credential security** — API keys stored in GNOME Keyring via host-side daemon, shared with containers over tmpfs (no plaintext credential files)
 - **No build step** — vanilla JS + MapLibre GL JS frontend, no bundler required
@@ -107,7 +110,7 @@ TileServer GL style/TileJSON endpoints.
 For a guided setup experience, use the setup wizard:
 
 ```bash
-git clone https://github.com/cdzucker/geographica.git
+git clone https://github.com/cameronzucker/geographica.git
 cd geographica
 sudo ./bootstrap.sh    # Install system prerequisites
 # Log out and back in so the docker group takes effect, then:
@@ -125,7 +128,9 @@ The manual setup steps below are still available for advanced users or automatio
 
 ---
 
-## Manual setup guide
+## Manual setup (advanced / AI-agent reference)
+
+> **The browser-based setup wizard (launched via `./setup.sh` after `sudo ./bootstrap.sh`) is the recommended path.** This manual section exists for debugging and automated-deployment purposes — follow these steps only if the wizard fails on your system, or if you're driving installation from a script.
 
 This guide walks through a complete deployment from a fresh Pi. The process has
 two phases: **data acquisition** (requires internet, takes several hours) and
@@ -182,7 +187,7 @@ GNOME Keyring (not plaintext files).
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/cdzucker/geographica.git
+git clone https://github.com/cameronzucker/geographica.git
 cd geographica
 ```
 
@@ -465,19 +470,19 @@ Once all services show healthy in `docker compose ps`:
 
 ```bash
 # Tile serving
-curl -s http://localhost:8090/health
+curl -s http://localhost:8093/tiles/data/southwest5.json | python3 -m json.tool | head -20
 
 # Geocoding
-curl -s "http://localhost:8092/search?q=Phoenix&format=json" | python3 -m json.tool | head -20
+curl -s "http://localhost:8093/nominatim/search?q=Phoenix&format=json" | python3 -m json.tool | head -20
 
 # Routing
-curl -s -X POST http://localhost:8094/route \
+curl -s -X POST http://localhost:8093/valhalla/route \
   -H "Content-Type: application/json" \
   -d '{"locations":[{"lat":33.45,"lon":-112.07},{"lat":34.05,"lon":-111.09}],"costing":"auto"}' \
   | python3 -m json.tool | head -20
 
 # Unified search
-curl -s "http://localhost:8096/search?q=Grand+Canyon" | python3 -m json.tool | head -20
+curl -s "http://localhost:8093/search/search?q=Grand+Canyon" | python3 -m json.tool | head -20
 
 # Speech-to-text
 curl -s http://localhost:8093/stt/health | python3 -m json.tool
@@ -554,9 +559,9 @@ The Pi serves both protocols simultaneously:
 # 1. Provision the certificate (requires root)
 sudo ./scripts/provision_tailscale_tls.sh
 
-# 2. Configure the environment
-echo 'TLS_MODE=tailscale' >> .env
-echo 'TLS_CERT_DIR=/srv/geographica/tls/tailscale' >> .env
+# 2. Configure the environment (idempotent swap: rewrite if present, else append)
+grep -q "^TLS_MODE=" .env && sed -i 's/^TLS_MODE=.*/TLS_MODE=tailscale/' .env || echo 'TLS_MODE=tailscale' >> .env
+grep -q "^TLS_CERT_DIR=" .env && sed -i 's|^TLS_CERT_DIR=.*|TLS_CERT_DIR=/srv/geographica/tls/tailscale|' .env || echo 'TLS_CERT_DIR=/srv/geographica/tls/tailscale' >> .env
 
 # 3. Restart the frontend
 docker compose restart frontend
@@ -573,7 +578,7 @@ Visit `https://<your-tailscale-hostname>` — green padlock, GPS works.
 ## Companion data utility
 
 For faster imagery downloads on hardware with more bandwidth and CPU (desktop,
-laptop), use the [Geographica Companion](https://github.com/cdzucker/geographica-companion)
+laptop), use the [Geographica Companion](https://github.com/cameronzucker/geographica-companion)
 utility. It runs the same NOAA NAIP pipeline on your desktop, then transfers the
 finished MBTiles to the Pi via SCP. This is significantly faster than running the
 pipeline on the Pi itself — a desktop with 8+ cores and no swap pressure processes
@@ -585,7 +590,7 @@ and register it with TileServer:
 
 ```bash
 scp imagery_noaa.mbtiles user@pi-ip:/srv/geographica/data/
-ssh user@pi-ip "cd ~/Code/geographica && python3 scripts/tileserver_config.py add tileserver/config.json imagery_noaa /srv/data/imagery_noaa.mbtiles && docker compose restart tileserver"
+ssh user@pi-ip "cd ~/geographica && python3 scripts/tileserver_config.py add tileserver/config.json imagery_noaa /srv/data/imagery_noaa.mbtiles && docker compose restart tileserver"
 ```
 
 ## Customizing coverage area

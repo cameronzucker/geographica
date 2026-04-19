@@ -18,6 +18,7 @@ class FakeStreamResponse:
 
     def __init__(self, data: bytes, status: int = 200):
         self.status = status
+        self.content_length = None  # omit Content-Length, like many real servers
         self._data = data
         self.content = self
 

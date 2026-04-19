@@ -81,39 +81,35 @@ REGION_PRESETS: dict[str, dict] = {
 # RAM profiles
 # ---------------------------------------------------------------------------
 RAM_PROFILE_16GB: dict[str, str] = {
-    "nominatim_memory": "8G",
+    "nominatim_memory": "5G",
     "postgres_shared_buffers": "1GB",
-    "postgres_maintenance_work_mem": "1GB",
-    "postgres_effective_cache_size": "4GB",
-    "valhalla_memory": "4G",
+    "postgres_maintenance_work_mem": "512MB",
+    "postgres_effective_cache_size": "3GB",
+    "postgres_work_mem": "32MB",
+    "postgres_autovacuum_work_mem": "256MB",
+    "valhalla_memory": "3G",
     "valhalla_threads": "4",
     "tileserver_memory": "1G",
-    "stt_memory": "1536M",
-    "pipeline_memory": "2G",
+    "stt_memory": "1G",
+    "pipeline_memory": "3G",
     "pipeline_gdal_cache": "1024",
-    "imagery_concurrency_naip": "2",
-    "imagery_concurrency_sentinel": "3",
-    "imagery_concurrency_direct": "5",
-    "m2m_batch_size": "50",
-    "planetiler_heap": "-Xmx8g",
+    "planetiler_heap": "3g",
 }
 
 RAM_PROFILE_8GB: dict[str, str] = {
-    "nominatim_memory": "4G",
+    "nominatim_memory": "2G",
     "postgres_shared_buffers": "512MB",
-    "postgres_maintenance_work_mem": "512MB",
-    "postgres_effective_cache_size": "2GB",
-    "valhalla_memory": "2G",
+    "postgres_maintenance_work_mem": "256MB",
+    "postgres_effective_cache_size": "1536MB",
+    "postgres_work_mem": "16MB",
+    "postgres_autovacuum_work_mem": "128MB",
+    "valhalla_memory": "1G",
     "valhalla_threads": "2",
     "tileserver_memory": "512M",
-    "stt_memory": "768M",
-    "pipeline_memory": "1G",
-    "pipeline_gdal_cache": "256",
-    "imagery_concurrency_naip": "1",
-    "imagery_concurrency_sentinel": "1",
-    "imagery_concurrency_direct": "3",
-    "m2m_batch_size": "20",
-    "planetiler_heap": "-Xmx4g",
+    "stt_memory": "512M",
+    "pipeline_memory": "1536M",
+    "pipeline_gdal_cache": "512",
+    "planetiler_heap": "1536m",
 }
 
 
@@ -232,6 +228,15 @@ def detect_storage() -> list[dict]:
                     continue
                 seen_devices.add(device)
 
+                # Filter to paths the wizard will actually accept
+                if mount_path != "/":
+                    allowed = any(
+                        mount_path == p or mount_path.startswith(p + os.sep)
+                        for p in ALLOWED_PATH_PREFIXES
+                    )
+                    if not allowed:
+                        continue
+
                 try:
                     usage = shutil.disk_usage(mount_path)
                     results.append({
@@ -253,6 +258,18 @@ def detect_storage() -> list[dict]:
 # ---------------------------------------------------------------------------
 # Path validation
 # ---------------------------------------------------------------------------
+def _under(path: str, prefix: str) -> bool:
+    """True if `path` is a proper descendant of `prefix` (has content under it).
+
+    Rejects: `prefix` alone, `prefix/` (trailing slash, empty), and any path
+    that merely starts with the prefix string but not a path-boundary character
+    (e.g. '/srvattacker' against '/srv').
+    Accepts: `prefix/<anything>` where anything is non-empty.
+    """
+    sep_prefix = prefix + os.sep
+    return path.startswith(sep_prefix) and len(path) > len(sep_prefix)
+
+
 def validate_path(path_str: str) -> dict:
     """Validate a filesystem path against the ALLOWLIST.
 
@@ -284,15 +301,19 @@ def validate_path(path_str: str) -> dict:
         return {"valid": False, "reason": "Invalid path"}
 
     # Check against allowlist AFTER resolving
-    if not any(resolved.startswith(prefix) for prefix in ALLOWED_PATH_PREFIXES):
+    if not any(_under(resolved, prefix) for prefix in ALLOWED_PATH_PREFIXES):
         return {"valid": False, "reason": f"Path not in allowed prefixes: {', '.join(ALLOWED_PATH_PREFIXES)}"}
 
     # Also check the original path before resolution — catches /srv/../etc
-    if not any(path_str.startswith(prefix) for prefix in ALLOWED_PATH_PREFIXES):
+    if not any(_under(path_str, prefix) for prefix in ALLOWED_PATH_PREFIXES):
         return {"valid": False, "reason": f"Path not in allowed prefixes: {', '.join(ALLOWED_PATH_PREFIXES)}"}
 
-    # Reject symlinks — check each existing component
-    check_path = Path(resolved)
+    # Reject symlinks — walk the ORIGINAL path's components, not the resolved path.
+    # `resolve()` has already followed symlinks away, so checking the resolved
+    # path's ancestors would never detect a symlink. Walk from the original
+    # `path_str` outward and check each ancestor that actually exists on disk.
+    original = Path(path_str)
+    check_path = original
     while str(check_path) != check_path.root:
         if check_path.exists() and check_path.is_symlink():
             return {"valid": False, "reason": "Path contains a symlink, which is not allowed"}
@@ -321,45 +342,45 @@ def validate_path(path_str: str) -> dict:
 # Env file generation
 # ---------------------------------------------------------------------------
 def generate_env(
-    host_ip: str,
+    *,
     tls_mode: str,
-    ram_profile: dict[str, str],
     bbox: str,
     data_path: str,
+    scripts_path: str,
+    ram_profile: dict[str, str],
+    tls_cert_dir: str = "./tls",
+    tls_port: int = 443,
+    stt_backend: str = "cpu",
 ) -> str:
-    """Generate .env file content for docker-compose."""
+    """Render a .env body. Keyword-only so call sites can't silently drift.
+
+    Emits exactly the 21 keys the wizard owns. HOST_IP is NOT emitted (B40
+    obsolete — the UI no longer asks for an IP, so the validation bug the
+    original B40 flagged no longer applies). IMAGERY_CONCURRENCY_* and
+    M2M_BATCH_SIZE are NOT emitted — they're placebo env vars that scripts
+    read as module-level constants today; fixing that is out of scope (O1).
+    """
     lines = [
-        "# Geographica .env — auto-generated by setup wizard",
-        f"HOST_IP={host_ip}",
         f"TLS_MODE={tls_mode}",
+        f"TLS_CERT_DIR={tls_cert_dir}",
+        f"TLS_PORT={tls_port}",
         f"BBOX={bbox}",
-        f"DATA_PATH={data_path}",
-        "",
-        "# PostgreSQL / Nominatim",
+        f"DATA_HOST_PATH={data_path}",
+        f"SCRIPTS_HOST_PATH={scripts_path}",
+        f"STT_BACKEND={stt_backend}",
         f"NOMINATIM_MEMORY={ram_profile['nominatim_memory']}",
         f"POSTGRES_SHARED_BUFFERS={ram_profile['postgres_shared_buffers']}",
         f"POSTGRES_MAINTENANCE_WORK_MEM={ram_profile['postgres_maintenance_work_mem']}",
         f"POSTGRES_EFFECTIVE_CACHE_SIZE={ram_profile['postgres_effective_cache_size']}",
-        "",
-        "# Valhalla",
+        f"POSTGRES_WORK_MEM={ram_profile['postgres_work_mem']}",
+        f"POSTGRES_AUTOVACUUM_WORK_MEM={ram_profile['postgres_autovacuum_work_mem']}",
         f"VALHALLA_MEMORY={ram_profile['valhalla_memory']}",
         f"VALHALLA_THREADS={ram_profile['valhalla_threads']}",
-        "",
-        "# Services",
         f"TILESERVER_MEMORY={ram_profile['tileserver_memory']}",
         f"STT_MEMORY={ram_profile['stt_memory']}",
         f"PIPELINE_MEMORY={ram_profile['pipeline_memory']}",
         f"PIPELINE_GDAL_CACHE={ram_profile['pipeline_gdal_cache']}",
-        "",
-        "# Imagery pipeline",
-        f"IMAGERY_CONCURRENCY_NAIP={ram_profile['imagery_concurrency_naip']}",
-        f"IMAGERY_CONCURRENCY_SENTINEL={ram_profile['imagery_concurrency_sentinel']}",
-        f"IMAGERY_CONCURRENCY_DIRECT={ram_profile['imagery_concurrency_direct']}",
-        f"M2M_BATCH_SIZE={ram_profile['m2m_batch_size']}",
         f"PLANETILER_HEAP={ram_profile['planetiler_heap']}",
-        "",
-        "# GPS",
         "GPS_DEVICE=/dev/ttyAMA0",
-        "",
     ]
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n"

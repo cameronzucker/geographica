@@ -1,0 +1,53 @@
+# LCSC part number mapping for JLCPCB PCBA.
+#
+# Each LCSC PN below was verified against JLCPCB's live catalog via
+# hardware/_shared/verify_lcsc.py (which queries their parts API and
+# cross-checks against our KiCad footprint's THT/SMD classification).
+#
+# To re-verify after any change:
+#   python3 ../_shared/verify_lcsc.py --pcb gx01-adapter.kicad_pcb \
+#       --mapping lcsc_mapping.yaml
+#
+# To regenerate the JLC bundle:
+#   python3 ../_shared/make_jlc_bundle.py \
+#       --pcb gx01-adapter.kicad_pcb --mapping lcsc_mapping.yaml \
+#       --gerbers gerbers/ --output jlc_bundle.zip
+
+skip_patterns:
+  - "^H[0-9]+$"   # H1-H4 mounting holes — no component to place
+
+parts:
+  R1:
+    lcsc: C1370997
+    tier: extended
+    note: "Yageo CFR-25JT-52-10R — 10Ω 1/4W 5% THT axial carbon film. 4,700 in stock."
+
+  C1:
+    lcsc: C524651
+    tier: extended
+    note: "Murata RDER71H104K0S1H03A — 100nF 50V leaded MLCC, P=2.5mm (matches C_Disc_D3.0mm_W2.0mm_P2.50mm footprint). 4k stock."
+
+  RV1:
+    lcsc: C48641779
+    tier: extended
+    note: "BAOTER 3296W-103 — 10kΩ 25-turn cermet trim pot (Bourns 3296W clone, pin-compatible). 18k stock."
+
+  J1:
+    lcsc: C2977589
+    tier: extended
+    note: "ZHOURI 2.54-2*20 — standard 2×20 female pin header, 2.54mm pitch. Mates with LC29H's top male header. 57k stock."
+
+  J2:
+    lcsc: C50981
+    tier: extended
+    note: "2.54-1*20P straight pin header — exact 1×20, P=2.54mm, THT. Ribbon connects here to the GDM12864H LCD. 22k stock."
+
+  J3:
+    lcsc: C158012
+    tier: extended
+    note: "JST B2B-XH-A(LF)(SN) — genuine JST vertical 2-pin, P=2.5mm, THT. Mates with Noctua fan's JST-XH-to-fan pigtail. 377k stock."
+
+  J4:
+    lcsc: C158012
+    tier: extended
+    note: "Same as J3 — second fan connector."

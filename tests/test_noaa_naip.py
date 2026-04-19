@@ -134,14 +134,20 @@ class TestGdaladdoCancelSupport:
             assert "cancel_check" in mock_rio.call_args.kwargs
 
     def test_run_gdal_subprocess_uses_popen(self):
-        """Structural check: run_gdal_subprocess uses Popen, not subprocess.run."""
+        """Structural check: the shared helper uses Popen, not subprocess.run.
+
+        After the B5 refactor, acquire_imagery.run_gdal_subprocess is a thin
+        wrapper that delegates to gdal_subprocess.run_gdal_subprocess. The
+        Popen call lives in the shared module — check there.
+        """
         import ast, inspect
-        source = inspect.getsource(acquire_imagery.run_gdal_subprocess)
+        import gdal_subprocess
+        source = inspect.getsource(gdal_subprocess.run_gdal_subprocess)
         tree = ast.parse(source)
         popen_calls = [n for n in ast.walk(tree)
                        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                        and n.func.attr == "Popen"]
-        assert len(popen_calls) > 0, "run_gdal_subprocess must use Popen"
+        assert len(popen_calls) > 0, "gdal_subprocess.run_gdal_subprocess must use Popen"
 
 
 # ---------------------------------------------------------------------------

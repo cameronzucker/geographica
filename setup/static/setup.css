@@ -209,6 +209,21 @@ select:focus {
   white-space: nowrap;
 }
 
+.global-error-banner {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #dc2626;
+  color: white;
+  padding: 12px 24px;
+  border-radius: 0 0 8px 8px;
+  z-index: 9999;
+  font-size: 14px;
+  max-width: 80%;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
 .field-hint.error {
   color: var(--accent-red);
 }

@@ -1468,67 +1468,89 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
             except Exception:
                 pass
 
-        # Reconcile: if state says running but container is dead, mark interrupted
-        # and capture last logs for crash diagnosis
-        if state_data.get("status") in ("running", "cancelling") and not container_running:
-            # Add completion timestamps
+        # Reconcile + TileServer handoff.
+        #
+        # Two paths enter this block:
+        #  1. Crash path: state says "running"/"cancelling" but container is
+        #     dead — classify the exit from log markers, then hand off to
+        #     TileServer if it looks like a completion.
+        #  2. Clean-terminal path: pipeline wrote "completed"/"completed_partial"
+        #     itself before exit (via update_progress), and the poll happens
+        #     after the container is gone — hand off once, idempotently.
+        #
+        # The clean-terminal path is the common case. Prior to the
+        # `tileserver_restarted_at` stamp, this branch only fired on crashes;
+        # clean completions never restarted TileServer, and the map never
+        # picked up new tiles until a manual reload (2026-04-17 Bug 1).
+        status = state_data.get("status")
+        already_handed_off = bool(state_data.get("tileserver_restarted_at"))
+        is_crash_path = status in ("running", "cancelling") and not container_running
+        is_clean_terminal = (
+            status in ("completed", "completed_partial")
+            and not container_running
+            and not already_handed_off
+        )
+
+        if is_crash_path or is_clean_terminal:
             from datetime import datetime, timezone as tz
-            state_data["completed_at"] = datetime.now(tz.utc).isoformat()
-            if state_data.get("started_at"):
-                started = datetime.fromisoformat(state_data["started_at"])
-                state_data["duration_seconds"] = int((datetime.now(tz.utc) - started).total_seconds())
 
-            # Capture last logs from dead container (client still open)
-            if client:
-                try:
-                    containers = client.containers.list(
-                        all=True, filters={"name": "geographica-pipeline"}
+            if is_crash_path:
+                # Stamp crash-recovery diagnostics
+                state_data["completed_at"] = datetime.now(tz.utc).isoformat()
+                if state_data.get("started_at"):
+                    started = datetime.fromisoformat(state_data["started_at"])
+                    state_data["duration_seconds"] = int(
+                        (datetime.now(tz.utc) - started).total_seconds()
                     )
-                    if containers:
-                        logs = containers[0].logs(tail=50, timestamps=False).decode("utf-8", errors="replace")
-                        state_data["last_logs"] = logs[-2000:]  # cap at 2KB
-                except Exception:
-                    pass
 
-            # Determine final status: check logs for success before marking interrupted
-            if state_data.get("status") == "cancelling":
-                new_status = "cancelled"
-            elif any(s in (state_data.get("last_logs") or "") for s in (
-                "MBTiles written to",
-                "NOAA pipeline complete",
-                "Import complete",
-                "pipeline complete",
-            )):
-                new_status = "completed"
+                # Capture last logs from dead container (client still open)
+                if client:
+                    try:
+                        containers = client.containers.list(
+                            all=True, filters={"name": "geographica-pipeline"}
+                        )
+                        if containers:
+                            logs = containers[0].logs(tail=50, timestamps=False).decode("utf-8", errors="replace")
+                            state_data["last_logs"] = logs[-2000:]  # cap at 2KB
+                    except Exception:
+                        pass
+
+                # Determine final status from logs before marking interrupted
+                if status == "cancelling":
+                    new_status = "cancelled"
+                elif any(s in (state_data.get("last_logs") or "") for s in (
+                    "MBTiles written to",
+                    "NOAA pipeline complete",
+                    "Import complete",
+                    "pipeline complete",
+                )):
+                    new_status = "completed"
+                else:
+                    new_status = "interrupted"
+                state_data["status"] = new_status
             else:
-                new_status = "interrupted"
-            state_data["status"] = new_status
+                # Clean-terminal path: keep the status the script already wrote
+                new_status = status
 
             # On successful completion: WAL checkpoint + TileServer restart.
             # The pipeline writes to MBTiles in WAL mode. TileServer caches
             # metadata at startup and won't see new tiles/bounds without a
             # restart. This is the centralized handoff point.
-            if new_status == "completed" and client:
-                # WAL checkpoint on the output MBTiles
-                output_name = state_data.get("mode", "imagery")
-                mbtiles_candidates = [
-                    f"imagery_{output_name}.mbtiles",
-                    f"imagery.mbtiles",
-                    f"elevation.mbtiles",
-                    f"public-lands.mbtiles",
-                ]
-                for candidate in mbtiles_candidates:
-                    mbtiles_file = DATA_DIR / candidate
-                    if mbtiles_file.exists():
-                        try:
-                            import sqlite3 as _wal
-                            with _wal.connect(str(mbtiles_file), timeout=5) as _wc:
-                                _wc.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                                _wc.execute("PRAGMA journal_mode=DELETE")
-                            print(f"WAL checkpoint: {candidate}", flush=True)
-                        except Exception as exc:
-                            print(f"WAL checkpoint failed for {candidate}: {exc}", flush=True)
-                        break
+            if new_status in ("completed", "completed_partial") and client:
+                # B14: WAL-checkpoint the MBTiles that matches this
+                # pipeline's `type`. The pipeline already checkpointed at
+                # exit; this is a safety net for crashes and a no-op after
+                # a clean exit. We keep WAL mode (D3) — flipping to DELETE
+                # can fail against TileServer's live read-lock.
+                mbtiles_file = _mbtiles_path_for_type(type)
+                if mbtiles_file.exists():
+                    try:
+                        import sqlite3 as _wal
+                        with _wal.connect(str(mbtiles_file), timeout=5) as _wc:
+                            _wc.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                        print(f"WAL checkpoint: {mbtiles_file.name}", flush=True)
+                    except Exception as exc:
+                        print(f"WAL checkpoint failed for {mbtiles_file.name}: {exc}", flush=True)
 
                 # Restart TileServer to pick up new metadata/bounds
                 try:
@@ -1541,6 +1563,11 @@ async def pipeline_status(type: str = Query("imagery", description="Pipeline typ
                             print("TileServer restarted after pipeline completion", flush=True)
                 except Exception as exc:
                     print(f"TileServer restart failed: {exc}", flush=True)
+
+                # Stamp handoff regardless of whether a TileServer was found
+                # or the restart call raised — next poll must be a no-op
+                # rather than retry-spamming Docker every 10s forever.
+                state_data["tileserver_restarted_at"] = datetime.now(tz.utc).isoformat()
 
             try:
                 tmp = state_file.with_suffix(".json.tmp")

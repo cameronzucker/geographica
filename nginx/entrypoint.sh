@@ -1,5 +1,23 @@
 #!/bin/sh
 TLS_MODE="${TLS_MODE:-http}"
+
+# Compatibility: map deprecated TLS_MODE vocabulary from pre-1.2 .env files
+# to the canonical set. See B1/B19 in the setup remediation plan.
+case "$TLS_MODE" in
+    self-signed)
+        echo "WARN: TLS_MODE=self-signed is deprecated; treating as 'https'. Please update .env."
+        TLS_MODE=https
+        ;;
+    external)
+        echo "WARN: TLS_MODE=external is deprecated; treating as 'tailscale'. Please update .env."
+        TLS_MODE=tailscale
+        ;;
+    existing)
+        echo "WARN: TLS_MODE=existing is deprecated and has been removed. Falling back to http. Update .env to 'https' (for self-signed) or 'tailscale' (for Let's Encrypt)."
+        TLS_MODE=http
+        ;;
+esac
+
 echo "Geographica NGINX starting in $TLS_MODE mode"
 
 if [ "$TLS_MODE" = "https" ]; then

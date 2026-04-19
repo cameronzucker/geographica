@@ -232,15 +232,17 @@ def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
                     geotiffs_bytes: int = None,
                     current_batch: int = None, total_batches: int = None,
                     tiles_reprojected: int = None):
-    """Write structured progress to the state file.
+    """Write structured progress to the state file atomically in ONE rename.
 
-    For direct mode: tiles_done/tiles_total/rate are the primary fields.
-    For M2M mode: phase + geotiffs fields are primary during downloading;
-    tiles_done/tiles_total during converting phase.
+    B15 fix: previous implementation called _generic_progress (atomic rename
+    #1) then read the file back, added backward-compat fields, and wrote
+    again via write_pipeline_state (atomic rename #2). A frontend polling
+    at 500ms could observe the file between writes, seeing canonical fields
+    without the compat fields (tiles_done, rate_per_sec, mode).
 
-    Delegates to the shared pipeline_progress module for the atomic write,
-    then enriches the state file with backward-compat fields so that both
-    old and new frontend/backend consumers can render progress correctly.
+    This rewrite builds the full enriched dict once, preserves any existing
+    unrelated fields by merging with the on-disk state, then writes a single
+    atomic rename.
     """
     state_path = Path(output_path).parent / ".pipeline-state.json"
 
@@ -273,40 +275,49 @@ def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
     else:
         detail = f"{tiles_done}/{tiles_total} tiles at {round(rate, 1)}/s"
 
-    # Determine source from mode
     source = mode if mode else "imagery"
 
-    # Step 1: call shared module for the canonical atomic write
-    _generic_progress(
-        state_path,
-        source=source,
-        status=status,
-        phase=phase,
-        items_done=items_done_val,
-        items_total=items_total_val,
-        item_unit=item_unit_val,
-        detail=detail,
-        error=error,
-        bbox=bbox,
-        zoom=zoom if zoom != "n/a" else None,
-    )
+    # Read any existing state so we preserve unrelated fields (mirroring
+    # write_pipeline_state's merge semantics).
+    existing: dict = {}
+    if state_path.exists():
+        try:
+            existing = json.loads(state_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            existing = {}
 
-    # Step 2: re-read the written state and add backward-compat fields
-    try:
-        enriched: dict = json.loads(state_path.read_text())
-    except (json.JSONDecodeError, OSError):
-        enriched = {}
+    import datetime as _dt
+    updated_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
 
+    # Build the canonical fields (what _generic_progress would have written).
+    enriched: dict = dict(existing)
+    enriched.update({
+        "source": source,
+        "status": status,
+        "items_done": items_done_val,
+        "items_total": items_total_val,
+        "item_unit": item_unit_val,
+        "detail": detail,
+        "bbox": bbox,
+        "updated_at": updated_at,
+    })
+    # Optional fields: only include when provided (mirrors _generic_progress semantics)
+    if phase is not None:
+        enriched["phase"] = phase
+    if zoom and zoom != "n/a":
+        enriched["zoom"] = zoom
+    if error is None:
+        enriched.pop("error", None)
+    else:
+        enriched["error"] = error
+
+    # Add the backward-compat fields in the SAME dict (no second read/write).
     enriched["mode"] = mode
     enriched["tiles_done"] = tiles_done
     enriched["tiles_total"] = tiles_total
     enriched["rate_per_sec"] = round(rate, 4)
     if getattr(update_progress, '_started_at', None) is not None:
         enriched.setdefault("started_at", update_progress._started_at)
-    if error is None:
-        enriched.pop("error", None)
-    else:
-        enriched["error"] = error
     if geotiffs_downloaded is not None:
         enriched["geotiffs_downloaded"] = geotiffs_downloaded
     if geotiffs_total is not None:
@@ -322,8 +333,8 @@ def update_progress(output_path: Path, mode: str, bbox: str, zoom: str,
     if tiles_reprojected is not None:
         enriched["tiles_reprojected"] = tiles_reprojected
 
-    # Step 3: write enriched state back atomically
-    write_pipeline_state(output_path, enriched)
+    # Single atomic write.
+    _atomic_write_json(state_path, enriched)
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +442,21 @@ async def fetch_to_file(session: aiohttp.ClientSession, url: str,
                                 dest.unlink(missing_ok=True)
                                 return False
                             f.write(chunk)
+                    # B10 fix: detect Content-Length short-reads. A server
+                    # that cleanly closes the socket mid-body after advertising
+                    # Content-Length produces a truncated file with no
+                    # exception. Compare bytes written to advertised length;
+                    # if short, discard and retry.
+                    advertised = resp.content_length
+                    if advertised is not None and total < advertised:
+                        log.warning(
+                            "Short read: got %d/%d bytes for %s -- retrying",
+                            total, advertised, url,
+                        )
+                        dest.unlink(missing_ok=True)
+                        wait = RETRY_BACKOFF * (2 ** attempt)
+                        await asyncio.sleep(wait)
+                        continue
                     return True
                 if resp.status in (429, 500, 502, 503, 504):
                     wait = RETRY_BACKOFF * (2 ** attempt)
@@ -648,6 +674,7 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
         """)
 
         composited = 0
+        errors = 0
         for z, x, y, src_data, dst_data in cursor:
             try:
                 with MemoryFile(src_data) as smf, MemoryFile(dst_data) as dmf:
@@ -663,11 +690,20 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
                     (merged, z, x, y),
                 )
                 composited += 1
-            except Exception:
-                pass  # Keep existing tile on decode error
+            except Exception as exc:
+                # B7 fix: count and log composite failures instead of silently
+                # dropping. Keeps the existing tile (correct default) but makes
+                # silent data-quality degradation observable.
+                errors += 1
+                if errors <= 5:  # avoid log-spam for systemic failures
+                    log.warning(
+                        "merge composite failed for %d/%d/%d: %s", z, x, y, exc
+                    )
 
         if composited:
             log.info("Composited %d overlapping edge tiles", composited)
+        if errors:
+            log.warning("merge_mbtiles: %d composite errors suppressed", errors)
 
         # Copy metadata from first batch only
         dst.execute("""INSERT OR IGNORE INTO metadata
@@ -731,50 +767,26 @@ def _update_mbtiles_bounds(mbtiles_path: Path) -> None:
 
 def run_gdal_subprocess(cmd: list[str], timeout: int = 7200,
                         cancel_check=None) -> subprocess.CompletedProcess:
-    """Run a GDAL CLI command with nice priority and optional cancel check.
+    """Run a GDAL CLI command. Delegates to the shared helper.
 
-    Uses Popen with a process group so SIGTERM can kill the child
-    immediately (without waiting for it to finish).
-
-    Args:
-        cmd: Command and arguments (e.g., ["gdalbuildvrt", ...])
-        timeout: Max seconds before killing the process.
-        cancel_check: Optional callable returning True if cancellation requested.
-
-    Returns:
-        CompletedProcess on success.
-
-    Raises:
-        subprocess.CalledProcessError: If command fails or is cancelled.
-        subprocess.TimeoutExpired: If timeout exceeded.
+    Preserved as a thin wrapper because existing tests import it from
+    acquire_imagery. Registers/clears the module-level _child_pid so the
+    SIGTERM handler (_handle_sigterm at the top of this module) can
+    killpg the child.
     """
-    global _child_pid
-    if cancel_check and cancel_check():
-        raise subprocess.CalledProcessError(1, cmd, stderr="Cancelled before start")
-    full_cmd = ["nice", "-n", "19"] + cmd
-    gdal_env = {
-        **os.environ,
-        "GDAL_CACHEMAX": os.environ.get("GDAL_CACHEMAX", "1024"),
-        "GDAL_NUM_THREADS": os.environ.get("GDAL_NUM_THREADS", "ALL_CPUS"),
-    }
-    proc = subprocess.Popen(
-        full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, env=gdal_env,
-        preexec_fn=os.setsid,  # new process group so we can kill it
-    )
-    _child_pid = proc.pid
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        proc.wait()
+    def _set_pid(pid: int) -> None:
+        global _child_pid
+        _child_pid = pid
+
+    def _clear_pid() -> None:
+        global _child_pid
         _child_pid = None
-        raise
-    _child_pid = None
-    if proc.returncode != 0:
-        raise subprocess.CalledProcessError(proc.returncode, full_cmd,
-                                            output=stdout, stderr=stderr)
-    return subprocess.CompletedProcess(full_cmd, proc.returncode, stdout, stderr)
+
+    from gdal_subprocess import run_gdal_subprocess as _shared
+    return _shared(
+        cmd, timeout=timeout, cancel_check=cancel_check,
+        on_child_started=_set_pid, on_child_ended=_clear_pid,
+    )
 
 
 def _run_gdaladdo_with_metadata_fixup(output: Path) -> None:
@@ -1642,6 +1654,16 @@ async def run_m2m(args):
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             log.warning("Overview generation failed: %s -- output is still usable", exc)
 
+    # B2 fix: if cancel fired during overview build, write "cancelled" and
+    # return — don't fall through to the unconditional "completed" write.
+    if _cancel_requested:
+        update_progress(output, "m2m", args.bbox, "n/a",
+                        0, len(scenes), status="cancelled", phase="cancelled",
+                        scenes_total=len(scenes),
+                        geotiffs_downloaded=len(tif_paths), geotiffs_total=len(scenes))
+        log.info("M2M pipeline cancelled during overview build")
+        return
+
     update_progress(output, "m2m", args.bbox, "n/a",
                     0, len(scenes), status="completed", phase="complete",
                     scenes_total=len(scenes),
@@ -1741,6 +1763,89 @@ async def _noaa_fetch_tile_index(
     return shp_files[0]
 
 
+def _repair_noaa_checkpoint(output_path: Path, tile_coord_map: dict) -> int:
+    """Detect and warn on _noaa_checkpoint/tiles divergence from a prior crash.
+
+    B13 fix — conservative variant: `_merger` writes the tile on one
+    sqlite connection and inserts into _noaa_checkpoint on another.
+    A crash between commits leaves the tile merged but unchecked.
+
+    Without a reliable filename→(z,x,y) map, we can't auto-repair — but
+    we CAN detect the smoking-gun pattern: tiles table has rows but
+    _noaa_checkpoint is empty or much smaller than expected. When the
+    optional tile_coord_map is provided, we also run a targeted repair.
+
+    Args:
+        output_path: Path to the MBTiles output.
+        tile_coord_map: Optional mapping {tile_filename: (zoom, col, row)}
+            for NOAA source tiles. When present and non-empty, rows are
+            inserted into _noaa_checkpoint for every mapped filename whose
+            (z,x,y) is present in `tiles`.
+
+    Returns:
+        Number of checkpoint rows added by the repair. 0 means no repair
+        was needed (or was not possible without a coord map).
+    """
+    if not output_path.exists():
+        return 0
+    try:
+        conn = sqlite3.connect(str(output_path))
+    except sqlite3.Error:
+        return 0
+    try:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='tiles'"
+        ).fetchone()
+        if row is None:
+            return 0
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS _noaa_checkpoint "
+            "(tile_filename TEXT PRIMARY KEY)"
+        )
+
+        tile_count = conn.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
+        ckpt_count = conn.execute("SELECT COUNT(*) FROM _noaa_checkpoint").fetchone()[0]
+
+        # Divergence warning: tiles present but checkpoint empty is the
+        # smoking-gun pattern of a crash between commits.
+        if tile_count > 0 and ckpt_count == 0:
+            log.warning(
+                "Checkpoint divergence detected: tiles=%d but _noaa_checkpoint=0. "
+                "Resume may re-merge tiles (B13). Consider dropping the output "
+                "and starting fresh if you see duplicate-composite artifacts.",
+                tile_count,
+            )
+
+        if not tile_coord_map:
+            return 0
+
+        existing = {r[0] for r in conn.execute(
+            "SELECT tile_filename FROM _noaa_checkpoint"
+        )}
+        added = 0
+        for fname, coord in tile_coord_map.items():
+            if fname in existing:
+                continue
+            z, x, y = coord
+            present = conn.execute(
+                "SELECT 1 FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                (z, x, y),
+            ).fetchone()
+            if present:
+                conn.execute(
+                    "INSERT OR IGNORE INTO _noaa_checkpoint (tile_filename) VALUES (?)",
+                    (fname,),
+                )
+                added += 1
+
+        if added:
+            conn.commit()
+            log.info("Checkpoint repair: re-derived %d _noaa_checkpoint rows from tiles table", added)
+        return added
+    finally:
+        conn.close()
+
+
 async def run_noaa(args):
     """Run the NOAA Digital Coast NAIP download pipeline.
 
@@ -1765,6 +1870,16 @@ async def run_noaa(args):
     west, south, east, north = bbox
     output = Path(args.output)
     data_dir = output.parent
+
+    # B13 fix: detect (and where possible repair) checkpoint divergence
+    # from a prior crash between tile commit and checkpoint commit.
+    # tile_coord_map is empty in this call path — the NOAA pipeline works
+    # on filenames, not (z,x,y) tuples — so the call acts as a detect-and-warn.
+    # Future: pass a real coord map once reproject metadata is cached earlier.
+    try:
+        _repair_noaa_checkpoint(output, {})
+    except Exception as _exc:
+        log.warning("Checkpoint repair pre-check failed: %s", _exc)
 
     import datetime
     update_progress._started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -1955,6 +2070,22 @@ async def run_noaa(args):
                 url = f"{blob_base}/{tile_fname}"
                 dest = staging / tile_fname
                 t0 = time.monotonic()
+
+                # B11 fix: if dest already exists and passes validation from a
+                # previous run (SIGTERM between download and merge), skip the
+                # re-download. Saves up to DOWNLOAD_CONCURRENCY * 486 MB on
+                # resume. Note: we check outside the semaphore because no
+                # network I/O is needed.
+                if (dest.exists()
+                        and dest.stat().st_size > 0
+                        and validate_file_header(dest, "geotiff")):
+                    size_mb = dest.stat().st_size / (1024 * 1024)
+                    log.info(
+                        "Using cached staging tile: %s (%.0f MB)",
+                        tile_fname, size_mb,
+                    )
+                    return (tile_fname, dest)
+
                 async with download_sem:
                     if _cancel_requested:
                         return (tile_fname, None)
@@ -2149,6 +2280,9 @@ async def run_noaa(args):
                         if warped_path is None:
                             with counter_lock:
                                 tiles_failed += 1
+                            # B12 fix: write progress so frontend polling
+                            # sees the failure-counter update, not stale state.
+                            _write_progress()
                         continue
 
                     log.info("[%d/%d] Merging %s into MBTiles",
@@ -2179,6 +2313,10 @@ async def run_noaa(args):
                     else:
                         with counter_lock:
                             tiles_failed += 1
+                        # B12 fix: write progress so frontend sees the
+                        # tiles_failed counter move without waiting for
+                        # the next success or Phase 5.
+                        _write_progress()
                         if _cancel_requested:
                             break
                         log.warning("[%d/%d] Merge failed for %s",
@@ -2201,9 +2339,10 @@ async def run_noaa(args):
                                 geotiffs_total=total_tiles)
                 return
 
-    # Phase 5: Build overview pyramids
-    # Also run when skip_to_postprocess (all quads already done) — overviews/erosion/inpaint
-    # are idempotent and should always be applied to the final output.
+    # Phase 5: Build overview pyramids + nodata cleanup
+    # Also run when skip_to_postprocess (all quads already done) — overviews
+    # and inpaint are idempotent. Erosion is NOT idempotent (boundary shifts)
+    # and is gated off on resume — see D1/B9 below.
     if output.exists() and (tiles_done > 0 or skip_to_postprocess):
         # Recalculate bounds from actual tile extent (first batch metadata is stale)
         try:
@@ -2224,6 +2363,16 @@ async def run_noaa(args):
         except Exception as exc:
             log.warning("Overview generation failed: %s — output is still usable", exc)
 
+        # B1 fix: cancel guard AFTER overview generation, before erode/inpaint
+        if _cancel_requested:
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            tiles_done, total_tiles, status="cancelled",
+                            phase="cancelled",
+                            geotiffs_downloaded=tiles_done,
+                            geotiffs_total=total_tiles)
+            log.info("NOAA pipeline cancelled after overview build")
+            return
+
         # Checkpoint WAL after overviews before erosion/inpaint
         import sqlite3 as _pp_sql
         try:
@@ -2235,23 +2384,61 @@ async def run_noaa(args):
         # Post-process: clean up JPEG nodata artifacts
         # 1. Erode boundary tiles with heavy nodata (black rectangles over basemap)
         # 2. Inpaint remaining black pixels (seams between NAIP quads)
+        #
+        # D1/B9 fix: erosion is gated off on resume (skip_to_postprocess=True).
+        # erode_nodata_edges is destructive and evaluates boundary tiles against
+        # the CURRENT tile bounds. On an expanded-bbox resume, it would strip
+        # valid tiles added by the new quads — an unrecoverable loss because
+        # the deleted tiles' filenames remain in _noaa_checkpoint.
+        # Users who want to re-erode after an expansion can delete the
+        # checkpoint and re-run. This matches the "resume = incremental add"
+        # mental model.
         try:
             from rasterio_ops import erode_nodata_edges as rio_erode_nodata_edges
             from rasterio_ops import inpaint_nodata_pixels as rio_inpaint_nodata_pixels
-            eroded = rio_erode_nodata_edges(output)
-            if eroded:
-                log.info("Eroded %d nodata-edge tiles for clean basemap transition", eroded)
+
+            if not skip_to_postprocess:
+                eroded = rio_erode_nodata_edges(
+                    output, cancel_check=lambda: _cancel_requested
+                )
+                if eroded:
+                    log.info("Eroded %d nodata-edge tiles for clean basemap transition", eroded)
+            else:
+                log.info("Skipping erosion on resume run (D1 gate: not idempotent across bbox expansion)")
+
+            # B1 fix: cancel guard AFTER erode, before inpaint
+            if _cancel_requested:
+                update_progress(output, "noaa", args.bbox, "n/a",
+                                tiles_done, total_tiles, status="cancelled",
+                                phase="cancelled",
+                                geotiffs_downloaded=tiles_done,
+                                geotiffs_total=total_tiles)
+                log.info("NOAA pipeline cancelled after erosion")
+                return
+
             # Checkpoint WAL between erode and inpaint (inpaint touches every tile)
             try:
                 with _pp_sql.connect(str(output)) as _pc:
                     _pc.execute("PRAGMA wal_checkpoint(PASSIVE)")
             except Exception:
                 pass
-            inpainted = rio_inpaint_nodata_pixels(output)
+            inpainted = rio_inpaint_nodata_pixels(
+                output, cancel_check=lambda: _cancel_requested
+            )
             if inpainted:
                 log.info("Inpainted %d tiles to remove black seams", inpainted)
         except Exception as exc:
             log.warning("Nodata cleanup failed: %s — output is still usable", exc)
+
+        # B1 fix: cancel guard AFTER inpaint, before final status write
+        if _cancel_requested:
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            tiles_done, total_tiles, status="cancelled",
+                            phase="cancelled",
+                            geotiffs_downloaded=tiles_done,
+                            geotiffs_total=total_tiles)
+            log.info("NOAA pipeline cancelled after inpaint")
+            return
 
     # TileServer config update + restart is handled by the search service
     # after it detects pipeline completion via status reconciliation.
@@ -2260,29 +2447,44 @@ async def run_noaa(args):
     # Final WAL checkpoint: flush all pending writes into the main database file.
     # Without this, the WAL can grow to several GB during post-processing
     # (overviews + erosion + inpainting write hundreds of thousands of tiles).
-    # TileServer can't serve an MBTiles with a huge WAL — it returns 404.
-    # TRUNCATE mode resets the WAL to zero bytes, which is safe here because
-    # no other process has the file open (TileServer source was unregistered).
+    # D3 fix: keep WAL mode permanently. TileServer reads WAL-mode SQLite
+    # correctly on modern SQLite; the previous journal-mode flip to the
+    # rollback-journal mode required zero other connections and caused recent
+    # 404 bugs when TileServer held a read handle. TRUNCATE checkpoint alone
+    # is sufficient (flushes WAL into main file, resets WAL to zero bytes).
     if output.exists():
         import sqlite3 as _wal_sql
         try:
             with _wal_sql.connect(str(output)) as _wc:
                 _wc.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                # Switch back to DELETE journal mode for TileServer compatibility.
-                # WAL mode requires that all readers use the same WAL file, but
-                # TileServer opens files read-only and may not handle WAL correctly
-                # on all platforms.
-                _wc.execute("PRAGMA journal_mode=DELETE")
             log.info("WAL checkpoint complete — database ready for TileServer")
         except Exception as exc:
             log.warning("WAL checkpoint failed: %s — TileServer may need manual restart", exc)
 
     # Final status
+    # D2: status taxonomy
+    #   error            — 0 tiles succeeded (and not a resume run)
+    #   completed_partial — tiles_done > 0 AND tiles_failed > 0
+    #   completed        — clean completion (no failures, or resume run)
+    # Search service reconciliation treats completed_partial the same as
+    # completed for TileServer restart purposes (see services/search/main.py
+    # pipeline_status). Frontend can render a warning badge for partial.
     if tiles_done == 0 and not skip_to_postprocess:
         update_progress(output, "noaa", args.bbox, "n/a",
                         0, total_tiles, status="error", phase="error",
                         error=f"All {total_tiles} tiles failed to process")
         log.error("NOAA pipeline failed: 0/%d tiles processed", total_tiles)
+    elif tiles_failed > 0 and not skip_to_postprocess:
+        reported_done = tiles_done
+        reported_total = total_tiles
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        reported_done, reported_total, status="completed_partial",
+                        phase="complete",
+                        error=f"{tiles_failed} of {total_tiles} tiles failed",
+                        geotiffs_downloaded=reported_done,
+                        geotiffs_total=reported_total)
+        log.warning("NOAA pipeline completed with partial failures: %d/%d processed, %d failed",
+                    tiles_done, total_tiles, tiles_failed)
     else:
         reported_done = total_tiles_original if skip_to_postprocess else tiles_done
         reported_total = total_tiles_original if skip_to_postprocess else total_tiles

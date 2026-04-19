@@ -19,10 +19,10 @@
 
   // Accumulated config
   var config = {
-    host_ip: '',
     tls_mode: 'http',
-    data_path: '/srv/geographica/data',
+    data_path: '',
     bbox: '',
+    layer_bbox: { basemap: '', base_imagery: '', detail_imagery: '' },
     layers: {
       basemap: 'download',
       base_imagery: 'naip',
@@ -151,16 +151,47 @@
     if (n === 5) startHealthPolling();
   }
 
+  function showError(msg, context) {
+    var banner = document.getElementById('global-error-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'global-error-banner';
+      banner.className = 'global-error-banner';
+      document.body.insertBefore(banner, document.body.firstChild);
+    }
+    banner.textContent = (context ? '[' + context + '] ' : '') + msg;
+    banner.style.display = '';
+    clearTimeout(showError._t);
+    showError._t = setTimeout(function () {
+      banner.style.display = 'none';
+    }, 10000);
+  }
+
   function nextStep() {
     if (currentStep === 1) {
-      config.host_ip = $('#host-ip').value.trim();
       config.tls_mode = $('#tls-mode').value;
-      config.data_path = $('#data-path').value;
-      if (!config.host_ip) {
-        $('#host-ip-hint').textContent = 'Required';
-        $('#host-ip-hint').className = 'field-hint error';
+      var path = computeDataPath();
+      if (!path) {
+        showError('Please select a data drive and enter a subpath (or choose "Other" and enter a custom path).');
         return;
       }
+      return api('POST', '/api/validate-path', { path: path })
+        .then(function (res) {
+          if (!res.valid) {
+            showError('Invalid data path: ' + (res.reason || 'path rejected'));
+            throw new Error('validate-path rejected');
+          }
+          return api('POST', '/api/create-directory', { path: path });
+        })
+        .then(function () {
+          config.data_path = path;
+          showStep(currentStep + 1);
+        })
+        .catch(function (err) {
+          if (!/rejected/.test(err.message)) {
+            showError('Could not create data directory: ' + err.message);
+          }
+        });
     }
 
     if (currentStep === 2) {
@@ -181,6 +212,23 @@
       }
       config.base_imagery_zoom = parseInt($('#base-imagery-zoom').value, 10);
 
+      // Per-layer bbox override validation — reject invalid overrides.
+      var invalidLayer = null;
+      Object.keys(config.layer_bbox).forEach(function (layer) {
+        var v = (config.layer_bbox[layer] || '').trim();
+        if (v && !validateBboxString(v)) {
+          invalidLayer = layer;
+        }
+      });
+      if (invalidLayer) {
+        var hint = document.getElementById('bbox-hint-' + invalidLayer);
+        if (hint) {
+          hint.textContent = 'Invalid bbox override — fix before continuing.';
+          hint.className = 'field-hint bbox-hint error';
+        }
+        return;
+      }
+
       // All skipped: save config now and jump straight to Launch
       if (allSkipped) {
         saveConfig();
@@ -190,8 +238,10 @@
     }
 
     if (currentStep === 3) {
-      saveConfig();
-      saveCredentials();
+      return saveConfig()
+        .then(function () { return saveCredentials(); })
+        .then(function () { showStep(currentStep + 1); })
+        .catch(function () { /* already surfaced via showError */ });
     }
 
     if (currentStep === 4) {
@@ -225,9 +275,6 @@
   function loadSystemInfo() {
     api('GET', '/api/system').then(function (data) {
       systemInfo = data;
-      $('#host-ip').value = data.host_ip || '';
-      config.host_ip = data.host_ip || '';
-      $('#host-ip-hint').textContent = data.host_ip ? 'Auto-detected' : 'Could not detect';
 
       var ramMb = data.ram_mb || 0;
       var ramGb = (ramMb / 1024).toFixed(1);
@@ -235,72 +282,131 @@
       var profileLabel = ramMb >= 12000 ? '16 GB profile' : '8 GB profile';
       $('#ram-profile-hint').textContent = profileLabel;
 
-      // Storage options
-      var sel = $('#data-path');
-      sel.textContent = '';
+      // Populate drive select from detect_storage output
+      var driveSel = $('#data-drive');
+      driveSel.textContent = '';
+      var emptyOpt = document.createElement('option');
+      emptyOpt.value = '';
+      emptyOpt.textContent = '-- Select a drive --';
+      driveSel.appendChild(emptyOpt);
       if (data.storage && data.storage.length > 0) {
         data.storage.forEach(function (s) {
           var opt = document.createElement('option');
-          var path = s.path === '/' ? '/srv/geographica/data' : s.path + '/geographica/data';
-          opt.value = path;
-          opt.textContent = s.device + ' - ' + s.path + ' (' + s.free_gb + ' GB free of ' + s.total_gb + ' GB)';
-          sel.appendChild(opt);
+          // For root mount, use /srv as the "drive" since /srv is the allowlist entry.
+          var driveVal = s.path === '/' ? '/srv' : s.path;
+          opt.value = driveVal;
+          opt.textContent = driveVal + ' (' + s.free_gb + ' GB free of ' + s.total_gb + ' GB — ' + s.fstype + ')';
+          driveSel.appendChild(opt);
         });
       }
-      // Always include default
-      var hasDefault = false;
-      for (var i = 0; i < sel.options.length; i++) {
-        if (sel.options[i].value === '/srv/geographica/data') { hasDefault = true; break; }
-      }
-      if (!hasDefault) {
-        var dopt = document.createElement('option');
-        dopt.value = '/srv/geographica/data';
-        dopt.textContent = '/srv/geographica/data (default)';
-        sel.insertBefore(dopt, sel.firstChild);
-      }
-      sel.value = config.data_path;
+      // Always append the "Other / custom path" sentinel.
+      var otherOpt = document.createElement('option');
+      otherOpt.value = '__other__';
+      otherOpt.textContent = 'Other (enter custom path)';
+      driveSel.appendChild(otherOpt);
 
-      if (data.existing_env) {
-        $('#host-ip-hint').textContent = 'Existing .env found - values pre-filled';
+      // Pre-fill from existing_env_parsed if present (Task 40 adds this field).
+      if (data.existing_env_parsed) {
+        var env = data.existing_env_parsed;
+        if (env.TLS_MODE) $('#tls-mode').value = env.TLS_MODE;
+        if (env.DATA_HOST_PATH) {
+          // Best-effort: if DATA_HOST_PATH is under a known drive, split it;
+          // otherwise fall back to custom path.
+          var match = null;
+          if (data.storage) {
+            data.storage.forEach(function (s) {
+              var driveVal = s.path === '/' ? '/srv' : s.path;
+              if (env.DATA_HOST_PATH.indexOf(driveVal + '/') === 0) {
+                match = { drive: driveVal, subpath: env.DATA_HOST_PATH.slice(driveVal.length + 1) };
+              }
+            });
+          }
+          if (match) {
+            $('#data-drive').value = match.drive;
+            $('#data-subpath').value = match.subpath;
+          } else {
+            $('#data-drive').value = '__other__';
+            $('#data-custom-path').value = env.DATA_HOST_PATH;
+          }
+        }
       }
+
+      onDataDriveChange();
     }).catch(function (err) {
-      $('#host-ip-hint').textContent = 'Detection failed: ' + err.message;
-      $('#host-ip-hint').className = 'field-hint error';
+      var hint = $('#data-path-hint');
+      if (hint) {
+        hint.textContent = 'System detection failed: ' + err.message;
+        hint.className = 'field-hint error';
+      }
     });
+  }
+
+  // Compute the full resolved data path from drive + subpath OR custom-path input.
+  function computeDataPath() {
+    var drive = $('#data-drive').value;
+    if (!drive) return '';
+    if (drive === '__other__') {
+      return ($('#data-custom-path').value || '').trim();
+    }
+    var subpath = ($('#data-subpath').value || 'geographica/data').trim().replace(/^\/+/, '');
+    return drive.replace(/\/+$/, '') + '/' + subpath;
+  }
+
+  // Show/hide subpath-group vs custom-group based on current drive value.
+  function onDataDriveChange() {
+    var drive = $('#data-drive').value;
+    var subpathGroup = $('#data-subpath-group');
+    var customGroup = $('#data-custom-group');
+    if (drive === '__other__') {
+      subpathGroup.style.display = 'none';
+      customGroup.style.display = '';
+    } else {
+      subpathGroup.style.display = '';
+      customGroup.style.display = 'none';
+    }
+    debouncedValidatePath();
+  }
+
+  // 400ms-debounced POST to /api/validate-path. Writes the result to
+  // #data-path-hint with an ok/warning/error CSS class.
+  var _validatePathTimer = null;
+  function debouncedValidatePath() {
+    if (_validatePathTimer) clearTimeout(_validatePathTimer);
+    _validatePathTimer = setTimeout(function () {
+      var path = computeDataPath();
+      var hint = $('#data-path-hint');
+      if (!path) {
+        hint.textContent = '';
+        hint.className = 'field-hint';
+        return;
+      }
+      api('POST', '/api/validate-path', { path: path })
+        .then(function (res) {
+          if (res.valid) {
+            hint.textContent = 'Path OK — will be created on Next if missing.';
+            hint.className = 'field-hint ok';
+          } else {
+            hint.textContent = 'Invalid: ' + (res.reason || 'path not allowed');
+            hint.className = 'field-hint error';
+          }
+        })
+        .catch(function (err) {
+          hint.textContent = 'Validation check failed: ' + err.message;
+          hint.className = 'field-hint warning';
+        });
+    }, 400);
   }
 
   // TLS mode change handler
   function onTlsModeChange() {
     var mode = $('#tls-mode').value;
-    var certGroup = $('#tls-cert-group');
     var hint = $('#tls-hint');
-
-    if (mode === 'existing') {
-      certGroup.style.display = '';
-      hint.textContent = 'Scanning for certificates...';
-      api('POST', '/api/tls/scan').then(function (data) {
-        var list = $('#tls-cert-list');
-        list.textContent = '';
-        if (data.certs && data.certs.length > 0) {
-          data.certs.forEach(function (c) {
-            var div = createEl('div', 'cert-item', c.subject + ' (expires: ' + c.expires + ')');
-            list.appendChild(div);
-          });
-          hint.textContent = data.certs.length + ' certificate(s) found';
-        } else {
-          list.appendChild(createEl('span', 'field-hint', 'No certificates found'));
-          hint.textContent = 'No certificates found';
-        }
-      });
+    if (mode === 'https') {
+      hint.textContent = 'A self-signed certificate will be generated on first launch. Browsers will show a security warning you must accept.';
+    } else if (mode === 'tailscale') {
+      hint.textContent = 'Requires: sudo ./scripts/provision_tailscale_tls.sh (see README Tailscale section).';
     } else {
-      certGroup.style.display = 'none';
-      if (mode === 'self-signed') {
-        hint.textContent = 'A self-signed certificate will be generated';
-      } else if (mode === 'external') {
-        hint.textContent = 'TLS handled by external proxy (e.g. Tailscale)';
-      } else {
-        hint.textContent = '';
-      }
+      hint.textContent = '';
     }
   }
 
@@ -498,32 +604,35 @@
   }
 
   function saveConfig() {
-    api('POST', '/api/config', {
-      host_ip: config.host_ip,
+    return api('POST', '/api/config', {
       tls_mode: config.tls_mode,
       bbox: config.bbox,
-      data_path: config.data_path
+      data_path: config.data_path,
+      scripts_path: '',
+      tls_cert_dir: './tls',
+      tls_port: 443,
+      stt_backend: 'cpu'
     }).catch(function (err) {
-      console.error('Failed to save config:', err);
+      showError('Save config failed: ' + err.message);
+      throw err;
     });
   }
 
   function saveCredentials() {
-    var m2mUser = $('#m2m-username').value.trim();
-    var m2mToken = $('#m2m-token').value.trim();
-    var copId = $('#copernicus-client-id').value.trim();
-    var copSecret = $('#copernicus-client-secret').value.trim();
-
-    // Only save if something was filled in
-    if (!m2mUser && !m2mToken && !copId && !copSecret) return;
-
-    api('POST', '/api/credentials', {
-      m2m_username: m2mUser,
-      m2m_token: m2mToken,
-      copernicus_client_id: copId,
-      copernicus_client_secret: copSecret
+    var m2mU = ($('#m2m-username').value || '').trim();
+    var m2mT = ($('#m2m-token').value || '').trim();
+    var copU = ($('#copernicus-username').value || '').trim();
+    var copP = ($('#copernicus-password').value || '').trim();
+    if (!m2mU && !m2mT && !copU && !copP) {
+      return Promise.resolve({ ok: true, skipped: true });
+    }
+    return api('POST', '/api/credentials', {
+      m2m_username: m2mU, m2m_token: m2mT,
+      copernicus_username: copU, copernicus_password: copP,
     }).catch(function (err) {
-      console.error('Failed to save credentials:', err);
+      showError('Credentials save failed: ' + err.message +
+                ' — is the keyring agent running? Try: sudo systemctl start geographica-keyring');
+      throw err;
     });
   }
 
@@ -556,24 +665,40 @@
         item.appendChild(createEl('span', 'preflight-name', check.label || check.name));
 
         if (check.status === 'ok') {
-          item.appendChild(createEl('span', 'preflight-version', check.version || ''));
+          item.appendChild(createEl('span', 'preflight-version', check.message || ''));
         } else {
           allOk = false;
           item.appendChild(createEl('span', 'preflight-version', check.message || 'Not available'));
-          // Add fix button if dependency is fixable
-          var actionDiv = createEl('div', 'preflight-action');
-          var fixBtn = document.createElement('button');
-          fixBtn.className = 'btn-fix';
-          fixBtn.textContent = 'Install';
-          fixBtn.setAttribute('data-dep', check.name);
-          fixBtn.addEventListener('click', function () {
-            fixDependency(check.name, fixBtn);
-          });
-          actionDiv.appendChild(fixBtn);
-          item.appendChild(actionDiv);
         }
         list.appendChild(item);
       });
+
+      if (!allOk) {
+        var remedyBox = $('#preflight-remedy');
+        if (!remedyBox) {
+          remedyBox = createEl('div', 'preflight-remedy');
+          remedyBox.id = 'preflight-remedy';
+          var preflightList = $('#preflight-list');
+          if (preflightList && preflightList.parentNode) {
+            preflightList.parentNode.insertBefore(remedyBox, preflightList);
+          }
+        }
+        remedyBox.textContent = '';
+        var msg = createEl('div', null,
+          'To install missing dependencies, run this in a terminal:');
+        var pre = createEl('pre', 'remedy-cmd', 'sudo ./bootstrap.sh');
+        var copyBtn = createEl('button', 'btn btn-secondary btn-small', 'Copy');
+        copyBtn.addEventListener('click', function () {
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText('sudo ./bootstrap.sh');
+          }
+          copyBtn.textContent = 'Copied';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 2000);
+        });
+        remedyBox.appendChild(msg);
+        remedyBox.appendChild(pre);
+        remedyBox.appendChild(copyBtn);
+      }
 
       var actionsEl = $('#preflight-actions');
       actionsEl.style.display = '';
@@ -591,25 +716,6 @@
       errItem.appendChild(createEl('span', 'preflight-name', 'Preflight check failed: ' + err.message));
       list.appendChild(errItem);
       $('#preflight-actions').style.display = '';
-    });
-  }
-
-  function fixDependency(depName, btn) {
-    btn.disabled = true;
-    btn.textContent = 'Installing...';
-
-    api('POST', '/api/fix-dependency', { dependency: depName }).then(function (data) {
-      if (data.ok) {
-        btn.textContent = 'Installed';
-        // Re-run preflight after a short delay
-        setTimeout(runPreflightChecks, 500);
-      } else {
-        btn.textContent = 'Failed';
-        btn.disabled = false;
-      }
-    }).catch(function () {
-      btn.textContent = 'Failed';
-      btn.disabled = false;
     });
   }
 
@@ -644,8 +750,10 @@
 
     api('POST', '/api/start', {
       bbox: config.bbox,
-      layers: layers,
-      data_path: config.data_path
+      layers: config.layers,
+      layer_bbox: config.layer_bbox,
+      data_path: config.data_path,
+      base_imagery_zoom: config.base_imagery_zoom,
     }).then(function () {
       connectProgress();
     }).catch(function (err) {
@@ -881,7 +989,7 @@
       $('#launch-actions').style.display = 'none';
       // Build app link
       var proto = config.tls_mode === 'http' ? 'http' : 'https';
-      var host = config.host_ip || location.hostname;
+      var host = location.hostname;
       var port = (config.tls_mode === 'http') ? ':8093' : '';  // HTTPS on 443 (default), HTTP on 8093
       $('#app-link').href = proto + '://' + host + port;
     }
@@ -937,6 +1045,63 @@
         });
       });
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Layer bbox overrides (per-layer "Customize coverage" details)
+  // ---------------------------------------------------------------------------
+  function initLayerBboxOverrides() {
+    $$('.same-as-basemap').forEach(function (cb) {
+      var layer = cb.getAttribute('data-layer');
+      var group = cb.closest('details').querySelector('.custom-bbox-group');
+      cb.addEventListener('change', function () {
+        if (cb.checked) {
+          group.style.display = 'none';
+          // Clear the override so the backend falls back to top-level bbox.
+          delete config.layer_bbox[layer];
+          var inp = group.querySelector('.bbox-override');
+          if (inp) inp.value = '';
+          var hint = group.querySelector('.bbox-hint');
+          if (hint) { hint.textContent = ''; hint.className = 'field-hint bbox-hint'; }
+        } else {
+          group.style.display = '';
+        }
+      });
+    });
+    $$('.bbox-override').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var layer = inp.id.replace('bbox-', '');
+        var hint = document.getElementById('bbox-hint-' + layer);
+        var raw = inp.value.trim();
+        if (!raw) {
+          delete config.layer_bbox[layer];
+          hint.textContent = '';
+          hint.className = 'field-hint bbox-hint';
+          return;
+        }
+        if (!validateBboxString(raw)) {
+          hint.textContent = 'Invalid — use: west,south,east,north';
+          hint.className = 'field-hint bbox-hint error';
+          return;
+        }
+        config.layer_bbox[layer] = raw;
+        hint.textContent = 'OK';
+        hint.className = 'field-hint bbox-hint ok';
+      });
+    });
+  }
+
+  function validateBboxString(s) {
+    var parts = (s || '').split(',');
+    if (parts.length !== 4) return false;
+    var nums = parts.map(function (p) { return parseFloat(p.trim()); });
+    if (nums.some(isNaN)) return false;
+    var w = nums[0], s_ = nums[1], e = nums[2], n = nums[3];
+    if (w < -180 || w > 180 || e < -180 || e > 180) return false;
+    if (s_ < -90 || s_ > 90 || n < -90 || n > 90) return false;
+    if (w >= e) return false;
+    if (s_ >= n) return false;
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -1009,9 +1174,18 @@
       $('#btn-next').disabled = false;
       $('#btn-next').textContent = 'Next';
     });
+    $('#btn-reset-checkpoint').addEventListener('click', function () {
+      if (!confirm('Reset pipeline checkpoint? This will re-run completed steps on the next start.')) return;
+      api('POST', '/api/checkpoint/reset', { data_path: config.data_path })
+        .then(function () { alert('Checkpoint cleared.'); })
+        .catch(function (err) { showError('Reset failed: ' + err.message); });
+    });
 
     // TLS mode change
     $('#tls-mode').addEventListener('change', onTlsModeChange);
+    $('#data-drive').addEventListener('change', onDataDriveChange);
+    $('#data-subpath').addEventListener('input', debouncedValidatePath);
+    $('#data-custom-path').addEventListener('input', debouncedValidatePath);
 
     // Preset change
     $('#preset-select').addEventListener('change', onPresetChange);
@@ -1024,6 +1198,9 @@
 
     // Zoom slider
     initZoomSlider();
+
+    // Layer bbox override handlers
+    initLayerBboxOverrides();
 
     // Tab click handlers (only allow going back, not forward)
     $$('.wizard-tab').forEach(function (tab) {

@@ -1,0 +1,9 @@
+{
+  "name": "geographica-wizard-harness",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}
