@@ -559,9 +559,9 @@ The Pi serves both protocols simultaneously:
 # 1. Provision the certificate (requires root)
 sudo ./scripts/provision_tailscale_tls.sh
 
-# 2. Configure the environment
-echo 'TLS_MODE=tailscale' >> .env
-echo 'TLS_CERT_DIR=/srv/geographica/tls/tailscale' >> .env
+# 2. Configure the environment (idempotent swap: rewrite if present, else append)
+grep -q "^TLS_MODE=" .env && sed -i 's/^TLS_MODE=.*/TLS_MODE=tailscale/' .env || echo 'TLS_MODE=tailscale' >> .env
+grep -q "^TLS_CERT_DIR=" .env && sed -i 's|^TLS_CERT_DIR=.*|TLS_CERT_DIR=/srv/geographica/tls/tailscale|' .env || echo 'TLS_CERT_DIR=/srv/geographica/tls/tailscale' >> .env
 
 # 3. Restart the frontend
 docker compose restart frontend
