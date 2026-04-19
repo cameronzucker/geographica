@@ -170,6 +170,32 @@ if [ "$WIZARD_UP" -eq 0 ]; then
     exit 1
 fi
 
+# Verify every critical runtime Python package is installed in the venv
+# that setup.sh runs uvicorn in. setup/requirements.txt can miss a dep
+# without any visible failure at wizard-load (the failure only fires
+# later — e.g. the 2026-04-19 beta report where `websockets` was
+# missing so /ws/progress handshakes silently failed and the frontend
+# retried forever with no UI feedback). This probe executes inside the
+# wizard's own venv python so it catches exactly the runtime state
+# uvicorn will hit when serving requests.
+echo "[$(date +%H:%M:%S)] Verifying wizard venv has critical runtime deps..."
+WIZARD_VENV_PY=/root/geographica/setup/.venv/bin/python3
+MISSING_DEPS=""
+for dep in websockets fastapi uvicorn httpx; do
+    if ! lxc exec "$CONTAINER" -- "$WIZARD_VENV_PY" -c "import $dep" 2>/dev/null; then
+        MISSING_DEPS="$MISSING_DEPS $dep"
+    fi
+done
+if [ -n "$MISSING_DEPS" ]; then
+    echo "FAIL: wizard venv is missing critical runtime deps:$MISSING_DEPS" >&2
+    echo "--- setup/requirements.txt in container ---" >&2
+    lxc exec "$CONTAINER" -- cat /root/geographica/setup/requirements.txt 2>&1 | head -10 >&2
+    echo "--- pip list in venv ---" >&2
+    lxc exec "$CONTAINER" -- "$WIZARD_VENV_PY" -m pip list 2>/dev/null | head -30 >&2
+    exit 1
+fi
+echo "[$(date +%H:%M:%S)]   all critical deps importable in venv"
+
 echo "[$(date +%H:%M:%S)] Driving wizard (mode=$MODE)..."
 RC=0
 node "$(dirname "$0")/drive-wizard.mjs" --"$MODE" --url="$WIZARD_URL" || RC=$?

@@ -1,4 +1,12 @@
 fastapi>=0.115.0
 uvicorn>=0.32.0
+# Required by FastAPI's @app.websocket endpoint (setup/main.py:588 /ws/progress).
+# Without this, uvicorn's 'auto' websocket protocol resolves to nothing and
+# every client handshake fails — the wizard's progress stream never connects.
+# The frontend retries silently forever (setup.js:802 connectProgress) with
+# NO UI feedback, so the beta tester sees "pipeline starting" and then an
+# apparently frozen wizard while the background logs fill with handshake
+# errors. Regression-guarded by tests/test_setup_requirements_websockets.py.
+websockets>=12.0
 httpx>=0.27.0
 pytest-asyncio>=0.23

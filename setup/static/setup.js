@@ -784,10 +784,32 @@
     });
   }
 
+  // Silent retry history. If every reconnect in the last THRESHOLD
+  // attempts has failed to even open (onclose fired before onopen), the
+  // wizard is broken — almost always because `websockets` isn't in the
+  // setup venv or the endpoint doesn't exist. Surface this to the user
+  // as a banner so the pipeline appearing to freeze turns into actionable
+  // text, not silent infinite retries.
+  var wsConsecutiveFailures = 0;
+  var wsShownStuckBanner = false;
+  var WS_STUCK_THRESHOLD = 3;
+
   function connectProgress() {
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws/progress';
     ws = new WebSocket(url);
+    var opened = false;
+
+    ws.onopen = function () {
+      opened = true;
+      wsConsecutiveFailures = 0;
+      if (wsShownStuckBanner) {
+        // Clear the "stuck" banner if we recover.
+        var b = document.getElementById('global-error-banner');
+        if (b) b.style.display = 'none';
+        wsShownStuckBanner = false;
+      }
+    };
 
     ws.onmessage = function (e) {
       var event;
@@ -800,12 +822,26 @@
     };
 
     ws.onclose = function () {
-      // Reconnect after 2 seconds
+      if (!opened) {
+        wsConsecutiveFailures += 1;
+      }
+      if (wsConsecutiveFailures >= WS_STUCK_THRESHOLD && !wsShownStuckBanner) {
+        wsShownStuckBanner = true;
+        showError(
+          'Progress stream is not connecting (' + wsConsecutiveFailures +
+          ' consecutive failures). The pipeline may still be running in ' +
+          'the background, but this wizard can\'t show updates. Most ' +
+          'commonly this means the `websockets` Python package is ' +
+          'missing from setup/.venv — check setup.sh logs and re-run ' +
+          '`./setup.sh` to reinstall requirements.'
+        );
+      }
+      // Reconnect after 2 seconds (the banner above stays up until onopen clears it).
       setTimeout(connectProgress, 2000);
     };
 
     ws.onerror = function () {
-      // Will trigger onclose
+      // Will trigger onclose.
     };
   }
 
