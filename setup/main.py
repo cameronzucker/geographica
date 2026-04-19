@@ -127,10 +127,13 @@ class BboxRequest(BaseModel):
 
 
 class ConfigRequest(BaseModel):
-    host_ip: str
     tls_mode: str
     bbox: str
     data_path: str
+    scripts_path: str = ""
+    tls_cert_dir: str = "./tls"
+    tls_port: int = 443
+    stt_backend: str = "cpu"
 
 
 class CredentialsRequest(BaseModel):
@@ -286,14 +289,18 @@ async def post_config(body: ConfigRequest):
     """Generate and write .env file."""
     if not validate_bbox(body.bbox):
         raise HTTPException(status_code=400, detail="Invalid bbox")
+    scripts_path = body.scripts_path or str(Path(__file__).parent.parent / "scripts")
     ram_mb = detect_ram_mb()
     ram_profile = get_ram_profile(ram_mb)
     env_content = generate_env(
-        host_ip=body.host_ip,
         tls_mode=body.tls_mode,
-        ram_profile=ram_profile,
         bbox=body.bbox,
         data_path=body.data_path,
+        scripts_path=scripts_path,
+        ram_profile=ram_profile,
+        tls_cert_dir=body.tls_cert_dir,
+        tls_port=body.tls_port,
+        stt_backend=body.stt_backend,
     )
     Path(ENV_PATH).write_text(env_content)
     return {"ok": True}

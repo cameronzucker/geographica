@@ -122,8 +122,7 @@ class TestConfigEndpoint:
         env_path = tmp_path / ".env"
         monkeypatch.setattr("setup.main.ENV_PATH", str(env_path))
         resp = self.client.post("/api/config", json={
-            "host_ip": "10.0.0.1",
-            "tls_mode": "none",
+            "tls_mode": "http",
             "bbox": "-114.8,31.3,-109.0,37.0",
             "data_path": "/srv/geographica/data",
         }, headers=self.headers)
@@ -131,13 +130,12 @@ class TestConfigEndpoint:
         assert resp.json()["ok"] is True
         assert env_path.exists()
         content = env_path.read_text()
-        assert "HOST_IP=10.0.0.1" in content
+        assert "DATA_HOST_PATH=/srv/geographica/data" in content
 
     def test_config_rejects_invalid_bbox(self, tmp_path, monkeypatch):
         env_path = tmp_path / ".env"
         monkeypatch.setattr("setup.main.ENV_PATH", str(env_path))
         resp = self.client.post("/api/config", json={
-            "host_ip": "10.0.0.1",
             "tls_mode": "none",
             "bbox": "not-a-bbox",
             "data_path": "/srv/geographica/data",
