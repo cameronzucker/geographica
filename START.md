@@ -25,6 +25,45 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## What to work on next
 
+**Recently completed (2026-04-21 beta-triage marathon — main HEAD `3ba8885`):**
+
+15+ bug fixes shipped in response to a stream of beta-tester screenshots.
+Every one was a different class — docker-buildx conflict, websockets
+missing from setup venv, corrupt PBF detection, CSRF token staleness,
+trailing-slash paths, log-output `undefined` spam, planetiler
+`--download` missing, osmium 1.18 flag incompatibility, btn-next stale
+text, state-coverage bbox handling (both the "downloads all 11 states
+for Phoenix" bug AND the "11 western only, breaks elsewhere" bug it
+created), and pipeline scripts invoking bare `python3` from the setup
+venv. Full commit-by-commit rundown + invariants + next-session
+priorities in [handoff_20260421_beta_triage_marathon](../memory/handoff_20260421_beta_triage_marathon.md).
+
+**In parallel at shutdown:** a separate session is implementing the
+exploratory-agent harness per [docs/superpowers/plans/2026-04-20-exploratory-agent-harness.md](docs/superpowers/plans/2026-04-20-exploratory-agent-harness.md).
+Tasks 1-9 landed (commits `e8eb158`..`fa17eca`). Task 10 (first real
+agent run + findings evidence + README) remains — requires
+`ANTHROPIC_API_KEY` on the Pi runner. When resuming, first verify the
+parallel session's state before restarting it.
+
+**Regression invariants to NOT break** (all have tests):
+- `setup/runner.py` pipeline scripts MUST use `/usr/bin/python3` (not bare `python3`).
+- `STATE_BBOXES` MUST have ≥49 entries (48 contiguous US states + DC).
+- `_states_intersecting` MUST return empty list (not fallback-to-all) for unsupported bboxes; `/api/start` returns 400 with supported regions listed.
+- `setup/requirements.txt` MUST pin `websockets>=12.0`.
+- Preflight `python-pipeline-deps` MUST shell to `/usr/bin/python3`.
+- CSRF_TOKEN MUST be loaded from `/run/geographica-setup/csrf-token` when present.
+
+**Next-session priorities:**
+1. Verify parallel exploratory-agent session completed Task 10 (check `git log origin/main`).
+2. Trigger one nightly `--exploratory` run manually to dogfood end-to-end.
+3. Review first findings file; convert real bugs to scripted assertions.
+4. Audit harness for today's exposed gaps — multi-step pipeline coverage, runtime bash-script verification against fixtures, seed-list updates for exploratory-agent.
+
+---
+
+**⏸ Paused mid-session (2026-04-19 NIGHT) — resume when rested:**
+- **NOAA NAIP CONUS expansion — brainstorm paused at Section 3.** Cameron asked for NOAA NAIP (currently AZ-only at [scripts/acquire_imagery.py:88](scripts/acquire_imagery.py#L88)) to become a core competency across all ~48 CONUS states. Brainstorm ran through 9 locked design decisions (UX Option B with Whole state/Custom area tabs, shared top-map hides-by-default architecture, Azure blob listing API for catalog discovery, C+D catalog mechanism, bbox auto-spans intersecting states, no year picker, Nominatim place-names). **Section 3 (pipeline architecture) was presented but not yet Cameron-approved.** Full state + resume instructions in [handoff_20260419_noaa_conus_brainstorm](../memory/handoff_20260419_noaa_conus_brainstorm.md). Visual companion mockups preserved at `.superpowers/brainstorm/869511-1776625800/`. **No code written yet.** Cameron cited 12-hour-day fatigue; default to shorter sessions when resuming.
+
 **Recently completed (2026-04-19 EVE):**
 - **GX-01 v2 HAT exploration — full scripted-PCB pipeline stress test.** Designed a 2-board respin (main HAT + separate Front Panel Board) via `superpowers:brainstorming`, then took both boards end-to-end through circuit→layout→autoroute→DRC→Gerbers→BOM→CPL→JLC designer. Both boards pass JLC designer pre-flight as of this session; not fabbed (experimental, waiting on X1100 + LCD dimensions). **Four skill-friction classes surfaced and documented**, with three fixes landed in-session: (1) rotation-correction DB wired into `make_jlc_bundle.py` using the community `cpl_rotations_db.csv`; (2) `connect_pad` helper fixed to handle footprints with duplicate pad numbers (tactile switches, coin cell holders) — previously left half the pads unnetted; (3) JLC PCBA-library verification now uses the correct API endpoint (LCSC bulk catalog ≠ JLC assembly library). Full handoff: [handoff_20260419_gx01_v2_exploration](../memory/handoff_20260419_gx01_v2_exploration.md). Artifacts: [hardware/gx01-adapter-v2/](hardware/gx01-adapter-v2/) + [hardware/gx01-front-panel/](hardware/gx01-front-panel/).
 
