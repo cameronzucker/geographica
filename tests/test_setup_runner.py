@@ -417,3 +417,20 @@ class TestCommandBuilders:
         ctx["layer_bbox"]["base_imagery"] = "-112,33,-110,34"
         cmd = base_imagery_cmd(ctx)
         assert cmd[cmd.index("--bbox") + 1] == "-112,33,-110,34"
+
+
+class TestShutdownKillsGrandchildren:
+    def test_run_command_uses_start_new_session(self):
+        from setup import runner
+        import inspect
+        src = inspect.getsource(runner.run_command)
+        assert "start_new_session=True" in src, (
+            "run_command must spawn with start_new_session=True so shutdown "
+            "can os.killpg the whole group (B17)"
+        )
+
+    def test_shutdown_children_uses_killpg(self):
+        from setup import runner
+        import inspect
+        src = inspect.getsource(runner.shutdown_children)
+        assert "killpg" in src

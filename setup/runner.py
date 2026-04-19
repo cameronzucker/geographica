@@ -127,6 +127,7 @@ async def run_command(
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
         env=env,
+        start_new_session=True,
     )
     _active_processes.append(proc)
 
@@ -151,12 +152,23 @@ async def run_command(
 
 
 def shutdown_children() -> None:
-    """Send SIGTERM to all active child processes."""
+    """Best-effort: send SIGTERM to each active child's process group.
+
+    Using start_new_session=True on create_subprocess_exec means each child
+    owns its own process group; killpg propagates SIGTERM to grandchildren too.
+    Falls back to per-process kill if killpg fails (e.g. already reaped).
+    """
     for proc in list(_active_processes):
+        if proc.returncode is not None:
+            continue
         try:
-            proc.send_signal(signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.send_signal(signal.SIGTERM)
+            except ProcessLookupError:
+                pass
 
 
 # ---------------------------------------------------------------------------
