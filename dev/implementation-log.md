@@ -37,6 +37,107 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-19 EVE — Trixie docker file-conflict: fix + pre-state harness
+
+**Released as:** fix on `dev` (commit `59f00b5`); matrix landing with this commit.
+**Plan / spec:** none — single-session debug + fix.
+**Bug hunts:** none — the three 2026-04-18 setup hunts missed this (see "Why internal missed it" below).
+**Adversarial reviews:** none.
+
+### Summary
+Every beta tester on Raspberry Pi OS Trixie with any prior Docker
+attempt (`apt install docker.io`, `get.docker.com`, or `apt
+full-upgrade` with docker.io on it) was hard-blocked at `./bootstrap.sh`
+with a dpkg file-conflict. Debian 13 Trixie started shipping native
+`docker-buildx` (0.13.1+ds1-3) and `docker-compose` (2.26.1-4) packages
+that physically own the same paths as Docker's official
+`docker-buildx-plugin` / `docker-compose-plugin`
+(`/usr/libexec/docker/cli-plugins/docker-{buildx,compose}`); neither
+side declares `Replaces`, so if either Debian package was installed,
+our `apt install docker-ce ... docker-compose-plugin` aborted
+mid-unpack. Observed tester looped bootstrap 16× before giving up
+(docs/123_1 (6).jpeg). `apt --fix-broken install` couldn't help:
+it only resolves dependency issues, not filesystem overwrites.
+
+Fixed in `fix(setup)` 59f00b5: bootstrap now runs Docker's official
+"Uninstall old versions" prerequisite step before the docker-ce
+install. Idempotent (no-op on clean systems) so the internal dev
+Pi and the LXD harness stay green.
+
+Post-fix, built `dev/harness/bootstrap-matrix.sh` — an apt-level
+pre-state matrix that runs bootstrap's `[1/6]` block in ephemeral
+Debian 13 Docker containers against realistic customer starting
+states (clean / `debian-docker-buildx` / `docker-io` /
+`get-docker-com`). Fails CI if any pre-state regresses.
+
+### Key decisions
+
+- **Use `apt remove`, not `apt purge`.** Removing Debian's docker.io
+  is the minimum needed to unblock docker-ce install; purging would
+  wipe `/etc/docker/` and any user-created configs. `apt remove`
+  leaves packages in `deinstall ok config-files` state, which
+  satisfies dpkg's path-ownership constraint (binaries gone). The
+  matrix's post-condition check had to handle this subtlety —
+  `dpkg -s <pkg>` returns 0 for both "install ok installed" AND
+  "deinstall ok config-files"; only the former is a regression.
+
+- **Docker-based matrix, not LXD-based.** LXD is the right tool for
+  the full wizard E2E (it exercises systemd + ports + Playwright).
+  For apt/dpkg state verification, Docker containers start in ~1 s
+  vs. LXD's ~15 s and don't require a bridge + NAT config. All four
+  pre-states complete in ~10 min in Docker. Fewer moving parts =
+  fewer CI flakes. The LXD harness (`wizard-ci.sh`) still owns the
+  full wizard path.
+
+- **Extract bootstrap slice via awk, not by copying or flag-gating.**
+  The matrix runs the real `bootstrap.sh` source (no duplicated
+  code; no test-mode flag on bootstrap itself). awk extracts the
+  `[1/6] ... [2/6]` range at runtime. If the banner format ever
+  changes, the matrix fails fast with a clear error.
+
+### Notable bugs caught
+
+- Beta-tester blocker (dpkg file conflict) → caught by the user
+  uploading `docs/123_1 (5).jpeg` + `(6).jpeg` from the latest
+  beta round → fixed in `fix(setup)` 59f00b5.
+- Matrix post-condition false-positive: `dpkg -s docker.io`
+  returns 0 for `deinstall ok config-files` too → caught by the
+  `docker-io` pre-state failing in matrix runtime → fixed in the
+  same commit as the matrix landing.
+
+### Why internal missed it
+
+Five independent reasons the signal was a false negative — saved
+in memory as `feedback_test_harness_mirror_reality.md`:
+
+1. **Internal dev Pi is a cherry-picked environment.** `dpkg -l
+   docker-buildx docker-compose` → both "not installed" on our Pi.
+2. **LXD harness uses `images:debian/trixie/cloud`.** Minimal cloud
+   image, zero preinstalled Docker packages → our happy-path test
+   never sees the conflict.
+3. **Harness only exercised one starting state.** No pre-state
+   matrix before today.
+4. **Setup-remediation plan had a structural blind spot.** 4950 lines,
+   50 tasks, zero mentions of `docker-buildx`, `purge`, or
+   `file conflict`. Plan assumed a clean target.
+5. **Bug hunts were static.** All three 2026-04-18 setup hunts read
+   bootstrap.sh as source code; none ran it against a customer-like
+   starting state.
+
+### Commits
+
+- `59f00b5 fix(setup): purge Debian-native docker packages before docker-ce install` — TDD: failing test + fix + end-to-end Docker verification that without the fix the beta error reproduces and with it bootstrap completes clean.
+- (this commit) `test(harness): bootstrap pre-state matrix (Trixie docker conflict regression guard)` — `dev/harness/bootstrap-matrix.sh`, 4 pre-states, 8 canary pytests, README update.
+
+### Outcome
+
+- `fix(setup)` landed on `dev` and pushed to `origin/dev` so beta testers could `git pull && sudo ./bootstrap.sh` immediately for weekend-availability testing.
+- 12/12 unit tests on the fix + matrix passing.
+- Full 4-pre-state Docker matrix: 4/4 PASS in 605 s end-to-end.
+- Follow-up queued: Tier 2 full-wizard LXD matrix (`wizard-ci.sh --pre-state=NAME`), currently blocked by LXD bridge being DOWN + NAT flushed by Docker on this host; needs a host networking fix before wiring up.
+
+---
+
 ## 2026-04-19 PM — TileServer auto-restart on clean pipeline completion
 
 **Released as:** not yet released (on `dev`, pending merge)
