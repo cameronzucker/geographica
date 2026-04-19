@@ -636,3 +636,32 @@ def test_broadcast_uses_gather_with_timeout():
     src = inspect.getsource(mod.broadcast)
     assert "asyncio.gather" in src
     assert "wait_for" in src or "timeout" in src.lower()
+
+
+def test_pipeline_error_broadcast_includes_step_and_stderr(tmp_path, monkeypatch):
+    import shutil
+    from setup import main as mod
+    events = []
+    async def capture(evt):
+        events.append(evt)
+    monkeypatch.setattr(mod, "broadcast", capture)
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda p: shutil._ntuple_diskusage(100*1024**3, 10*1024**3, 90*1024**3))
+
+    async def failing_run(args, cwd, on_output, env_extra=None):
+        on_output("stderr", b"boom stack trace line 1\nline 2\n")
+        return 1
+
+    monkeypatch.setattr(mod, "run_command", failing_run)
+    body = mod.StartRequest(
+        bbox="-114.8,31.3,-109.0,37.0",
+        layers={"basemap": "download"},
+        data_path=str(tmp_path),
+    )
+    import asyncio as _a
+    _a.run(mod._run_pipeline(body))
+    errors = [e for e in events if e.get("type") == "error"]
+    assert errors
+    e = errors[0]
+    assert "step" in e
+    assert "boom" in (e.get("message") or "")

@@ -61,3 +61,9 @@ def test_js_validates_layer_bbox_overrides():
     text = JS.read_text()
     # must reference the per-layer bbox inputs
     assert "bbox-override" in text or "bbox-basemap" in text
+
+
+def test_error_shown_in_main_panel_not_only_log():
+    text = JS.read_text()
+    assert "showPipelineError" in text
+    assert "#error-actions" in text
