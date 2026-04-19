@@ -722,3 +722,39 @@ def test_pipeline_error_broadcast_includes_step_and_stderr(tmp_path, monkeypatch
     e = errors[0]
     assert "step" in e
     assert "boom" in (e.get("message") or "")
+
+
+class TestPreflightCoversAllDeps:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.client = TestClient(app)
+
+    def test_preflight_includes_tippecanoe(self):
+        resp = self.client.get("/api/preflight")
+        names = [c["name"] for c in resp.json()["checks"]]
+        assert "tippecanoe" in names
+
+    def test_preflight_includes_pipeline_python_deps(self):
+        resp = self.client.get("/api/preflight")
+        names = [c["name"] for c in resp.json()["checks"]]
+        assert "python-pipeline-deps" in names
+
+    def test_preflight_includes_keyring_agent(self):
+        resp = self.client.get("/api/preflight")
+        names = [c["name"] for c in resp.json()["checks"]]
+        assert "keyring-agent" in names
+
+    def test_preflight_includes_cgroup_memory(self):
+        resp = self.client.get("/api/preflight")
+        names = [c["name"] for c in resp.json()["checks"]]
+        assert "cgroup-memory" in names
+
+    def test_preflight_includes_openssl(self):
+        resp = self.client.get("/api/preflight")
+        names = [c["name"] for c in resp.json()["checks"]]
+        assert "openssl" in names
+
+    def test_every_check_has_fix_hint(self):
+        from setup.main import PREFLIGHT_CHECKS
+        for entry in PREFLIGHT_CHECKS:
+            assert "fix_hint" in entry, f"{entry.get('name','?')} missing fix_hint"

@@ -7,6 +7,7 @@ import json
 import os
 import signal
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -34,6 +35,57 @@ from setup.pipeline_steps import ALL_PIPELINE_STEPS, filter_active_steps
 # CSRF token — generated once at startup
 CSRF_TOKEN = secrets.token_hex(32)
 
+# ---------------------------------------------------------------------------
+# Preflight helper functions
+# ---------------------------------------------------------------------------
+
+def _check_python_pipeline_deps() -> dict:
+    """Verify rasterio/shapely/scipy/numpy importable."""
+    missing = []
+    for pkg in ("rasterio", "shapely", "scipy", "numpy"):
+        try:
+            __import__(pkg)
+        except ImportError:
+            missing.append(pkg)
+    if missing:
+        return {"status": "missing", "message": f"Missing: {', '.join(missing)}",
+                "fix_hint": "Run: sudo ./bootstrap.sh (installs scripts/requirements.txt)"}
+    return {"status": "ok", "message": "rasterio, shapely, scipy, numpy all importable"}
+
+
+async def _check_keyring_socket() -> dict:
+    """Verify keyring agent responds on Unix socket."""
+    try:
+        reader, writer = await asyncio.open_unix_connection("/run/geographica/keyring.sock")
+        writer.write(b'{"action":"ping"}\n')
+        await writer.drain()
+        await asyncio.wait_for(reader.readline(), timeout=2.0)
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except (ConnectionResetError, BrokenPipeError, OSError):
+            pass
+        return {"status": "ok", "message": "keyring agent responsive"}
+    except Exception as e:
+        return {"status": "error", "message": f"Keyring unreachable: {e}",
+                "fix_hint": "Run: sudo systemctl start geographica-keyring"}
+
+
+def _check_cgroup_memory() -> dict:
+    """Verify Docker has cgroup memory limit support."""
+    try:
+        proc = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=5)
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        if "No memory limit support" in combined or "WARNING: No memory limit support" in combined:
+            return {"status": "error",
+                    "message": "Docker cgroup memory support disabled",
+                    "fix_hint": "Run: sudo ./bootstrap.sh then reboot (edits /boot/firmware/cmdline.txt)"}
+        return {"status": "ok", "message": "cgroup memory limits supported"}
+    except Exception as e:
+        return {"status": "error", "message": f"docker info failed: {e}",
+                "fix_hint": "Verify Docker is running: sudo systemctl start docker"}
+
+
 # FIX_REGISTRY — ONLY these dependencies can be "fixed" via the API.
 # Each entry maps a dependency name to the exact command (as a list of strings)
 # that will be executed. NEVER shell=True, NEVER accept user strings.
@@ -51,15 +103,37 @@ FIX_REGISTRY: dict[str, list[str]] = {
 
 # Preflight dependency checks — command to run and what constitutes success
 PREFLIGHT_CHECKS: list[dict] = [
-    {"name": "docker", "check_cmd": ["docker", "--version"], "label": "Docker"},
-    {"name": "docker-compose", "check_cmd": ["docker", "compose", "version"], "label": "Docker Compose"},
-    {"name": "python3", "check_cmd": ["python3", "--version"], "label": "Python 3"},
-    {"name": "gdal-bin", "check_cmd": ["gdalinfo", "--version"], "label": "GDAL"},
-    {"name": "osmium-tool", "check_cmd": ["osmium", "--version"], "label": "Osmium Tool"},
-    {"name": "gpsd", "check_cmd": ["gpsd", "-V"], "label": "GPSD"},
-    {"name": "wget", "check_cmd": ["wget", "--version"], "label": "wget"},
-    {"name": "curl", "check_cmd": ["curl", "--version"], "label": "curl"},
-    {"name": "git", "check_cmd": ["git", "--version"], "label": "Git"},
+    {"name": "docker", "check_cmd": ["docker", "--version"], "label": "Docker",
+     "fix_hint": "Run: sudo ./bootstrap.sh (installs docker-ce)"},
+    {"name": "docker-compose", "check_cmd": ["docker", "compose", "version"], "label": "Docker Compose",
+     "fix_hint": "Run: sudo ./bootstrap.sh (installs docker-compose-plugin)"},
+    {"name": "python3", "check_cmd": ["python3", "--version"], "label": "Python 3",
+     "fix_hint": "Run: sudo ./bootstrap.sh"},
+    {"name": "gdal-bin", "check_cmd": ["gdalinfo", "--version"], "label": "GDAL",
+     "fix_hint": "Run: sudo ./bootstrap.sh (installs gdal-bin)"},
+    {"name": "osmium-tool", "check_cmd": ["osmium", "--version"], "label": "Osmium Tool",
+     "fix_hint": "Run: sudo ./bootstrap.sh (installs osmium-tool)"},
+    {"name": "gpsd", "check_cmd": ["gpsd", "-V"], "label": "GPSD",
+     "fix_hint": "Run: sudo ./bootstrap.sh"},
+    {"name": "wget", "check_cmd": ["wget", "--version"], "label": "wget",
+     "fix_hint": "Run: sudo ./bootstrap.sh"},
+    {"name": "curl", "check_cmd": ["curl", "--version"], "label": "curl",
+     "fix_hint": "Run: sudo ./bootstrap.sh"},
+    {"name": "git", "check_cmd": ["git", "--version"], "label": "Git",
+     "fix_hint": "Run: sudo ./bootstrap.sh"},
+    {"name": "tippecanoe", "check_cmd": ["tippecanoe", "--version"], "label": "Tippecanoe",
+     "fix_hint": "Run: sudo ./bootstrap.sh (installs tippecanoe 2.79.0 from GitHub Release)"},
+    {"name": "openssl", "check_cmd": ["openssl", "version"], "label": "OpenSSL",
+     "fix_hint": "Run: sudo ./bootstrap.sh"},
+    {"name": "python-pipeline-deps", "label": "Python pipeline deps (rasterio/shapely/scipy/numpy)",
+     "check_fn": _check_python_pipeline_deps,
+     "fix_hint": "Run: sudo ./bootstrap.sh (installs scripts/requirements.txt)"},
+    {"name": "keyring-agent", "label": "Keyring agent (credential storage)",
+     "check_fn": _check_keyring_socket,
+     "fix_hint": "Run: sudo systemctl start geographica-keyring"},
+    {"name": "cgroup-memory", "label": "Docker cgroup memory support",
+     "check_fn": _check_cgroup_memory,
+     "fix_hint": "Run: sudo ./bootstrap.sh then reboot"},
 ]
 
 # Keyring agent Unix socket — installed by bootstrap's keyring-agent step
@@ -221,34 +295,43 @@ async def post_validate_path(body: PathRequest):
 @app.get("/api/preflight")
 async def get_preflight():
     """Run preflight dependency checks."""
-    checks = []
+    results = []
     for entry in PREFLIGHT_CHECKS:
-        check_result = {"name": entry["name"], "label": entry["label"]}
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *entry["check_cmd"],
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await proc.communicate()
-            if proc.returncode == 0:
-                version_text = stdout.decode("utf-8", errors="replace").strip()
-                if not version_text:
-                    version_text = stderr.decode("utf-8", errors="replace").strip()
-                version_line = version_text.split("\n")[0] if version_text else ""
-                check_result["status"] = "ok"
-                check_result["version"] = version_line
+        name = entry["name"]
+        label = entry.get("label", name)
+        fix_hint = entry.get("fix_hint", "")
+        if "check_fn" in entry:
+            fn = entry["check_fn"]
+            if asyncio.iscoroutinefunction(fn):
+                check_result = await fn()
             else:
-                check_result["status"] = "error"
-                check_result["message"] = "Command returned non-zero exit code"
-        except FileNotFoundError:
-            check_result["status"] = "missing"
-            check_result["message"] = f"{entry['name']} is not installed"
-        except Exception as e:
-            check_result["status"] = "error"
-            check_result["message"] = str(e)
-        checks.append(check_result)
-    return {"checks": checks}
+                check_result = fn()
+        else:
+            cmd = entry["check_cmd"]
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                if proc.returncode == 0:
+                    first_line = (proc.stdout or proc.stderr).strip().splitlines()[0:1]
+                    msg = first_line[0] if first_line else "ok"
+                    check_result = {"status": "ok", "message": msg}
+                else:
+                    check_result = {"status": "missing",
+                                    "message": (proc.stderr or proc.stdout or "").strip()[:200]}
+            except FileNotFoundError:
+                check_result = {"status": "missing", "message": f"{cmd[0]} not on PATH"}
+            except subprocess.TimeoutExpired:
+                check_result = {"status": "error", "message": "timeout"}
+            except Exception as e:
+                check_result = {"status": "error", "message": str(e)[:200]}
+        result = {
+            "name": name,
+            "label": label,
+            "status": check_result.get("status", "error"),
+            "message": check_result.get("message", ""),
+            "fix_hint": check_result.get("fix_hint", fix_hint),
+        }
+        results.append(result)
+    return {"checks": results}
 
 
 @app.post("/api/fix-dependency")
