@@ -7,6 +7,13 @@ project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries
 from v1.1.0 onward are generated automatically by `release-please` from
 Conventional Commits.
 
+## [1.5.1](https://github.com/cameronzucker/geographica/compare/v1.5.0...v1.5.1) (2026-04-19)
+
+
+### Bug Fixes
+
+* **setup:** drop fileinfo from download step; fix merge error for osmium 1.18; refresh btn-next text ([8a62b78](https://github.com/cameronzucker/geographica/commit/8a62b78bc47e3606aaa949637c2fe8e868fa2bde))
+
 ## [1.5.0](https://github.com/cameronzucker/geographica/compare/v1.4.0...v1.5.0) (2026-04-19)
 
 
