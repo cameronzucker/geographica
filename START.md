@@ -25,7 +25,11 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## What to work on next
 
-**Recently completed (2026-04-19):**
+**Recently completed (2026-04-19 PM):**
+- **TileServer handoff fix (2026-04-17 B1 closed).** Pipelines now correctly trigger TileServer restart on clean completion — map auto-updates without manual reload. Widened reconciliation guard in `services/search/main.py` + new `tileserver_restarted_at` idempotency stamp. TDD (5 new tests), runtime-validated against the stuck Phoenix NOAA run. See [handoff](../memory/handoff_20260419_tileserver_handoff_fix.md) — commit `f6f7365`. Self-healed both Phoenix `imagery_noaa.mbtiles` + a stuck `elevation.mbtiles` state as a side effect.
+- **Setup-remediation plan COMPLETE.** All 50 tasks shipped (57 commits on `dev`). 779 → 784 tests passing. 6 ship-blockers caught by 3-agent review. Pending merge to `main` + docker-ce swap + reboot to land cgroup memory flag. See handoff `handoff_20260419_setup_remediation_complete.md`.
+
+**Recently completed (2026-04-19 AM):**
 - **GX-01 adapter HAT — JLC bundle correctness + Path C deferral.** Three iterative rounds with the JLCPCB 3D preview surfaced CPL coordinate bugs (Y-flip + pad-anchor-vs-center), 4 LCSC physical-dimension mismatches, and a mechanical clearance issue with the adapter HAT in the current case. All CPL/LCSC issues fixed; mechanical design (Path A taller case vs. Path C sandwich) formally paused pending X1100 + LCD arrival. See [hardware/gx01-path-c-mockup.html](hardware/gx01-path-c-mockup.html) + [docs/superpowers/plans/2026-04-18-gx-01-pcb-completion.md](docs/superpowers/plans/2026-04-18-gx-01-pcb-completion.md) (Status block at top).
 - **Hardware workflow captured as user-level skills** at `~/.claude/skills/`:
   - `jlc-pcba` — triggered by JLCPCB PCBA submission tasks, CPL generation, LCSC part verification. Catches the three pitfall classes from this session (CPL geometry, LCSC physical mismatch, 3D preview interpretation).
@@ -82,23 +86,33 @@ The browser mockup at [hardware/gx01-path-c-mockup.html](hardware/gx01-path-c-mo
 3. In parallel: start Plan 1 Phases 0-4 (status LCD daemon TDD; no hardware needed).
 4. Once Plan 1 Phase 2 KS0108B driver is solid + X1100 is verified + Path decision made: order PCB (Plan 3 Phase 1) and BOM (Plan 3 Phase 2).
 
-### 1. NOAA Pipeline Remediation — ship to main (BLOCKED on production pipeline finishing)
+### 1. Merge `dev` → `main` (UNBLOCKED — runtime validation done)
 
-13 bug fixes + 3 design decisions committed on `dev` (not yet on `main`) from the 2026-04-18 fresh bug-hunt cycle. Reports at [dev/bug-hunts/2026-04-18-noaa-imagery-pipeline-consolidated.md](dev/bug-hunts/2026-04-18-noaa-imagery-pipeline-consolidated.md). Plan at [dev/plans/2026-04-18-noaa-imagery-pipeline-remediation-plan.md](dev/plans/2026-04-18-noaa-imagery-pipeline-remediation-plan.md). Narrative log at [dev/implementation-log.md](dev/implementation-log.md) (2026-04-18 NOAA remediation entry).
+`dev` is now ~60 commits ahead of `origin/dev` (not pushed). Includes:
+- 13 NOAA-pipeline remediation commits (2026-04-18 bug hunt)
+- 57 setup-remediation commits (all 50 tasks)
+- TileServer handoff fix `f6f7365` (just runtime-validated)
+- Task 42 test-isolation fixup `a2cf6dc` (prevents pytest from hijacking `./data` symlink)
+- Docker keyring guard broadening `8608b6d`
 
-**Status:** all 13 commits on `dev`, 624 tests passing (0 regressions), but **not yet on `main`** — deferred pending runtime validation. Production NOAA pipeline (~494-quad run started 2026-04-17) is currently running and will finish ~2026-04-19; blocks the Pi from running a validation bbox.
+**Status:** 784 tests passing (up from 624 baseline at start of April 18); same 2 pre-existing M2M failures; 18 pre-existing env errors (need Nominatim up).
 
-**Resume steps when you come back:**
-1. Confirm production pipeline finished cleanly (check admin panel / TileServer status)
-2. Run `python -m pytest tests/ services/search/tests/ -v` — expect **624 pass, 2 pre-existing M2M fails, 9 pre-existing OSM POI errors**
-3. Validate new code on a small bbox (Flagstaff `-112.0,35.1,-111.5,35.4`, ~10 quads). Verify: pipeline completes, tiles render at all zooms, cancel mid-Phase-5 is honored, resume run doesn't re-erode
-4. If validation passes: `git switch main && git merge --ff-only dev && git push origin main` — Release PR #2 auto-updates with the 13 new fixes
-5. If validation reveals an issue: identify the specific task → `git revert <sha>` on dev → iterate
-6. After v1.1.0 ships, revisit B6 + B8 with visual-regression tests
+**Resume steps:**
+1. `git push origin dev` first (60-commit backlog)
+2. Optional: one more small-bbox NOAA validation run to confirm the B1→B16 fixes hold at runtime — Flagstaff `-112.0,35.1,-111.5,35.4` (~10 quads, ~10 min)
+3. `git switch main && git merge --ff-only dev && git push origin main`
+4. Release PR auto-updates; tag `v1.2.0` when ready
+5. After merge, queue the known follow-ups below
 
 **Deferred for follow-up (documented in the plan's appendix):**
 - **B6** (`merge_mbtiles` re-composites every overlap) and **B8** (erosion-after-overview order) — Chesterton's Fence: both touch code added by commits `e7e3b32` and `1bab361` specifically to fix user-observed artifacts. Need visual-regression testing before the hunter-proposed fixes land. Likely candidates for the v1.2.0 cycle.
 - **D4** (two-progress-writer consolidation), **D5** (4-script `fetch_*` consolidation), **D6** (`_noaa_checkpoint` sidecar JSON) — scope; cleanup passes for later.
+
+**New follow-ups from 2026-04-19 PM TileServer handoff fix (all small, high-leverage):**
+- **NAIP/Sentinel state-file misnaming (B2 from completion bug hunt):** scripts write to `.pipeline-state.json` instead of `.naip-state.json`/`.sentinel-state.json`. Admin reads the type-specific file → NAIP runs look "interrupted" forever.
+- **NAIP/Sentinel never register in TileServer config (B3):** `acquire_naip.py` and `acquire_sentinel.py` never call `add_mbtiles_to_config`. Even a perfect restart would 404 on `/tiles/data/imagery_naip.json`.
+- **MapLibre base `imagery` TileJSON cache (B6):** nothing refreshes the base imagery bounds after a basemap pipeline run. Overlay sources are fine (30-s poll).
+- **docker.io → docker-ce swap + cgroup_enable=memory reboot:** currently running docker.io 26.1.5; Task 4 canonical is docker-ce (29.x). Memory limits in docker-compose.yml silently discarded until `cgroup_enable=memory` is on cmdline.txt. One reboot lands both.
 
 ### 2. Visual Design Identity (MEDIUM)
 
@@ -120,7 +134,7 @@ Pipeline features: start/cancel for all modes, 3-stage progress tracking for NOA
 
 ### Imagery
 - USGS basemap z0-14 (26 GB)
-- NOAA NAIP z17 + overviews z0-16 (8.6 GB, 419K tiles, northern AZ)
+- NOAA NAIP z17 + overviews z0-16 (39 GB, 1.84M tiles, Phoenix + northern AZ as of 2026-04-19 run)
 - M2M z19 partial
 - Pipeline container has numpy/rasterio/scipy for in-process tile rendering
 
@@ -132,14 +146,14 @@ GNOME Keyring via host-side agent. tmpfs secrets for pipeline containers. No pla
 
 ### Tests
 - **`main`:** 585 pass (after versioning adoption adds 6 tests for CI config); 2 pre-existing M2M failures, 9 pre-existing OSM POI errors.
-- **`dev`:** 624 pass (remediation cycle adds 28 tests + 1 correction); same 2 + 9 pre-existing.
+- **`dev`:** 784 pass (NOAA remediation + setup remediation + TileServer handoff fix); same 2 pre-existing M2M failures; the 9 OSM POI errors were resolved as a side effect of the setup conftest.py asyncio fix. 18 Nominatim-env errors require `docker compose up` to clear.
 - Run: `python -m pytest tests/ services/search/tests/ -v`
 
 ### Key architectural details (describes `main`; dev has remediation changes not yet shipped)
 - Combined imagery: Hybrid checkbox removed, basemap auto-shows, 28 paint overrides, tileSize:256
 - Pipeline admin: card grid with non-destructive catalog polling (no DOM rebuild on poll)
 - NOAA pipeline: 3-stage parallel (8 downloaders, 4 reproject workers, 1 serial merger), rasterio in-process (not GDAL CLI), GDAL_CACHEMAX=64, quad-level checkpoint dedup
-- TileServer: source unregistered during pipeline writes, WAL→DELETE journal mode conversion on completion *(on dev: D3 keeps WAL mode permanently, removes the journal-mode flip)*
+- TileServer: source unregistered during pipeline writes, WAL→DELETE journal mode conversion on completion *(on dev: D3 keeps WAL mode permanently; 2026-04-19 PM fix also triggers TileServer restart on clean completion via `tileserver_restarted_at` idempotency stamp)*
 - Keyring: host-side daemon on Unix socket, search container communicates via bind-mounted socket
 - Pipeline container: 4 GB memory limit, bind-mounted scripts (:ro)
 - Release automation: `release-please` GitHub Action on push to main; v1.1.0 Release PR #2 currently accumulating commits pending merge

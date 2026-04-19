@@ -37,6 +37,34 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-19 PM — TileServer auto-restart on clean pipeline completion
+
+**Released as:** not yet released (on `dev`, pending merge)
+**Commit:** `f6f7365` (single commit, 2 files, +312 / −37)
+**Bug hunt:** [dev/bug-hunts/2026-04-17-pipeline-completion-review.md](bug-hunts/2026-04-17-pipeline-completion-review.md) §Bug 1
+
+### Summary
+Long-standing bug where the map never auto-updated after a pipeline run finished cleanly. The admin service's reconciliation guard at `services/search/main.py:1473` only entered the WAL-checkpoint + TileServer-restart path when the pipeline had CRASHED (`status in ("running", "cancelling") and not container_running`). But every pipeline script writes `status="completed"` to the state file itself *before* the container exits, so the guard was false on clean exits and TileServer was never restarted. Widened the guard to include terminal states (`completed` / `completed_partial`) that have not yet been handed off — tracked via a new `tileserver_restarted_at` stamp on the state file that makes repeat polls no-ops. Runtime-validated live against the stuck Phoenix NOAA run.
+
+### Key decisions
+- **Idempotency via state-file stamp, not a background watcher.** Considered a dedicated `/admin/pipeline/finalize` endpoint or a docker-event-driven watcher. Stamp approach is minimally invasive (no new endpoints, no new threads), self-healing (swept a stuck elevation state as a side effect), and fires exactly once per run.
+- **Dropped `PRAGMA journal_mode=DELETE`** from the search-service checkpoint. D3 (already shipped on dev) deliberately keeps WAL mode permanently; flipping to DELETE can fail against TileServer's live read-lock during handoff. TRUNCATE checkpoint alone suffices.
+- **TDD end-to-end.** 5 new tests covering clean-completion, idempotency, `completed_partial`, and crash-path regression. Watched all fail first; implemented fix; watched all pass. No production behavior untouched by a test.
+
+### Notable bugs caught
+- 2026-04-17 §B1 (TileServer Never Restarted After Pipeline Completion) → `f6f7365`
+- Symlink-hijack by pytest Task 42 fixture (parallel agent found + fixed as `a2cf6dc`) — not a Claude bug but surfaced during runtime validation.
+
+### Commits
+- `f6f7365` — fix(search): restart TileServer on clean pipeline completion (B1 2026-04-17)
+
+### Outcome
+- 5 new tests pass; full suite 784 passed (same 2 pre-existing M2M failures, 18 pre-existing env errors).
+- Runtime validation on the actual stuck Phoenix state: `tileserver_restarted_at: 2026-04-19T12:57:25Z` written to `.pipeline-state.json`; TileServer StartedAt jumped `12:57:25 → 12:57:55`; `/data/imagery_noaa.json` now serves correct bounds + z9-17; sample tile `/data/imagery_noaa/9/93/202.jpeg` serves 200 OK 18.6 KB JPEG. Second poll idempotent (no double-restart). Self-healed `.elevation-state.json` as a bonus.
+- Deferred (each a separate follow-up): B2 (NAIP/Sentinel state-file misnaming), B3 (NAIP/Sentinel missing from TileServer config), B6 (MapLibre base-imagery TileJSON cache).
+
+---
+
 ## 2026-04-19 — Setup process remediation (v1.2 cycle)
 
 **Scope:** 48 confirmed bugs (B1-B48) + 8 design decisions (D1-D8) + 3
