@@ -749,6 +749,23 @@ class TestFixDependencyRemoved:
         assert resp.status_code == 404
 
 
+class TestAllHealthyRegex:
+    @pytest.mark.parametrize("svcs,expected,why", [
+        ([{"Health": "healthy"}, {"Health": "healthy"}], True, "both healthy"),
+        ([{"Health": "healthy"}, {"Health": "unhealthy"}], False, "one unhealthy"),
+        ([{"Status": "Up 2 days (healthy)"}, {"Status": "Up 2 days (healthy)"}], True, "status healthy"),
+        ([{"Status": "Up 2 days (unhealthy)"}], False, "status unhealthy"),
+        ([{"Status": "Up 2 days (health: starting)"}], False, "starting is not healthy"),
+        ([{"Status": "Up 5 minutes"}], False, "no health annotation"),
+        ([{"Status": "Exited (1)"}], False, "exited"),
+        ([{}], False, "no fields"),
+        ([], False, "empty services list"),
+    ])
+    def test_all_healthy_classifier(self, svcs, expected, why):
+        from setup.main import _is_all_healthy
+        assert _is_all_healthy(svcs) is expected, why
+
+
 class TestExistingEnvPreserved:
     @pytest.fixture(autouse=True)
     def _setup(self):

@@ -77,6 +77,27 @@ def _parse_env(path: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Health helpers
+# ---------------------------------------------------------------------------
+
+_HEALTHY_RE = re.compile(r"\(healthy\)")
+
+
+def _is_all_healthy(services: list[dict]) -> bool:
+    if not services:
+        return False
+    for s in services:
+        health = s.get("Health", "") or ""
+        if health == "healthy":
+            continue
+        status = s.get("Status", "") or ""
+        if _HEALTHY_RE.search(status):
+            continue
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Preflight helper functions
 # ---------------------------------------------------------------------------
 
@@ -813,10 +834,7 @@ async def post_launch():
                 continue
 
     already_running = len(existing_services) > 0
-    all_healthy = all(
-        "healthy" in (s.get("Health", "") or s.get("Status", ""))
-        for s in existing_services
-    ) if existing_services else False
+    all_healthy = _is_all_healthy(existing_services)
 
     # Run docker compose up -d
     output_lines: list[str] = []
