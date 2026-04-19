@@ -1,10 +1,15 @@
 #!/bin/bash
 # dev/harness/wizard-ci.sh — LXD+Playwright harness for the setup wizard.
 #
-# Usage: ./wizard-ci.sh [--smoke | --full] [--image=ALIAS] [--pre-state=NAME]
+# Usage: ./wizard-ci.sh [--smoke | --pipeline-start | --full] [--image=ALIAS] [--pre-state=NAME]
 #
-#   --smoke       walk through Steps 1-4 and exit clean (~3-5 min)
-#   --full        run the full pipeline + wait for stack healthy (~8 hr)
+#   --smoke          walk through Steps 1-4 and exit clean (~3-5 min)
+#   --pipeline-start smoke + click Start Pipeline + assert a step starts +
+#                    WebSocket delivers real frames + no tracebacks (~4-6 min).
+#                    Catches bugs that fire AFTER preflight — missing deps
+#                    in pipeline scripts, broken /ws/progress, silent pipeline
+#                    failures. Container teardown is the cancel.
+#   --full           run the full pipeline + wait for stack healthy (~8 hr)
 #   --image=X     LXD image alias to launch from (default: images:debian/trixie/cloud).
 #                 Use `raspios-trixie-lite` to mirror the actual beta-tester
 #                 environment. See dev/harness/import-raspios.sh to create that
@@ -20,13 +25,14 @@ IMAGE="images:debian/trixie/cloud"
 PRE_STATE="clean"
 for arg in "$@"; do
     case "$arg" in
-        --smoke) MODE="smoke" ;;
-        --full)  MODE="full"  ;;
-        --image=*)     IMAGE="${arg#--image=}" ;;
-        --pre-state=*) PRE_STATE="${arg#--pre-state=}" ;;
+        --smoke)          MODE="smoke" ;;
+        --pipeline-start) MODE="pipeline-start" ;;
+        --full)           MODE="full"  ;;
+        --image=*)        IMAGE="${arg#--image=}" ;;
+        --pre-state=*)    PRE_STATE="${arg#--pre-state=}" ;;
         *)
             echo "unknown arg: $arg"
-            echo "usage: $0 [--smoke|--full] [--image=ALIAS] [--pre-state=NAME]"
+            echo "usage: $0 [--smoke|--pipeline-start|--full] [--image=ALIAS] [--pre-state=NAME]"
             exit 2
             ;;
     esac
@@ -198,7 +204,8 @@ echo "[$(date +%H:%M:%S)]   all critical deps importable in venv"
 
 echo "[$(date +%H:%M:%S)] Driving wizard (mode=$MODE)..."
 RC=0
-node "$(dirname "$0")/drive-wizard.mjs" --"$MODE" --url="$WIZARD_URL" || RC=$?
+MODE_FLAG="--$MODE"
+node "$(dirname "$0")/drive-wizard.mjs" "$MODE_FLAG" --url="$WIZARD_URL" || RC=$?
 
 if [ "$RC" -eq 0 ]; then
     echo "[$(date +%H:%M:%S)] Wizard walkthrough OK."
