@@ -172,7 +172,75 @@ class Position:
     rotation_deg: float
 
 
-def extract_positions(pcb_path: Path) -> dict[str, Position]:
+def load_rotation_corrections(csv_path: Path) -> list[tuple]:
+    """Load (regex, delta_rotation, offset_x, offset_y) rows from a
+    cpl_rotations_db.csv file (matthewlai/JLCKicadTools format).
+
+    JLC's pick-and-place machines use each LCSC part's library-defined
+    "zero rotation," which frequently disagrees with KiCad's footprint-
+    zero. The CPL's Rotation field must compensate or the part gets
+    placed 90°/180°/270° off its pads — potentially destructive for
+    polarized parts (ICs with VDD/GND in the wrong pins).
+
+    This database is the community-maintained authoritative source for
+    those corrections. Patterns match against the footprint NAME (the
+    bit after `:` in the library:name FPID).
+    """
+    import re
+    corrections = []
+    if not csv_path.exists():
+        return corrections
+    with csv_path.open() as fh:
+        reader = csv.reader(fh)
+        header = next(reader, None)    # skip header row
+        for row in reader:
+            if not row or not row[0].strip():
+                continue
+            pattern = row[0].strip()
+            # Strip surrounding quotes — csv module usually does this but
+            # the DB file has inconsistent quoting.
+            if pattern.startswith('"') and pattern.endswith('"'):
+                pattern = pattern[1:-1]
+            try:
+                rotation = float(row[1].strip()) if len(row) > 1 and row[1].strip() else 0.0
+                offset_x = float(row[2].strip()) if len(row) > 2 and row[2].strip() else 0.0
+                offset_y = float(row[3].strip()) if len(row) > 3 and row[3].strip() else 0.0
+            except ValueError:
+                continue
+            corrections.append((re.compile(pattern), rotation, offset_x, offset_y))
+    return corrections
+
+
+def apply_rotation_correction(
+    fp_name: str,
+    base_rotation: float,
+    base_x_mm: float,
+    base_y_mm: float,
+    corrections: list[tuple],
+) -> tuple[float, float, float, str | None]:
+    """Return (corrected_rotation, corrected_x, corrected_y, pattern_matched).
+
+    Takes the first matching regex from the DB. Rotation is added
+    (modulo 360), offsets are added in the CURRENT rotated frame (so
+    they rotate with the part).
+    """
+    import math
+    for regex, delta, ox, oy in corrections:
+        if regex.match(fp_name):
+            new_rot = (base_rotation + delta) % 360
+            # Rotate offset vector by the base rotation so it lands in
+            # the correct world position after JLC places the part.
+            theta = math.radians(base_rotation)
+            dx_world = ox * math.cos(theta) - oy * math.sin(theta)
+            dy_world = ox * math.sin(theta) + oy * math.cos(theta)
+            return new_rot, base_x_mm + dx_world, base_y_mm + dy_world, regex.pattern
+    return base_rotation, base_x_mm, base_y_mm, None
+
+
+def extract_positions(
+    pcb_path: Path,
+    rotation_corrections: list[tuple] | None = None,
+) -> dict[str, Position]:
     """Return a {designator: Position} map with JLC-CPL-ready coordinates.
 
     Why this doesn't just shell out to `kicad-cli pcb export pos`:
@@ -192,12 +260,15 @@ def extract_positions(pcb_path: Path) -> dict[str, Position]:
     - The board's aux axis origin is subtracted so coords match Gerbers
       exported with `--use-drill-file-origin`. If aux origin is (0,0),
       this is a no-op.
+    - Per-footprint rotation corrections from cpl_rotations_db.csv.
     """
     import pcbnew
     board = pcbnew.LoadBoard(str(pcb_path))
     aux = board.GetDesignSettings().GetAuxOrigin()
     aux_x_mm = pcbnew.ToMM(aux.x)
     aux_y_mm = pcbnew.ToMM(aux.y)
+
+    rotation_corrections = rotation_corrections or []
 
     positions: dict[str, Position] = {}
     for fp in board.GetFootprints():
@@ -222,11 +293,32 @@ def extract_positions(pcb_path: Path) -> dict[str, Position]:
         layer_id = fp.GetLayer()
         layer = "Bottom" if layer_id == pcbnew.B_Cu else "Top"
 
+        # Base JLC-ready coords (pad-bbox-center + Y-flip + aux offset)
+        base_x = cx_mm - aux_x_mm
+        base_y = -(cy_mm - aux_y_mm)
+        base_rot = fp.GetOrientationDegrees()
+
+        # Strip library prefix from footprint name for regex matching.
+        fp_name_full = fp.GetFPIDAsString()
+        fp_name = fp_name_full.split(":", 1)[-1] if ":" in fp_name_full else fp_name_full
+
+        rot_final, x_final, y_final, matched = apply_rotation_correction(
+            fp_name, base_rot, base_x, base_y, rotation_corrections
+        )
+
+        if matched and rot_final != base_rot:
+            print(
+                f"  rotation-correction: {fp.GetReference():5s} "
+                f"({fp_name}) base={base_rot}° → {rot_final}° "
+                f"via pattern {matched!r}",
+                file=sys.stderr,
+            )
+
         positions[fp.GetReference()] = Position(
-            mid_x_mm=cx_mm - aux_x_mm,
-            mid_y_mm=-(cy_mm - aux_y_mm),
+            mid_x_mm=x_final,
+            mid_y_mm=y_final,
             layer=layer,
-            rotation_deg=fp.GetOrientationDegrees(),
+            rotation_deg=rot_final,
         )
     return positions
 
@@ -348,6 +440,7 @@ def build_bundle(
     gerbers_dir: Path,
     output_zip: Path,
     dry_run: bool = False,
+    rotations_csv: Path | None = None,
 ) -> BundleSummary:
     components = extract_components(pcb_path)
     mapping = load_mapping(mapping_path)
@@ -360,7 +453,20 @@ def build_bundle(
             lines.append(f"    search: https://www.lcsc.com/search?q={des}")
         raise SystemExit("\n".join(lines))
 
-    positions = extract_positions(pcb_path)
+    # Load JLC rotation corrections DB. Default to the sibling file next
+    # to this script so make_jlc_bundle.py "just works" when invoked from
+    # any board directory without an explicit --rotations flag.
+    if rotations_csv is None:
+        rotations_csv = Path(__file__).parent / "cpl_rotations_db.csv"
+    rotation_corrections = load_rotation_corrections(rotations_csv)
+    if rotation_corrections:
+        print(
+            f"Loaded {len(rotation_corrections)} rotation-correction "
+            f"rules from {rotations_csv.name}",
+            file=sys.stderr,
+        )
+
+    positions = extract_positions(pcb_path, rotation_corrections)
     bom_csv = render_bom_csv(assembled)
     cpl_csv = render_cpl_csv(assembled, positions)
 
