@@ -462,3 +462,38 @@ class TestLaunchReTargetsSymlink:
         resp = self.client.post("/api/launch", headers=self.headers)
         assert resp.status_code == 200
         assert (repo_root / "data").resolve() == new_data.resolve()
+
+
+class TestStartRequestLayerConfig:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.client = TestClient(app)
+        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+    def test_start_accepts_per_layer_bbox(self, tmp_path, monkeypatch):
+        from setup import main as mod
+        async def fake_run(args, cwd, on_output, env_extra=None):
+            return 0
+        monkeypatch.setattr(mod, "run_command", fake_run)
+        resp = self.client.post("/api/start", json={
+            "bbox": "-114.8,31.3,-109.0,37.0",
+            "layers": {"basemap": "download", "base_imagery": "naip",
+                       "detail_imagery": "skip", "elevation": "download"},
+            "data_path": str(tmp_path),
+            "base_imagery_zoom": 15,
+            "layer_bbox": {
+                "basemap": "-114.8,31.3,-109.0,37.0",
+                "base_imagery": "-113.0,33.0,-111.0,34.0",
+                "detail_imagery": ""
+            }
+        }, headers=self.headers)
+        assert resp.status_code == 200, resp.text
+
+    def test_start_rejects_unknown_field(self):
+        resp = self.client.post("/api/start", json={
+            "bbox": "-114.8,31.3,-109.0,37.0",
+            "layers": {"basemap": "download"},
+            "data_path": "/srv/geographica/data",
+            "random_garbage_field": "boom",
+        }, headers=self.headers)
+        assert resp.status_code == 422

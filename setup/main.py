@@ -17,7 +17,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPExcept
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from setup.config import (
     validate_bbox, get_ram_profile, detect_host_ip,
@@ -156,9 +156,13 @@ class CreateDirectoryRequest(BaseModel):
 
 
 class StartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     bbox: str
-    layers: list[str] = []
+    layers: dict = {}  # {basemap, base_imagery, detail_imagery, elevation} -> source|'skip'
     data_path: str = "/srv/geographica/data"
+    base_imagery_zoom: int = 15
+    layer_bbox: dict = {}  # {layer: bbox_string} — empty string means "same as top-level bbox"
 
 
 # ---------------------------------------------------------------------------
