@@ -81,35 +81,35 @@ REGION_PRESETS: dict[str, dict] = {
 # RAM profiles
 # ---------------------------------------------------------------------------
 RAM_PROFILE_16GB: dict[str, str] = {
-    "nominatim_memory": "8G",
-    "postgres_shared_buffers": "2GB",
-    "postgres_maintenance_work_mem": "1GB",
-    "postgres_effective_cache_size": "6GB",
-    "postgres_work_mem": "32MB",
-    "postgres_autovacuum_work_mem": "256MB",
-    "valhalla_memory": "4G",
-    "valhalla_threads": "4",
-    "tileserver_memory": "1G",
-    "stt_memory": "1536M",
-    "pipeline_memory": "4G",
-    "pipeline_gdal_cache": "1024",
-    "planetiler_heap": "4g",
-}
-
-RAM_PROFILE_8GB: dict[str, str] = {
-    "nominatim_memory": "4G",
+    "nominatim_memory": "5G",
     "postgres_shared_buffers": "1GB",
     "postgres_maintenance_work_mem": "512MB",
     "postgres_effective_cache_size": "3GB",
+    "postgres_work_mem": "32MB",
+    "postgres_autovacuum_work_mem": "256MB",
+    "valhalla_memory": "3G",
+    "valhalla_threads": "4",
+    "tileserver_memory": "1G",
+    "stt_memory": "1G",
+    "pipeline_memory": "3G",
+    "pipeline_gdal_cache": "1024",
+    "planetiler_heap": "3g",
+}
+
+RAM_PROFILE_8GB: dict[str, str] = {
+    "nominatim_memory": "2G",
+    "postgres_shared_buffers": "512MB",
+    "postgres_maintenance_work_mem": "256MB",
+    "postgres_effective_cache_size": "1536MB",
     "postgres_work_mem": "16MB",
     "postgres_autovacuum_work_mem": "128MB",
-    "valhalla_memory": "2G",
+    "valhalla_memory": "1G",
     "valhalla_threads": "2",
-    "tileserver_memory": "768M",
-    "stt_memory": "1G",
-    "pipeline_memory": "2G",
+    "tileserver_memory": "512M",
+    "stt_memory": "512M",
+    "pipeline_memory": "1536M",
     "pipeline_gdal_cache": "512",
-    "planetiler_heap": "2g",
+    "planetiler_heap": "1536m",
 }
 
 

@@ -56,35 +56,35 @@ class TestBboxValidation:
 class TestRamProfile:
     def test_16gb_values(self):
         profile = RAM_PROFILE_16GB
-        assert profile["nominatim_memory"] == "8G"
-        assert profile["postgres_shared_buffers"] == "2GB"
-        assert profile["postgres_maintenance_work_mem"] == "1GB"
-        assert profile["postgres_effective_cache_size"] == "6GB"
-        assert profile["postgres_work_mem"] == "32MB"
-        assert profile["postgres_autovacuum_work_mem"] == "256MB"
-        assert profile["valhalla_memory"] == "4G"
-        assert profile["valhalla_threads"] == "4"
-        assert profile["tileserver_memory"] == "1G"
-        assert profile["stt_memory"] == "1536M"
-        assert profile["pipeline_memory"] == "4G"
-        assert profile["pipeline_gdal_cache"] == "1024"
-        assert profile["planetiler_heap"] == "4g"
-
-    def test_8gb_values(self):
-        profile = RAM_PROFILE_8GB
-        assert profile["nominatim_memory"] == "4G"
+        assert profile["nominatim_memory"] == "5G"
         assert profile["postgres_shared_buffers"] == "1GB"
         assert profile["postgres_maintenance_work_mem"] == "512MB"
         assert profile["postgres_effective_cache_size"] == "3GB"
+        assert profile["postgres_work_mem"] == "32MB"
+        assert profile["postgres_autovacuum_work_mem"] == "256MB"
+        assert profile["valhalla_memory"] == "3G"
+        assert profile["valhalla_threads"] == "4"
+        assert profile["tileserver_memory"] == "1G"
+        assert profile["stt_memory"] == "1G"
+        assert profile["pipeline_memory"] == "3G"
+        assert profile["pipeline_gdal_cache"] == "1024"
+        assert profile["planetiler_heap"] == "3g"
+
+    def test_8gb_values(self):
+        profile = RAM_PROFILE_8GB
+        assert profile["nominatim_memory"] == "2G"
+        assert profile["postgres_shared_buffers"] == "512MB"
+        assert profile["postgres_maintenance_work_mem"] == "256MB"
+        assert profile["postgres_effective_cache_size"] == "1536MB"
         assert profile["postgres_work_mem"] == "16MB"
         assert profile["postgres_autovacuum_work_mem"] == "128MB"
-        assert profile["valhalla_memory"] == "2G"
+        assert profile["valhalla_memory"] == "1G"
         assert profile["valhalla_threads"] == "2"
-        assert profile["tileserver_memory"] == "768M"
-        assert profile["stt_memory"] == "1G"
-        assert profile["pipeline_memory"] == "2G"
+        assert profile["tileserver_memory"] == "512M"
+        assert profile["stt_memory"] == "512M"
+        assert profile["pipeline_memory"] == "1536M"
         assert profile["pipeline_gdal_cache"] == "512"
-        assert profile["planetiler_heap"] == "2g"
+        assert profile["planetiler_heap"] == "1536m"
 
     def test_12gb_returns_16gb_profile(self):
         profile = get_ram_profile(12000)
@@ -108,7 +108,7 @@ class TestEnvGeneration:
             scripts_path="/home/administrator/Code/geographica/scripts",
         )
         assert "TLS_MODE=tailscale" in env
-        assert "POSTGRES_SHARED_BUFFERS=2GB" in env
+        assert "POSTGRES_SHARED_BUFFERS=1GB" in env
         assert "BBOX=-124.8,31.3,-102.0,49.0" in env
 
     def test_env_contains_required_keys_8gb(self):
@@ -120,7 +120,7 @@ class TestEnvGeneration:
             scripts_path="/home/administrator/Code/geographica/scripts",
         )
         assert "TLS_MODE=http" in env
-        assert "POSTGRES_SHARED_BUFFERS=1GB" in env
+        assert "POSTGRES_SHARED_BUFFERS=512MB" in env
         assert "BBOX=-114.8,31.3,-109.0,37.0" in env
 
 
@@ -321,7 +321,7 @@ class TestEnvGenerationFull:
         assert set(env.keys()) == EXPECTED_21_KEYS
         assert env["POSTGRES_WORK_MEM"] == "32MB"
         assert env["POSTGRES_AUTOVACUUM_WORK_MEM"] == "256MB"
-        assert env["NOMINATIM_MEMORY"] == "8G"
+        assert env["NOMINATIM_MEMORY"] == "5G"
         assert env["VALHALLA_THREADS"] == "4"
         assert env["DATA_HOST_PATH"] == "/srv/geographica/data"
         assert env["SCRIPTS_HOST_PATH"].endswith("/scripts")
@@ -336,7 +336,7 @@ class TestEnvGenerationFull:
         ))
         assert env["POSTGRES_WORK_MEM"] == "16MB"
         assert env["POSTGRES_AUTOVACUUM_WORK_MEM"] == "128MB"
-        assert env["NOMINATIM_MEMORY"] == "4G"
+        assert env["NOMINATIM_MEMORY"] == "2G"
 
     def test_has_data_host_path(self):
         assert "DATA_HOST_PATH=/srv/geographica/data" in self._env()
