@@ -747,3 +747,34 @@ class TestFixDependencyRemoved:
                                 json={"dependency": "docker"},
                                 headers=self.headers)
         assert resp.status_code == 404
+
+
+class TestExistingEnvPreserved:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.client = TestClient(app)
+        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+    def test_system_includes_parsed_env(self, tmp_path, monkeypatch):
+        env = tmp_path / ".env"
+        env.write_text("TLS_MODE=tailscale\nBBOX=-120,30,-100,45\nCUSTOM_KEY=foo\n")
+        monkeypatch.setattr("setup.main.ENV_PATH", str(env))
+        resp = self.client.get("/api/system")
+        data = resp.json()
+        assert data["existing_env"] is True
+        assert data["existing_env_parsed"]["TLS_MODE"] == "tailscale"
+        assert data["existing_env_parsed"]["CUSTOM_KEY"] == "foo"
+
+    def test_post_config_preserves_custom_keys(self, tmp_path, monkeypatch):
+        env = tmp_path / ".env"
+        env.write_text("CUSTOM_KEY=preserved\nTLS_MODE=http\n")
+        monkeypatch.setattr("setup.main.ENV_PATH", str(env))
+        resp = self.client.post("/api/config", json={
+            "tls_mode": "https",
+            "bbox": "-114.8,31.3,-109.0,37.0",
+            "data_path": "/srv/geographica/data",
+        }, headers=self.headers)
+        assert resp.status_code == 200
+        contents = env.read_text()
+        assert "CUSTOM_KEY=preserved" in contents
+        assert "TLS_MODE=https" in contents

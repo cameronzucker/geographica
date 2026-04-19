@@ -1,6 +1,7 @@
 """FastAPI setup wizard for Geographica — CSRF-protected, ephemeral."""
 from __future__ import annotations
 
+import re
 import secrets
 import asyncio
 import json
@@ -34,6 +35,46 @@ from setup.pipeline_steps import ALL_PIPELINE_STEPS, filter_active_steps
 
 # CSRF token — generated once at startup
 CSRF_TOKEN = secrets.token_hex(32)
+
+# ---------------------------------------------------------------------------
+# .env key sets and parser
+# ---------------------------------------------------------------------------
+
+WIZARD_KEYS = {
+    "TLS_MODE", "TLS_CERT_DIR", "TLS_PORT", "BBOX",
+    "DATA_HOST_PATH", "SCRIPTS_HOST_PATH", "STT_BACKEND",
+    "NOMINATIM_MEMORY", "POSTGRES_SHARED_BUFFERS",
+    "POSTGRES_MAINTENANCE_WORK_MEM", "POSTGRES_EFFECTIVE_CACHE_SIZE",
+    "POSTGRES_WORK_MEM", "POSTGRES_AUTOVACUUM_WORK_MEM",
+    "VALHALLA_MEMORY", "VALHALLA_THREADS",
+    "TILESERVER_MEMORY", "STT_MEMORY",
+    "PIPELINE_MEMORY", "PIPELINE_GDAL_CACHE", "PLANETILER_HEAP",
+    "GPS_DEVICE",
+}
+
+
+def _parse_env(path: str) -> dict:
+    """Parse a .env file into a dict. Skips blanks and # comments."""
+    result = {}
+    try:
+        text = Path(path).read_text()
+    except OSError:
+        return result
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        # Strip surrounding quotes if present
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+        result[key] = value
+    return result
+
 
 # ---------------------------------------------------------------------------
 # Preflight helper functions
@@ -246,12 +287,14 @@ async def index():
 async def get_system():
     """Return system detection info."""
     ram_mb = detect_ram_mb()
+    env_exists = os.path.exists(ENV_PATH)
     return {
         "host_ip": detect_host_ip(),
         "ram_mb": ram_mb,
         "ram_profile": get_ram_profile(ram_mb),
         "storage": detect_storage(),
-        "existing_env": os.path.exists(ENV_PATH),
+        "existing_env": env_exists,
+        "existing_env_parsed": _parse_env(ENV_PATH) if env_exists else {},
     }
 
 
@@ -337,7 +380,7 @@ async def post_create_directory(body: CreateDirectoryRequest):
 
 @app.post("/api/config")
 async def post_config(body: ConfigRequest):
-    """Generate and write .env file."""
+    """Generate and write .env file, preserving non-wizard keys."""
     ALLOWED_TLS_MODES = {"http", "https", "tailscale"}
     if body.tls_mode not in ALLOWED_TLS_MODES:
         raise HTTPException(
@@ -349,7 +392,7 @@ async def post_config(body: ConfigRequest):
     scripts_path = body.scripts_path or str(Path(__file__).parent.parent / "scripts")
     ram_mb = detect_ram_mb()
     ram_profile = get_ram_profile(ram_mb)
-    env_content = generate_env(
+    wizard_content = generate_env(
         tls_mode=body.tls_mode,
         bbox=body.bbox,
         data_path=body.data_path,
@@ -359,7 +402,32 @@ async def post_config(body: ConfigRequest):
         tls_port=body.tls_port,
         stt_backend=body.stt_backend,
     )
-    Path(ENV_PATH).write_text(env_content)
+
+    # Preserve non-wizard keys from any existing .env
+    preserved_lines = []
+    if os.path.exists(ENV_PATH):
+        try:
+            for line in Path(ENV_PATH).read_text().splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if "=" not in stripped:
+                    continue
+                key = stripped.split("=", 1)[0].strip()
+                if key not in WIZARD_KEYS:
+                    preserved_lines.append(line)
+        except OSError:
+            pass
+
+    if preserved_lines:
+        merged_content = wizard_content.rstrip("\n") + "\n\n# Preserved from existing .env:\n" + "\n".join(preserved_lines) + "\n"
+    else:
+        merged_content = wizard_content
+
+    # Atomic write — tmp file + rename.
+    tmp_path = Path(str(ENV_PATH) + ".tmp")
+    tmp_path.write_text(merged_content)
+    tmp_path.replace(Path(ENV_PATH))
     return {"ok": True}
 
 
