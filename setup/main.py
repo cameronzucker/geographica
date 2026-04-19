@@ -459,14 +459,27 @@ async def ws_progress(websocket: WebSocket):
 
 
 async def broadcast(event: dict):
-    """Send an event to all connected WebSocket clients."""
+    """Broadcast event to all connected WebSockets in parallel with per-socket timeout.
+
+    Hanging sockets are dropped after 2s so they can't stall the pipeline.
+    """
     progress_buffer.append(event)
-    for ws in list(connected_websockets):
+    socks = list(connected_websockets)
+    if not socks:
+        return
+    async def _send(ws):
         try:
-            await ws.send_json(event)
+            await asyncio.wait_for(ws.send_json(event), timeout=2.0)
+            return None
         except Exception:
-            if ws in connected_websockets:
-                connected_websockets.remove(ws)
+            return ws
+    results = await asyncio.gather(*[_send(w) for w in socks], return_exceptions=True)
+    for r in results:
+        if r is None or isinstance(r, Exception):
+            continue
+        # `_send` returns the failing ws to drop. We compare identity to ws objects.
+        if r in connected_websockets:
+            connected_websockets.remove(r)
 
 
 @app.post("/api/start")

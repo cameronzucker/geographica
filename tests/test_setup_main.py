@@ -627,3 +627,12 @@ def test_ws_progress_snapshots_buffer():
         "ws_progress must snapshot progress_buffer via list(...) to avoid "
         "deque-mutated-during-iteration under concurrent pipeline output"
     )
+
+
+def test_broadcast_uses_gather_with_timeout():
+    """Source-level check: broadcast parallelizes via gather + per-socket timeout."""
+    from setup import main as mod
+    import inspect
+    src = inspect.getsource(mod.broadcast)
+    assert "asyncio.gather" in src
+    assert "wait_for" in src or "timeout" in src.lower()
