@@ -207,6 +207,23 @@
       }
       config.base_imagery_zoom = parseInt($('#base-imagery-zoom').value, 10);
 
+      // Per-layer bbox override validation — reject invalid overrides.
+      var invalidLayer = null;
+      Object.keys(config.layer_bbox).forEach(function (layer) {
+        var v = (config.layer_bbox[layer] || '').trim();
+        if (v && !validateBboxString(v)) {
+          invalidLayer = layer;
+        }
+      });
+      if (invalidLayer) {
+        var hint = document.getElementById('bbox-hint-' + invalidLayer);
+        if (hint) {
+          hint.textContent = 'Invalid bbox override — fix before continuing.';
+          hint.className = 'field-hint bbox-hint error';
+        }
+        return;
+      }
+
       // All skipped: save config now and jump straight to Launch
       if (allSkipped) {
         saveConfig();
@@ -728,8 +745,10 @@
 
     api('POST', '/api/start', {
       bbox: config.bbox,
-      layers: layers,
-      data_path: config.data_path
+      layers: config.layers,
+      layer_bbox: config.layer_bbox,
+      data_path: config.data_path,
+      base_imagery_zoom: config.base_imagery_zoom,
     }).then(function () {
       connectProgress();
     }).catch(function (err) {
@@ -1024,6 +1043,63 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Layer bbox overrides (per-layer "Customize coverage" details)
+  // ---------------------------------------------------------------------------
+  function initLayerBboxOverrides() {
+    $$('.same-as-basemap').forEach(function (cb) {
+      var layer = cb.getAttribute('data-layer');
+      var group = cb.closest('details').querySelector('.custom-bbox-group');
+      cb.addEventListener('change', function () {
+        if (cb.checked) {
+          group.style.display = 'none';
+          // Clear the override so the backend falls back to top-level bbox.
+          delete config.layer_bbox[layer];
+          var inp = group.querySelector('.bbox-override');
+          if (inp) inp.value = '';
+          var hint = group.querySelector('.bbox-hint');
+          if (hint) { hint.textContent = ''; hint.className = 'field-hint bbox-hint'; }
+        } else {
+          group.style.display = '';
+        }
+      });
+    });
+    $$('.bbox-override').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var layer = inp.id.replace('bbox-', '');
+        var hint = document.getElementById('bbox-hint-' + layer);
+        var raw = inp.value.trim();
+        if (!raw) {
+          delete config.layer_bbox[layer];
+          hint.textContent = '';
+          hint.className = 'field-hint bbox-hint';
+          return;
+        }
+        if (!validateBboxString(raw)) {
+          hint.textContent = 'Invalid — use: west,south,east,north';
+          hint.className = 'field-hint bbox-hint error';
+          return;
+        }
+        config.layer_bbox[layer] = raw;
+        hint.textContent = 'OK';
+        hint.className = 'field-hint bbox-hint ok';
+      });
+    });
+  }
+
+  function validateBboxString(s) {
+    var parts = (s || '').split(',');
+    if (parts.length !== 4) return false;
+    var nums = parts.map(function (p) { return parseFloat(p.trim()); });
+    if (nums.some(isNaN)) return false;
+    var w = nums[0], s_ = nums[1], e = nums[2], n = nums[3];
+    if (w < -180 || w > 180 || e < -180 || e > 180) return false;
+    if (s_ < -90 || s_ > 90 || n < -90 || n > 90) return false;
+    if (w >= e) return false;
+    if (s_ >= n) return false;
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
   // Zoom slider
   // ---------------------------------------------------------------------------
   function initZoomSlider() {
@@ -1111,6 +1187,9 @@
 
     // Zoom slider
     initZoomSlider();
+
+    // Layer bbox override handlers
+    initLayerBboxOverrides();
 
     // Tab click handlers (only allow going back, not forward)
     $$('.wizard-tab').forEach(function (tab) {

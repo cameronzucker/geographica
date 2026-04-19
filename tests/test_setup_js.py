@@ -44,3 +44,20 @@ def test_completion_link_no_config_host_ip():
     """Task 22 removed the dead `config.host_ip ||` fallback."""
     text = JS.read_text()
     assert "config.host_ip" not in text
+
+
+def test_js_handles_same_as_basemap_checkbox():
+    text = JS.read_text()
+    assert "same-as-basemap" in text
+
+
+def test_js_sends_layer_bbox_and_zoom():
+    text = JS.read_text()
+    assert "layer_bbox" in text
+    assert "base_imagery_zoom" in text
+
+
+def test_js_validates_layer_bbox_overrides():
+    text = JS.read_text()
+    # must reference the per-layer bbox inputs
+    assert "bbox-override" in text or "bbox-basemap" in text
