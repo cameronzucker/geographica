@@ -390,6 +390,29 @@ def planetiler_pull_cmd(ctx=None) -> list[str]:
 
 
 def planetiler_build_cmd(ctx) -> list[str]:
+    """Build the basemap vector-tiles MBTiles via Planetiler/OpenMapTiles.
+
+    `--download` is REQUIRED on any fresh Pi. Planetiler's OpenMapTiles
+    profile depends on auxiliary shapefile sources (lake centerlines,
+    water polygons, natural-earth) stored under `data/sources/` inside
+    the Planetiler container. On first run these don't exist yet; with
+    `--download`, Planetiler fetches them from OpenStreetMap / Natural
+    Earth / OSMdata on demand (~1 GB) and caches them for subsequent
+    runs. Without the flag it aborts with
+
+        Exception in thread "main"
+        java.io.FileNotFoundException:
+        data/sources/lake_centerline.shp.zip does not exist.
+        Run with --download to fetch it.
+
+    2026-04-20 beta tester hit exactly that — the internal dev Pi had
+    cached sources from an old run so the flag's absence wasn't
+    observable internally.
+
+    `--download-threads=4` is a conservative default; heavier machines
+    can override via the PIPELINE tuning path, but the Pi's network is
+    usually the bottleneck so more threads don't help.
+    """
     return [
         "docker", "run", "--rm",
         "-v", f"{ctx['data_path']}:/data",
@@ -397,6 +420,8 @@ def planetiler_build_cmd(ctx) -> list[str]:
         "--area=custom",
         "--osm-path=/data/pbf/western-us.osm.pbf",
         "--output=/data/basemap.mbtiles",
+        "--download",
+        "--download-threads=4",
         "--force",
     ]
 

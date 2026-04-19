@@ -926,7 +926,15 @@
     }
 
     if (type === 'output') {
-      appendLog(event.text);
+      // Backend (setup/main.py::_on_output) broadcasts {type:"output",
+      // data:<text>}. Prior code read `event.text` which was never set,
+      // so `appendLog(undefined)` stringified "undefined" into the log
+      // pane for every chunk of stdout/stderr — thousands of times per
+      // pipeline step. 2026-04-20 beta-tester screenshot showed a wall
+      // of "undefinedundefined..." burying the real error message.
+      // Prefer event.data, fall back to event.text so older message
+      // shapes (if any stream past) don't cause the same failure.
+      appendLog(event.data || event.text || '');
     }
 
     if (type === 'warning') {

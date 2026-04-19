@@ -466,6 +466,25 @@ class TestCommandBuilders:
         assert cmd[0] == "bash"
         assert "cp " in " ".join(cmd)
 
+    def test_planetiler_build_cmd_includes_download_flag(self):
+        """2026-04-20 beta-tester screenshot: pipeline crashed at
+        `Build basemap tiles` with
+            Exception ... data/sources/lake_centerline.shp.zip does not exist.
+            Run with --download to fetch it.
+
+        Planetiler's OpenMapTiles profile needs auxiliary shapefile
+        sources; without --download it aborts on first run. Internal
+        dev Pi masks this because it has cached sources from old runs.
+        Every beta tester on a clean install hits the exception.
+        """
+        from setup.runner import planetiler_build_cmd
+        cmd = planetiler_build_cmd(_CTX_BASE)
+        assert "--download" in cmd, (
+            "planetiler_build_cmd must pass --download; without it, "
+            "Planetiler's OpenMapTiles profile aborts on fresh Pi's "
+            "because data/sources/lake_centerline.shp.zip is missing"
+        )
+
     def test_planetiler_pull_cmd(self):
         cmd = planetiler_pull_cmd()
         assert cmd[0] == "docker"
