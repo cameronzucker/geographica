@@ -159,6 +159,10 @@ class CreateDirectoryRequest(BaseModel):
     path: str
 
 
+class CheckpointResetRequest(BaseModel):
+    data_path: str
+
+
 class StartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -601,6 +605,23 @@ async def _run_pipeline(config: "StartRequest") -> None:
         current_state["running"] = False
         await broadcast({"type": "state", "running": False,
                          "step": current_state["step"]})
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint reset
+# ---------------------------------------------------------------------------
+@app.post("/api/checkpoint/reset")
+async def post_checkpoint_reset(body: CheckpointResetRequest):
+    validation = validate_path(body.data_path)
+    if not validation.get("valid"):
+        raise HTTPException(status_code=400, detail=validation.get("reason", "Invalid path"))
+    ckpt_path = Path(body.data_path) / ".setup_checkpoint.json"
+    if ckpt_path.exists():
+        try:
+            ckpt_path.unlink()
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Could not delete checkpoint: {e}")
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

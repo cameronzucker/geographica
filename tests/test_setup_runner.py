@@ -419,6 +419,36 @@ class TestCommandBuilders:
         assert cmd[cmd.index("--bbox") + 1] == "-112,33,-110,34"
 
 
+class TestCheckpointResilience:
+    def test_corrupt_json_returns_empty(self, tmp_path):
+        from setup.runner import Checkpoint
+        path = tmp_path / "ckpt.json"
+        path.write_text("{not valid json")
+        cp = Checkpoint(str(path))
+        assert cp.get_completed() == []
+
+    def test_persist_is_atomic(self):
+        from setup import runner
+        import inspect
+        src = inspect.getsource(runner.Checkpoint._persist)
+        assert ".tmp" in src or "os.replace" in src or "rename" in src
+
+    def test_persist_creates_parent_dir(self, tmp_path):
+        from setup.runner import Checkpoint
+        nested = tmp_path / "deep" / "nested" / "ckpt.json"
+        cp = Checkpoint(str(nested))
+        cp.mark_completed("x")
+        assert nested.exists()
+
+    def test_reset_clears_file(self, tmp_path):
+        from setup.runner import Checkpoint
+        path = tmp_path / "ckpt.json"
+        cp = Checkpoint(str(path))
+        cp.mark_completed("a")
+        cp.reset()
+        assert not path.exists()
+
+
 class TestShutdownKillsGrandchildren:
     def test_run_command_uses_start_new_session(self):
         from setup import runner

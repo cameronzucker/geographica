@@ -1169,6 +1169,12 @@
       $('#btn-next').disabled = false;
       $('#btn-next').textContent = 'Next';
     });
+    $('#btn-reset-checkpoint').addEventListener('click', function () {
+      if (!confirm('Reset pipeline checkpoint? This will re-run completed steps on the next start.')) return;
+      api('POST', '/api/checkpoint/reset', { data_path: config.data_path })
+        .then(function () { alert('Checkpoint cleared.'); })
+        .catch(function (err) { showError('Reset failed: ' + err.message); });
+    });
 
     // TLS mode change
     $('#tls-mode').addEventListener('change', onTlsModeChange);

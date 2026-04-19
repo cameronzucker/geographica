@@ -638,6 +638,37 @@ def test_broadcast_uses_gather_with_timeout():
     assert "wait_for" in src or "timeout" in src.lower()
 
 
+class TestCheckpointResetEndpoint:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.client = TestClient(app)
+        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+
+    def test_reset_endpoint_exists(self, tmp_path):
+        from setup.main import ALLOWED_PATH_PREFIXES  # may or may not exist
+        # Use a path under /tmp which is allowlist-rejected, so we verify the
+        # endpoint returns 400 (not 404/405). A 200 is also acceptable if
+        # /tmp is conditionally allowed.
+        resp = self.client.post("/api/checkpoint/reset",
+                                json={"data_path": "/tmp"},
+                                headers=self.headers)
+        assert resp.status_code in (200, 400), f"expected 200 or 400, got {resp.status_code}"
+
+    def test_reset_endpoint_clears_existing_checkpoint(self, tmp_path, monkeypatch):
+        # Bypass path allowlist so the endpoint reaches the delete logic.
+        from setup import main as mod
+        monkeypatch.setattr(mod, "validate_path", lambda p: {"valid": True})
+        # Seed a checkpoint file.
+        ckpt = tmp_path / ".setup_checkpoint.json"
+        ckpt.write_text('{"completed": ["x"]}')
+        assert ckpt.exists()
+        resp = self.client.post("/api/checkpoint/reset",
+                                json={"data_path": str(tmp_path)},
+                                headers=self.headers)
+        assert resp.status_code == 200, resp.text
+        assert not ckpt.exists()
+
+
 def test_pipeline_error_broadcast_includes_step_and_stderr(tmp_path, monkeypatch):
     import shutil
     from setup import main as mod

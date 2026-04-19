@@ -19,8 +19,12 @@ class Checkpoint:
         self._path = Path(path)
         self._completed: set[str] = set()
         if self._path.exists():
-            data = json.loads(self._path.read_text())
-            self._completed = set(data.get("completed", []))
+            try:
+                data = json.loads(self._path.read_text())
+                self._completed = set(data.get("completed", []))
+            except (json.JSONDecodeError, OSError):
+                # Corrupt or unreadable — start fresh rather than crash.
+                self._completed = set()
 
     def is_completed(self, step: str) -> bool:
         return step in self._completed
@@ -38,7 +42,10 @@ class Checkpoint:
             self._path.unlink()
 
     def _persist(self) -> None:
-        self._path.write_text(json.dumps({"completed": sorted(self._completed)}))
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+        tmp.write_text(json.dumps({"completed": sorted(self._completed)}))
+        os.replace(str(tmp), str(self._path))
 
 
 # ---------------------------------------------------------------------------
