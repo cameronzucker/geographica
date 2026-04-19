@@ -61,8 +61,8 @@ PREFLIGHT_CHECKS: list[dict] = [
     {"name": "git", "check_cmd": ["git", "--version"], "label": "Git"},
 ]
 
-# Credential storage path — HARDCODED, never from client
-CREDENTIALS_PATH = "/srv/geographica/data/credentials.json"
+# Keyring agent Unix socket — installed by bootstrap's keyring-agent step
+KEYRING_SOCKET_PATH = "/run/geographica/keyring.sock"
 
 # Static files directory
 STATIC_DIR = str(Path(__file__).parent / "static")
@@ -137,10 +137,10 @@ class ConfigRequest(BaseModel):
 
 
 class CredentialsRequest(BaseModel):
-    m2m_username: str
-    m2m_token: str
-    copernicus_client_id: str
-    copernicus_client_secret: str
+    m2m_username: str = ""
+    m2m_token: str = ""
+    copernicus_username: str = ""
+    copernicus_password: str = ""
 
 
 class PathRequest(BaseModel):
@@ -312,18 +312,63 @@ async def post_config(body: ConfigRequest):
     return {"ok": True}
 
 
+async def _write_to_keyring(cred_type: str, fields: dict[str, str]) -> None:
+    """Send store-actions to the keyring agent over its Unix socket.
+
+    Raises HTTPException(503) if the socket is unavailable — surfaces the
+    'did you forget to start the keyring agent?' case to the user.
+    Raises HTTPException(500) if the agent responds with ok=False.
+    """
+    try:
+        reader, writer = await asyncio.open_unix_connection(KEYRING_SOCKET_PATH)
+    except (FileNotFoundError, ConnectionRefusedError) as e:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Keyring agent not reachable at {KEYRING_SOCKET_PATH} ({e}). "
+                "Start it with: sudo systemctl start geographica-keyring"
+            ),
+        )
+    try:
+        for key, value in fields.items():
+            if not value:
+                continue  # skip empty values — don't clobber the stored entry
+            msg = json.dumps({
+                "action": "store",
+                "type": cred_type,
+                "key": key,
+                "value": value,
+            }) + "\n"
+            writer.write(msg.encode("utf-8"))
+            await writer.drain()
+            resp_line = await reader.readline()
+            if not resp_line:
+                raise HTTPException(status_code=500,
+                                    detail=f"keyring agent closed socket mid-write ({cred_type}/{key})")
+            resp = json.loads(resp_line.decode("utf-8"))
+            if not resp.get("ok"):
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"keyring agent rejected {cred_type}/{key}: {resp.get('error', 'unknown')}",
+                )
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+
 @app.post("/api/credentials")
 async def post_credentials(body: CredentialsRequest):
-    """Write credentials to hardcoded path."""
-    cred_data = {
-        "m2m_username": body.m2m_username,
-        "m2m_token": body.m2m_token,
-        "copernicus_client_id": body.copernicus_client_id,
-        "copernicus_client_secret": body.copernicus_client_secret,
-    }
-    cred_path = Path(CREDENTIALS_PATH)
-    cred_path.parent.mkdir(parents=True, exist_ok=True)
-    cred_path.write_text(json.dumps(cred_data, indent=2))
+    await _write_to_keyring("m2m", {
+        "username": body.m2m_username,
+        "token": body.m2m_token,
+    })
+    await _write_to_keyring("copernicus", {
+        "username": body.copernicus_username,
+        "password": body.copernicus_password,
+    })
     return {"ok": True}
 
 

@@ -594,21 +594,20 @@
   }
 
   function saveCredentials() {
-    var m2mUser = $('#m2m-username').value.trim();
-    var m2mToken = $('#m2m-token').value.trim();
-    var copId = $('#copernicus-client-id').value.trim();
-    var copSecret = $('#copernicus-client-secret').value.trim();
-
-    // Only save if something was filled in
-    if (!m2mUser && !m2mToken && !copId && !copSecret) return;
-
-    api('POST', '/api/credentials', {
-      m2m_username: m2mUser,
-      m2m_token: m2mToken,
-      copernicus_client_id: copId,
-      copernicus_client_secret: copSecret
+    var m2mU = ($('#m2m-username').value || '').trim();
+    var m2mT = ($('#m2m-token').value || '').trim();
+    var copU = ($('#copernicus-username').value || '').trim();
+    var copP = ($('#copernicus-password').value || '').trim();
+    if (!m2mU && !m2mT && !copU && !copP) {
+      return Promise.resolve({ ok: true, skipped: true });
+    }
+    return api('POST', '/api/credentials', {
+      m2m_username: m2mU, m2m_token: m2mT,
+      copernicus_username: copU, copernicus_password: copP,
     }).catch(function (err) {
-      console.error('Failed to save credentials:', err);
+      showError('Credentials save failed: ' + err.message +
+                ' — is the keyring agent running? Try: sudo systemctl start geographica-keyring');
+      throw err;
     });
   }
 

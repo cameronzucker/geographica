@@ -1,4 +1,5 @@
 """Tests for setup/main.py — FastAPI setup wizard with CSRF protection."""
+import json
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -7,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from setup.main import app, CSRF_TOKEN, CREDENTIALS_PATH, current_state
+from setup.main import app, CSRF_TOKEN, current_state
 from fastapi.testclient import TestClient
 
 
@@ -154,38 +155,106 @@ class TestConfigEndpoint:
             assert "tls_mode" in resp.json().get("detail", "").lower()
 
 
-class TestCredentialsEndpoint:
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        self.client = TestClient(app)
-        self.headers = {"X-CSRF-Token": CSRF_TOKEN}
+@pytest.fixture
+def fake_keyring_socket(tmp_path):
+    import socket
+    import threading
+    socket_path = tmp_path / "keyring.sock"
+    captured = []
+    stop_event = threading.Event()
 
-    def test_credentials_path_is_hardcoded(self):
-        assert CREDENTIALS_PATH == "/srv/geographica/data/credentials.json"
+    def handle_conn(conn):
+        """Handle one connection: read newline-delimited messages until EOF."""
+        buf = b""
+        try:
+            while True:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        msg = json.loads(line.decode())
+                        captured.append(msg)
+                        conn.sendall(b'{"ok":true}\n')
+                    except Exception:
+                        conn.sendall(b'{"ok":false,"error":"bad_json"}\n')
+        finally:
+            conn.close()
 
-    def test_credentials_writes_file(self, tmp_path, monkeypatch):
-        cred_path = tmp_path / "credentials.json"
-        monkeypatch.setattr("setup.main.CREDENTIALS_PATH", str(cred_path))
-        resp = self.client.post("/api/credentials", json={
-            "m2m_username": "user",
-            "m2m_token": "tok",
-            "copernicus_client_id": "cid",
-            "copernicus_client_secret": "csec",
-        }, headers=self.headers)
+    def server():
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(socket_path))
+        srv.listen(5)
+        srv.settimeout(0.1)
+        while not stop_event.is_set():
+            try:
+                conn, _ = srv.accept()
+                t = threading.Thread(target=handle_conn, args=(conn,), daemon=True)
+                t.start()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+        srv.close()
+
+    thread = threading.Thread(target=server, daemon=True)
+    thread.start()
+    yield socket_path, captured
+    stop_event.set()
+
+
+class TestCredentialsEndpointKeyring:
+    def test_post_credentials_writes_each_field(self, fake_keyring_socket, monkeypatch):
+        socket_path, captured = fake_keyring_socket
+        monkeypatch.setattr("setup.main.KEYRING_SOCKET_PATH", str(socket_path))
+        client = TestClient(app)
+        resp = client.post(
+            "/api/credentials",
+            json={"m2m_username": "alice", "m2m_token": "t0k3n",
+                  "copernicus_username": "bob", "copernicus_password": "secret"},
+            headers={"X-CSRF-Token": CSRF_TOKEN},
+        )
         assert resp.status_code == 200
-        assert resp.json()["ok"] is True
-        import json
-        data = json.loads(cred_path.read_text())
-        assert data["m2m_username"] == "user"
+        # Must write exactly 4 store actions with specific fields
+        assert len(captured) == 4
+        stored = {(m["type"], m["key"]): m["value"] for m in captured}
+        assert stored[("m2m", "username")] == "alice"
+        assert stored[("m2m", "token")] == "t0k3n"
+        assert stored[("copernicus", "username")] == "bob"
+        assert stored[("copernicus", "password")] == "secret"
 
-    def test_credentials_requires_csrf(self):
-        resp = self.client.post("/api/credentials", json={
-            "m2m_username": "user",
-            "m2m_token": "tok",
-            "copernicus_client_id": "cid",
-            "copernicus_client_secret": "csec",
-        })
-        assert resp.status_code == 403
+    def test_post_credentials_skips_empty_fields(self, fake_keyring_socket, monkeypatch):
+        socket_path, captured = fake_keyring_socket
+        monkeypatch.setattr("setup.main.KEYRING_SOCKET_PATH", str(socket_path))
+        client = TestClient(app)
+        resp = client.post(
+            "/api/credentials",
+            json={"m2m_username": "alice", "m2m_token": "",
+                  "copernicus_username": "", "copernicus_password": ""},
+            headers={"X-CSRF-Token": CSRF_TOKEN},
+        )
+        assert resp.status_code == 200
+        # Only m2m/username should have been written; blanks skipped
+        assert len(captured) == 1
+        assert captured[0]["type"] == "m2m"
+        assert captured[0]["key"] == "username"
+
+    def test_post_credentials_surfaces_socket_failure(self, monkeypatch, tmp_path):
+        missing = tmp_path / "does-not-exist.sock"
+        monkeypatch.setattr("setup.main.KEYRING_SOCKET_PATH", str(missing))
+        client = TestClient(app)
+        resp = client.post(
+            "/api/credentials",
+            json={"m2m_username": "alice", "m2m_token": "t"},
+            headers={"X-CSRF-Token": CSRF_TOKEN},
+        )
+        assert resp.status_code == 503
+        assert "systemctl" in resp.json()["detail"]
 
 
 class TestStatusEndpoint:
