@@ -43,6 +43,30 @@ $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
     > /etc/apt/sources.list.d/docker.list
 fi
 apt update
+
+# Remove Debian-native Docker packages that file-conflict with Docker's
+# official plugins. Required on Trixie+: Debian's `docker-buildx` and
+# `docker-compose` both own /usr/libexec/docker/cli-plugins/docker-{buildx,compose},
+# the exact paths Docker's `docker-buildx-plugin` and `docker-compose-plugin`
+# claim. Neither side declares Replaces, so if either Debian package is
+# preinstalled (common on beta testers who tried `apt install docker.io`
+# or ran `apt full-upgrade` with docker.io present), the docker-ce install
+# aborts mid-unpack with `trying to overwrite ... which is also in package
+# docker-buildx`. Matches Docker's official "Uninstall old versions" step
+# at https://docs.docker.com/engine/install/debian/.
+CONFLICTING_PKGS=(docker.io docker-compose docker-compose-v2 docker-buildx \
+                  docker-doc podman-docker containerd runc)
+TO_REMOVE=()
+for pkg in "${CONFLICTING_PKGS[@]}"; do
+    if dpkg -s "$pkg" >/dev/null 2>&1; then
+        TO_REMOVE+=("$pkg")
+    fi
+done
+if [ "${#TO_REMOVE[@]}" -gt 0 ]; then
+    echo "  Removing Debian-native Docker packages that conflict with docker-ce: ${TO_REMOVE[*]}"
+    apt remove -y "${TO_REMOVE[@]}"
+fi
+
 apt install -y \
   docker-ce docker-ce-cli containerd.io docker-compose-plugin \
   python3 python3-venv python3-pip \
