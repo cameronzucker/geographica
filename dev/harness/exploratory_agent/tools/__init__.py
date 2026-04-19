@@ -25,3 +25,5 @@ def register(name: str, factory: Callable, schema: dict) -> None:
 from . import browser  # noqa: F401,E402
 from . import api  # noqa: F401,E402
 from . import container  # noqa: F401,E402
+from . import control  # noqa: F401,E402
+from . import reporting  # noqa: F401,E402

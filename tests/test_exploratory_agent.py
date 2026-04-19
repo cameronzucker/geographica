@@ -220,3 +220,121 @@ def test_container_restart_unit_name_matches_wizard_ci_sh():
     assert ci_unit == WIZARD_SYSTEMD_UNIT or ci_unit + ".service" == WIZARD_SYSTEMD_UNIT, (
         f"wizard-ci.sh uses unit {ci_unit!r}; ContainerTools uses {WIZARD_SYSTEMD_UNIT!r}"
     )
+
+
+def test_control_and_reporting_tools_registered():
+    from dev.harness.exploratory_agent.tools import TOOL_REGISTRY
+    for name in ("wait_seconds", "describe_wizard_state",
+                 "report_finding", "checkpoint", "stop"):
+        assert name in TOOL_REGISTRY
+
+
+def test_wait_seconds_is_capped_at_30():
+    from dev.harness.exploratory_agent.tools.control import ControlTools
+    import time
+    ct = ControlTools(browser=None)
+    t0 = time.time()
+    r = ct.wait_seconds_sync(100)
+    elapsed = time.time() - t0
+    assert r["waited"] == 30
+    assert elapsed < 35
+
+
+def test_report_finding_appends_and_returns_id(tmp_path):
+    from dev.harness.exploratory_agent.tools.reporting import ReportingTools
+    rt = ReportingTools(findings_dir=str(tmp_path))
+    r = rt.report_finding_sync(
+        classification="input-validation",
+        severity="high",
+        title="trailing slash silently accepted",
+        reproduction_steps=["enter /srv/x/", "click Next"],
+        input={"path": "/srv/x/"},
+        observed="path saved with trailing /",
+        expected="trailing / stripped",
+        evidence={"screenshot": "screenshots/f1-after.png"},
+    )
+    assert "id" in r
+    assert r["id"].startswith("F-")
+    assert len(rt.findings) == 1
+
+
+def test_report_finding_dedups_on_identical_title_and_input(tmp_path):
+    """MUST-FIX 4.2: two reports with the same class/title/input keys
+    produce ONE finding; second call returns the first ID + deduped=True."""
+    from dev.harness.exploratory_agent.tools.reporting import ReportingTools
+    rt = ReportingTools(findings_dir=str(tmp_path))
+    r1 = rt.report_finding_sync(
+        classification="input-validation",
+        severity="high",
+        title="Trailing slash silently accepted",
+        reproduction_steps=["step a"],
+        input={"path": "/srv/x/"},
+        observed="x",
+        expected="y",
+        evidence={},
+    )
+    r2 = rt.report_finding_sync(
+        classification="input-validation",
+        severity="medium",  # even with different severity
+        title="trailing slash   silently  accepted!",  # re-cased + punctuation
+        reproduction_steps=["step b"],
+        input={"path": "/srv/different/"},  # same KEY, different VALUE
+        observed="x2",
+        expected="y2",
+        evidence={},
+    )
+    assert r1["id"] == r2["id"]
+    assert r2.get("deduped") is True
+    assert len(rt.findings) == 1
+
+
+def test_stop_records_reason():
+    from dev.harness.exploratory_agent.tools.reporting import ReportingTools
+    rt = ReportingTools(findings_dir="/tmp")
+    r = rt.stop_sync(reason="exhausted hypotheses")
+    assert r == {"stopped": True}
+    assert rt.stop_reason == "exhausted hypotheses"
+
+
+def test_findings_writer_renders_markdown(tmp_path):
+    from dev.harness.exploratory_agent.findings_writer import render_markdown
+    findings = [{
+        "id": "F-001",
+        "classification": "input-validation",
+        "severity": "high",
+        "title": "Trailing slash accepted",
+        "reproduction_steps": ["step 1", "step 2"],
+        "input": {"path": "/srv/x/"},
+        "observed": "accepted",
+        "expected": "stripped",
+        "evidence": {"screenshot": "screenshots/x.png"},
+    }]
+    meta = {
+        "container_image": "images:debian/trixie/cloud",
+        "pre_state": "clean",
+        "model": "claude-sonnet-4-6",
+        "started_at": "2026-04-20 14:30",
+        "ended_at": "2026-04-20 14:44",
+        "turns_used": 83,
+        "turns_cap": 200,
+        "transcript_path": "dev/harness/findings/2026-04-20-1430.transcript.jsonl",
+        "stop_reason": "time budget",
+    }
+    md = render_markdown(findings, meta)
+    assert "# Exploratory-Agent Findings" in md
+    assert "Finding 1 — HIGH" in md
+    assert "Trailing slash accepted" in md
+    assert "F-001" in md
+
+
+def test_transcript_writer_appends_jsonl(tmp_path):
+    import json
+    from dev.harness.exploratory_agent.transcript import TranscriptWriter
+    p = tmp_path / "t.jsonl"
+    tw = TranscriptWriter(str(p))
+    tw.log({"event": "tool_call", "name": "page_goto", "args": {"url": "x"}})
+    tw.log({"event": "tool_result", "name": "page_goto", "result": {"status": 200}})
+    tw.close()
+    lines = p.read_text().strip().splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["event"] == "tool_call"
