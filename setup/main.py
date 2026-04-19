@@ -722,6 +722,38 @@ async def post_start(body: StartRequest):
     """Start the download/build pipeline as a background task."""
     if not validate_bbox(body.bbox):
         raise HTTPException(status_code=400, detail="Invalid bbox")
+
+    # Reject bboxes that don't intersect any supported Geofabrik state
+    # extract. Otherwise the pipeline kicks off, downloads nothing useful
+    # (or, under the prior fallback-to-all-states bug, 4+ GB of wrong-
+    # region data), and fails opaquely further down. See
+    # setup/runner.py::_states_intersecting and STATE_BBOXES for the
+    # supported set (48 contiguous US states + DC).
+    #
+    # Only gate on OSM layers being enabled — basemap/POI/OSM-POIs need
+    # the state extracts, but a pipeline that only touches elevation or
+    # imagery can run outside the US (hypothetically; no presets for
+    # that today). So: if any OSM-consuming layer is NOT skipped, the
+    # bbox must hit a state.
+    osm_consumers = {"basemap", "base_imagery"}
+    osm_active = any(
+        (body.layers or {}).get(k, "skip") != "skip" for k in osm_consumers
+    )
+    if osm_active:
+        from setup.runner import _states_intersecting, STATE_BBOXES
+        if not _states_intersecting(body.bbox):
+            supported = ", ".join(sorted(STATE_BBOXES.keys()))
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"bbox {body.bbox!r} does not intersect any supported "
+                    f"region. Geographica currently supports the 48 "
+                    f"contiguous US states + DC. Supported region names: "
+                    f"{supported}. Update your bbox or pick a preset that "
+                    f"covers the area you want."
+                ),
+            )
+
     async with _start_lock:
         if current_state["running"]:
             raise HTTPException(status_code=409, detail="Pipeline already running")

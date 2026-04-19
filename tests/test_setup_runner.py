@@ -338,26 +338,85 @@ class TestCommandBuilders:
         assert "arizona" in result
         assert "new-mexico" in result
 
-    def test_states_intersecting_malformed_falls_back_to_all(self):
-        """Conservative: rather than fail a wizard run on a bbox parse
-        error, download everything and let the merge + downstream step
-        surface the real issue with specific context."""
+    def test_states_intersecting_malformed_returns_empty(self):
+        """A malformed bbox no longer falls back to "download all states".
+        After the 2026-04-21 beta-tester report where a bbox outside the
+        western-US set silently pulled 4 GB of irrelevant data, the
+        function returns an EMPTY list for malformed input and the
+        caller is responsible for producing a clear validation error."""
+        from setup.runner import _states_intersecting
+        assert _states_intersecting("not,a,valid,bbox") == []
+
+    def test_states_intersecting_empty_bbox_returns_empty(self):
+        from setup.runner import _states_intersecting
+        assert _states_intersecting("") == []
+
+    def test_states_intersecting_outside_all_states_returns_empty(self):
+        """Bbox in Europe / Asia / Atlantic / anywhere outside the 48
+        contiguous states + DC. Returns empty. Caller must validate."""
+        from setup.runner import _states_intersecting
+        # Middle of the North Atlantic — far from any US state.
+        assert _states_intersecting("-40,40,-35,45") == []
+
+    # --- expanded-coverage tests for the 2026-04-21 beta-tester report ---
+    #
+    # The prior STATE_BBOXES list only had 11 western states. Any bbox
+    # anywhere else in the US got the "fallback to all western states"
+    # treatment, which downloaded 4 GB of wrong-region data. Tests below
+    # lock in 48-contiguous + DC coverage so a bbox in ANY contiguous US
+    # state resolves to the right Geofabrik extracts.
+
+    def test_states_intersecting_texas(self):
+        """Austin-area bbox resolves to Texas only."""
+        from setup.runner import _states_intersecting
+        assert _states_intersecting("-98.0,30.1,-97.5,30.5") == ["texas"]
+
+    def test_states_intersecting_florida_miami(self):
+        from setup.runner import _states_intersecting
+        assert _states_intersecting("-80.35,25.7,-80.15,25.9") == ["florida"]
+
+    def test_states_intersecting_nyc_tri_state(self):
+        """NYC bbox — NY and potentially NJ/CT depending on the exact
+        rectangle. At minimum new-york must be included; neighbors are
+        acceptable (bbox is generous by design)."""
+        from setup.runner import _states_intersecting
+        result = _states_intersecting("-74.1,40.6,-73.9,40.9")
+        assert "new-york" in result
+
+    def test_states_intersecting_dc(self):
+        from setup.runner import _states_intersecting
+        result = _states_intersecting("-77.05,38.88,-76.95,38.92")
+        # DC is tiny and bordered by MD/VA, so neighbors are OK.
+        assert "district-of-columbia" in result
+
+    def test_states_intersecting_full_continental_bbox(self):
+        """full_us-ish bbox spanning the continental US should match
+        every contiguous state + DC in STATE_BBOXES."""
         from setup.runner import _states_intersecting, STATE_BBOXES
-        result = _states_intersecting("not,a,valid,bbox")
+        result = _states_intersecting("-124.8,24.5,-66.9,49.4")
+        # Expect ≥48 states (48 lower + DC; Alaska/Hawaii excluded).
+        assert len(result) >= 48, (
+            f"continental-US bbox should match ~48 states; got {len(result)}: {result}"
+        )
+        # All STATE_BBOXES entries should be present (because continental
+        # bbox covers them all).
         assert set(result) == set(STATE_BBOXES.keys())
 
-    def test_states_intersecting_empty_bbox_falls_back_to_all(self):
-        from setup.runner import _states_intersecting, STATE_BBOXES
-        result = _states_intersecting("")
-        assert set(result) == set(STATE_BBOXES.keys())
-
-    def test_states_intersecting_outside_all_states_falls_back_to_all(self):
-        """Bbox over New York — not in any of the 11 western states.
-        Fall back to the full list rather than silently download
-        nothing (user's bbox is probably wrong)."""
-        from setup.runner import _states_intersecting, STATE_BBOXES
-        result = _states_intersecting("-75,40,-73,42")
-        assert set(result) == set(STATE_BBOXES.keys())
+    def test_state_bboxes_has_all_48_contiguous_plus_dc(self):
+        """Lock in the expected state-list size so a future edit that
+        accidentally deletes entries (or limits to just the old 11
+        western states) fails loudly."""
+        from setup.runner import STATE_BBOXES
+        assert len(STATE_BBOXES) >= 49, (
+            f"STATE_BBOXES must cover 48 contiguous states + DC "
+            f"(prior 11-state list triggered the 2026-04-21 beta "
+            f"bug); got {len(STATE_BBOXES)}"
+        )
+        # Spot-check specific expected entries.
+        for must_have in ("texas", "florida", "new-york", "illinois",
+                           "pennsylvania", "georgia-us", "district-of-columbia"):
+            assert must_have in STATE_BBOXES, \
+                f"STATE_BBOXES missing {must_have!r}"
 
     def test_osm_download_cmd_verifies_md5(self):
         """Beta-tester 2026-04-19 report: osm_merge failed with
@@ -494,6 +553,55 @@ class TestCommandBuilders:
         assert cmd[0] == "bash"
         assert "cp " in " ".join(cmd)
 
+    def test_pipeline_scripts_invoked_via_usr_bin_python3(self):
+        """Beta-tester 2026-04-21 report:
+            [ERROR] Build POI index: Traceback ...
+                File "/home/pi/geographica/scripts/build_poi_index.py", line 20
+                import aiohttp
+            ModuleNotFoundError: No module named 'aiohttp'
+
+        aiohttp IS in scripts/requirements.txt and bootstrap.sh's
+        `pip install --user --break-system-packages` DID install it
+        into ~/.local/... — but only for /usr/bin/python3. When
+        setup.sh activates setup/.venv, bare `python3` in the runner
+        commands resolves to the venv's interpreter which does NOT
+        inherit ~/.local. Same class as the 2026-04-19 preflight bug
+        fixed in 5e400c5.
+
+        Every pipeline subprocess that runs a script from scripts/
+        must explicitly invoke /usr/bin/python3 so it picks up the
+        user site-packages bootstrap installed.
+        """
+        from setup.runner import (
+            poi_build_cmd, osm_pois_cmd, public_lands_cmd,
+            elevation_cmd, base_imagery_cmd, detail_imagery_cmd,
+        )
+
+        layers_naip = dict(_CTX_BASE["layers"], base_imagery="naip",
+                            detail_imagery="m2m")
+        ctx_naip = dict(_CTX_BASE, layers=layers_naip)
+
+        check_cmds = {
+            "poi_build_cmd":     poi_build_cmd(_CTX_BASE),
+            "osm_pois_cmd":      osm_pois_cmd(_CTX_BASE),
+            "public_lands_cmd":  public_lands_cmd(_CTX_BASE),
+            "elevation_cmd":     elevation_cmd(_CTX_BASE),
+            "base_imagery_cmd":  base_imagery_cmd(ctx_naip),
+            "detail_imagery_cmd": detail_imagery_cmd(ctx_naip),
+        }
+
+        for name, cmd in check_cmds.items():
+            # cmd[0] is the python interpreter; it MUST be the absolute
+            # /usr/bin/python3, not a bare "python3" that resolves to
+            # whatever's on PATH (which, under setup.sh, is the venv).
+            assert cmd[0] == "/usr/bin/python3", (
+                f"{name} invokes {cmd[0]!r} as the interpreter. Must be "
+                f"'/usr/bin/python3' so pip-install-user packages from "
+                f"scripts/requirements.txt are importable. Bare 'python3' "
+                f"resolves to setup/.venv under setup.sh and the venv "
+                f"doesn't have aiohttp/rasterio/shapely/etc."
+            )
+
     def test_planetiler_build_cmd_includes_download_flag(self):
         """2026-04-20 beta-tester screenshot: pipeline crashed at
         `Build basemap tiles` with
@@ -530,13 +638,13 @@ class TestCommandBuilders:
 
     def test_poi_build_cmd(self):
         cmd = poi_build_cmd(_CTX_BASE)
-        assert cmd[0] == "python3"
+        assert cmd[0] == "/usr/bin/python3"
         assert cmd[1].endswith("/build_poi_index.py")
         assert cmd[cmd.index("--bbox") + 1] == "-114,31,-109,37"
 
     def test_osm_pois_cmd(self):
         cmd = osm_pois_cmd(_CTX_BASE)
-        assert cmd[0] == "python3"
+        assert cmd[0] == "/usr/bin/python3"
         assert cmd[1].endswith("/build_osm_pois.py")
         assert cmd[cmd.index("--pbf") + 1].endswith("western-us.osm.pbf")
 
@@ -545,7 +653,7 @@ class TestCommandBuilders:
         ctx["layers"] = dict(ctx["layers"])
         ctx["layers"]["base_imagery"] = "naip"
         cmd = base_imagery_cmd(ctx)
-        assert cmd[0] == "python3"
+        assert cmd[0] == "/usr/bin/python3"
         assert cmd[1].endswith("/acquire_imagery.py")
         assert "--mode" in cmd
         assert cmd[cmd.index("--mode") + 1] == "naip"
@@ -575,7 +683,7 @@ class TestCommandBuilders:
     def test_detail_imagery_cmd_m2m(self):
         ctx = dict(_CTX_BASE)
         cmd = detail_imagery_cmd(ctx)
-        assert cmd[0] == "python3"
+        assert cmd[0] == "/usr/bin/python3"
         assert cmd[1].endswith("/acquire_imagery.py")
         assert cmd[cmd.index("--mode") + 1] == "m2m"
         assert cmd[cmd.index("--bbox") + 1] == "-114,31,-109,37"
@@ -599,13 +707,13 @@ class TestCommandBuilders:
 
     def test_public_lands_cmd(self):
         cmd = public_lands_cmd(_CTX_BASE)
-        assert cmd[0] == "python3"
+        assert cmd[0] == "/usr/bin/python3"
         assert cmd[1].endswith("/build_public_lands.py")
         assert cmd[cmd.index("--bbox") + 1] == "-114,31,-109,37"
 
     def test_elevation_cmd(self):
         cmd = elevation_cmd(_CTX_BASE)
-        assert cmd[0] == "python3"
+        assert cmd[0] == "/usr/bin/python3"
         assert cmd[1].endswith("/download_elevation.py")
         assert cmd[cmd.index("--zoom") + 1] == "0-14"
 

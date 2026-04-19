@@ -297,15 +297,22 @@ class TestValidatePath:
     def test_validate_path_rejects_sibling_prefixes(self):
         """Adversarial path table covering every boundary-class the allowlist must reject."""
         from config import validate_path
+        # NB: `//srv/x` used to be in this list because earlier
+        # validate_path used raw `startswith("/srv/")` which `//srv/x`
+        # failed. Since commit 7bcf685, validate_path normalizes paths
+        # first (`//srv/x` → `/srv/x`) so the string is now legitimately
+        # valid — it resolves to the same filesystem location as a
+        # bare `/srv/x`. Removing it here isn't a security regression;
+        # the allowlist check still catches genuine bypass attempts
+        # (/srvattacker/x etc.).
         ADVERSARIAL_REJECT = [
             "",                    # empty
             "/",                   # root
             "/srv",                # allowed prefix alone
-            "/srv/",               # trailing slash on allowed prefix
+            "/srv/",               # trailing slash — normalizes to /srv, still rejected (no content)
             "/srvattacker/x",      # sibling of /srv
             "/srv/../etc/passwd",  # traversal (resolve should catch)
             "/srv\x00malicious",   # null byte
-            "//srv/x",             # double-slash
             "../srv/x",            # relative
             "/homeroot/x",         # sibling of /home
             "/mntfoo/x",           # sibling of /mnt

@@ -465,6 +465,47 @@ class TestStartRequestLayerConfig:
         }, headers=self.headers)
         assert resp.status_code == 200, resp.text
 
+    def test_start_rejects_bbox_outside_supported_regions(self):
+        """2026-04-21 beta-tester report: a bbox outside the 11-state
+        western-US set used to fall back to downloading all 11 states
+        anyway (wasted bandwidth, wrong data). After the runner.py fix
+        that returns an empty state list for unsupported bboxes,
+        /api/start must reject such bboxes with a clear 400 listing
+        the supported region names, instead of kicking off a broken
+        pipeline."""
+        # Middle of the North Atlantic — far from any US state.
+        resp = self.client.post("/api/start", json={
+            "bbox": "-40,40,-35,45",
+            "layers": {"basemap": "download", "base_imagery": "skip",
+                        "detail_imagery": "skip", "elevation": "skip"},
+            "data_path": "/srv/geographica/data",
+        }, headers=self.headers)
+        assert resp.status_code == 400, resp.text
+        detail = resp.json()["detail"]
+        assert "does not intersect" in detail
+        assert "48 contiguous US states" in detail
+        # Names at least a few recognisable states so the user can tell
+        # what's available.
+        assert "texas" in detail
+        assert "new-york" in detail
+
+    def test_start_accepts_bbox_when_basemap_is_skipped(self, tmp_path, monkeypatch):
+        """If the user skips every OSM-consuming layer
+        (basemap + base_imagery), the bbox doesn't need to intersect
+        any Geofabrik state. Elevation-only or imagery-only pipelines
+        can target arbitrary regions."""
+        from setup import main as mod
+        async def fake_run(args, cwd, on_output, env_extra=None):
+            return 0
+        monkeypatch.setattr(mod, "run_command", fake_run)
+        resp = self.client.post("/api/start", json={
+            "bbox": "-40,40,-35,45",  # mid-Atlantic, no state intersection
+            "layers": {"basemap": "skip", "base_imagery": "skip",
+                        "detail_imagery": "skip", "elevation": "download"},
+            "data_path": str(tmp_path),
+        }, headers=self.headers)
+        assert resp.status_code == 200, resp.text
+
     def test_start_rejects_unknown_field(self):
         resp = self.client.post("/api/start", json={
             "bbox": "-114.8,31.3,-109.0,37.0",
