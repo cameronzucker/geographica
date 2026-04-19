@@ -258,6 +258,18 @@ def detect_storage() -> list[dict]:
 # ---------------------------------------------------------------------------
 # Path validation
 # ---------------------------------------------------------------------------
+def _under(path: str, prefix: str) -> bool:
+    """True if `path` is a proper descendant of `prefix` (has content under it).
+
+    Rejects: `prefix` alone, `prefix/` (trailing slash, empty), and any path
+    that merely starts with the prefix string but not a path-boundary character
+    (e.g. '/srvattacker' against '/srv').
+    Accepts: `prefix/<anything>` where anything is non-empty.
+    """
+    sep_prefix = prefix + os.sep
+    return path.startswith(sep_prefix) and len(path) > len(sep_prefix)
+
+
 def validate_path(path_str: str) -> dict:
     """Validate a filesystem path against the ALLOWLIST.
 
@@ -289,11 +301,11 @@ def validate_path(path_str: str) -> dict:
         return {"valid": False, "reason": "Invalid path"}
 
     # Check against allowlist AFTER resolving
-    if not any(resolved.startswith(prefix) for prefix in ALLOWED_PATH_PREFIXES):
+    if not any(_under(resolved, prefix) for prefix in ALLOWED_PATH_PREFIXES):
         return {"valid": False, "reason": f"Path not in allowed prefixes: {', '.join(ALLOWED_PATH_PREFIXES)}"}
 
     # Also check the original path before resolution — catches /srv/../etc
-    if not any(path_str.startswith(prefix) for prefix in ALLOWED_PATH_PREFIXES):
+    if not any(_under(path_str, prefix) for prefix in ALLOWED_PATH_PREFIXES):
         return {"valid": False, "reason": f"Path not in allowed prefixes: {', '.join(ALLOWED_PATH_PREFIXES)}"}
 
     # Reject symlinks — check each existing component

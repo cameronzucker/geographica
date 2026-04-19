@@ -278,6 +278,42 @@ class TestValidatePath:
         if "free_gb" in result:
             assert isinstance(result["free_gb"], (int, float))
 
+    def test_rejects_srvattacker(self):
+        from config import validate_path
+        assert validate_path("/srvattacker/malicious")["valid"] is False
+
+    def test_rejects_homeroot(self):
+        from config import validate_path
+        assert validate_path("/homeroot/x")["valid"] is False
+
+    def test_rejects_bare_srv(self):
+        from config import validate_path
+        assert validate_path("/srv")["valid"] is False
+
+    def test_accepts_srv_subpath(self):
+        from config import validate_path
+        assert validate_path("/srv/anything")["valid"] is True
+
+    def test_validate_path_rejects_sibling_prefixes(self):
+        """Adversarial path table covering every boundary-class the allowlist must reject."""
+        from config import validate_path
+        ADVERSARIAL_REJECT = [
+            "",                    # empty
+            "/",                   # root
+            "/srv",                # allowed prefix alone
+            "/srv/",               # trailing slash on allowed prefix
+            "/srvattacker/x",      # sibling of /srv
+            "/srv/../etc/passwd",  # traversal (resolve should catch)
+            "/srv\x00malicious",   # null byte
+            "//srv/x",             # double-slash
+            "../srv/x",            # relative
+            "/homeroot/x",         # sibling of /home
+            "/mntfoo/x",           # sibling of /mnt
+        ]
+        for path in ADVERSARIAL_REJECT:
+            result = validate_path(path)
+            assert result["valid"] is False, f"Expected {path!r} to be rejected, got {result}"
+
 
 def _parse(env_text: str) -> dict[str, str]:
     return dict(l.split("=", 1) for l in env_text.strip().splitlines()
