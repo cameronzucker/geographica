@@ -7,6 +7,14 @@ project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries
 from v1.1.0 onward are generated automatically by `release-please` from
 Conventional Commits.
 
+## [1.3.2](https://github.com/cameronzucker/geographica/compare/v1.3.1...v1.3.2) (2026-04-19)
+
+
+### Bug Fixes
+
+* **pipeline:** verify OSM PBF integrity at download, name the file at merge ([44c5ea6](https://github.com/cameronzucker/geographica/commit/44c5ea6702b57e4ab031892879e652557149589b))
+* **setup:** CSRF token survives uvicorn restart + auto-reload stale tabs + verbatim error detail ([9325e93](https://github.com/cameronzucker/geographica/commit/9325e931dc97cd731cebfd019c667033612565f9))
+
 ## [1.3.1](https://github.com/cameronzucker/geographica/compare/v1.3.0...v1.3.1) (2026-04-19)
 
 
