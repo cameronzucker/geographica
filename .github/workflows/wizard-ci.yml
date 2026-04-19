@@ -28,6 +28,10 @@ on:
       - 'setup/**'
       - 'dev/harness/**'
       - '.github/workflows/wizard-ci.yml'
+  schedule:
+    # 09:00 UTC = 02:00 PDT / 01:00 PST; off-peak maintainer window.
+    # Runs --exploratory once per night against current dev / main.
+    - cron: '0 9 * * *'
   workflow_dispatch:
     inputs:
       mode:
@@ -35,7 +39,7 @@ on:
         required: true
         default: 'smoke'
         type: choice
-        options: [smoke, pipeline-start, full, matrix, matrix-raspios]
+        options: [smoke, pipeline-start, full, matrix, matrix-raspios, exploratory]
       image:
         description: 'LXD image alias (smoke/full only)'
         required: false
@@ -79,6 +83,34 @@ jobs:
           IMAGE: ${{ inputs.image }}
         run: |
           ./dev/harness/wizard-ci.sh "--$MODE" "--image=$IMAGE"
+
+      # Exploratory mode: Claude-driven agent. Non-deterministic,
+      # ~$2-7/run. Findings are advisory - exit 0 regardless of count.
+      # Requires ANTHROPIC_API_KEY secret on the self-hosted runner.
+      - name: Run wizard — manual exploratory
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'exploratory'
+        env:
+          MODE: exploratory
+          EXPLORATORY_MAX_MINUTES: "15"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ./dev/harness/wizard-ci.sh "--$MODE"
+
+      - name: Run wizard — nightly exploratory
+        if: github.event_name == 'schedule'
+        env:
+          EXPLORATORY_MAX_MINUTES: "15"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ./dev/harness/wizard-ci.sh --exploratory
+
+      - name: Upload exploratory findings artifact
+        if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'exploratory'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: exploratory-findings
+          path: dev/harness/findings/*.md
+          if-no-files-found: ignore
 
       - name: Run wizard — pre-state matrix (Debian cloud)
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'matrix'
