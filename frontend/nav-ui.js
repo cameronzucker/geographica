@@ -266,6 +266,19 @@
     // Convert distance from display units to meters for the engine
     var distMeters = (summary.length || 0) * (window._geographicaUseImperial ? 1609.344 : 1000);
 
+    // Extract intermediate waypoints from trip.locations.
+    // Valhalla returns: [start, ...throughs, end].
+    // Reroute will re-plan from current GPS → throughs → end.
+    var locs = trip.locations || [];
+    var intermediates = locs.length > 2 ? locs.slice(1, -1) : [];
+    var remainingWaypoints = intermediates.map(function (loc) {
+      return {
+        lat: loc.lat,
+        lon: loc.lon,
+        type: loc.type || 'through',
+      };
+    });
+
     return {
       coords: allCoords,
       maneuvers: allManeuvers,
@@ -273,7 +286,7 @@
       totalDistance: distMeters,
       totalTime: summary.time || 0,
       costing: trip._costing || 'auto',
-      remainingWaypoints: []
+      remainingWaypoints: remainingWaypoints,
     };
   }
 
@@ -940,6 +953,13 @@
     while (iconEl.firstChild) iconEl.removeChild(iconEl.firstChild);
     iconEl.appendChild(buildManeuverSVG(type));
   }
+
+  // Test hook: expose internal helpers for unit tests. Must sit before
+  // BOOTSTRAP so the assignment happens even if init() throws in a
+  // degenerate (e.g. Node vm) environment.
+  window._geographicaNavUIInternals = {
+    buildRouteData: buildRouteData,
+  };
 
   // =====================================================================
   //  BOOTSTRAP

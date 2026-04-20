@@ -68,6 +68,39 @@ test('applyReroute clears announcedSet and lastAnnouncementTime', async (t) => {
   );
 });
 
+test('triggerReroute preserves remainingWaypoints in the callback info', async () => {
+  const { nav, window: win } = await loadEngine();
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
+
+  // Route with two intermediate waypoints.
+  const multiStopRoute = {
+    ...fixtureRouteWithTwoTurns(),
+    remainingWaypoints: [
+      { lat: 35.21, lon: -111.64, type: 'through' },
+      { lat: 35.22, lon: -111.63, type: 'through' },
+    ],
+  };
+
+  const rerouteCalls = [];
+  nav.onReroute((info) => rerouteCalls.push(info));
+
+  nav.start(multiStopRoute);
+
+  for (let i = 0; i < 5; i++) {
+    nav.updateGPS({ latitude: 35.25, longitude: -111.55, heading: 90, speed: 10 });
+  }
+
+  assert.equal(rerouteCalls.length, 1);
+  assert.deepEqual(
+    rerouteCalls[0].remainingWaypoints,
+    [
+      { lat: 35.21, lon: -111.64, type: 'through' },
+      { lat: 35.22, lon: -111.63, type: 'through' },
+    ],
+    'remainingWaypoints must be passed through to the onReroute callback'
+  );
+});
+
 test('reroute timeout clears lastRerouteTime for immediate re-reroute', { timeout: 15_000 }, async (t) => {
   const { nav, window: win } = await loadEngine();
   t.after(() => { try { nav.stop(); } catch (_) {} });
