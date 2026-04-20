@@ -114,22 +114,17 @@ async function mainAsserts() {
   // Wait for nav-active class on body.
   await page.waitForFunction(() => document.body.classList.contains('nav-active'), null, { timeout: 5_000 });
 
-  // Force off-route GPS for several ticks (engine hysteresis 3-of-5).
-  for (let i = 0; i < 8; i++) {
-    await page.evaluate(() => {
-      window._geographicaGPSData = { lat: 35.25, lon: -111.55, heading: 90, speed: 10 };
-    });
-    await page.waitForTimeout(600);  // > 500 ms feedGPS interval
-  }
-
   // B12 mode: assert no reroute fetches fire after stopNavigation.
-  if (mode === 'stop-mid-reroute') {
-    let rerouteHitsAfterStop = 0;
-    let navStoppedAt = null;
+  // Set up slow mock override BEFORE off-route tick loop so we catch the reroute in-flight.
+  let rerouteCallCount = 0;
+  let rerouteHitsAfterStop = 0;
+  let navStoppedAt = null;
 
-    // Override the existing mock with a slow handler (3 s delay) so the fetch
-    // is in-flight when we click stop.
+  if (mode === 'stop-mid-reroute') {
+    // Unroute the default fast mock and install slow-mock override before the tick loop.
+    await page.unroute('**/valhalla/route');
     await page.route('**/valhalla/route', async (route, req) => {
+      rerouteCallCount++;
       const now = Date.now();
       if (navStoppedAt && now > navStoppedAt) {
         rerouteHitsAfterStop++;
@@ -159,8 +154,25 @@ async function mainAsserts() {
         }),
       });
     });
+  }
 
-    // Wait 500 ms for the reroute fetch to start, then stop nav.
+  // Force off-route GPS for several ticks (engine hysteresis 3-of-5).
+  for (let i = 0; i < 8; i++) {
+    await page.evaluate(() => {
+      window._geographicaGPSData = { lat: 35.25, lon: -111.55, heading: 90, speed: 10 };
+    });
+    await page.waitForTimeout(600);  // > 500 ms feedGPS interval
+  }
+
+  // B12 mode: assert no reroute fetches fire after stopNavigation.
+  if (mode === 'stop-mid-reroute') {
+    // Verify a reroute was in-flight at stop time. If not, the test passes vacuously.
+    if (rerouteCallCount < 1) {
+      console.error('ASSERT FAIL (B12): no reroute fetch was initiated during off-route ticks (vacuous pass)');
+      process.exit(1);
+    }
+
+    // Wait 500 ms for the reroute fetch to complete or be aborted, then stop nav.
     await page.waitForTimeout(500);
     navStoppedAt = Date.now();
     await page.evaluate(() => document.getElementById('stop-nav-btn').click());
