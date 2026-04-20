@@ -27,6 +27,15 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## What to work on next
 
+**🎯 TOP PRIORITY — Voice announcement TTM redesign (B1 full fix, band-aid currently masking):**
+
+Field testing on 2026-04-20 (Cameron) surfaced that the deferred B1 voice-over-announcement bug is dramatically worse in urban/surface-street driving than pre-remediation observation suggested. A rerouted detour through a dense turn cluster (2235 W Villa Rita Dr → North Phoenix Costco, with a westerly detour) fired **up to 9 voice prompts in ~200 ft of driving** — past helpful, into actively dangerous. Distance-threshold model was the wrong architecture for a range of driving speeds; it needs replacement with a time-to-maneuver (TTM) model.
+
+- **Band-aid is LIVE on dev** (commit `e63f6d9`, dropped voice tiers from `[800, 200, 50]` to `[400, 50]`, caps announcements at 2/maneuver). Buys safety while the redesign runs. **The band-aid will be removed entirely when TTM lands** — that's the design intent.
+- **Redesign handoff:** [handoff_20260420_nav_voice_ttm_kickoff](../memory/handoff_20260420_nav_voice_ttm_kickoff.md) — **READ THIS FIRST.** Contains the problem statement, the target TTM model (`[30s, 3s]` with a 50m distance floor), 10 pre-identified design open questions, the suggested process (brainstorm → adversarial review → spec v2 → plan → subagent-driven execution → field-test), files-to-touch list, and "what NOT to do."
+- **Process discipline:** full brainstorm + 5+ round adversarial review (include Codex cross-validation round) + spec v2 + plan + subagent-driven execution + integration review, same as the 2026-04-20 nav UX remediation. Unit-tests-alone are insufficient — the 2026-04-20 cycle's tests all passed while the field scenario produced 9 prompts. **TTM merge candidates must re-drive the Villa Rita → Costco detour** as a regression gate before merge.
+- **Explicit non-goals:** no more distance-threshold tuning (that's pure band-aid), no amending the band-aid commit (it's the safety net), no skipping adversarial review.
+
 **🚧 IN-FLIGHT WORK — NOAA NAIP CONUS expansion (10/39 tasks done, branch `feat/noaa-conus`):**
 
 A multi-session implementation is in progress on the `feat/noaa-conus` worktree. Phases 0+1 are committed (Tasks 1-10, 13 commits, 113 tests passing in worktree). Phases 2-6 (Tasks 11-39) remain. **The next agent is expected to punch through all remaining work** following the subagent-driven-development protocol.
