@@ -471,9 +471,17 @@ async def refresh_catalog(
                 usps, year = parsed
                 slug = SLUG_BY_USPS[usps]
                 dir_stem = prefix.rstrip("/")
+                # URL pattern discovered 2026-04-20 via live Azure listing
+                # (see Task 10 follow-up). The hash suffix that appears in the
+                # directory name (e.g. AZ_NAIP_2021_*9596*) is NOT part of the
+                # tile-index zip filename. Verified across AZ/AL/AR/CA:
+                #   AZ_NAIP_2021_9596/tileindex_AZ_NAIP_2021.zip
+                #   AL_NAIP_2021_9593/tileindex_AL_NAIP_2021.zip
+                #   AR_NAIP_2021_9594/tileindex_AR_NAIP_2021.zip
+                #   CA_NAIP_2020_9503/tileindex_CA_NAIP_2020.zip
                 tile_index_url = (
-                    f"{AZURE_LISTING_BASE}/{dir_stem}/tileindex/"
-                    f"tileindex_{dir_stem}.zip"
+                    f"{AZURE_LISTING_BASE}/{dir_stem}/"
+                    f"tileindex_{usps}_NAIP_{year}.zip"
                 )
                 validated = await validate_tile_index(tile_index_url)
                 if validated is None:
