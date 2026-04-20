@@ -117,3 +117,68 @@ test('SilentVideoLock.enable() rejects — acquire() degrades silently', async (
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(module.status(), 'none');
 });
+
+test('release() calls sentinel.release() on primary path', async () => {
+  // Use a custom sentinel factory so we can observe release calls cleanly
+  let capturedSentinel = null;
+  const navigator = {
+    wakeLock: {
+      request: (type) => {
+        const s = {
+          type,
+          released: false,
+          release: () => { s.released = true; return Promise.resolve(); },
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        };
+        capturedSentinel = s;
+        return Promise.resolve(s);
+      },
+    },
+  };
+  const doc = makeDocumentMock();
+  const win = {
+    document: doc,
+    console: { warn: () => {} },
+    navigator,
+    SilentVideoLock: makeSilentVideoLockMock(),
+    matchMedia: () => ({ matches: false }),
+    WakeLock: undefined,
+  };
+  const ctx = vm.createContext({ window: win, document: doc, navigator, console: win.console });
+  vm.runInContext(SOURCE, ctx);
+  const module = win.WakeLock;
+
+  await module.acquire();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(capturedSentinel.released, false);
+  await module.release();
+  assert.strictEqual(capturedSentinel.released, true);
+  assert.strictEqual(module.status(), 'idle');
+});
+
+test('release() disables SilentVideoLock on fallback path', async () => {
+  const silentVideoLock = makeSilentVideoLockMock();
+  const { module } = loadModule({ hasWakeLock: false, silentVideoLock });
+  await module.acquire();
+  await new Promise((r) => setImmediate(r));
+  await module.release();
+  assert.strictEqual(silentVideoLock.disable.mock.callCount(), 1);
+  assert.strictEqual(module.status(), 'idle');
+});
+
+test('release() without prior acquire() is a no-op', async () => {
+  const { module } = loadModule();
+  await assert.doesNotReject(() => module.release());
+  assert.strictEqual(module.status(), 'idle');
+});
+
+test('release() called twice is a no-op the second time', async () => {
+  const silentVideoLock = makeSilentVideoLockMock();
+  const { module } = loadModule({ hasWakeLock: false, silentVideoLock });
+  await module.acquire();
+  await new Promise((r) => setImmediate(r));
+  await module.release();
+  await module.release(); // second call
+  assert.strictEqual(silentVideoLock.disable.mock.callCount(), 1); // still only 1
+});
