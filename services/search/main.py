@@ -77,6 +77,12 @@ _pipeline_lock = asyncio.Lock()
 _active_refresh_task: "asyncio.Task | None" = None
 _cancel_event: "asyncio.Event | None" = None
 
+# Fix 4: maximum seconds to await task finalization after .cancel() in /reset.
+# If the task is stuck in a non-cancelable sync call the reset still proceeds
+# to clear lockfile + progress so the subsystem returns to idle. Exposed as a
+# module constant so tests can monkeypatch it to a short value.
+CANCEL_TIMEOUT_SEC: float = 30.0
+
 
 # ---------------------------------------------------------------------------
 # Auth dependency
@@ -2608,8 +2614,16 @@ async def noaa_refresh_reset():
     if has_task:
         _active_refresh_task.cancel()
         try:
-            await _active_refresh_task
+            # Fix 4: bound the await with a timeout so a task stuck in a
+            # non-cancelable sync call doesn't block /reset indefinitely.
+            # We drop the module ref below regardless; the orphaned task
+            # will eventually exit (or not) on its own — the subsystem
+            # is already returning to idle from our perspective.
+            await asyncio.wait_for(_active_refresh_task, timeout=CANCEL_TIMEOUT_SEC)
         except asyncio.CancelledError:
+            pass
+        except asyncio.TimeoutError:
+            # Task didn't finalize within CANCEL_TIMEOUT_SEC; proceed anyway.
             pass
         except Exception:
             # Other exceptions are already logged in progress.json by the

@@ -1410,6 +1410,56 @@ async def test_noaa_refresh_reset_cancels_active_task(tmp_path, monkeypatch):
     assert main_module._cancel_event is None
 
 
+@pytest.mark.asyncio
+async def test_noaa_refresh_reset_task_hang_does_not_block_endpoint(tmp_path, monkeypatch):
+    """If _active_refresh_task never finalizes after .cancel(), /reset still returns.
+
+    Fix 4: CANCEL_TIMEOUT_SEC bounds the await via asyncio.wait_for.  We simulate
+    the timeout by monkeypatching asyncio.wait_for to raise TimeoutError immediately,
+    which is equivalent to the 30-second timeout firing in production.
+    """
+    import asyncio
+    from services.search import main as main_module
+    from refresh_noaa_catalog import PROGRESS_FILENAME, write_progress_state
+
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+
+    # Simulate wait_for raising TimeoutError (as if the task hung for 30s)
+    async def raise_timeout(*args, **kwargs):
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(asyncio, "wait_for", raise_timeout)
+
+    async def long_running():
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            raise
+
+    task = asyncio.create_task(long_running())
+    await asyncio.sleep(0.01)  # let the task start
+    main_module._active_refresh_task = task
+    main_module._cancel_event = asyncio.Event()
+    write_progress_state(tmp_path / PROGRESS_FILENAME, {"status": "running"})
+
+    from services.search.main import noaa_refresh_reset
+    body = await noaa_refresh_reset()
+
+    # Endpoint must succeed despite the simulated timeout
+    assert body["status"] == "reset"
+    assert body["task_cancelled"] is True
+    assert body["progress_removed"] is True
+    # Module refs cleared so the next refresh can dispatch
+    assert main_module._active_refresh_task is None
+    assert main_module._cancel_event is None
+    # Clean up the real task (it does handle CancelledError, so this is safe)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
 def test_noaa_refresh_reset_requires_internal_header(tmp_path, monkeypatch):
     """POST /reset requires X-Config-Source auth."""
     from services.search.main import app

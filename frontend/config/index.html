@@ -348,6 +348,7 @@
         .noaa-completion-banner.truncated,
         .noaa-completion-banner.invalid_parse { background: #2b2516; border: 1px solid #6e5a20; color: #f0e4b8; }
         .noaa-completion-banner.error { background: #2a1a1a; border: 1px solid #6e3030; color: #f0c4c4; }
+        .noaa-completion-banner.unknown { background: #1a1d22; border: 1px solid #3c434a; color: #c4c9cf; }
     </style>
 </head>
 <body>
@@ -1273,7 +1274,15 @@
             if (prevCard) {
                 prevCard.classList.remove('expanded');
                 var prevBody = document.getElementById('card-' + _expandedCard + '-body');
-                if (prevBody) prevBody.textContent = '';
+                if (prevBody) {
+                    // Fix 1: stop any running NOAA progress poll before tearing down the body
+                    // so the interval doesn't keep firing on detached DOM.
+                    if (prevBody._noaaProgressPollId) {
+                        clearInterval(prevBody._noaaProgressPollId);
+                        prevBody._noaaProgressPollId = null;
+                    }
+                    prevBody.textContent = '';
+                }
             }
             allCards.forEach(function(c) { c.classList.remove('dimmed'); });
         }
@@ -1521,7 +1530,15 @@
             var emptyBanner = document.getElementById('card-' + src.id + '-empty-banner');
             var inlineRefresh = document.getElementById('card-' + src.id + '-refresh-inline');
             var countEl = body.querySelector('.noaa-empty-count');
-            if (countEl) countEl.textContent = String(entryCount);
+            // Fix 6: "No states cataloged yet." when count is 0; "Only N of ~49" otherwise.
+            if (countEl) {
+                var titleEl = countEl.closest('.noaa-empty-title') || countEl.parentNode;
+                if (entryCount === 0) {
+                    titleEl.textContent = 'No states cataloged yet.';
+                } else {
+                    titleEl.innerHTML = 'Only <span class="noaa-empty-count">' + entryCount + '</span> of ~49 states cataloged.';
+                }
+            }
             if (entryCount <= 1) {
                 if (emptyBanner) emptyBanner.style.display = '';
                 if (inlineRefresh) inlineRefresh.style.display = 'none';
@@ -1548,8 +1565,25 @@
                     _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), state, body, src);
                     _startPolling(body, src);
                 } else if (state.status === 'done') {
-                    // Show the full completion summary (result from last finished refresh).
-                    _renderCompletionSummary(body, src, state);
+                    // Fix 7: only render the completion banner if the refresh finished
+                    // within the last 24 hours; otherwise fall through to idle/empty-state.
+                    var staleThresholdMs = 24 * 60 * 60 * 1000;
+                    var endedAt = state.ended_at;
+                    var showCompletion = false;
+                    if (endedAt) {
+                        try {
+                            var endedDate = new Date(endedAt.replace(/\+00:00$/, 'Z'));
+                            showCompletion = (Date.now() - endedDate.getTime()) < staleThresholdMs;
+                        } catch (e) {
+                            showCompletion = true; // malformed date; render anyway
+                        }
+                    } else {
+                        showCompletion = true; // no timestamp; render anyway
+                    }
+                    if (showCompletion) {
+                        _renderCompletionSummary(body, src, state);
+                    }
+                    // else: fall through to idle/empty-state flow.
                 }
                 // status: 'idle' — no-op; normal render proceeds.
             })
@@ -1579,11 +1613,22 @@
                     } else {
                         sel.innerHTML = '<option value="arizona">Arizona</option>';
                     }
-                    _updateRefreshBannerVisibility(slugs.length);
+                    // Fix 3: if a progress card or completion banner already owns the top
+                    // of the NOAA card, don't let the catalog fetch's banner-visibility
+                    // logic overwrite it with the empty-state banner.
+                    var progressCard = document.getElementById('card-' + targetSrc.id + '-progress');
+                    var completionBanner = document.getElementById('card-' + targetSrc.id + '-completion');
+                    if (!progressCard && !completionBanner) {
+                        _updateRefreshBannerVisibility(slugs.length);
+                    }
                     return slugs.length;
                 })
                 .catch(function() {
-                    _updateRefreshBannerVisibility(0);
+                    var progressCard = document.getElementById('card-' + targetSrc.id + '-progress');
+                    var completionBanner = document.getElementById('card-' + targetSrc.id + '-completion');
+                    if (!progressCard && !completionBanner) {
+                        _updateRefreshBannerVisibility(0);
+                    }
                     return 0;
                 });
         }
@@ -2054,6 +2099,10 @@
                              'running refresh and return the subsystem to idle.')) return;
                 btn.disabled = true;
                 btn.textContent = 'Clearing\u2026';
+                // Fix 2: bump force-clear generation counter BEFORE the reset call so
+                // any in-flight poll fetch that resolves after /reset completes will
+                // see a mismatched generation and discard its (stale) response.
+                body._noaaForceClearGen = (body._noaaForceClearGen || 0) + 1;
                 cfgFetch('/admin/pipeline/noaa/refresh/reset', { method: 'POST' })
                     .then(function(r) {
                         if (!r.ok) throw new Error('Reset failed (' + r.status + ')');
@@ -2114,8 +2163,11 @@
 
             var result      = state.result || {};
             var resultStatus = result.status || 'unknown';
+            // Fix 5: whitelist server-provided status to prevent CSS class injection.
+            var knownStatuses = ['ok', 'cancelled', 'truncated', 'invalid_parse', 'error'];
+            var safeStatus = knownStatuses.indexOf(resultStatus) !== -1 ? resultStatus : 'unknown';
             var banner = document.createElement('div');
-            banner.className = 'noaa-completion-banner ' + resultStatus;
+            banner.className = 'noaa-completion-banner ' + safeStatus;
             banner.id = 'card-' + targetSrc.id + '-completion';
 
             if (resultStatus === 'ok') {
@@ -2127,9 +2179,11 @@
             } else if (resultStatus === 'cancelled') {
                 var entry      = result.log_entry || {};
                 var stateCount = entry.state_count != null ? entry.state_count : '?';
+                // Fix 8: "after K states" is clearer than "at state K of M"; pluralize correctly.
+                var stateWord = stateCount === 1 ? 'state' : 'states';
                 banner.innerHTML =
-                    '<div class="noaa-completion-msg">Refresh cancelled at state ' + stateCount +
-                    '. Previous catalog kept.</div>' +
+                    '<div class="noaa-completion-msg">Refresh cancelled after ' + stateCount +
+                    ' ' + stateWord + '. Previous catalog kept.</div>' +
                     '<button type="button" class="btn-secondary" data-action="refresh-again">Refresh again</button>';
             } else if (resultStatus === 'truncated' || resultStatus === 'invalid_parse') {
                 var errText = _escapeHtml(
@@ -2194,10 +2248,30 @@
         function _startPolling(targetBody, targetSrc) {
             _stopPolling(targetBody); // clear any existing poll
 
+            // Fix 1: if the body is already detached from DOM, don't start polling.
+            if (!document.body.contains(targetBody)) {
+                return null;
+            }
+
+            // Fix 2: capture the current force-clear generation so stale in-flight
+            // fetches can be discarded if Force Clear fires before they resolve.
+            targetBody._noaaForceClearGen = targetBody._noaaForceClearGen || 0;
+            var pollGen = targetBody._noaaForceClearGen;
+
             var pollId = setInterval(function() {
+                // Fix 1: if body was detached (card collapsed) since poll started, stop.
+                if (!document.body.contains(targetBody)) {
+                    _stopPolling(targetBody);
+                    return;
+                }
                 cfgFetch('/admin/pipeline/noaa/refresh/progress')
                     .then(function(r) { return r.json(); })
                     .then(function(state) {
+                        // Fix 2: discard if Force Clear has fired since this poll started.
+                        if (targetBody._noaaForceClearGen !== pollGen) {
+                            _stopPolling(targetBody);
+                            return;
+                        }
                         var card = document.getElementById('card-' + targetSrc.id + '-progress');
                         if (state.status === 'running') {
                             if (!card) {
