@@ -359,6 +359,33 @@ def write_pipeline_state(output_path: Path, state: dict):
         log.warning("Failed to write pipeline state: %s", exc)
 
 
+def _finalize_noaa_status(
+    output: Path,
+    per_state: dict,
+    skip_to_postprocess: bool,
+) -> None:
+    """Write the final multi-state status fields to the pipeline state file.
+
+    Inspects *per_state* to determine whether any state failed entirely (as
+    opposed to per-tile failures within an otherwise successful run, which are
+    tracked by the existing completed_partial / error / completed taxonomy).
+
+    Status written:
+      partial_failed — at least one state's value starts with "failed:"
+      completed      — all states succeeded (value == "complete")
+
+    The call uses write_pipeline_state() so it merges atomically with existing
+    state fields; no previously-written keys are lost.
+
+    This helper intentionally supports N states in per_state even though today's
+    single-state pipeline always passes a one-entry dict. Task 26 (Phase 3) will
+    call this with a fully-populated per_state after the multi-state loop.
+    """
+    any_failed = any(v.startswith("failed:") for v in per_state.values())
+    new_status = "partial_failed" if any_failed else "completed"
+    write_pipeline_state(output, {"status": new_status, "per_state": per_state})
+
+
 class SnapshotPrunedError(RuntimeError):
     """Raised when a resume tries to use a catalog snapshot that was pruned."""
 
@@ -2744,8 +2771,13 @@ async def run_noaa(args):
     # Final status
     # D2: status taxonomy
     #   error            — 0 tiles succeeded (and not a resume run)
-    #   completed_partial — tiles_done > 0 AND tiles_failed > 0
+    #   completed_partial — tiles_done > 0 AND tiles_failed > 0 (per-tile failures)
     #   completed        — clean completion (no failures, or resume run)
+    #   partial_failed   — at least one state's download failed entirely (per-state
+    #                      failure; orthogonal to per-tile completed_partial).
+    #                      TileServer registration is suppressed by the search
+    #                      service's pipeline_status reconciler (Task 26, Phase 3).
+    #                      Written by _finalize_noaa_status() AFTER this block.
     # Search service reconciliation treats completed_partial the same as
     # completed for TileServer restart purposes (see services/search/main.py
     # pipeline_status). Frontend can render a warning badge for partial.
@@ -2780,6 +2812,20 @@ async def run_noaa(args):
         log.info("Total time: %.1f min | Output: %.1f MB | Throughput: %.1f tiles/min",
                  total_elapsed / 60, output_size,
                  tiles_done / (total_elapsed / 60) if total_elapsed > 0 else 0)
+
+    # Task 18: per-state results for Phase 3 multi-state orchestration.
+    # Today the pipeline processes one state at a time, so per_state reflects
+    # just args.state's outcome. Task 26 will populate this dict from the
+    # multi-state loop around run_noaa.
+    if args.state:  # state-mode run (bbox-mode wiring comes in Task 26)
+        if tiles_done == 0 and not skip_to_postprocess:
+            per_state_result = f"failed: 0 of {total_tiles} tiles processed"
+        else:
+            per_state_result = "complete"
+        _finalize_noaa_status(
+            output, per_state={args.state: per_state_result},
+            skip_to_postprocess=skip_to_postprocess,
+        )
 
 
 # ---------------------------------------------------------------------------

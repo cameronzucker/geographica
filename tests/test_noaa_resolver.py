@@ -1,4 +1,5 @@
 """Tests for NOAA catalog resolver — mapping bbox/state to catalog entries."""
+import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -287,3 +288,59 @@ def test_normalize_state_arg_rejects_unsupported_usps():
     from acquire_imagery import _normalize_state_arg
     with pytest.raises(argparse.ArgumentTypeError, match="not supported"):
         _normalize_state_arg("AK")
+
+
+# ---------------------------------------------------------------------------
+# Task 18: _finalize_noaa_status — partial_failed terminal state
+# ---------------------------------------------------------------------------
+
+def test_finalize_noaa_status_partial_failed_when_any_state_failed(tmp_path):
+    from acquire_imagery import _finalize_noaa_status
+    output = tmp_path / "imagery.mbtiles"
+    output.touch()  # pipeline state file lives at output.parent / ".pipeline-state.json"
+
+    _finalize_noaa_status(
+        output,
+        per_state={"arizona": "complete", "utah": "failed: HTTP 503 on tile index"},
+        skip_to_postprocess=False,
+    )
+
+    state = json.loads((output.parent / ".pipeline-state.json").read_text())
+    assert state["status"] == "partial_failed"
+    assert state["per_state"]["arizona"] == "complete"
+    assert state["per_state"]["utah"].startswith("failed:")
+
+
+def test_finalize_noaa_status_completed_when_all_states_succeeded(tmp_path):
+    from acquire_imagery import _finalize_noaa_status
+    output = tmp_path / "imagery.mbtiles"
+    output.touch()
+
+    _finalize_noaa_status(
+        output,
+        per_state={"arizona": "complete", "utah": "complete"},
+        skip_to_postprocess=False,
+    )
+
+    state = json.loads((output.parent / ".pipeline-state.json").read_text())
+    assert state["status"] == "completed"
+    assert state["per_state"] == {"arizona": "complete", "utah": "complete"}
+
+
+def test_finalize_noaa_status_preserves_existing_state_keys(tmp_path):
+    """write_pipeline_state merges — other fields must survive the finalize call."""
+    from acquire_imagery import _finalize_noaa_status, write_pipeline_state
+    output = tmp_path / "imagery.mbtiles"
+    output.touch()
+
+    write_pipeline_state(output, {"catalog_snapshot": "/some/snap.json", "tiles_done": 42})
+    _finalize_noaa_status(
+        output,
+        per_state={"arizona": "complete"},
+        skip_to_postprocess=False,
+    )
+
+    state = json.loads((output.parent / ".pipeline-state.json").read_text())
+    assert state["status"] == "completed"
+    assert state["catalog_snapshot"] == "/some/snap.json"
+    assert state["tiles_done"] == 42
