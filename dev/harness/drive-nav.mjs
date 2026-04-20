@@ -114,6 +114,60 @@ async function mainAsserts() {
   // Wait for nav-active class on body.
   await page.waitForFunction(() => document.body.classList.contains('nav-active'), null, { timeout: 5_000 });
 
+  // buttons mode (B4): assert recenter button is above compass, no overlap
+  if (mode === 'buttons') {
+    // Start nav so nav-recenter-btn could be shown.
+    await page.evaluate(() => document.getElementById('start-nav-btn').click());
+    await page.waitForFunction(() => document.body.classList.contains('nav-active'));
+
+    // Force nav-recenter-btn visible: simulate a manual pan.
+    await page.evaluate(() => window._navPauseAutoCenter && window._navPauseAutoCenter());
+    await page.waitForTimeout(100);
+
+    // Test at desktop viewport.
+    for (const viewport of [{ width: 1280, height: 800, label: 'desktop' }, { width: 375, height: 667, label: 'mobile' }]) {
+      await page.setViewportSize(viewport);
+      await page.waitForTimeout(100);
+
+      const rects = await page.evaluate(() => {
+        const recenter = document.getElementById('nav-recenter-btn');
+        const compass = document.getElementById('compass-north-btn');
+        return {
+          recenter: recenter ? recenter.getBoundingClientRect() : null,
+          compass: compass ? compass.getBoundingClientRect() : null,
+        };
+      });
+
+      if (!rects.recenter || !rects.compass) {
+        console.error(`ASSERT FAIL (B4/${viewport.label}): one of the buttons missing`);
+        process.exit(1);
+      }
+
+      // Assertion 1: no overlap — recenter bottom must be above compass top.
+      if (rects.recenter.bottom > rects.compass.top) {
+        console.error(`ASSERT FAIL (B4/${viewport.label}): recenter/compass overlap (recenter.bottom=${rects.recenter.bottom}, compass.top=${rects.compass.top})`);
+        process.exit(1);
+      }
+
+      // Assertion 2: recenter is ABOVE compass on screen (lower y = higher on screen).
+      if (rects.recenter.top > rects.compass.top) {
+        console.error(`ASSERT FAIL (B4/${viewport.label}): recenter must be above compass on screen`);
+        process.exit(1);
+      }
+
+      // Assertion 3: gap of at least 8px between them.
+      const gap = rects.compass.top - rects.recenter.bottom;
+      if (gap < 8) {
+        console.error(`ASSERT FAIL (B4/${viewport.label}): gap too small (${gap}px)`);
+        process.exit(1);
+      }
+
+      console.log(`PASS (${viewport.label}): recenter above compass, gap=${gap}px`);
+    }
+    await browser.close();
+    return;
+  }
+
   // padding mode (B3 + B8): assert GPS marker at 70-86% during nav,
   // then assert MapLibre padding clears after stopNavigation.
   if (mode === 'padding') {

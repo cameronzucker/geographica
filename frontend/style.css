@@ -1432,10 +1432,12 @@ h4 {
   background: #e07a95;
 }
 
-/* Re-center button (during navigation) */
+/* Nav re-center button: stacked ABOVE the compass so the
+   direction-of-travel control is the closer-to-thumb button. */
 #nav-recenter-btn {
-  bottom: 120px;
+  bottom: 170px;
   right: 12px;
+  z-index: 11;
 }
 
 /* Disabled overlays during navigation */
@@ -1669,12 +1671,15 @@ body.nav-active #search-container.nav-search-open #search-icon {
 
 /* During nav, results show as map pins only — no dropdown list */
 
-/* ----- Compass Button ----- */
+/* ----- Compass Button -----
+   Stacked below #nav-recenter-btn so both are right-hand thumb
+   accessible. 36px buttons + 14px gap = recenter at bottom:170,
+   compass at bottom:120 (ample clearance over attribution). */
 #compass-north-btn {
   position: absolute;
-  bottom: 160px; /* above zoom controls (~120px) + attribution */
+  bottom: 120px;
   right: 12px;
-  z-index: 10;
+  z-index: 11;
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -1682,7 +1687,10 @@ body.nav-active #search-container.nav-search-open #search-icon {
 }
 
 @media (max-width: 480px) {
+  #nav-recenter-btn {
+    bottom: 150px;
+  }
   #compass-north-btn {
-    bottom: 140px; /* tighter on mobile, zoom controls are smaller */
+    bottom: 100px;
   }
 }
