@@ -953,3 +953,98 @@ def test_noaa_refresh_writes_progress_and_task_ref(tmp_path):
     first = all_writes[0]
     assert first.get("status") == "running", f"first write: {first}"
     assert "started_at" in first, f"first write missing started_at: {first}"
+
+
+# ---------------------------------------------------------------------------
+# Task 4: GET /admin/pipeline/noaa/refresh/progress endpoint
+# ---------------------------------------------------------------------------
+
+def test_noaa_refresh_progress_idle_when_no_file(tmp_path):
+    """GET /progress returns {status: idle} when progress.json is absent."""
+    from services.search.main import app
+    from unittest.mock import patch
+
+    client = TestClient(app)
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        r = client.get(
+            "/admin/pipeline/noaa/refresh/progress",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert r.status_code == 200
+    assert r.json() == {"status": "idle"}
+
+
+def test_noaa_refresh_progress_running(tmp_path):
+    """GET /progress returns the running-state shape from spec API contract."""
+    from services.search.main import app
+    from refresh_noaa_catalog import write_progress_state, PROGRESS_FILENAME
+    from unittest.mock import patch
+
+    monkeypatch_data_dir = tmp_path
+    progress_path = tmp_path / PROGRESS_FILENAME
+    write_progress_state(progress_path, {
+        "status": "running",
+        "phase": "fetching_tile_indexes",
+        "states_processed": 12,
+        "states_total": 49,
+        "current_slug": "arizona",
+        "started_at": "2026-04-20T21:30:00Z",
+        "percent": 24.5,
+        "cancel_requested": False,
+    })
+
+    client = TestClient(app)
+    with patch("services.search.main.DATA_DIR", monkeypatch_data_dir):
+        r = client.get(
+            "/admin/pipeline/noaa/refresh/progress",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "running"
+    assert body["phase"] == "fetching_tile_indexes"
+    assert body["states_processed"] == 12
+    assert body["states_total"] == 49
+    assert body["current_slug"] == "arizona"
+    assert "last_updated" in body  # stamped by write_progress_state
+
+
+def test_noaa_refresh_progress_done(tmp_path):
+    """GET /progress returns terminal result when the bg task finished."""
+    from services.search.main import app
+    from refresh_noaa_catalog import write_progress_state, PROGRESS_FILENAME
+    from unittest.mock import patch
+
+    monkeypatch_data_dir = tmp_path
+    progress_path = tmp_path / PROGRESS_FILENAME
+    write_progress_state(progress_path, {
+        "status": "done",
+        "started_at": "2026-04-20T21:30:00Z",
+        "ended_at": "2026-04-20T21:54:12Z",
+        "result": {"status": "ok", "snapshot_path": "/data/noaa_catalog_snapshots/x.json",
+                   "log_entry": {"ts": "2026-04-20T21:30:00Z", "state_count": 49}},
+    })
+
+    client = TestClient(app)
+    with patch("services.search.main.DATA_DIR", monkeypatch_data_dir):
+        r = client.get(
+            "/admin/pipeline/noaa/refresh/progress",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "done"
+    assert body["result"]["status"] == "ok"
+    assert body["result"]["log_entry"]["state_count"] == 49
+
+
+def test_noaa_refresh_progress_requires_internal_header(tmp_path):
+    """GET /progress goes through require_config_source like the other admin endpoints."""
+    from services.search.main import app
+    from unittest.mock import patch
+
+    client = TestClient(app)
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        r = client.get("/admin/pipeline/noaa/refresh/progress")  # no X-Config-Source header
+    # The exact status depends on how require_config_source rejects; match existing pattern.
+    assert r.status_code in (401, 403)

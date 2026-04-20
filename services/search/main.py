@@ -2485,6 +2485,21 @@ class NoaaRollbackBody(BaseModel):
     to_snapshot: str  # filename like "2026-04-20T12:00:00Z.json"
 
 
+@app.get("/admin/pipeline/noaa/refresh/progress", dependencies=[Depends(require_config_source)])
+async def noaa_refresh_progress():
+    """Return the current NOAA catalog refresh state.
+
+    - {status: idle} when no refresh is in flight and no progress.json exists.
+    - {status: running, phase, states_processed, ...} while a bg task writes.
+    - {status: done, result: {...}} after the bg task terminates.
+    """
+    try:
+        from refresh_noaa_catalog import read_progress_state, PROGRESS_FILENAME
+    except ImportError:
+        raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
+    return read_progress_state(DATA_DIR / PROGRESS_FILENAME)
+
+
 @app.post("/admin/pipeline/noaa/rollback", dependencies=[Depends(require_config_source)])
 async def noaa_rollback(body: NoaaRollbackBody):
     """Rollback NOAA catalog to a prior snapshot. Atomic symlink swap."""
