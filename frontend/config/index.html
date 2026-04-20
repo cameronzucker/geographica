@@ -248,6 +248,23 @@
         .noaa-retry-list { margin: 4px 0; padding-left: 20px; color: #b0b8cc; }
         .noaa-retry-list li { margin: 2px 0; }
         .noaa-retry-btn { margin-top: 6px; font-size: 12px; }
+
+        /* === NOAA empty-state banner + inline refresh (Task 7 — async refresh) === */
+        .noaa-empty-banner {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            padding: 12px;
+            background: #2b2516;
+            border: 1px solid #6e5a20;
+            border-radius: 4px;
+            margin: 0 0 12px;
+        }
+        .noaa-empty-icon { font-size: 20px; color: #d4a63a; flex-shrink: 0; }
+        .noaa-empty-text { flex: 1; }
+        .noaa-empty-title { font-weight: 600; font-size: 13px; margin-bottom: 2px; color: #f0e4b8; }
+        .noaa-empty-sub { font-size: 11px; color: #b0a680; }
+        .noaa-tabs-refresh { margin-left: auto; font-size: 11px; padding: 4px 8px; }
     </style>
 </head>
 <body>
@@ -1292,10 +1309,20 @@
         // ---------------------------------------------------------------
         body.innerHTML =
             '<p style="font-size:12px;color:#7a8299;margin:0 0 10px">GeoTIFF tiles from Azure Blob Storage. No auth, no throttling.</p>' +
+            // Empty-state banner: shown when <=1 state is cataloged (visibility toggled by JS after catalog fetch)
+            '<div class="noaa-empty-banner" id="card-' + src.id + '-empty-banner" style="display:none">' +
+                '<div class="noaa-empty-icon">&#9888;</div>' +
+                '<div class="noaa-empty-text">' +
+                    '<div class="noaa-empty-title">Only <span class="noaa-empty-count">0</span> of ~49 states cataloged.</div>' +
+                    '<div class="noaa-empty-sub">Scans NOAA\'s Azure blob listing (~10\u201330\u00a0min). Runs in background.</div>' +
+                '</div>' +
+                '<button type="button" class="btn-primary" id="card-' + src.id + '-refresh-empty">Refresh catalog</button>' +
+            '</div>' +
             // Tab strip
             '<div class="noaa-tabs" role="tablist">' +
                 '<button class="noaa-tab active" data-tab="whole" role="tab">Whole state</button>' +
                 '<button class="noaa-tab" data-tab="custom" role="tab">Custom area</button>' +
+                '<button type="button" class="btn-secondary noaa-tabs-refresh" id="card-' + src.id + '-refresh-inline" style="display:none">Refresh</button>' +
             '</div>' +
             // ---- Whole state tab body ----
             '<div class="noaa-tab-body noaa-tab-whole">' +
@@ -1328,9 +1355,8 @@
                     '&#9658; Catalog refresh history' +
                 '</button>' +
                 '<div class="noaa-refresh-body" id="card-' + src.id + '-refresh-body" style="display:none">' +
-                    '<div class="btn-row" style="margin-bottom:8px">' +
-                        '<button type="button" class="btn-secondary" id="card-' + src.id + '-refresh-now">Refresh catalog now</button>' +
-                        '<button type="button" class="btn-secondary" id="card-' + src.id + '-refresh-reload" style="flex:none" title="Reload the log">&#8635;</button>' +
+                    '<div style="text-align:right;margin-bottom:4px">' +
+                        '<button type="button" class="btn-secondary" id="card-' + src.id + '-refresh-reload" style="font-size:11px;padding:3px 8px" title="Reload the log">&#8635;</button>' +
                     '</div>' +
                     '<div class="noaa-refresh-entries" id="card-' + src.id + '-refresh-entries"></div>' +
                 '</div>' +
@@ -1407,9 +1433,28 @@
         var stateSel = document.getElementById('card-' + src.id + '-state');
         // Fallback: keep Arizona selected if fetch fails or catalog not loaded
         stateSel.innerHTML = '<option value="arizona">Arizona</option>';
+        // Helper: update empty-state banner and inline refresh button visibility
+        function _updateRefreshBannerVisibility(entryCount) {
+            var emptyBanner = document.getElementById('card-' + src.id + '-empty-banner');
+            var inlineRefresh = document.getElementById('card-' + src.id + '-refresh-inline');
+            var countEl = body.querySelector('.noaa-empty-count');
+            if (countEl) countEl.textContent = String(entryCount);
+            if (entryCount <= 1) {
+                if (emptyBanner) emptyBanner.style.display = '';
+                if (inlineRefresh) inlineRefresh.style.display = 'none';
+            } else {
+                if (emptyBanner) emptyBanner.style.display = 'none';
+                if (inlineRefresh) inlineRefresh.style.display = '';
+            }
+        }
+
         cfgFetch('/admin/pipeline/noaa/catalog')
             .then(function(r) { return r.json(); })
             .then(function(data) {
+                // Update banner visibility based on how many states are cataloged
+                var entryCount = (data.status === 'ok' && data.entries) ? Object.keys(data.entries).length : 0;
+                _updateRefreshBannerVisibility(entryCount);
+
                 if (data.status !== 'ok' || !data.entries) return;
                 var opts = [];
                 Object.keys(data.entries).sort().forEach(function(slug) {
@@ -1426,7 +1471,10 @@
                     stateSel.innerHTML = opts.join('');
                 }
             })
-            .catch(function() { /* fallback already in place */ });
+            .catch(function() {
+                // Catalog fetch failed — show empty-state banner so user has a path forward
+                _updateRefreshBannerVisibility(0);
+            });
 
         // ---------------------------------------------------------------
         // Shared estimate renderer — populates an estBox with API response
@@ -1736,30 +1784,51 @@
 
         document.getElementById('card-' + src.id + '-refresh-reload').addEventListener('click', loadRefreshLog);
 
-        document.getElementById('card-' + src.id + '-refresh-now').addEventListener('click', function() {
+        // Shared refresh trigger — wired to both the empty-state banner button
+        // and the inline tab-strip button. Task 9 will replace the response
+        // handling with a full polling/progress-bar UX; for now we surface a
+        // generic "Refresh started" message on 202 so the UX isn't broken.
+        function triggerRefresh(btn) {
             if (!confirm('Refresh the NOAA catalog now?\nThis re-lists the Azure blob container, which can take a few minutes. A running pipeline will block this.')) return;
-            var btn = this;
             btn.disabled = true;
             var orig = btn.textContent;
-            btn.textContent = 'Refreshing...';
+            btn.textContent = 'Starting\u2026';
             cfgFetch('/admin/pipeline/noaa/refresh', { method: 'POST' })
                 .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d, status: r.status }; }); })
                 .then(function(r) {
                     btn.disabled = false;
                     btn.textContent = orig;
-                    if (!r.ok) {
+                    if (r.status === 202) {
+                        // Phase 1 async dispatch: refresh queued in background.
+                        // Task 9 will replace this stub with polling + progress bar.
+                        alert('Refresh started \u2014 see the \u201cCatalog refresh history\u201d panel for status updates.');
+                        // Open the history panel so the user has immediate feedback
+                        if (refreshToggle.getAttribute('aria-expanded') !== 'true') {
+                            refreshToggle.click();
+                        } else {
+                            loadRefreshLog();
+                        }
+                    } else if (!r.ok) {
                         alert('Refresh returned ' + r.status + ': ' + JSON.stringify(r.data.detail || r.data));
                     } else if (r.data.status === 'truncated' || r.data.status === 'invalid_parse') {
                         alert('Refresh finished with status=' + r.data.status + '. See log for details.');
+                        loadRefreshLog();
+                    } else {
+                        loadRefreshLog();
                     }
-                    loadRefreshLog();
                 })
                 .catch(function(err) {
                     btn.disabled = false;
                     btn.textContent = orig;
                     alert('Refresh failed: ' + err);
                 });
-        });
+        }
+
+        var refreshEmptyBtn = document.getElementById('card-' + src.id + '-refresh-empty');
+        if (refreshEmptyBtn) refreshEmptyBtn.addEventListener('click', function() { triggerRefresh(this); });
+
+        var refreshInlineBtn = document.getElementById('card-' + src.id + '-refresh-inline');
+        if (refreshInlineBtn) refreshInlineBtn.addEventListener('click', function() { triggerRefresh(this); });
     }
 
     // -----------------------------------------------------------------------
