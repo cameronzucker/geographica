@@ -2169,3 +2169,17 @@ async def noaa_rollback(body: NoaaRollbackBody):
 
     return {"status": "ok", "to_snapshot": body.to_snapshot, "log_entry": log_entry}
 
+
+@app.post("/admin/pipeline/noaa/force-unlock", dependencies=[Depends(require_config_source)])
+async def noaa_force_unlock():
+    """Remove a stale refresh lockfile (PID no longer alive)."""
+    try:
+        from scripts.refresh_noaa_catalog import force_unlock
+    except ImportError:
+        raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
+    lock_path = DATA_DIR / "noaa_catalog_refresh.lock"
+    result = force_unlock(lock_path)
+    if result["status"] == "lock_holder_alive":
+        raise HTTPException(status_code=409, detail=result)
+    return result
+

@@ -435,3 +435,52 @@ def test_rollback_pipeline_running_returns_409(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+
+# Task 24 — POST /admin/pipeline/noaa/force-unlock
+# ---------------------------------------------------------------------------
+
+def test_force_unlock_no_lock(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        resp = client.post(
+            "/admin/pipeline/noaa/force-unlock",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "no_lock"
+
+
+def test_force_unlock_stale_lock_removed(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    lock = tmp_path / "noaa_catalog_refresh.lock"
+    # PID 999999999 is very unlikely to exist
+    lock.write_text(json.dumps({"pid": 999999999}))
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        resp = client.post(
+            "/admin/pipeline/noaa/force-unlock",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert not lock.exists()
+
+
+def test_force_unlock_live_holder_returns_409(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    lock = tmp_path / "noaa_catalog_refresh.lock"
+    lock.write_text(json.dumps({"pid": os.getpid()}))  # our own PID — alive
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        resp = client.post(
+            "/admin/pipeline/noaa/force-unlock",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 409
+
+
+# ---------------------------------------------------------------------------
