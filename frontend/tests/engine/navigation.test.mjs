@@ -214,3 +214,38 @@ test('B1 band-aid: voice tiers capped at 2 per costing (remove when TTM ships)',
   assert.ok(t.bicycle[0] > t.bicycle[1]);
   assert.ok(t.pedestrian[0] > t.pedestrian[1]);
 });
+
+test('TTM constants have expected shape and per-costing keys', async () => {
+  const { window: win } = await loadEngine();
+  const i = win._geographicaNavEngineInternals;
+  assert.ok(i, 'internals hook must exist');
+
+  // Check VOICE_TTM shape and values
+  assert.ok(Array.isArray(i.VOICE_TTM.auto) && i.VOICE_TTM.auto.length === 2);
+  assert.equal(i.VOICE_TTM.auto[0], 30);
+  assert.equal(i.VOICE_TTM.auto[1], 3);
+
+  assert.ok(Array.isArray(i.VOICE_TTM.bicycle) && i.VOICE_TTM.bicycle.length === 2);
+  assert.equal(i.VOICE_TTM.bicycle[0], 20);
+  assert.equal(i.VOICE_TTM.bicycle[1], 3);
+
+  assert.ok(Array.isArray(i.VOICE_TTM.pedestrian) && i.VOICE_TTM.pedestrian.length === 2);
+  assert.equal(i.VOICE_TTM.pedestrian[0], 15);
+  assert.equal(i.VOICE_TTM.pedestrian[1], 2);
+
+  // Check VOICE_DISTANCE_FLOOR values
+  assert.equal(i.VOICE_DISTANCE_FLOOR.auto, 50);
+  assert.equal(i.VOICE_DISTANCE_FLOOR.bicycle, 30);
+  assert.equal(i.VOICE_DISTANCE_FLOOR.pedestrian, 15);
+
+  // Check speed model constants
+  assert.equal(i.MIN_SPEED_FLOOR, 1.0);
+  assert.equal(i.SPEED_WINDOW_SIZE, 3);
+  assert.equal(i.MAX_SPEED_DELTA_PER_TICK, 15);
+
+  // Costing keys must match across VOICE_TTM and VOICE_DISTANCE_FLOOR (lint).
+  const ttmKeys = Object.keys(i.VOICE_TTM).sort();
+  const floorKeys = Object.keys(i.VOICE_DISTANCE_FLOOR).sort();
+  assert.deepStrictEqual(ttmKeys, floorKeys,
+    'VOICE_TTM and VOICE_DISTANCE_FLOOR must have identical costing keys');
+});

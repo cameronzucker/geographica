@@ -66,6 +66,24 @@
   var VOICE_SPEED_GATE = 2;        // m/s -- suppress below this
   var VOICE_NEAR_ANNOUNCE_DISTANCE = 50; // meters -- always announce within this distance
 
+  // ─── TTM (time-to-maneuver) voice model — spec v2 ──────────────────────
+  // Each VOICE_TTM entry is [far_seconds, near_seconds]. Announcement timing
+  // is ttm = distToNext / smoothedSpeed. The distance floor ensures near-tier
+  // still fires when stationary at a maneuver (TTM → ∞ when speed → 0).
+  var VOICE_TTM = {
+    auto:       [30, 3],
+    bicycle:    [20, 3],
+    pedestrian: [15, 2]
+  };
+  var VOICE_DISTANCE_FLOOR = {
+    auto:       50,
+    bicycle:    30,
+    pedestrian: 15
+  };
+  var MIN_SPEED_FLOOR = 1.0;              // m/s — TTM denominator minimum
+  var SPEED_WINDOW_SIZE = 3;              // median-of-3 rolling window
+  var MAX_SPEED_DELTA_PER_TICK = 15;      // m/s — physically-implausible sample delta
+
   // ─── Geo math helpers ────────────────────────────────────────────────
 
   /** Haversine distance between two [lng, lat] points, returns meters. */
@@ -891,7 +909,13 @@
   window._geographicaNavEngineInternals = {
     VOICE_THRESHOLDS: VOICE_THRESHOLDS,
     VOICE_COOLDOWN: VOICE_COOLDOWN,
-    VOICE_SPEED_GATE: VOICE_SPEED_GATE
+    VOICE_SPEED_GATE: VOICE_SPEED_GATE,
+    // TTM constants (spec v2) — old constants above are removed in T10:
+    VOICE_TTM: VOICE_TTM,
+    VOICE_DISTANCE_FLOOR: VOICE_DISTANCE_FLOOR,
+    MIN_SPEED_FLOOR: MIN_SPEED_FLOOR,
+    SPEED_WINDOW_SIZE: SPEED_WINDOW_SIZE,
+    MAX_SPEED_DELTA_PER_TICK: MAX_SPEED_DELTA_PER_TICK
   };
 
 })();
