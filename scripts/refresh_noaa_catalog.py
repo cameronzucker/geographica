@@ -322,6 +322,39 @@ def find_running_pipelines(data_dir: Path) -> list[Path]:
     return running
 
 
+PROGRESS_FILENAME = "noaa_catalog_refresh.progress.json"
+
+
+def write_progress_state(path: Path, state: dict) -> None:
+    """Atomic write — temp file + rename — so readers never see partial JSON."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    state = {**state, "last_updated": datetime.now(timezone.utc).isoformat()}
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(state, sort_keys=True))
+    os.replace(tmp, path)
+
+
+def read_progress_state(path: Path) -> dict:
+    """Return progress JSON, or {'status': 'idle'} if the file is absent/unreadable."""
+    try:
+        return json.loads(Path(path).read_text())
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {"status": "idle"}
+
+
+def is_cancel_requested(path: Path) -> bool:
+    return bool(read_progress_state(path).get("cancel_requested"))
+
+
+def request_cancel(path: Path) -> None:
+    state = read_progress_state(path)
+    if state.get("status") != "running":
+        return
+    state["cancel_requested"] = True
+    write_progress_state(path, state)
+
+
 BASELINE_FILENAME = "0000_ci_baseline.json"
 
 

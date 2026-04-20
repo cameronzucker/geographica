@@ -372,3 +372,36 @@ async def test_refresh_catalog_blocked_by_pipeline(tmp_path):
     )
     assert result["status"] == "blocked_by_pipeline"
     assert "blocked_by_pipeline" in result
+
+
+def test_write_progress_atomic(tmp_path):
+    from scripts.refresh_noaa_catalog import write_progress_state
+    path = tmp_path / "progress.json"
+    write_progress_state(path, {"status": "running", "phase": "listing"})
+    assert path.exists()
+    import json
+    data = json.loads(path.read_text())
+    assert data["status"] == "running"
+    assert "last_updated" in data
+
+
+def test_read_progress_state_missing_returns_idle(tmp_path):
+    from scripts.refresh_noaa_catalog import read_progress_state
+    assert read_progress_state(tmp_path / "nonexistent.json") == {"status": "idle"}
+
+
+def test_is_cancel_requested(tmp_path):
+    from scripts.refresh_noaa_catalog import write_progress_state, is_cancel_requested
+    path = tmp_path / "progress.json"
+    write_progress_state(path, {"status": "running"})
+    assert is_cancel_requested(path) is False
+    write_progress_state(path, {"status": "running", "cancel_requested": True})
+    assert is_cancel_requested(path) is True
+
+
+def test_request_cancel_sets_flag(tmp_path):
+    from scripts.refresh_noaa_catalog import write_progress_state, request_cancel, read_progress_state
+    path = tmp_path / "progress.json"
+    write_progress_state(path, {"status": "running"})
+    request_cancel(path)
+    assert read_progress_state(path)["cancel_requested"] is True
