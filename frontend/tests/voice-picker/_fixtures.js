@@ -116,6 +116,17 @@ function makeDocumentMock() {
       return true;
     },
     getElementById: function (id) { return elements[id] || null; },
+    querySelector: function () { return null; },
+    querySelectorAll: function () { return []; },
+    createElement: function (tag) {
+      return {
+        tagName: String(tag || '').toUpperCase(),
+        value: '',
+        textContent: '',
+        selected: false,
+        appendChild: function () {},
+      };
+    },
     _registerElement: function (id, el) { elements[id] = el; },
     _listeners: listeners,
   };
