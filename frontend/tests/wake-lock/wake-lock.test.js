@@ -389,3 +389,59 @@ test('visibility re-acquire racing with release does not orphan', async () => {
   assert.strictEqual(module.status(), 'idle');
   assert.strictEqual(deferred.sentinels[1].released, true, 'stale sentinel released');
 });
+
+test('iOS PWA standalone mode bypasses primary and engages fallback', async () => {
+  const silentVideoLock = makeSilentVideoLockMock();
+  // matchMedia returns true for display-mode: standalone
+  const matchMedia = (q) => ({ matches: q === '(display-mode: standalone)' });
+  const { module, win } = loadModule({
+    silentVideoLock,
+    matchMedia,
+  });
+  await module.acquire();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(
+    win.navigator.wakeLock.request.mock.callCount(),
+    0,
+    'primary must NOT be called in standalone mode'
+  );
+  assert.strictEqual(silentVideoLock.enable.mock.callCount(), 1);
+  assert.strictEqual(module.status(), 'fallback');
+});
+
+test('both paths fail — status is "none", no throws', async () => {
+  const silentVideoLock = makeSilentVideoLockMock({ rejectWith: new Error('autoplay blocked') });
+  const { module } = loadModule({
+    wakeLockOpts: { rejectWith: new Error('NotAllowedError') },
+    silentVideoLock,
+  });
+  await assert.doesNotReject(() => module.acquire());
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(module.status(), 'none');
+});
+
+test('duplicate module load is a no-op (IIFE guard)', () => {
+  const { module, win, doc } = loadModule();
+  const originalModule = win.WakeLock;
+  // Re-run the source in the same context
+  const ctx = vm.createContext({
+    window: win,
+    document: doc,
+    navigator: win.navigator,
+    console: win.console,
+  });
+  vm.runInContext(SOURCE, ctx);
+  assert.strictEqual(win.WakeLock, originalModule);
+});
+
+test('class manipulation does not trigger acquire', async () => {
+  const { module, doc, win } = loadModule();
+  // Directly toggle the class (mimicking external JS)
+  doc.body.classList.add('nav-active');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(
+    win.navigator.wakeLock.request.mock.callCount(),
+    0,
+    'class add must NOT trigger acquire'
+  );
+});

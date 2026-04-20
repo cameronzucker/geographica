@@ -12,7 +12,10 @@
     shouldBeActive = true;
     var myGen = ++acquireGeneration;
 
-    if ('wakeLock' in navigator) {
+    // iOS PWA standalone mode pre-18.4 has a non-functional wakeLock — bypass to fallback.
+    var iosPwa = typeof window.matchMedia === 'function' &&
+                 window.matchMedia('(display-mode: standalone)').matches;
+    if ('wakeLock' in navigator && !iosPwa) {
       try {
         var sentinel = await navigator.wakeLock.request('screen');
         if (!shouldBeActive || myGen !== acquireGeneration) {
