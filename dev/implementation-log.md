@@ -263,7 +263,23 @@ Commits on dev (Phase 3 only, in order): `c74a935` (19), `5719b3b` (20), `f20d51
 
 **Test counts:** 911 (end of Phase 2) → 941 on `services/search/tests/test_noaa_admin_endpoints.py` alone (+30 new Phase 3 tests after the Round-2-gap additions; the other suites remained unchanged). Two pre-existing `test_pipeline_status_m2m.py` failures persist.
 
-**Phases 4-6 remain.** Phase 4 (frontend UI, 6 tasks) is next; Phase 4 requires browser-side visual verification that the plan's §3 mockup flows are honored (tab structure, state dropdown, bbox-draw UX, peak-disk warning banner, retry-failed-states UI). Phase 5 (testing infrastructure, 5 tasks) includes the live-Azure integration test that's expected to discover the real tile-index URL pattern (the known-bad template from Task 10). Phase 6 (regression, 2 tasks) captures an Arizona baseline MBTiles from `dev` pre-refactor and verifies the setup-runner `STATE_BBOXES` extraction.
+**Phase 4 complete (Tasks 27-32).** NOAA admin card fully refactored in [frontend/config/index.html](../frontend/config/index.html):
+
+- **Task 27** (`23ff95b`) — `renderNoaaBody` rewritten into a two-tab structure (Whole state / Custom area) matching the validated brainstorm mockup at `.superpowers/brainstorm/869511-1776625800/content/whole-page-flow-v4.html`. Shared `_renderEstimate` helper surfaces placename callout, missing[] banner, "I understand" acknowledgment checkbox.
+- **Task 28** (`b82c3d9`) — new `GET /admin/pipeline/noaa/catalog` endpoint (in `services/search/main.py`); Whole state dropdown populated from the catalog at render time; slug-based option values (matches `_normalize_state_arg`).
+- **Task 29** (`a37f4a9`) — Custom area tab shows a live indicator of the `#cfg-bbox` value (green monospace when valid, yellow prompt when empty). Scope trim documented in the entry: the mockup's full shared-Coverage-Area redesign was deferred; the existing bbox input stays in place.
+- **Task 30** (`7a98433`) — peak-working-set disk gate (>85% yellow, >100% red+Start-blocked via `estBox._diskBlocked`); `acknowledge_missing` wired through `startPipeline` into the POST body; Custom-area Estimate validates bbox client-side before firing the fetch.
+- **Task 31** (`37a33ad`) — collapsible "Catalog refresh history" panel inside the NOAA card: lists entries reverse-chronological from `GET /refresh-log`, per-entry `[Rollback]` button when `rollback_available` is true, "Refresh catalog now" button that triggers `POST /refresh`.
+- **Task 32** (`c979205`) — `partial_failed` status branch in `renderGenericProgress` surfaces the per-state breakdown and a "Retry failed state(s)" button that starts a fresh pipeline for the failed entries (MVP: retries first failed state; multi-state retry sequential).
+
+**Phase 4 review loop** (1 Sonnet round on JS correctness + regression risk; no browser harness available for the UI so manual visual check deferred to Cameron). Surfaced 3 Important issues, all closed in `bf83af4`:
+- `#cfg-bbox` listener accumulation across repeated card-expand cycles (dedup via stashed function reference + `removeEventListener`).
+- HTML-injection surface in Task 32's retry-list `li.innerHTML` where a backend error string could render raw tags (rebuilt via `createElement` + `textContent`).
+- Whole-state Estimate fell through to a 422 on empty bbox (mirrored the Custom-area tab's client-side 4-float isFinite pre-check).
+
+**Pending: Cameron's manual visual check** of the live admin UI against the mockup. The tests green (32 passing in `services/search/tests/test_noaa_admin_endpoints.py`) don't exercise the DOM — the admin panel lacks Playwright/jsdom infra, documented as a Phase 4 follow-up.
+
+**Phases 5-6 remain.** Phase 5 (testing infrastructure, 5 tasks) includes the live-Azure integration test expected to discover the real tile-index URL pattern (the known-bad template from Task 10). Phase 6 (regression, 2 tasks) captures an Arizona baseline MBTiles from pre-refactor `dev` and verifies the setup-runner `STATE_BBOXES` extraction.
 
 
 ---
