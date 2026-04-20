@@ -2145,6 +2145,15 @@ async def noaa_rollback(body: NoaaRollbackBody):
     except ImportError:
         raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
 
+    # Defense-in-depth: reject path traversal before any filesystem op. The
+    # snapshot filename is user-supplied; .exists() alone would silently mask
+    # attacks like "../.ssh/id_rsa".
+    if "/" in body.to_snapshot or "\\" in body.to_snapshot or ".." in body.to_snapshot:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid snapshot filename (no path separators or '..' allowed)",
+        )
+
     # Check pipeline
     running = find_running_pipelines(DATA_DIR)
     if running:

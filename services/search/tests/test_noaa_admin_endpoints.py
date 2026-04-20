@@ -433,6 +433,20 @@ def test_rollback_pipeline_running_returns_409(tmp_path):
         )
     assert resp.status_code == 409
 
+def test_rollback_rejects_path_traversal(tmp_path):
+    """Defense-in-depth: reject filenames with '/', '\\', or '..' with 422."""
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        for evil in ("../etc/passwd", "..\\secrets", "a/b.json", "a/../../b.json"):
+            resp = client.post(
+                "/admin/pipeline/noaa/rollback",
+                json={"to_snapshot": evil},
+                headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+            )
+            assert resp.status_code == 422, f"expected 422 for {evil!r}, got {resp.status_code}"
+
 
 # ---------------------------------------------------------------------------
 
