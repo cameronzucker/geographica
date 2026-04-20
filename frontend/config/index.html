@@ -1642,11 +1642,39 @@
                 return;
             }
             refreshEntries.innerHTML = entries.map(function(e) {
-                var statusClass = 'status-' + (e.status || 'unknown').replace(/[^a-z_]/gi, '');
+                // Derive a synthetic status from the log entry shape.
+                // refresh_catalog() writes log entries with added/removed/state_count
+                // and NO status field on successful refreshes; a dedicated
+                // "rollback" action writes status="rollback". Detect ok vs
+                // truncated vs rollback from the available fields.
+                var status = e.status
+                    || (e.to_snapshot ? 'rollback'
+                        : typeof e.state_count === 'number' ? (e.state_count > 0 ? 'ok' : 'empty')
+                        : 'unknown');
+                var statusClass = 'status-' + status.replace(/[^a-z_]/gi, '');
                 var ts = (e.ts || '').replace('T', ' ').replace('Z', '');
-                var label = e.status + (e.to_snapshot ? ' \u2192 ' + e.to_snapshot : e.snapshot_path ? ' (new snapshot)' : '');
+                var issues = Array.isArray(e.validation_issues) ? e.validation_issues.length : 0;
+                var added = Array.isArray(e.added) ? e.added.length : 0;
+                var removed = Array.isArray(e.removed) ? e.removed.length : 0;
+                var summary;
+                if (status === 'rollback') {
+                    summary = 'rollback \u2192 ' + e.to_snapshot;
+                } else if (status === 'ok') {
+                    summary = 'refresh \u2014 ' + (e.state_count || 0) + ' states'
+                        + (added ? ', +' + added : '')
+                        + (removed ? ', \u2212' + removed : '')
+                        + (issues ? ', ' + issues + ' issues' : '');
+                } else if (status === 'empty') {
+                    summary = 'refresh \u2014 0 states'
+                        + (issues ? ' (' + issues + ' issues)' : '');
+                } else if (status === 'truncated') {
+                    summary = 'refresh truncated: ' + (e.error || 'Azure listing incomplete');
+                } else {
+                    summary = status;
+                }
+                var label = summary;
                 var filename = e.to_snapshot || (e.snapshot_path ? e.snapshot_path.split('/').pop() : '');
-                var canRollback = e.rollback_available && filename && e.status !== 'rollback';
+                var canRollback = e.rollback_available && filename && status !== 'rollback';
                 var btn = canRollback
                     ? '<button type="button" class="btn-rollback" data-snap="' + filename + '">Rollback</button>'
                     : '<button type="button" class="btn-rollback" disabled>\u2014</button>';
