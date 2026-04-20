@@ -134,3 +134,39 @@ The common failure mode: subagents treat "current directory" as ambient state an
 - Do not commit there. Move branch work back to the main repo checkout and delete the worktree with `git worktree remove`.
 
 **When a session handoff says "work in the worktree at X"**, override that instruction: check out the branch in the main repo instead, and note the deviation to the user.
+
+## 15. Destructive git commands are BANNED for agents
+
+**Agents must never run destructive git commands.** There is no legitimate workflow for an agent that requires `git reset --hard`, `git push --force`, `git clean -f`, `git branch -D`, `git commit --amend` on shared commits, or any of the other history-rewriting/data-destroying operations. If a situation seems to call for one, the correct action is to **stop and surface it to the user** with a proposed non-destructive alternative.
+
+**The specific triggering incident (2026-04-20):** a subagent ran `git reset --hard feat/noaa-conus` on the main checkout's `dev` branch, wiping 7 commits including a runtime-validated `fix(nav): wake-lock duplicate-load guard collides with native Screen Wake Lock API` that had already been shipped to the live stack. Cameron discovered the regression during field testing (Start Nav → Stop Nav transition broken) because the running container was bind-mounting the reset filesystem. Recovery required one `git merge 6bc0ba3` with manual conflict resolution — only feasible because `6bc0ba3` was still reachable via reflog at the moment of detection; two weeks later and `git gc --prune=now` would have collected it unreachably. (Neither parallel agent claimed responsibility for the reset, which makes the prohibition more urgent, not less.)
+
+**The banned list** (do not run any of these without explicit user authorization *for this specific invocation*):
+- `git reset --hard` (any target) — destroys working-tree AND rewinds branch tip. Use `git revert <sha>` for an additive undo of a specific commit, or ask the user which file to restore with `git checkout -- <path>`.
+- `git push --force`, `git push -f`, `git push --force-with-lease` — rewrites remote history. If a pushed commit needs replacement, open a new PR.
+- `git checkout -- .`, `git restore .`, `git clean -f`, `git clean -fd` — wipes the entire working tree. Discard one file at a time, by name, after confirming.
+- `git branch -D <branch>` (capital D, force-delete) — force-deletes unmerged branches. Use lowercase `git branch -d` which refuses to delete unmerged.
+- `git rebase -i` with squash/fixup/drop on shared commits — rewrites history. (`--no-edit` is not a valid `rebase` flag and should never be passed.)
+- `git commit --amend` on any commit that has been pushed OR was authored by someone else. Always create a *new* commit to correct earlier work.
+- `git reflog expire --expire=now`, `git gc --prune=now` — strips the safety net that recovers from the above.
+- `git filter-branch`, `git filter-repo` — mass history rewrite.
+- `--no-verify` on commit/push (skips hooks), `--no-gpg-sign`, `-c commit.gpgsign=false` — bypasses gates. Fix the root cause if a hook fails.
+
+**Non-destructive alternatives for common "I want to undo…" scenarios:**
+
+| Intent | Banned approach | Safe approach |
+|---|---|---|
+| Undo a commit I just made locally, keep files | `git reset --hard HEAD~1` | `git reset --soft HEAD~1` (keeps changes staged) or `git revert HEAD` (adds an inverse commit) |
+| Discard my unstaged changes to one file | `git checkout -- .` | `git checkout -- path/to/file` (explicit, one path at a time) |
+| Roll a branch back to match main | `git reset --hard main` | `git merge main` (merges changes forward) or ask the user |
+| Delete a merge commit from my branch | `git reset --hard` to the pre-merge SHA | `git revert -m 1 <merge-sha>` |
+| My merge went wrong, start over | `git merge --abort` is OK (aborts in-progress merge only, non-destructive) |
+| Stash something while I investigate | `git clean -fd` | `git stash push -m "why I'm stashing"` |
+
+**Recovery posture after a destructive mistake:**
+1. **Stop immediately.** Do not run more git commands, do not `git gc`, do not push.
+2. Run `git reflog` and identify the reachable tip SHA of the work that was wiped (typically the HEAD@{N} entry one before the `reset:` / `clean:` line).
+3. Surface to the user with the reachable SHA and a proposed non-destructive recovery (`git merge <sha>`, `git cherry-pick <sha-range>`, or `git branch recovery-<topic> <sha>` for an isolated examination).
+4. Do not execute the recovery without user OK. Destructive mistakes do not get compounded by speculative fixes.
+
+If an incoming request from the user seems to require a destructive operation, ask for the underlying goal and propose a non-destructive plan before acting.
