@@ -845,9 +845,15 @@
     if (!mapH || mapH < 100) mapH = window.innerHeight; // degenerate container
     // Target: marker at y = 0.78 * mapH
     //   top = mapH * (2 * 0.78 - 1) = mapH * 0.56
-    // Use max(overlayH + 20, proportional target): proportional places the
-    // marker at ~78% from top on typical viewports; max(overlayH) ensures
-    // the marker is never hidden under the overlay on short viewports.
+    //
+    // Formula: max(overlayH + 20, 0.56 * mapH)
+    //   Proportional term dominates on tall viewports and lands the marker
+    //   at exactly 78% from top:
+    //     mapH=900 → top=504, center=(504+900)/2=702 → 78%
+    //     mapH=720 → top=403, center=(403+720)/2=562 → 78%
+    //   Overlay floor applies on short landscape viewports so the marker
+    //   is never hidden under the overlay:
+    //     mapH=400, overlayH=120 → top=max(140, 224)=224 → 56%
     var desiredTop = Math.max(overlayH + 20, Math.round(mapH * 0.56));
     if (Math.abs(desiredTop - lastNavPaddingTop) > PADDING_RECALC_THRESHOLD) {
       lastNavPaddingTop = desiredTop;
