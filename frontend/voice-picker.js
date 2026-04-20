@@ -252,7 +252,134 @@
     }
   }
 
-  function rerenderPreferences() { /* implemented in Phase 5 */ }
+  function $(id) { try { return window.document.getElementById(id); } catch (e) { return null; } }
+
+  function renderHint() {
+    var hintEl = $('pref-voice-hint');
+    if (!hintEl) return;
+    var detectingEl = $('pref-voice-detecting');
+    var stubEl = $('pref-voice-stub');
+    if (detectingEl && !detectingEl.classList.contains('hidden')) { hintEl.classList.add('hidden'); return; }
+    if (stubEl && !stubEl.classList.contains('hidden')) { hintEl.classList.add('hidden'); return; }
+    var pref = readPref();
+    var candidates = candidateVoices(pref.allowCloudVoices);
+    if (pref.mode === 'unavailable' && pref.voice) {
+      hintEl.textContent = 'Saved voice "' + pref.voice.name + '" is not installed on this device — using device default.';
+      hintEl.classList.remove('hidden');
+      return;
+    }
+    var effectiveGender = null;
+    if (pref.mode === 'gender') effectiveGender = pref.gender;
+    else if (pref.mode === 'specific' && pref.storedGenderHint) effectiveGender = pref.storedGenderHint;
+    if (effectiveGender) {
+      var match = candidates.find(function (v) { return inferGender(v.name) === effectiveGender; });
+      if (!match) {
+        var gLabel = effectiveGender === 'male' ? 'Male' : 'Female';
+        hintEl.textContent = 'No ' + gLabel + ' voice detected on this device — using device default.';
+        hintEl.classList.remove('hidden');
+        return;
+      }
+    }
+    if (isIOS() && candidates.length <= 3 && candidates.length > 0) {
+      hintEl.textContent = 'Only a few voices detected. On iOS, add more via Settings → Accessibility → Spoken Content → Voices.';
+      hintEl.classList.remove('hidden');
+      return;
+    }
+    hintEl.classList.add('hidden');
+  }
+
+  function renderButtons() {
+    var pref = readPref();
+    var navActive = false;
+    try { navActive = window.document.body.classList.contains('nav-active'); } catch (e) {}
+    ['default', 'male', 'female'].forEach(function (g) {
+      var btn = window.document && window.document.querySelector('.pref-voice-btn[data-gender="' + g + '"]');
+      if (!btn) return;
+      btn.disabled = navActive;
+      if (navActive) btn.setAttribute('title', 'Voice can only be changed before or after navigation.');
+      else btn.removeAttribute('title');
+      var active = (pref.mode === 'default' && g === 'default') ||
+                   (pref.mode === 'gender' && pref.gender === g);
+      btn.classList.toggle('active', active);
+    });
+  }
+
+  function renderDropdown() {
+    var sel = $('pref-voice-select');
+    if (!sel) return;
+    var pref = readPref();
+    var candidates = candidateVoices(pref.allowCloudVoices);
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+    candidates.forEach(function (v) {
+      var opt = window.document.createElement('option');
+      opt.value = v.voiceURI;
+      opt.textContent = v.name + ' — ' + v.lang;
+      if (pref.mode === 'specific' && pref.voice && pref.voice.voiceURI === v.voiceURI) {
+        opt.selected = true;
+      }
+      sel.appendChild(opt);
+    });
+    var cb = $('pref-voice-allow-cloud');
+    if (cb) cb.checked = !!pref.allowCloudVoices;
+  }
+
+  function onVoiceButtonClick(e) {
+    var btn = e.currentTarget;
+    var gender = btn.getAttribute('data-gender');
+    if (btn.disabled) return;
+    if (gender === 'default') writePref({ mode: 'default' });
+    else writePref({ mode: 'gender', gender: gender });
+    armPreview();
+    rerenderPreferences();
+    speakPreviewDebounced();
+  }
+
+  function onDropdownChange(e) {
+    var sel = e.currentTarget;
+    var candidates = candidateVoices(readPref().allowCloudVoices);
+    var picked = candidates.find(function (v) { return v.voiceURI === sel.value; });
+    if (!picked) return;
+    writePref({
+      mode: 'specific',
+      voice: { voiceURI: picked.voiceURI, name: picked.name, lang: picked.lang },
+    });
+    armPreview();
+    rerenderPreferences();
+    speakPreviewDebounced();
+  }
+
+  function onCloudCheckboxChange(e) {
+    writePref({ allowCloudVoices: e.currentTarget.checked });
+    rerenderPreferences();
+  }
+
+  function onAdvancedToggleClick(e) {
+    var toggle = e.currentTarget;
+    var panel = $('pref-voice-advanced');
+    if (!panel) return;
+    var expanded = toggle.getAttribute('aria-expanded') === 'true';
+    toggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+    panel.classList.toggle('hidden', expanded);
+  }
+
+  function wireDOMHandlers() {
+    try {
+      var buttons = window.document.querySelectorAll('.pref-voice-btn');
+      buttons.forEach(function (btn) { btn.addEventListener('click', onVoiceButtonClick); });
+      var sel = $('pref-voice-select');
+      if (sel) sel.addEventListener('change', onDropdownChange);
+      var cb = $('pref-voice-allow-cloud');
+      if (cb) cb.addEventListener('change', onCloudCheckboxChange);
+      var toggle = $('pref-voice-advanced-toggle');
+      if (toggle) toggle.addEventListener('click', onAdvancedToggleClick);
+    } catch (e) {}
+  }
+
+  function rerenderPreferences() {
+    renderButtons();
+    renderDropdown();
+    renderHint();
+  }
 
   function initBootstrap() {
     notifyVoiceListChanged();
@@ -288,7 +415,13 @@
   }
 
   window.VoicePicker = {
-    init: function () { initBootstrap(); initEventListeners(); },
+    init: function () {
+      initBootstrap();
+      initEventListeners();
+      wireDOMHandlers();
+      rerenderPreferences();
+      voiceListCallbacks.push(rerenderPreferences);
+    },
     getUtteranceVoice: getUtteranceVoice,
     onVoiceListChanged: function (cb) {
       voiceListCallbacks.push(cb);
