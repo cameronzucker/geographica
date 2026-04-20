@@ -638,10 +638,14 @@
     state = "rerouting";
     rerouteSeq++;
     rerouteTimeoutId = setTimeout(function () {
+      rerouteTimeoutId = null;
       if (state === "rerouting") {
         state = "navigating";
         offRouteHistory = [];
         inOffRouteState = false;
+        // Clear the cooldown too — the failure already burned 10 s;
+        // don't penalize the user with another 5 s of blocked reroutes.
+        lastRerouteTime = 0;
       }
     }, REROUTE_TIMEOUT);
 
@@ -651,6 +655,7 @@
         currentLng: lng,
         remainingWaypoints: route.remainingWaypoints || [],
         costing: route.costing,
+        costingOptions: route.costingOptions || null,
         _seq: rerouteSeq // caller passes back to confirmReroute
       });
     }
@@ -775,10 +780,22 @@
      * gpsData: { latitude, longitude, heading, speed, timestamp }
      */
     updateGPS: function (data) {
+      // Dedup on (lat, lng): the UI polls feedGPS every 500 ms but the
+      // GPS source is ~1 Hz, so half the ticks carry an unchanged
+      // position. The off-route hysteresis window (5-tick, 3-of-5) is
+      // designed for 1 Hz; duplicate ticks would fill it in half the
+      // intended time and cause false reroutes while stationary. (B7)
+      //
+      // We still refresh lastGPSTime so the stale-checker doesn't fire
+      // DR on a stationary-but-fresh-GPS vehicle.
+      var positionChanged = !lastGPS ||
+        lastGPS.latitude !== data.latitude ||
+        lastGPS.longitude !== data.longitude;
+
       lastGPS = data;
       lastGPSTime = Date.now();
 
-      if (state !== "idle") {
+      if (state !== "idle" && positionChanged) {
         tick(data);
       }
     },
@@ -798,15 +815,11 @@
       currentManeuverIdx = 0;
       offRouteHistory = [];
       inOffRouteState = false;
-      // Clear only forward maneuvers' thresholds
-      var newSet = {};
-      for (var key in announcedSet) {
-        var idx = parseInt(key.split('-')[0]);
-        if (idx <= currentManeuverIdx) {
-          newSet[key] = true;
-        }
-      }
-      announcedSet = newSet;
+      // Full reset: old keys refer to a route that no longer exists.
+      // Voice cooldown also resets so the new route's first announcement
+      // isn't suppressed by the 5 s cooldown from the pre-reroute one.
+      announcedSet = {};
+      lastAnnouncementTime = 0;
       speedHistory = [];
       precomputeDistances();
 

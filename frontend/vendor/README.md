@@ -11,6 +11,7 @@ These files are **checked into git** — no installation step needed.
 | toGeoJSON | 0.16.2 | KML → GeoJSON conversion for import |
 | JSZip | 3.10.1 | KMZ archive extraction |
 | DOMPurify | — | HTML sanitization for KML descriptions |
+| silent.mp4 | generated 2026-04-20 | MIT (first-party). Silent 2x2 video (no audio track) for the `SilentVideoLock` screen keep-awake fallback on non-Secure-Context origins. Regenerate with the ffmpeg command in the wake-lock spec §4.8. |
 
 ## Updating Versions
 

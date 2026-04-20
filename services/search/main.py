@@ -1906,6 +1906,11 @@ async def noaa_estimate(
     intermediate_gb = round(raw_download_gb * 0.3, 1)  # reprojected, compressed
     peak_required_gb = round(raw_download_gb + intermediate_gb + final_mbtiles_gb, 1)
 
+    # 3-stage parallel pipeline economics:
+    # - Download stage: 4 concurrent fetches at ~3 MB/s each → ~160 s/tile raw but parallelized
+    # - Reproject stage: CPU-bound, min(cpu_count, 6) threads → ~45 s/tile wall-clock at 4 cores
+    # - Merge stage: serial, ~20 s/tile (the bottleneck once downloads catch up)
+    # Steady-state per-tile cost = max(download/concurrency, reproject/workers, merge_serial)
     download_concurrency = 4
     reproject_workers = 4
     download_per_tile_s = (NOAA_TILE_SIZE_MB / 3.0) / download_concurrency  # ~40 s

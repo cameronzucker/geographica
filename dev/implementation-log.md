@@ -37,6 +37,151 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-21 — Nav UX beta-bug remediation (13 bugs closed, B1 deferred)
+
+**Released as:** not yet released (pending main merge + runtime validation)
+**Plan / spec:** [docs/superpowers/plans/2026-04-21-nav-uxb-remediation.md](../docs/superpowers/plans/2026-04-21-nav-uxb-remediation.md)
+**Bug hunts:** [dev/bug-hunts/2026-04-21-nav-uxb-consolidated.md](bug-hunts/2026-04-21-nav-uxb-consolidated.md)
+**Adversarial reviews:** none (exploratory/holistic/multipass hunters cross-validated in parallel)
+
+### Summary
+
+Four beta-tester reports triggered a full bug-hunt cycle on turn-by-turn navigation. Exploratory, Holistic, and Multipass hunters conducted independent analysis and triangulated findings across [frontend/navigation.js](../frontend/navigation.js), [frontend/nav-ui.js](../frontend/nav-ui.js), and [frontend/app.js](../frontend/app.js). Cycle surfaced 14 confirmed bugs (13 closed in this cycle, 1 deferred) + 6 low-priority signals + 2 pre-existing out-of-scope issues.
+
+**Closed bugs:**
+- **B2 (highest severity):** Reroute leaves map polyline, sidebar directions, and trip globals stale. Fixed via new `setActiveRoute(trip, options)` unifier in app.js that owns engine state + map source + sidebar + globals. Reroute path now calls this before engine apply.
+- **B3:** GPS marker renders at ~60% instead of 78% from viewport top. Fixed proportional padding formula `top = mapH * 0.56 + overlayH` in getNavPadding; also explicit clear-padding on nav exit (merged with B8).
+- **B4:** Recenter/compass overlap on mobile; wrong stack order on desktop. CSS-only stack reorder: compass at bottom:120, recenter at bottom:170 (desktop); at mobile:100/150 resp.
+- **B5:** Multi-stop reroutes drop intermediate waypoints. Fixed `buildRouteData` to extract `remainingWaypoints` from trip.locations; reroute callback filters already-passed waypoints.
+- **B6:** `costing_options` (avoid_highways, etc.) dropped on reroute. Added `costingOptions` field to route payload; engine passes through to reroute callback.
+- **B7:** GPS hysteresis fills in ~2.5s instead of 5s because feedGPS calls updateGPS twice per unique position. Moved `nav.updateGPS()` inside signature-change guard.
+- **B8:** Padding leaks across sessions via MapLibre persistence. Merged into B3 fix; explicit `padding: {top:0, bottom:0, left:0, right:0}` in restoreMapState easeTo.
+- **B9:** `applyReroute` does not reset `lastAnnouncementTime`; `announcedSet` filter is backward. Fixed: `announcedSet = {}; lastAnnouncementTime = 0;`.
+- **B10:** `lastRerouteTime` not cleared when engine timeout fires (10s reroute timeout but 15s cooldown overhang). Cleared on timeout callback.
+- **B11:** Valhalla 200-with-error silent no-op (banner stuck). Explicit branch on `!data.trip || data.error` routes to retry/failure path.
+- **B12:** In-flight fetches + retry setTimeouts survive stopNavigation. Tracked setTimeout IDs in array; stopNavigation clears all + resets counter.
+- **B13:** First maneuver of subsequent leg at `begin_shape_index=0` indexes into previous leg. Clamped to `Math.max(0, ...)`.
+- **B14 (upgraded from false-positive):** UI mute state not propagated to engine on nav start. Added `nav.setMuted(muted)` call after `nav.start()`.
+
+**Deferred:**
+- **B1 (voice tiering redesign):** Current distance-threshold logic announces 3× per turn; thresholds + tier boundaries are design-dependent. Cameron's plan-review decision: no band-aid this cycle — ship nothing until the full TTM (time-to-maneuver) redesign lands with its own brainstorm + spec + adversarial review. `VOICE_THRESHOLDS` in [frontend/navigation.js:42-46](../frontend/navigation.js#L42-L46) remains unchanged at `[800, 200, 50]`. Beta testers continue to hear 3 announcements per turn until the follow-up plan ships. TTM-redesign seed topics documented in the plan's Appendix.
+
+### Key decisions
+
+- **B1 fully deferred, no threshold band-aid:** Cameron's explicit call ("no reason to fix now when we're going to rebuild it"). The consolidated report's D1 option (b) chosen; options (a) and (c) rejected.
+- **setActiveRoute refactor for B2, not band-aid:** Cameron's explicit call ("no more bandaids approaching 2.0.0"). Introduced `setActiveRoute(trip, options)` in [frontend/app.js](../frontend/app.js) that owns the 4-way state update (engine route, `_geographicaLastTrip`, `lastRouteCoords`, map `'route'` source, sidebar `#route-directions`). Exposed as `window._geographicaSetActiveRoute` for nav-ui.js reroute consumer. The old `renderRoute` function was deleted (~80 LOC). Three commits implement this: `2c03471` (extract, behavior unchanged), `a8cd7ba` (convert initial-route site + delete renderRoute), `cb3f27b` (convert reroute site — closes B2).
+- **All 13 non-B1 bugs fixed inline:** Reroute path is under heavy surgery this cycle; deferring B5, B6, B12 would require revisiting same code in a follow-up. Fixing now is cheap + reduces regression risk.
+
+### Notable bugs caught
+
+- B2: State split across 4 places (engine route, globals, map source, sidebar) — caught by all three hunters as "most severe reported bug."
+- B3: Padding math inverted (inset vs. offset) — caught by all hunters; Multipass also found sub-bug (B8 padding leak).
+- B14: Upgraded from false-positive FP6 after re-read of logic — mute state guard is UI-side only; engine's announcedSet still fires, suppressing unmute-time announcements.
+
+### Commits
+
+Notable commits (20+ total on this branch):
+- `54af3f0` test(nav): bootstrap Node vm-based engine test harness
+- `830e4c7` fix(nav): reset announcedSet and lastAnnouncementTime on applyReroute (B9)
+- `2c03471` refactor(nav): extract setActiveRoute as single source of truth (B2 prep)
+- `03624b5` fix(nav): preserve intermediate waypoints across reroutes (B5)
+- `ce12c02` fix(nav): preserve costing_options across reroutes (B6)
+- `633f176` fix(nav): engine dedups duplicate GPS positions for hysteresis (B7)
+- `cf56e6a` fix(nav): proportional nav padding + clear padding on nav exit (B3, B8)
+- `ddc9578` fix(nav): stack recenter button above compass, resolve mobile overlap (B4)
+
+### Outcome
+
+- **Tests:** 12 unit tests passing (6 engine nav + 6 nav-ui route-data builders). Engine tests include dedicated B7 dedup test + B10 timeout test. Playwright harness modes (B2 polyline update, B11 error banner, B12 fetch abort, B3/B8 padding assertions, B4 button stack at viewports) documented as pending runtime validation against live dev frontend.
+- **Code coverage:** Frontend path touched: navigation.js (9 + 10 = 19 modified lines), nav-ui.js (50+ across 5 separate sites), app.js (setActiveRoute export), style.css (B4 stack reorder). Zero backend/pipeline/setup changes.
+- **Surprises:** None. Hunters' consensus across three independent passes validates the scope. B1 threshold tuning deferred cleanly. B14 upgrade from FP justified on re-read.
+
+---
+
+## 2026-04-20 — Nav keep-awake (feature-complete, field-untested)
+
+**Released as:** not yet released (agent-complete on dev, awaiting §6.3 manual field acceptance before merge to main)
+**Plan / spec:** [docs/superpowers/specs/2026-04-20-nav-keep-awake-design.md](../docs/superpowers/specs/2026-04-20-nav-keep-awake-design.md)
+                 [docs/superpowers/plans/2026-04-20-nav-keep-awake-plan.md](../docs/superpowers/plans/2026-04-20-nav-keep-awake-plan.md)
+**Adversarial reviews:** [dev/adversarial/2026-04-20-nav-keep-awake-r{1..6}-*.md](adversarial/)
+**Research:** [dev/research/2026-04-20-spec-b-field-mode-research.md](research/2026-04-20-spec-b-field-mode-research.md) (parallel Spec B research for future offline-HTTPS work)
+
+### Summary
+
+Turn-by-turn nav silently broke on mobile when the phone auto-dimmed — not because the screen going dark is itself dangerous, but because a driver glances down to investigate a silent/dark phone, and that's the actual eyes-off-road safety hazard at driving speeds. This feature holds the device screen awake for the duration of active nav using a two-layer mechanism: `navigator.wakeLock.request('screen')` on Secure Context origins, with a first-party `SilentVideoLock` helper (plays a 2×2 no-audio-track MP4) on plain HTTP. Entirely passive to the driver — no indicator, no chime, no banner; the existing nav UI IS the evidence. Voice-continuity-under-backgrounding is explicitly out of scope for a future sibling spec.
+
+### Key decisions
+
+- **Bespoke silent-video helper instead of NoSleep.js.** Round 1 of the adversarial review (with the Codex cross-validation round) discovered that NoSleep.js v0.12.0 internally calls `navigator.wakeLock.request('screen')` first — meaning our "fallback" was re-invoking the same failing API on any origin where the primary rejects. Replaced with a ~60-line first-party module. Removed a 5-year-unmaintained dependency as a bonus.
+- **Generation-counter race safety.** Concurrency round (R2) found three distinct orphan-lock bug classes the v1 canonical code permitted under rapid Start→Stop→Start, release-during-pending-acquire, and visibility-reacquire-during-release interleavings. Fix: monotonic `acquireGeneration` counter captured per-call, compared on await resume. Task 8's race tests verify all three scenarios empirically.
+- **iOS PWA standalone-mode bypass.** WebKit #254545 silently breaks `navigator.wakeLock` in iOS 16.4–18.3 Home Screen PWA. Detection via `matchMedia('(display-mode: standalone)')` forces the fallback path on affected devices. Extended to the visibility-reacquire handler after Task 10 quality review caught that the visibility handler re-called the broken primary API without the bypass.
+- **Explicit "no audio track" (not muted silence) media contract.** Codex R6 F6.4 caught that muted silence collides with `speechSynthesis` media-session routing and iOS lock-screen affordances. The MP4 is generated with ffmpeg `-an` flag (no audio stream at all); a Python test verifies via `ffprobe`.
+- **Tests promoted to GitHub Actions (frontend-ci.yml)** per `feedback_env_drift_favor_ci.md` — pure-logic tests on ubuntu-latest distinct from Cameron's dev Pi, separate from wizard-ci.yml's LXD integration suite.
+- **Voice-continuity deferred (user decision B).** Wake-lock reduces how often the tab is backgrounded at all (driver doesn't need to unlock to check); a proper voice-continuity spec gets its own treatment later. Stale-prompt replay explicitly rejected as NG7 — worse than silence.
+
+### Notable bugs caught by adversarial review
+
+- **NoSleep fallback is not a fallback** (R1 F1.1) — architectural; fix = replace with bespoke helper.
+- **Orphan-lock on rapid acquire/release interleavings** (R2 F2.1/2.3/2.8) — race safety; fix = generation counter.
+- **Grep-based static tests mistake presence for behavior** (R3 F3.1) — test quality; fix = brace-tracked `function_body` + `strip_js_noise`.
+- **Mock fidelity underspecified** (R3 F3.7) — fix = reference mock factories in `_fixtures.js`.
+- **JS test dir collision with pytest** (R3 F3.11) — fix = `frontend/tests/wake-lock/` (hyphen blocks Python import).
+- **Spec meta-coherence** (R6 F6.1, Codex) — the highest-leverage finding. R1's "replace NoSleep" decision wasn't propagated through acceptance criteria, tests, dependencies — spec would have asked a subagent to ship the rejected design. Fix = full v2 rewrite before plan was written.
+- **Silent video must have no audio track** (R6 F6.4) — media contract; fix = ffmpeg `-an` + ffprobe verification test.
+- **iOS PWA bypass incomplete in visibility handler** (Task 10 quality review) — real bug that would silently break nav after the first tab-hide/show on iOS <18.4 PWA. Fix = hoisted `isIosPwaBypass()` helper, gated both `acquire()` and the visibility handler.
+
+### Commits
+
+Spec + adversarial review (before implementation):
+- `0cfd989` spec v1 — immediately invalidated by R1's NoSleep.js finding
+- `eb8b53b` 6 adversarial review files + Spec B research
+- `0ab8bf2` spec v2 — full post-adversarial rewrite (525 → 877 lines)
+- `846a722` implementation plan (16 tasks across 5 phases)
+
+Implementation (17 commits on dev):
+- `22fbc2a` Task 1 silent.mp4
+- `3ea2bd7` Task 2 test fixtures
+- `a473597` ffmpeg recipe fix (1×1 unworkable)
+- `e2dc957` Task 3 SilentVideoLock lifecycle
+- `8087dbd` Task 4 SilentVideoLock contract
+- `272d156` Task 5 WakeLock scaffolding
+- `95b8c5a` Task 6 fallback path
+- `f6742eb` Task 7 release lifecycle tests
+- `96e0ed5` Task 8 race-safety tests
+- `fac58fe` Task 9 visibility handler
+- `d8a2200` Task 10 iOS PWA bypass
+- `c2179b4` Task 10.5 iOS PWA bypass in visibility handler (Critical bug caught in review)
+- `f7fb1aa` Task 11 index.html
+- `17f5cff` Task 12 nav-ui.js hooks
+- `fad0385` Task 13 Python static tests
+- `46a5e44` Task 14 CHANGELOG + CONTRIBUTING
+- `74c979c` Task 15 frontend-ci.yml
+
+Supporting:
+- `df4ac27` CLAUDE.md clarification that Codex CLI is installed but not on $PATH (unblocks future build-robust-features runs)
+
+### Outcome
+
+**Tests (local, pre-merge):**
+- 34/34 JS unit tests via `node --test frontend/tests/wake-lock/` (11 SilentVideoLock + 23 WakeLock)
+- 13/13 Python static tests via `python -m pytest tests/test_wake_lock_static.py`
+- 47/47 combined, 0 failures, 0 skips
+
+**Deferred intentionally:**
+- §6.3 manual field acceptance (real phone, driving scenarios) — the agent plan formally defers this to Cameron per build-robust-features' agent-complete ≠ ship-complete principle. PR body contains the 10-item checklist.
+- Test-hardening follow-ups flagged in Task 9 quality review:
+  - Empirical test for `document.visibilityState !== 'visible'` guard
+  - Empirical test for generation check inside visibility handler's `.then()` — the §5.11 race the original Task 9 test sketched but couldn't wire up cleanly
+  - Either remove `++acquireGeneration` from `release()` or add a test that requires it (currently belt-and-suspenders)
+
+**Review-process observations (for transferable lessons):**
+- Per-task subagent-driven-development with two-stage review (spec then quality) caught 1 Critical bug (Task 10 visibility-handler iOS PWA hole) and several Important findings that would have shipped otherwise. The per-task review step earned its cost.
+- Codex cross-validation round (R6) found the single most valuable meta-level finding — spec-meta coherence — that 5 Claude-family agents collectively missed because each attacked one angle. Worth making "meta-coherence after per-angle review" a routine step for future build-robust-features cycles.
+- Two implementer-flagged plan bugs found during execution: (a) `loadModule` JS-destructuring semantics silently ignoring `undefined` (Task 6), (b) `strip_js_noise` helper wiping string-literal tokens (Task 13). Both caught via DONE_WITH_CONCERNS signalling rather than silent papering-over — the right posture.
+
+
+---
+
 ## 2026-04-20 — NOAA NAIP CONUS expansion (in progress)
 
 **Released as:** not yet released (branch `feat/noaa-conus`, worktree at `.claude/worktrees/feat-noaa-conus`)
@@ -99,6 +244,7 @@ Review notes in [dev/adversarial/2026-04-20-noaa-phase2-review.md](../dev/advers
 **Known follow-up** (same as Phase 1): tile-index URL template still assembles `{AZURE_BASE}/{dir}/tileindex/tileindex_{dir}.zip` which doesn't match NOAA's actual Azure layout. Phase 5 integration test will force discovery via live-Azure listing. Phase 2 doesn't exercise the tile-index URL path (it builds queues from synthetic inputs in unit tests); Arizona-only runs through the legacy `NOAA_NAIP_CATALOG` dict still work because that path never touches `refresh_catalog`'s URL builder.
 
 **Phases 3-6 remain.** Phase 3 (admin endpoints, 8 tasks) next. Subagent-driven-development flow with combined spec+quality review (single reviewer for mechanical Haiku tasks, separate two-stage for Sonnet load-bearing) proven efficient — ~2 min per per-task review, ~5 min per Sonnet implementer dispatch.
+
 
 ---
 
