@@ -143,6 +143,16 @@ Implications:
   of the repo (commits, CHANGELOG, versioning, CI) teaches Cameron what
   "good" looks like and builds habits that transfer.
 
+## Git workflow — worktrees are BANNED
+
+Do NOT use `git worktree` in this project. All branch work happens via `git checkout` in the main repo at `/home/administrator/Code/geographica`.
+
+**Rationale:** Two near-misses in 2026-04 where subagents `cd`'d out of a worktree and performed destructive operations on the main repo's branch (one `git reset --hard` wiped 6+ commits from `dev`'s tip pointer; recovered via reflog). Worktree topology multiplies the blast radius of "subagent forgets which checkout it's in" errors. See [docs/pitfalls/implementation-pitfalls.md](docs/pitfalls/implementation-pitfalls.md) §14 for the full write-up and recovery posture.
+
+**If you encounter an existing worktree** (e.g., `.claude/worktrees/<name>/`): do NOT use it. Check out the same branch in the main repo instead, and suggest that the user remove the worktree with `git worktree remove`.
+
+**If a session handoff tells you to "work in the worktree at X"**: override that instruction. Check out the branch in the main repo, and flag the deviation to the user.
+
 ## Commit and release discipline
 
 - Match the commit `type:` to the table in [CONTRIBUTING.md](CONTRIBUTING.md).

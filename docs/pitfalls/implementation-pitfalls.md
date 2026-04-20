@@ -117,3 +117,20 @@ This must be done BOTH at init (in initFreeLookCamera) AND in the `map.on('style
 ## 13. Frontend must handle non-2xx from spatial endpoint
 
 The `performSearch()` function in `app.js` only special-cased 404/405 (fallback to legacy endpoint). Any other error status (422, 500, 503) was parsed as JSON and treated as a normal response, causing misleading UI. Always check `res.ok` before parsing spatial endpoint responses.
+
+## 14. Git worktrees are BANNED (until further notice)
+
+**Do NOT create `git worktree add` entries under `.claude/worktrees/`** or anywhere else in this project. Do all branch work via `git checkout` in the main repo at `/home/administrator/Code/geographica`.
+
+**Why (two near-misses in 2026-04):**
+1. Subagent dispatched to a worktree silently `cd`'d out to the main repo mid-session and committed NOAA work on `dev` instead of the feature branch, contaminating a parallel agent's history. Recovered via `git revert`.
+2. A later subagent ran `git reset --hard feat/noaa-conus` on `dev` while the parallel agent had accumulated 19 commits there. Wiped the reachable tip pointer to nav-remediation merges, voice-picker spec, field-test screenshots, and a duplicate peak-disk commit. All recoverable via reflog, but only because the agent paused before pushing.
+
+The common failure mode: subagents treat "current directory" as ambient state and lose track of which checkout they're operating on. Worktree topology multiplies the surface area of the bug: you have two checkouts of the same repo, and ref updates in one are visible to the other, and the "bash session" in an agent can quietly walk from the worktree into the main repo.
+
+**If you see `.claude/worktrees/` in the repo:**
+- Treat its existence as a bug, not a feature.
+- Do not dispatch subagents into it.
+- Do not commit there. Move branch work back to the main repo checkout and delete the worktree with `git worktree remove`.
+
+**When a session handoff says "work in the worktree at X"**, override that instruction: check out the branch in the main repo instead, and note the deviation to the user.
