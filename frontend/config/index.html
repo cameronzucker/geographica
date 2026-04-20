@@ -265,6 +265,83 @@
         .noaa-empty-title { font-weight: 600; font-size: 13px; margin-bottom: 2px; color: #f0e4b8; }
         .noaa-empty-sub { font-size: 11px; color: #b0a680; }
         .noaa-tabs-refresh { margin-left: auto; font-size: 11px; padding: 4px 8px; }
+
+        /* === NOAA catalog refresh progress card (Task 9) === */
+        .noaa-progress-card {
+            position: relative;
+            background: #1a1f2e;
+            border: 1px solid #3a5070;
+            border-radius: 6px;
+            padding: 14px;
+            margin: 0 0 12px;
+        }
+        .noaa-progress-header {
+            font-weight: 600;
+            font-size: 13px;
+            color: #b0c8e8;
+            margin-bottom: 10px;
+        }
+        .noaa-progress-bar-wrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .noaa-progress-bar {
+            flex: 1;
+            height: 8px;
+            border-radius: 4px;
+            appearance: none;
+            -webkit-appearance: none;
+            background: #2d3548;
+            border: none;
+        }
+        .noaa-progress-bar::-webkit-progress-bar { background: #2d3548; border-radius: 4px; }
+        .noaa-progress-bar::-webkit-progress-value { background: #4a9e7a; border-radius: 4px; }
+        .noaa-progress-bar::-moz-progress-bar { background: #4a9e7a; border-radius: 4px; }
+        .noaa-progress-pct { font-size: 11px; color: #9aa4bf; white-space: nowrap; min-width: 80px; text-align: right; }
+        .noaa-progress-meta { font-size: 11px; color: #9aa4bf; display: flex; flex-direction: column; gap: 3px; }
+        .noaa-progress-meta .label { color: #6a7490; }
+        .noaa-progress-btn-row { margin-top: 10px; }
+        /* Cancelling overlay state */
+        .noaa-progress-card.cancelling { opacity: 0.6; }
+        .noaa-progress-card.cancelling::after {
+            content: 'Cancelling\u2026';
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 600;
+            color: #f9e2af;
+            background: rgba(0,0,0,0.45);
+            border-radius: 6px;
+        }
+        /* Stale/recoverable-error overlay */
+        .noaa-stale-overlay {
+            margin-top: 10px;
+            background: rgba(249, 226, 175, 0.10);
+            border: 1px solid rgba(249, 226, 175, 0.35);
+            border-radius: 4px;
+            padding: 8px 10px;
+            font-size: 11px;
+            color: #f9e2af;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .noaa-stale-overlay .stale-msg { flex: 1; }
+        /* Completion summary stub */
+        .noaa-completion-stub {
+            background: rgba(166, 227, 161, 0.08);
+            border: 1px solid rgba(166, 227, 161, 0.30);
+            border-radius: 4px;
+            padding: 10px 12px;
+            font-size: 12px;
+            color: #a6e3a1;
+            margin: 0 0 12px;
+        }
     </style>
 </head>
 <body>
@@ -1448,6 +1525,33 @@
             }
         }
 
+        // ---------------------------------------------------------------
+        // Task 9 — Page-navigation rehydration (spec §Testing invariant #7)
+        // Fires BEFORE the catalog fetch so that a running refresh isn't
+        // clobbered by the empty-state banner logic inside the catalog
+        // response handler.
+        // ---------------------------------------------------------------
+        cfgFetch('/admin/pipeline/noaa/refresh/progress')
+            .then(function(r) { return r.json(); })
+            .then(function(state) {
+                if (state.status === 'running') {
+                    // A refresh was started in a previous page load and is
+                    // still going — skip the confirm dialog; jump straight to
+                    // the in-progress UI + polling.
+                    _showProgressCard(body, src);
+                    _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), state);
+                    _startPolling(body, src);
+                } else if (state.status === 'done') {
+                    // Task 10 renders the full completion summary; stub for now.
+                    _renderCompletionSummaryStub(body, src, state);
+                }
+                // status: 'idle' — no-op; normal render proceeds.
+            })
+            .catch(function() {
+                // Progress endpoint unavailable — ignore; catalog fetch below
+                // handles the empty-banner fallback path.
+            });
+
         cfgFetch('/admin/pipeline/noaa/catalog')
             .then(function(r) { return r.json(); })
             .then(function(data) {
@@ -1784,10 +1888,233 @@
 
         document.getElementById('card-' + src.id + '-refresh-reload').addEventListener('click', loadRefreshLog);
 
-        // Shared refresh trigger — wired to both the empty-state banner button
-        // and the inline tab-strip button. Task 9 will replace the response
-        // handling with a full polling/progress-bar UX; for now we surface a
-        // generic "Refresh started" message on 202 so the UX isn't broken.
+        // ---------------------------------------------------------------
+        // Task 9 — Progress-bar polling helpers
+        // ---------------------------------------------------------------
+
+        // Humanize a state slug: strip -us suffix, title-case each word.
+        // Reuses the same transform as the dropdown-populate logic above.
+        function _humanizeSlug(slug) {
+            return (slug || '—')
+                .replace(/-us$/, '')
+                .split('-')
+                .map(function(p) { return p.charAt(0).toUpperCase() + p.slice(1); })
+                .join(' ');
+        }
+
+        // Format elapsed seconds as "Xm Ys" or "Ys".
+        function _fmtElapsed(secs) {
+            secs = Math.max(0, Math.round(secs));
+            if (secs >= 60) {
+                return Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+            }
+            return secs + 's';
+        }
+
+        // Format ETA seconds as "~X min" or "~Y s".
+        function _fmtEta(secs) {
+            if (secs == null) return '—';
+            secs = Math.max(0, Math.round(secs));
+            return secs >= 60 ? '~' + Math.ceil(secs / 60) + ' min' : '~' + secs + 's';
+        }
+
+        // Build and inject the progress-card markup; hide the empty banner and
+        // inline refresh button (they'd conflict with the card UI).
+        // Returns the card DOM element.
+        function _showProgressCard(targetBody, targetSrc) {
+            // Hide empty-state banner and inline refresh button
+            var emptyBanner = document.getElementById('card-' + targetSrc.id + '-empty-banner');
+            var inlineRefresh = document.getElementById('card-' + targetSrc.id + '-refresh-inline');
+            if (emptyBanner) emptyBanner.style.display = 'none';
+            if (inlineRefresh) inlineRefresh.style.display = 'none';
+
+            // Remove any existing progress card before inserting a fresh one
+            var existing = document.getElementById('card-' + targetSrc.id + '-progress');
+            if (existing) existing.parentNode.removeChild(existing);
+
+            var card = document.createElement('div');
+            card.className = 'noaa-progress-card';
+            card.id = 'card-' + targetSrc.id + '-progress';
+            card.innerHTML =
+                '<div class="noaa-progress-header">Refreshing NOAA catalog</div>' +
+                '<div class="noaa-progress-bar-wrap">' +
+                    '<progress class="noaa-progress-bar" value="0" max="100"></progress>' +
+                    '<span class="noaa-progress-pct">0% (0 of \u2014)</span>' +
+                '</div>' +
+                '<div class="noaa-progress-meta">' +
+                    '<div><span class="label">Current:</span> <span class="noaa-progress-slug">\u2014</span></div>' +
+                    '<div>' +
+                        '<span class="label">Elapsed:</span> <span class="noaa-progress-elapsed">0 s</span>' +
+                        ' \u00b7 <span class="label">ETA:</span> <span class="noaa-progress-eta">\u2014</span>' +
+                    '</div>' +
+                    '<div><span class="label">Phase:</span> <span class="noaa-progress-phase">starting</span></div>' +
+                '</div>' +
+                '<div class="noaa-progress-btn-row">' +
+                    '<button type="button" class="btn-secondary" id="card-' + targetSrc.id + '-progress-cancel">Cancel</button>' +
+                '</div>';
+
+            // Insert the card at the top of the body, before the tabs section or as the first child
+            var firstChild = targetBody.firstChild;
+            targetBody.insertBefore(card, firstChild);
+
+            // Wire cancel button
+            var cancelBtn = document.getElementById('card-' + targetSrc.id + '-progress-cancel');
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', function() {
+                    cancelBtn.disabled = true;
+                    cfgFetch('/admin/pipeline/noaa/refresh/cancel', { method: 'POST' })
+                        .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, status: r.status, data: d }; }); })
+                        .then(function(res) {
+                            if (res.status === 200) {
+                                // Dim the card; keep polling until terminal status
+                                card.classList.add('cancelling');
+                            } else if (res.status === 404) {
+                                // Nothing in progress — the card will get cleaned up on next poll
+                                card.classList.add('cancelling');
+                            } else {
+                                cancelBtn.disabled = false;
+                            }
+                        })
+                        .catch(function() { cancelBtn.disabled = false; });
+                });
+            }
+
+            return card;
+        }
+
+        // Apply a progress state snapshot to the card element.
+        function _updateProgressCard(card, state) {
+            var pct = (state.percent != null) ? Math.round(state.percent) : 0;
+            var proc = (state.states_processed != null) ? state.states_processed : null;
+            var total = (state.states_total != null && state.states_total > 0) ? state.states_total : null;
+
+            var bar = card.querySelector('.noaa-progress-bar');
+            var pctEl = card.querySelector('.noaa-progress-pct');
+            var slugEl = card.querySelector('.noaa-progress-slug');
+            var elapsedEl = card.querySelector('.noaa-progress-elapsed');
+            var etaEl = card.querySelector('.noaa-progress-eta');
+            var phaseEl = card.querySelector('.noaa-progress-phase');
+
+            if (bar) { bar.value = pct; bar.max = 100; }
+
+            // N of M text — honest about states_processed only (see spec §Graceful semantics)
+            var nofm = (proc != null && total != null) ? (proc + ' of ' + total) : '\u2014 of \u2014';
+            if (pctEl) pctEl.textContent = pct + '% (' + nofm + ')';
+
+            if (slugEl) slugEl.textContent = state.current_slug ? _humanizeSlug(state.current_slug) : '\u2014';
+
+            // Elapsed: client-computed from started_at
+            if (elapsedEl && state.started_at) {
+                var start = new Date(state.started_at.replace(/\+00:00$/, 'Z'));
+                var elapsed = (Date.now() - start.getTime()) / 1000;
+                elapsedEl.textContent = _fmtElapsed(elapsed);
+            }
+
+            if (etaEl) etaEl.textContent = _fmtEta(state.eta_seconds != null ? state.eta_seconds : null);
+            if (phaseEl) phaseEl.textContent = state.phase || 'running';
+
+            // Stale overlay
+            if (state.stale) {
+                var existingOverlay = card.querySelector('.noaa-stale-overlay');
+                if (!existingOverlay) {
+                    var overlay = document.createElement('div');
+                    overlay.className = 'noaa-stale-overlay';
+                    overlay.innerHTML =
+                        '<span class="stale-msg">\u26a0 Progress data may be stale. The refresh worker may have stalled.</span>' +
+                        '<button type="button" class="btn-secondary" data-testid="noaa-force-clear-btn" disabled ' +
+                        'title="Force-clear wiring lands in Task 11">[Force Clear]</button>';
+                    card.appendChild(overlay);
+                }
+            } else {
+                // Remove stale overlay if it was there before
+                var staleEl = card.querySelector('.noaa-stale-overlay');
+                if (staleEl) staleEl.parentNode.removeChild(staleEl);
+            }
+        }
+
+        // Stop polling — clear the interval and remove the stored id.
+        function _stopPolling(targetBody) {
+            if (targetBody._noaaProgressPollId) {
+                clearInterval(targetBody._noaaProgressPollId);
+                targetBody._noaaProgressPollId = null;
+            }
+        }
+
+        // Completion summary stub — Task 10 replaces with the full UI.
+        function _renderCompletionSummaryStub(targetBody, targetSrc, state) {
+            // Remove the progress card
+            var card = document.getElementById('card-' + targetSrc.id + '-progress');
+            if (card) card.parentNode.removeChild(card);
+
+            // Show empty banner visibility based on catalog re-fetch (will happen on next panel expand)
+            // For now just show a minimal stub so the user sees something.
+            var stub = document.createElement('div');
+            stub.className = 'noaa-completion-stub';
+            stub.id = 'card-' + targetSrc.id + '-completion-stub';
+            stub.innerHTML =
+                '<strong>Catalog refresh complete.</strong>' +
+                (state.states_total ? ' Processed ' + (state.states_processed || 0) + ' of ' + state.states_total + ' states.' : '') +
+                ' <span style="color:#7a8299;font-size:11px">(Full summary — Task 10)</span>';
+
+            var firstChild = targetBody.firstChild;
+            targetBody.insertBefore(stub, firstChild);
+
+            // Re-show the inline refresh button and update banner visibility
+            var inlineRefresh = document.getElementById('card-' + targetSrc.id + '-refresh-inline');
+            if (inlineRefresh) inlineRefresh.style.display = '';
+
+            // Reload the catalog and refresh log to pick up new data
+            cfgFetch('/admin/pipeline/noaa/catalog')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var count = (data.status === 'ok' && data.entries) ? Object.keys(data.entries).length : 0;
+                    _updateRefreshBannerVisibility(count);
+                })
+                .catch(function() {});
+            loadRefreshLog();
+        }
+
+        // Start polling /refresh/progress every 2s. Returns the interval id.
+        // Stores the id on body._noaaProgressPollId for lifecycle management.
+        function _startPolling(targetBody, targetSrc) {
+            _stopPolling(targetBody); // clear any existing poll
+
+            var pollId = setInterval(function() {
+                cfgFetch('/admin/pipeline/noaa/refresh/progress')
+                    .then(function(r) { return r.json(); })
+                    .then(function(state) {
+                        var card = document.getElementById('card-' + targetSrc.id + '-progress');
+                        if (state.status === 'running') {
+                            if (!card) {
+                                // Card was removed (e.g. panel collapse/expand); re-show it
+                                card = _showProgressCard(targetBody, targetSrc);
+                            }
+                            _updateProgressCard(card, state);
+                        } else if (state.status === 'done') {
+                            _stopPolling(targetBody);
+                            _renderCompletionSummaryStub(targetBody, targetSrc, state);
+                        } else {
+                            // idle or unknown — refresh is gone; stop polling, clean up card
+                            _stopPolling(targetBody);
+                            if (card) card.parentNode.removeChild(card);
+                            // Restore inline refresh button
+                            var inlineRefresh = document.getElementById('card-' + targetSrc.id + '-refresh-inline');
+                            if (inlineRefresh) inlineRefresh.style.display = '';
+                        }
+                    })
+                    .catch(function() {
+                        // Network error — keep polling; the card stays visible
+                    });
+            }, 2000);
+
+            targetBody._noaaProgressPollId = pollId;
+            return pollId;
+        }
+
+        // ---------------------------------------------------------------
+        // Shared refresh trigger — wired to both the empty-state banner
+        // button and the inline tab-strip button.
+        // ---------------------------------------------------------------
         function triggerRefresh(btn) {
             var proceed = confirm(
                 'Refresh NOAA catalog?\n\n' +
@@ -1810,20 +2137,30 @@
                     btn.disabled = false;
                     btn.textContent = orig;
                     if (r.status === 202) {
-                        // Phase 1 async dispatch: refresh queued in background.
-                        // Task 9 will replace this stub with polling + progress bar.
-                        alert('Refresh started \u2014 see the \u201cCatalog refresh history\u201d panel for status updates.');
-                        // Open the history panel so the user has immediate feedback
-                        if (refreshToggle.getAttribute('aria-expanded') !== 'true') {
-                            refreshToggle.click();
-                        } else {
-                            loadRefreshLog();
+                        // Async dispatch confirmed — show progress card and start polling.
+                        _showProgressCard(body, src);
+                        // Seed the card with whatever the 202 body provides
+                        if (r.data && r.data.progress) {
+                            _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), r.data.progress);
                         }
+                        _startPolling(body, src);
+                    } else if (r.status === 409) {
+                        if (r.data && r.data.detail && r.data.detail.indexOf('blocked_by_pipeline') !== -1) {
+                            alert('A pipeline is running; cancel it first.');
+                        } else if (r.data && r.data.progress) {
+                            // locked — show progress card from existing state
+                            _showProgressCard(body, src);
+                            _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), r.data.progress);
+                            _startPolling(body, src);
+                        } else {
+                            alert('Refresh already in progress (409). Check the progress bar.');
+                            _showProgressCard(body, src);
+                            _startPolling(body, src);
+                        }
+                    } else if (r.status === 503) {
+                        alert('Refresh subsystem unavailable. Try again shortly.');
                     } else if (!r.ok) {
                         alert('Refresh returned ' + r.status + ': ' + JSON.stringify(r.data.detail || r.data));
-                    } else if (r.data.status === 'truncated' || r.data.status === 'invalid_parse') {
-                        alert('Refresh finished with status=' + r.data.status + '. See log for details.');
-                        loadRefreshLog();
                     } else {
                         loadRefreshLog();
                     }
@@ -1831,7 +2168,7 @@
                 .catch(function(err) {
                     btn.disabled = false;
                     btn.textContent = orig;
-                    alert('Refresh failed: ' + err);
+                    alert('Refresh failed — check network connection and retry. (' + err + ')');
                 });
         }
 
