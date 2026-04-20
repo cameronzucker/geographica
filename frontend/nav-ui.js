@@ -607,7 +607,10 @@
       zoom: savedMapState.zoom,
       pitch: savedMapState.pitch,
       bearing: savedMapState.bearing,
-      duration: 800
+      duration: 800,
+      // B8: clear the nav-era padding so post-nav fitBounds/flyTo
+      // aren't offset into the bottom of the screen.
+      padding: { top: 0, bottom: 0, left: 0, right: 0 },
     });
     savedMapState = null;
   }
@@ -819,13 +822,37 @@
     return Math.max(min, Math.min(max, val));
   }
 
+  /**
+   * Returns MapLibre `padding` suitable for placing the GPS marker at ~78%
+   * from the top of the map container — below the nav overlay and well
+   * into the bottom third so the user can see ahead of their direction of
+   * travel.
+   *
+   * MapLibre `padding` is an *inset*: effective center is
+   *   ((top + (H - bottom)) / 2, ...)
+   * For a target y = f * H:
+   *   f = (top + H - bottom) / (2*H)
+   *   top - bottom = H * (2f - 1)
+   * With bottom=0 and f=0.78: top = H * 0.56. Add overlayH so the overlay
+   * itself doesn't cover the marker at extreme aspect ratios.
+   */
   function getNavPadding() {
-    if (!overlay || overlay.classList.contains('hidden')) return {};
-    var measured = overlay.offsetHeight + 20;
-    if (Math.abs(measured - lastNavPaddingTop) > PADDING_RECALC_THRESHOLD) {
-      lastNavPaddingTop = measured;
+    if (!overlay || overlay.classList.contains('hidden')) {
+      return { top: 0, bottom: 0, left: 0, right: 0 };
     }
-    return { top: lastNavPaddingTop };
+    var overlayH = overlay.offsetHeight;
+    var mapH = (map && map.getContainer) ? map.getContainer().clientHeight : window.innerHeight;
+    if (!mapH || mapH < 100) mapH = window.innerHeight; // degenerate container
+    // Target: marker at y = 0.78 * mapH
+    //   top = mapH * (2 * 0.78 - 1) = mapH * 0.56
+    // Use max(overlayH + 20, proportional target): proportional places the
+    // marker at ~78% from top on typical viewports; max(overlayH) ensures
+    // the marker is never hidden under the overlay on short viewports.
+    var desiredTop = Math.max(overlayH + 20, Math.round(mapH * 0.56));
+    if (Math.abs(desiredTop - lastNavPaddingTop) > PADDING_RECALC_THRESHOLD) {
+      lastNavPaddingTop = desiredTop;
+    }
+    return { top: lastNavPaddingTop, bottom: 0, left: 0, right: 0 };
   }
 
   // =====================================================================

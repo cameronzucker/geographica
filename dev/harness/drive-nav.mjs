@@ -114,6 +114,49 @@ async function mainAsserts() {
   // Wait for nav-active class on body.
   await page.waitForFunction(() => document.body.classList.contains('nav-active'), null, { timeout: 5_000 });
 
+  // padding mode (B3 + B8): assert GPS marker at 70-86% during nav,
+  // then assert MapLibre padding clears after stopNavigation.
+  if (mode === 'padding') {
+    // Wait for easeTo to settle after startNavigation.
+    await page.waitForTimeout(2000);
+
+    // Where on screen is the GPS marker (center of easeTo target)?
+    const center = await page.evaluate(() => {
+      const data = window._geographicaGPSData;
+      const px = window._geographicaMap.project([data.lon, data.lat]);
+      const mapH = window._geographicaMap.getContainer().clientHeight;
+      return { y: px.y, mapH, fraction: px.y / mapH };
+    });
+
+    console.log(`GPS marker at y=${center.y.toFixed(1)}/${center.mapH} = ${(center.fraction * 100).toFixed(1)}% from top`);
+    if (center.fraction < 0.70 || center.fraction > 0.86) {
+      console.error(`ASSERT FAIL (B3): GPS marker not in 70-86% range (got ${(center.fraction * 100).toFixed(1)}%)`);
+      process.exit(1);
+    }
+    console.log('PASS: GPS marker at ~78% from top (B3)');
+
+    // Stop nav, verify post-nav padding is cleared.
+    await page.evaluate(() => document.getElementById('stop-nav-btn').click());
+    await page.waitForFunction(() => !document.body.classList.contains('nav-active'), null, { timeout: 5_000 });
+
+    // Fire a fitBounds with explicit padding then read MapLibre's stored padding.
+    const postNavPadding = await page.evaluate(() => {
+      window._geographicaMap.fitBounds(
+        [[-111.65, 35.20], [-111.60, 35.25]],
+        { duration: 0, padding: { top: 20, bottom: 20, left: 20, right: 20 } }
+      );
+      return window._geographicaMap.getPadding();
+    });
+
+    if (postNavPadding.top > 50) {
+      console.error(`ASSERT FAIL (B8): post-nav padding retained nav inset (top=${postNavPadding.top})`);
+      process.exit(1);
+    }
+    console.log('PASS: padding cleared after nav (B8)');
+    await browser.close();
+    return;
+  }
+
   // B12 mode: assert no reroute fetches fire after stopNavigation.
   // Set up slow mock override BEFORE off-route tick loop so we catch the reroute in-flight.
   let rerouteCallCount = 0;
