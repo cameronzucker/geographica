@@ -1,0 +1,52 @@
+name: frontend-ci
+
+# Runs on every push/PR to main or dev that touches the frontend or its
+# static-test suite. Verifies:
+# - JS unit tests under frontend/tests/ pass (node:test, zero deps)
+# - Python structural tests for frontend invariants pass
+#
+# Intentionally separate from wizard-ci.yml, which owns the LXD-based
+# setup-wizard integration tests and uses a self-hosted runner. This
+# workflow is pure-logic and runs on GitHub-hosted ubuntu-latest.
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'frontend/**'
+      - 'tests/test_wake_lock_*.py'
+      - 'tests/test_frontend_*.py'
+      - '.github/workflows/frontend-ci.yml'
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'frontend/**'
+      - 'tests/test_wake_lock_*.py'
+      - 'tests/test_frontend_*.py'
+      - '.github/workflows/frontend-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  frontend-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run JS unit tests (node:test)
+        run: node --test frontend/tests/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ffprobe (for silent.mp4 audio-track verification)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Run wake-lock Python structural tests
+        run: python -m pytest tests/test_wake_lock_static.py -v
