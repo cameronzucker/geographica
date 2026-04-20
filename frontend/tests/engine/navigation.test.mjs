@@ -14,8 +14,9 @@ test('engine loads and exposes the expected API', async () => {
   assert.equal(typeof nav.getState, 'function');
 });
 
-test('start enters navigating when GPS is on-route', async () => {
+test('start enters navigating when GPS is on-route', async (t) => {
   const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
   win._geographicaGPSData = {
     lat: 35.20, lon: -111.65, heading: 90, speed: 5,
   };
@@ -26,12 +27,13 @@ test('start enters navigating when GPS is on-route', async () => {
   assert.equal(updates[0].state, 'navigating');
 });
 
-test('applyReroute clears announcedSet and lastAnnouncementTime', async () => {
+test('applyReroute clears announcedSet and lastAnnouncementTime', async (t) => {
   const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
   win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
 
   const voiceFires = [];
-  nav.onVoice((t) => voiceFires.push({ text: t, at: Date.now() }));
+  nav.onVoice((voiceText) => voiceFires.push({ text: voiceText, at: Date.now() }));
 
   nav.start(fixtureRouteWithTwoTurns());
 
@@ -66,8 +68,9 @@ test('applyReroute clears announcedSet and lastAnnouncementTime', async () => {
   );
 });
 
-test('reroute timeout clears lastRerouteTime for immediate re-reroute', { timeout: 15_000 }, async () => {
+test('reroute timeout clears lastRerouteTime for immediate re-reroute', { timeout: 15_000 }, async (t) => {
   const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
   win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
 
   const rerouteCalls = [];
@@ -89,8 +92,10 @@ test('reroute timeout clears lastRerouteTime for immediate re-reroute', { timeou
   // 4.5 s beyond our wait).
   await new Promise((r) => setTimeout(r, 10_500));
 
-  // Feed 5 more off-route positions at DIFFERENT coords (engine dedups
-  // by position internally on the tick path — make them distinct).
+  // Feed 5 more off-route positions at DIFFERENT coords. Using distinct
+  // coords makes the 5-tick hysteresis window unambiguously off-route
+  // and is forward-compatible with the Task 12 engine-side position
+  // dedup that will land later in this plan.
   for (let i = 0; i < 5; i++) {
     nav.updateGPS({
       latitude: 35.30 + i * 0.001,
