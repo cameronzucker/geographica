@@ -190,6 +190,30 @@
   var announcedSet = {};      // key: "maneuverIdx-threshold" -> true
   var lastAnnouncementTime = 0;
 
+  // Speed smoothing (spec v2 §4.2) — median-of-3 with outlier clamp.
+  // MAX_SPEED_DELTA_PER_TICK rejects samples that differ from the prior median
+  // by a physically-implausible amount. Catches GPS multipath bursts that a
+  // median alone cannot reject.
+  var speedSamples = [];
+
+  function pushSpeedSample(s) {
+    var clamped = (typeof s === 'number' && s >= 0 && isFinite(s)) ? s : 0;
+    if (speedSamples.length >= 1) {
+      var priorMedian = speedMedian();
+      if (Math.abs(clamped - priorMedian) > MAX_SPEED_DELTA_PER_TICK) {
+        return; // drop physically-implausible outlier
+      }
+    }
+    speedSamples.push(clamped);
+    if (speedSamples.length > SPEED_WINDOW_SIZE) speedSamples.shift();
+  }
+
+  function speedMedian() {
+    if (speedSamples.length === 0) return MIN_SPEED_FLOOR;
+    var sorted = speedSamples.slice().sort(function (a, b) { return a - b; });
+    return sorted[Math.floor(sorted.length / 2)];
+  }
+
   // Speed history for ETA adjustment: [{time, actual, expected}]
   var speedHistory = [];
 
@@ -575,6 +599,7 @@
 
     // Speed gate for heading
     lastSpeed = gpsSpeed;
+    pushSpeedSample(gpsSpeed);
     if (gpsSpeed >= HEADING_SPEED_GATE && gpsHeading !== null && gpsHeading !== undefined) {
       lastValidHeading = gpsHeading;
       headingValid = true;
@@ -760,6 +785,7 @@
     drActive = false;
     announcedSet = {};
     lastAnnouncementTime = 0;
+    speedSamples = [];
     speedHistory = [];
     segmentDistances = null;
     cumulativeDistances = null;
@@ -915,7 +941,9 @@
     VOICE_DISTANCE_FLOOR: VOICE_DISTANCE_FLOOR,
     MIN_SPEED_FLOOR: MIN_SPEED_FLOOR,
     SPEED_WINDOW_SIZE: SPEED_WINDOW_SIZE,
-    MAX_SPEED_DELTA_PER_TICK: MAX_SPEED_DELTA_PER_TICK
+    MAX_SPEED_DELTA_PER_TICK: MAX_SPEED_DELTA_PER_TICK,
+    _getSpeedSamples: function () { return Array.from(speedSamples); },
+    _speedMedian: function () { return speedMedian(); }
   };
 
 })();

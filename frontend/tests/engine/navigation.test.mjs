@@ -249,3 +249,87 @@ test('TTM constants have expected shape and per-costing keys', async () => {
   assert.deepStrictEqual(ttmKeys, floorKeys,
     'VOICE_TTM and VOICE_DISTANCE_FLOOR must have identical costing keys');
 });
+
+test('pushSpeedSample: updateGPS populates speedSamples', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
+  nav.start(fixtureRouteWithTwoTurns());
+
+  const i = win._geographicaNavEngineInternals;
+  assert.equal(typeof i._getSpeedSamples, 'function',
+    '_getSpeedSamples hook required for speed-window tests');
+
+  nav.updateGPS({ latitude: 35.20, longitude: -111.649, heading: 90, speed: 10 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.648, heading: 90, speed: 11 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.647, heading: 90, speed: 12 });
+
+  const samples = i._getSpeedSamples();
+  assert.deepEqual(samples, [10, 11, 12],
+    'speedSamples should contain the three post-start speeds in order');
+});
+
+test('pushSpeedSample: window size is capped at SPEED_WINDOW_SIZE (3)', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 5 };
+  nav.start(fixtureRouteWithTwoTurns());
+  const i = win._geographicaNavEngineInternals;
+
+  for (let k = 0; k < 10; k++) {
+    nav.updateGPS({
+      latitude: 35.20, longitude: -111.65 + k * 0.0001,
+      heading: 90, speed: 8 + k,
+    });
+  }
+  assert.equal(i._getSpeedSamples().length, 3,
+    'speedSamples must be bounded at SPEED_WINDOW_SIZE=3');
+  assert.deepEqual(i._getSpeedSamples(), [15, 16, 17],
+    'speedSamples must keep the most recent 3 accepted samples');
+});
+
+test('pushSpeedSample: physically-implausible delta is rejected (outlier clamp)', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
+  nav.start(fixtureRouteWithTwoTurns());
+  const i = win._geographicaNavEngineInternals;
+
+  // Seed window with two legitimate samples.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.649, heading: 90, speed: 10 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.648, heading: 90, speed: 10 });
+  // Inject a 50 m/s outlier: delta = |50 - 10| = 40 > MAX_SPEED_DELTA_PER_TICK(15) → rejected.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.647, heading: 90, speed: 50 });
+  // Inject a 10 m/s-delta sample (within threshold) → accepted.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.646, heading: 90, speed: 20 });
+
+  const samples = i._getSpeedSamples();
+  assert.ok(!samples.includes(50),
+    'outlier 50 m/s must be rejected — delta from prior median exceeded 15 m/s');
+  assert.ok(samples.includes(20),
+    'legitimate delta <=15 m/s must be accepted');
+});
+
+test('pushSpeedSample: negative and NaN samples are sanitized to 0', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 0 };
+  nav.start(fixtureRouteWithTwoTurns());
+  const i = win._geographicaNavEngineInternals;
+
+  nav.updateGPS({ latitude: 35.20, longitude: -111.649, heading: 90, speed: -5 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.648, heading: 90, speed: NaN });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.647, heading: 90, speed: 1 });
+
+  const samples = i._getSpeedSamples();
+  assert.ok(!samples.some(s => s < 0 || Number.isNaN(s)),
+    'negative and NaN samples must be sanitized');
+});
+
+test('speedMedian: returns MIN_SPEED_FLOOR when window is empty', async () => {
+  const { window: win } = await loadEngine();
+  const i = win._geographicaNavEngineInternals;
+  assert.equal(typeof i._speedMedian, 'function',
+    '_speedMedian hook required for median tests');
+  assert.equal(i._speedMedian(), i.MIN_SPEED_FLOOR);
+});
