@@ -1175,12 +1175,14 @@ def _noaa_peak_and_snapshot(
     Returns ([], 0.0, None) when the catalog isn't loadable — callers must
     handle this gracefully (treat as no-disk-constraint / no-missing-states).
 
-    Design note (Task 26): The pipeline-not-running gate on /refresh and
-    /rollback ensures the catalog symlink cannot be atomically swapped while
-    a pipeline is running.  Recording the resolved snapshot_path here is
-    therefore an effective pin: if this function is called before entering
-    _pipeline_lock, and the pipeline was not running at call time, the
-    snapshot remains stable for the lifetime of that pipeline run.
+    Pinning mechanism (Task 26): the returned snapshot_path is informational
+    — the actual pin happens inside the pipeline container at startup via
+    `pin_catalog_snapshot()` in `scripts/acquire_imagery.py`, which resolves
+    the symlink again at that moment. What keeps the two resolutions in sync
+    is the pipeline-not-running gate on /refresh and /rollback: neither can
+    swap the symlink while a pipeline container exists. So in practice the
+    snapshot the user sees in the estimate == the snapshot the pipeline
+    pins, as long as no out-of-band process modifies the symlink.
     """
     NOAA_TILE_SIZE_MB = 486
 
@@ -1214,10 +1216,9 @@ def _noaa_peak_and_snapshot(
         if not states_list:
             return ([], 0.0, None)
 
-    # Compute total tile count from catalog (no shapefile refinement needed here).
-    total_tile_count = sum(
-        entries[s].get("tile_count", 0) for s in states_list
-    )
+    # Use the SAME tile-count logic as noaa_estimate so the peak-disk check at
+    # Start doesn't disagree with the number the user saw in the estimate.
+    total_tile_count = _count_noaa_tiles(states_list, body.bbox, entries, DATA_DIR)
 
     # Same disk-cost formula as noaa_estimate.
     raw_download_gb = total_tile_count * NOAA_TILE_SIZE_MB / 1024
@@ -1813,6 +1814,73 @@ def _load_noaa_catalog(data_dir: Path) -> "tuple[dict | None, Path | None]":
         return (None, None)
 
 
+def _count_noaa_tiles(
+    slugs: "list[str]",
+    bbox_str: "str | None",
+    entries: dict,
+    data_dir: Path,
+) -> int:
+    """Sum NOAA tile counts across `slugs`.
+
+    Applies per-state spatial refinement (state bbox × user bbox area ratio
+    against the cached tile-index .dbf) when bbox_str is supplied and the
+    cache exists; falls back to the catalog's `tile_count` otherwise. Called
+    from both `noaa_estimate` and `_noaa_peak_and_snapshot` so the estimate
+    card and the Start-time disk recheck never disagree on tile count.
+    """
+    parsed_bbox: "tuple[float, float, float, float] | None" = None
+    if bbox_str:
+        try:
+            parts = [float(x.strip()) for x in bbox_str.split(",")]
+            if len(parts) == 4:
+                parsed_bbox = (parts[0], parts[1], parts[2], parts[3])
+        except ValueError:
+            parsed_bbox = None  # Whole-state fallback on malformed bbox.
+
+    total = 0
+    for slug in slugs:
+        entry = entries.get(slug, {})
+        catalog_total: int = entry.get("tile_count", 0)
+
+        if parsed_bbox is None:
+            total += catalog_total
+            continue
+
+        # Cached shapefile path mirrors the legacy `noaa_cache/{USPS}_{year}` layout.
+        usps = entry.get("usps", slug.upper()[:2])
+        entry_year = entry.get("year", 2021)
+        cache = data_dir / "noaa_cache" / f"{usps}_{entry_year}"
+        shp_files = list(cache.glob("*.shp")) if cache.exists() else []
+
+        if not shp_files:
+            total += catalog_total
+            continue
+
+        dbf_path = shp_files[0].with_suffix(".dbf")
+        try:
+            with open(dbf_path, "rb") as f:
+                f.read(4)
+                total_records = struct.unpack("<I", f.read(4))[0]
+            from scripts.common.state_bboxes import STATE_BBOXES
+            state_bbox = STATE_BBOXES.get(slug)
+            if state_bbox is None:
+                total += total_records
+                continue
+            sw, ss, se, sn = state_bbox
+            state_area = (se - sw) * (sn - ss)
+            west, south, east, north = parsed_bbox
+            uw = min(east, se) - max(west, sw)
+            uh = min(north, sn) - max(south, ss)
+            if uw > 0 and uh > 0 and state_area > 0:
+                ratio = min(1.0, (uw * uh) / state_area)
+                total += int(total_records * ratio)
+            # else: zero overlap; contributes 0 tiles.
+        except (OSError, struct.error):
+            total += catalog_total
+
+    return total
+
+
 async def _noaa_placename(
     states: list[str],
     missing: list[str],
@@ -1949,53 +2017,10 @@ async def noaa_estimate(
         raise HTTPException(status_code=422, detail=f"Invalid bbox: {e}")
 
     # ------------------------------------------------------------------
-    # 4. Tile count — sum across all cataloged states in this estimate.
-    #    Use the catalog's tile_count per state; spatial filtering via
-    #    shapefile cache stays as-is when the tile index is available.
-    #    Fall back to catalog tile_count when shapefile isn't cached.
+    # 4. Tile count — shared helper so Start-time disk recheck
+    #    (_noaa_peak_and_snapshot) never disagrees with this estimate.
     # ------------------------------------------------------------------
-    total_tile_count = 0
-    for slug in states_list:
-        entry = entries[slug]
-        catalog_tile_count: int = entry.get("tile_count", 0)
-
-        # Check for a cached shapefile (legacy path; preserves per-bbox filtering)
-        usps = entry.get("usps", slug.upper()[:2])
-        entry_year = entry.get("year", 2021)
-        cache = DATA_DIR / "noaa_cache" / f"{usps}_{entry_year}"
-        shp_files = list(cache.glob("*.shp")) if cache.exists() else []
-
-        if shp_files:
-            dbf_path = shp_files[0].with_suffix(".dbf")
-            state_tile_count = 0
-            try:
-                with open(dbf_path, "rb") as f:
-                    f.read(4)
-                    total_records = struct.unpack("<I", f.read(4))[0]
-                # Estimate tile fraction via bbox overlap with state extent
-                from scripts.common.state_bboxes import STATE_BBOXES
-                state_bbox = STATE_BBOXES.get(slug)
-                if state_bbox:
-                    sw, ss, se, sn = state_bbox
-                    state_area = (se - sw) * (sn - ss)
-                    uw = min(east, se) - max(west, sw)
-                    uh = min(north, sn) - max(south, ss)
-                    if uw > 0 and uh > 0 and state_area > 0:
-                        ratio = min(1.0, (uw * uh) / state_area)
-                        state_tile_count = int(total_records * ratio)
-                    else:
-                        state_tile_count = 0
-                else:
-                    state_tile_count = total_records
-            except (OSError, struct.error):
-                state_tile_count = catalog_tile_count
-        else:
-            # No shapefile cache — use catalog total
-            state_tile_count = catalog_tile_count
-
-        total_tile_count += state_tile_count
-
-    tile_count = total_tile_count
+    tile_count = _count_noaa_tiles(states_list, bbox, entries, DATA_DIR)
 
     # ------------------------------------------------------------------
     # 5. Derived cost estimates (same economics as before)
@@ -2293,7 +2318,15 @@ async def noaa_force_unlock():
     lock_path = DATA_DIR / "noaa_catalog_refresh.lock"
     result = force_unlock(lock_path)
     if result["status"] == "lock_holder_alive":
-        raise HTTPException(status_code=409, detail=result)
+        # Match the structured-detail shape used by /refresh and /rollback 409s.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "lock_holder_alive",
+                "previous_holder_pid": result.get("previous_holder_pid"),
+                "message": "Refresh lock held by a live process; not force-unlocking.",
+            },
+        )
     return result
 
 
