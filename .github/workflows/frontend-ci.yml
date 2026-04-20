@@ -48,5 +48,8 @@ jobs:
       - name: Install ffprobe (for silent.mp4 audio-track verification)
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+
       - name: Run wake-lock Python structural tests
         run: python -m pytest tests/test_wake_lock_static.py -v
