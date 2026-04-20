@@ -45,9 +45,9 @@ export async function loadEngine() {
   return { nav: win.GeographicaNav, window: win };
 }
 
-// Fixture: a minimal 2-maneuver straight-line route for general testing.
+// Fixture: a 3-maneuver route (2 turns + arrival) for voice/snap testing.
 // Coords are in [lng, lat] order per MapLibre/Valhalla convention.
-export function fixtureTwoManeuverRoute() {
+export function fixtureRouteWithTwoTurns() {
   return {
     coords: [
       [-111.65, 35.20],  // start
@@ -86,3 +86,7 @@ export function fixtureTwoManeuverRoute() {
     remainingWaypoints: [],
   };
 }
+
+// Backward-compat alias: earlier plan tasks reference the old name.
+// Remove when all plan tasks have been converted.
+export const fixtureTwoManeuverRoute = fixtureRouteWithTwoTurns;

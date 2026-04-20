@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadEngine, fixtureTwoManeuverRoute } from './test_runner.mjs';
+import { loadEngine, fixtureRouteWithTwoTurns } from './test_runner.mjs';
 
 test('engine loads and exposes the expected API', async () => {
   const { nav } = await loadEngine();
@@ -21,7 +21,7 @@ test('start enters navigating when GPS is on-route', async () => {
   };
   const updates = [];
   nav.onUpdate((s) => updates.push(s));
-  nav.start(fixtureTwoManeuverRoute());
+  nav.start(fixtureRouteWithTwoTurns());
   assert.equal(updates.length, 1);
   assert.equal(updates[0].state, 'navigating');
 });
@@ -33,7 +33,7 @@ test('applyReroute clears announcedSet and lastAnnouncementTime', async () => {
   const voiceFires = [];
   nav.onVoice((t) => voiceFires.push({ text: t, at: Date.now() }));
 
-  nav.start(fixtureTwoManeuverRoute());
+  nav.start(fixtureRouteWithTwoTurns());
 
   // Drive close enough to trigger the 'near' announcement for maneuver 1.
   // Maneuver 1 is at coord[1] = [-111.64, 35.20].
@@ -53,7 +53,7 @@ test('applyReroute clears announcedSet and lastAnnouncementTime', async () => {
   assert.ok(capturedSeq != null, 'engine should have fired onReroute callback');
 
   // New route — same shape, just a stand-in.
-  const newRoute = fixtureTwoManeuverRoute();
+  const newRoute = fixtureRouteWithTwoTurns();
   nav.applyReroute(newRoute, capturedSeq);
 
   // After applyReroute, announcedSet and lastAnnouncementTime must be fully reset:
