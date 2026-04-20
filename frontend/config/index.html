@@ -1789,7 +1789,18 @@
         // handling with a full polling/progress-bar UX; for now we surface a
         // generic "Refresh started" message on 202 so the UX isn't broken.
         function triggerRefresh(btn) {
-            if (!confirm('Refresh the NOAA catalog now?\nThis re-lists the Azure blob container, which can take a few minutes. A running pipeline will block this.')) return;
+            var proceed = confirm(
+                'Refresh NOAA catalog?\n\n' +
+                'This scans NOAA\'s Azure blob storage for every NAIP state-year ' +
+                'directory, downloading each tile index to count its features. ' +
+                'First-time runs take 10-30 minutes depending on your connection. ' +
+                'Subsequent refreshes are faster (only changed states pay the ' +
+                'download cost).\n\n' +
+                'You can cancel mid-way. The refresh runs in the background — you ' +
+                'don\'t have to keep this tab open, but the progress bar will only ' +
+                'update while it\'s visible.'
+            );
+            if (!proceed) return;
             btn.disabled = true;
             var orig = btn.textContent;
             btn.textContent = 'Starting\u2026';
