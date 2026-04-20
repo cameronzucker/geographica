@@ -252,6 +252,8 @@
     }
   }
 
+  function rerenderPreferences() { /* implemented in Phase 5 */ }
+
   function initBootstrap() {
     notifyVoiceListChanged();
     try {
@@ -272,6 +274,15 @@
       });
       window.document.addEventListener('visibilitychange', function () {
         if (window.document.hidden) onVisibilityHidden();
+      });
+    } catch (e) {}
+    try {
+      window.addEventListener('storage', function (e) {
+        if (!e || e.key !== LS_KEY) return;
+        if (typeof window.VoicePicker._onStorageEventForTest === 'function') {
+          window.VoicePicker._onStorageEventForTest(e);
+        }
+        rerenderPreferences();
       });
     } catch (e) {}
   }
