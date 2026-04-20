@@ -37,6 +37,89 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-20 — Nav keep-awake (feature-complete, field-untested)
+
+**Released as:** not yet released (agent-complete on dev, awaiting §6.3 manual field acceptance before merge to main)
+**Plan / spec:** [docs/superpowers/specs/2026-04-20-nav-keep-awake-design.md](../docs/superpowers/specs/2026-04-20-nav-keep-awake-design.md)
+                 [docs/superpowers/plans/2026-04-20-nav-keep-awake-plan.md](../docs/superpowers/plans/2026-04-20-nav-keep-awake-plan.md)
+**Adversarial reviews:** [dev/adversarial/2026-04-20-nav-keep-awake-r{1..6}-*.md](adversarial/)
+**Research:** [dev/research/2026-04-20-spec-b-field-mode-research.md](research/2026-04-20-spec-b-field-mode-research.md) (parallel Spec B research for future offline-HTTPS work)
+
+### Summary
+
+Turn-by-turn nav silently broke on mobile when the phone auto-dimmed — not because the screen going dark is itself dangerous, but because a driver glances down to investigate a silent/dark phone, and that's the actual eyes-off-road safety hazard at driving speeds. This feature holds the device screen awake for the duration of active nav using a two-layer mechanism: `navigator.wakeLock.request('screen')` on Secure Context origins, with a first-party `SilentVideoLock` helper (plays a 2×2 no-audio-track MP4) on plain HTTP. Entirely passive to the driver — no indicator, no chime, no banner; the existing nav UI IS the evidence. Voice-continuity-under-backgrounding is explicitly out of scope for a future sibling spec.
+
+### Key decisions
+
+- **Bespoke silent-video helper instead of NoSleep.js.** Round 1 of the adversarial review (with the Codex cross-validation round) discovered that NoSleep.js v0.12.0 internally calls `navigator.wakeLock.request('screen')` first — meaning our "fallback" was re-invoking the same failing API on any origin where the primary rejects. Replaced with a ~60-line first-party module. Removed a 5-year-unmaintained dependency as a bonus.
+- **Generation-counter race safety.** Concurrency round (R2) found three distinct orphan-lock bug classes the v1 canonical code permitted under rapid Start→Stop→Start, release-during-pending-acquire, and visibility-reacquire-during-release interleavings. Fix: monotonic `acquireGeneration` counter captured per-call, compared on await resume. Task 8's race tests verify all three scenarios empirically.
+- **iOS PWA standalone-mode bypass.** WebKit #254545 silently breaks `navigator.wakeLock` in iOS 16.4–18.3 Home Screen PWA. Detection via `matchMedia('(display-mode: standalone)')` forces the fallback path on affected devices. Extended to the visibility-reacquire handler after Task 10 quality review caught that the visibility handler re-called the broken primary API without the bypass.
+- **Explicit "no audio track" (not muted silence) media contract.** Codex R6 F6.4 caught that muted silence collides with `speechSynthesis` media-session routing and iOS lock-screen affordances. The MP4 is generated with ffmpeg `-an` flag (no audio stream at all); a Python test verifies via `ffprobe`.
+- **Tests promoted to GitHub Actions (frontend-ci.yml)** per `feedback_env_drift_favor_ci.md` — pure-logic tests on ubuntu-latest distinct from Cameron's dev Pi, separate from wizard-ci.yml's LXD integration suite.
+- **Voice-continuity deferred (user decision B).** Wake-lock reduces how often the tab is backgrounded at all (driver doesn't need to unlock to check); a proper voice-continuity spec gets its own treatment later. Stale-prompt replay explicitly rejected as NG7 — worse than silence.
+
+### Notable bugs caught by adversarial review
+
+- **NoSleep fallback is not a fallback** (R1 F1.1) — architectural; fix = replace with bespoke helper.
+- **Orphan-lock on rapid acquire/release interleavings** (R2 F2.1/2.3/2.8) — race safety; fix = generation counter.
+- **Grep-based static tests mistake presence for behavior** (R3 F3.1) — test quality; fix = brace-tracked `function_body` + `strip_js_noise`.
+- **Mock fidelity underspecified** (R3 F3.7) — fix = reference mock factories in `_fixtures.js`.
+- **JS test dir collision with pytest** (R3 F3.11) — fix = `frontend/tests/wake-lock/` (hyphen blocks Python import).
+- **Spec meta-coherence** (R6 F6.1, Codex) — the highest-leverage finding. R1's "replace NoSleep" decision wasn't propagated through acceptance criteria, tests, dependencies — spec would have asked a subagent to ship the rejected design. Fix = full v2 rewrite before plan was written.
+- **Silent video must have no audio track** (R6 F6.4) — media contract; fix = ffmpeg `-an` + ffprobe verification test.
+- **iOS PWA bypass incomplete in visibility handler** (Task 10 quality review) — real bug that would silently break nav after the first tab-hide/show on iOS <18.4 PWA. Fix = hoisted `isIosPwaBypass()` helper, gated both `acquire()` and the visibility handler.
+
+### Commits
+
+Spec + adversarial review (before implementation):
+- `0cfd989` spec v1 — immediately invalidated by R1's NoSleep.js finding
+- `eb8b53b` 6 adversarial review files + Spec B research
+- `0ab8bf2` spec v2 — full post-adversarial rewrite (525 → 877 lines)
+- `846a722` implementation plan (16 tasks across 5 phases)
+
+Implementation (17 commits on dev):
+- `22fbc2a` Task 1 silent.mp4
+- `3ea2bd7` Task 2 test fixtures
+- `a473597` ffmpeg recipe fix (1×1 unworkable)
+- `e2dc957` Task 3 SilentVideoLock lifecycle
+- `8087dbd` Task 4 SilentVideoLock contract
+- `272d156` Task 5 WakeLock scaffolding
+- `95b8c5a` Task 6 fallback path
+- `f6742eb` Task 7 release lifecycle tests
+- `96e0ed5` Task 8 race-safety tests
+- `fac58fe` Task 9 visibility handler
+- `d8a2200` Task 10 iOS PWA bypass
+- `c2179b4` Task 10.5 iOS PWA bypass in visibility handler (Critical bug caught in review)
+- `f7fb1aa` Task 11 index.html
+- `17f5cff` Task 12 nav-ui.js hooks
+- `fad0385` Task 13 Python static tests
+- `46a5e44` Task 14 CHANGELOG + CONTRIBUTING
+- `74c979c` Task 15 frontend-ci.yml
+
+Supporting:
+- `df4ac27` CLAUDE.md clarification that Codex CLI is installed but not on $PATH (unblocks future build-robust-features runs)
+
+### Outcome
+
+**Tests (local, pre-merge):**
+- 34/34 JS unit tests via `node --test frontend/tests/wake-lock/` (11 SilentVideoLock + 23 WakeLock)
+- 13/13 Python static tests via `python -m pytest tests/test_wake_lock_static.py`
+- 47/47 combined, 0 failures, 0 skips
+
+**Deferred intentionally:**
+- §6.3 manual field acceptance (real phone, driving scenarios) — the agent plan formally defers this to Cameron per build-robust-features' agent-complete ≠ ship-complete principle. PR body contains the 10-item checklist.
+- Test-hardening follow-ups flagged in Task 9 quality review:
+  - Empirical test for `document.visibilityState !== 'visible'` guard
+  - Empirical test for generation check inside visibility handler's `.then()` — the §5.11 race the original Task 9 test sketched but couldn't wire up cleanly
+  - Either remove `++acquireGeneration` from `release()` or add a test that requires it (currently belt-and-suspenders)
+
+**Review-process observations (for transferable lessons):**
+- Per-task subagent-driven-development with two-stage review (spec then quality) caught 1 Critical bug (Task 10 visibility-handler iOS PWA hole) and several Important findings that would have shipped otherwise. The per-task review step earned its cost.
+- Codex cross-validation round (R6) found the single most valuable meta-level finding — spec-meta coherence — that 5 Claude-family agents collectively missed because each attacked one angle. Worth making "meta-coherence after per-angle review" a routine step for future build-robust-features cycles.
+- Two implementer-flagged plan bugs found during execution: (a) `loadModule` JS-destructuring semantics silently ignoring `undefined` (Task 6), (b) `strip_js_noise` helper wiping string-literal tokens (Task 13). Both caught via DONE_WITH_CONCERNS signalling rather than silent papering-over — the right posture.
+
+---
+
 ## 2026-04-19 NIGHT — Beta-tester preflight unblocker + wizard harness rebuild
 
 **Released as:** `fix(setup): unblock beta testers stuck in preflight + bootstrap loops` (commit `5e400c5` on main). Harness rewrite lands with this commit on main.
