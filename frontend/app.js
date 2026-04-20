@@ -1180,6 +1180,9 @@
         if (sidebarToggle) sidebarToggle.classList.remove('hidden');
         map.setPadding({ left: 0, top: 0, right: 0, bottom: 0 });
       }
+      document.dispatchEvent(new CustomEvent('geographica:sidebar', {
+        detail: { open: open }
+      }));
     }
 
     if (sidebarToggle) {
