@@ -798,7 +798,7 @@
 
         // Re-fetch catalog once when pipeline reaches terminal state (not every poll)
         var terminalKey = '_terminal_' + sourceId;
-        if (d.status === 'completed' || d.status === 'error' || d.status === 'cancelled') {
+        if (d.status === 'completed' || d.status === 'error' || d.status === 'cancelled' || d.status === 'partial_failed') {
             if (!renderSourceProgress[terminalKey]) {
                 renderSourceProgress[terminalKey] = true;
                 fetchCatalog();
@@ -2070,6 +2070,94 @@
                 completedEl.style.display = '';
                 completedEl.className = 'status status-error';
                 completedEl.textContent = (sourceLabel || 'Download') + ' failed' + (ago ? ' ' + ago : '') + (d.error ? ' \u2014 ' + d.error : '');
+            } else if (d.status === 'partial_failed') {
+                // Task 32 — NOAA partial_failed: surface per-state breakdown + retry button
+                progressDiv.style.display = 'none';
+                completedEl.style.display = '';
+                completedEl.className = 'status status-warn';
+                var perState = d.per_state || {};
+                var failedStates = Object.keys(perState).filter(function(k) {
+                    return String(perState[k]).startsWith('failed:');
+                });
+                var completeStates = Object.keys(perState).filter(function(k) {
+                    return perState[k] === 'complete';
+                });
+                completedEl.textContent = 'NOAA NAIP: partial coverage' +
+                    (ago ? ' ' + ago : '') + ' \u2014 ' +
+                    completeStates.length + ' complete, ' + failedStates.length + ' failed';
+
+                // Inject retry block if there are failed states (idempotent — clear old block first)
+                var existingBlock = completedEl.querySelector('.noaa-retry-block');
+                if (existingBlock) existingBlock.parentNode.removeChild(existingBlock);
+
+                if (failedStates.length > 0) {
+                    var retryBlock = document.createElement('div');
+                    retryBlock.className = 'noaa-retry-block';
+                    var retryLabel = document.createElement('div');
+                    retryLabel.className = 'noaa-retry-label';
+                    retryLabel.textContent = 'Failed states:';
+                    retryBlock.appendChild(retryLabel);
+                    var retryList = document.createElement('ul');
+                    retryList.className = 'noaa-retry-list';
+                    failedStates.forEach(function(k) {
+                        var li = document.createElement('li');
+                        var reason = String(perState[k]).replace(/^failed:\s*/, '');
+                        li.innerHTML = '<b>' + k + '</b>: ' + reason;
+                        retryList.appendChild(li);
+                    });
+                    retryBlock.appendChild(retryList);
+                    var retryBtn = document.createElement('button');
+                    retryBtn.type = 'button';
+                    retryBtn.className = 'btn-secondary noaa-retry-btn';
+                    retryBtn.textContent = 'Retry failed state(s)';
+                    retryBtn.setAttribute('data-failed', failedStates.join(','));
+                    retryBlock.appendChild(retryBtn);
+
+                    retryBtn.addEventListener('click', function() {
+                        var failed = retryBtn.getAttribute('data-failed').split(',').filter(Boolean);
+                        if (failed.length === 0) return;
+                        if (!confirm('Retry ' + failed.length + ' failed state(s): ' + failed.join(', ') + '?\nThis starts a new pipeline for just those states.')) return;
+
+                        // MVP: retry first failed state; user re-clicks for subsequent states
+                        var first = failed[0];
+                        if (failed.length > 1) {
+                            alert('Multi-state retry not supported yet; will retry \u201c' + first + '\u201d only. Re-click after for remaining states.');
+                        }
+
+                        retryBtn.disabled = true;
+                        var origText = retryBtn.textContent;
+                        retryBtn.textContent = 'Starting\u2026';
+
+                        cfgFetch('/admin/pipeline/start', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                type: 'imagery',
+                                mode: 'noaa',
+                                state: first,
+                                acknowledge_missing: true,
+                            }),
+                        })
+                        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data, status: r.status }; }); })
+                        .then(function(r) {
+                            retryBtn.disabled = false;
+                            retryBtn.textContent = origText;
+                            if (!r.ok) {
+                                alert('Retry failed (' + r.status + '): ' + JSON.stringify(r.data.detail || r.data));
+                                return;
+                            }
+                            alert('Retry started for \u201c' + first + '\u201d. The pipeline card will update with progress.');
+                            fetchAll();
+                        })
+                        .catch(function(err) {
+                            retryBtn.disabled = false;
+                            retryBtn.textContent = origText;
+                            alert('Retry failed: ' + err);
+                        });
+                    });
+
+                    completedEl.appendChild(retryBlock);
+                }
             } else {
                 progressDiv.style.display = 'none';
                 completedEl.style.display = 'none';
