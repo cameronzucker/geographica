@@ -32,6 +32,7 @@
   var rerouteRetries = 0;
   var MAX_REROUTE_RETRIES = 3;
   var pendingRerouteTimeouts = [];
+  var rerouteAbortController = null;
   var lastNavState = null;  // latest state from engine callback
   var lastGPSSignature = null;
 
@@ -230,6 +231,15 @@
     lastNavPaddingTop = 0;
     lastNavState = null;
     lastGPSSignature = null;
+
+    // B12: cancel in-flight reroute fetches and clear pending retries.
+    if (rerouteAbortController) {
+      rerouteAbortController.abort();
+      rerouteAbortController = null;
+    }
+    pendingRerouteTimeouts.forEach(function (id) { clearTimeout(id); });
+    pendingRerouteTimeouts = [];
+    rerouteRetries = 0;
   }
 
   // =====================================================================
@@ -523,13 +533,19 @@
   }
 
   function attemptReroute(body, seq, info) {
+    if (rerouteAbortController) rerouteAbortController.abort();
+    rerouteAbortController = new AbortController();
+    var signal = rerouteAbortController.signal;
+
     fetch('/valhalla/route', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: signal
     })
     .then(function (res) { return res.json(); })
     .then(function (data) {
+      if (signal.aborted) return;
       if (data && data.error) {
         // Valhalla returned 200 with {error: "..."} — no trip field.
         // Treat as a retryable failure, not a silent no-op. (B11)
@@ -551,6 +567,7 @@
       }
     })
     .catch(function (err) {
+      if (err.name === 'AbortError') return;  // silent on user-initiated abort
       console.error('Reroute failed:', err);
       rerouteRetries++;
       if (rerouteRetries <= MAX_REROUTE_RETRIES) {

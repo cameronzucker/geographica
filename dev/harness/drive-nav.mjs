@@ -122,6 +122,60 @@ async function mainAsserts() {
     await page.waitForTimeout(600);  // > 500 ms feedGPS interval
   }
 
+  // B12 mode: assert no reroute fetches fire after stopNavigation.
+  if (mode === 'stop-mid-reroute') {
+    let rerouteHitsAfterStop = 0;
+    let navStoppedAt = null;
+
+    // Override the existing mock with a slow handler (3 s delay) so the fetch
+    // is in-flight when we click stop.
+    await page.route('**/valhalla/route', async (route, req) => {
+      const now = Date.now();
+      if (navStoppedAt && now > navStoppedAt) {
+        rerouteHitsAfterStop++;
+      }
+      // Delay the response by 3 s so we can stop nav mid-flight.
+      await new Promise((r) => setTimeout(r, 3000));
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          trip: {
+            legs: [{
+              shape: REROUTE_SHAPE,
+              maneuvers: [
+                { type: 1, instruction: 'Head east', begin_shape_index: 0, end_shape_index: 1,
+                  verbal_transition_alert_instruction: 'In half a mile, turn left',
+                  verbal_pre_transition_instruction: 'Turn left on Oak Street' },
+                { type: 15, instruction: 'Arrived', begin_shape_index: 2, end_shape_index: 2 },
+              ],
+            }],
+            summary: { length: 1.0, time: 60 },
+            locations: [
+              { lat: 35.25, lon: -111.55, type: 'break' },
+              { lat: 35.21, lon: -111.64, type: 'break' },
+            ],
+          },
+        }),
+      });
+    });
+
+    // Wait 500 ms for the reroute fetch to start, then stop nav.
+    await page.waitForTimeout(500);
+    navStoppedAt = Date.now();
+    await page.evaluate(() => document.getElementById('stop-nav-btn').click());
+
+    // Wait 10 s and assert no further /valhalla/route calls were made post-stop.
+    await page.waitForTimeout(10_000);
+    if (rerouteHitsAfterStop > 0) {
+      console.error(`ASSERT FAIL (B12): ${rerouteHitsAfterStop} reroute fetches fired after stopNavigation`);
+      process.exit(1);
+    }
+    console.log('PASS: no reroute fetches after stopNavigation (B12)');
+    await browser.close();
+    return;
+  }
+
   // If mode === 'error', assert banner surfaces after MAX_REROUTE_RETRIES backoff.
   if (mode === 'error') {
     // Retries: 2s + 4s + 8s = 14s maximum. Add fudge for async propagation.
