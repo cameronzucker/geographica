@@ -39,6 +39,40 @@ The 5-round adversarial review (Codex + 4 distinct-lens subagents) on spec v1 su
 
 ---
 
+**🛏️ READY FOR FIELD TESTING — Nav keep-awake (dev HEAD `b127060`, agent-complete 2026-04-20):**
+
+Two-layer screen keep-awake during active nav. Primary: `navigator.wakeLock.request('screen')` on Secure Context. Fallback: first-party `SilentVideoLock` helper (silent 2×2 H.264 MP4, no audio track) for plain HTTP. Generation-counter race safety. iOS PWA bypass. A11y-safe hidden `<video>`. Entirely passive to the driver — no UI indicator, the existing nav banner is the evidence. Voice-continuity under tab-backgrounding is deliberately out-of-scope (future sibling spec).
+
+- **Dev HEAD:** `b127060` (19 commits since spec v1, pushed). Stack is live — `geographica-frontend` bind-mounts serve the new files immediately. No restart needed to test.
+- **Spec (v2, post-adversarial):** [docs/superpowers/specs/2026-04-20-nav-keep-awake-design.md](docs/superpowers/specs/2026-04-20-nav-keep-awake-design.md)
+- **Plan:** [docs/superpowers/plans/2026-04-20-nav-keep-awake-plan.md](docs/superpowers/plans/2026-04-20-nav-keep-awake-plan.md) (16 tasks, 5 phases)
+- **6-round adversarial review** (R1-R5 Claude, R6 Codex cross-validation): [dev/adversarial/2026-04-20-nav-keep-awake-r{1..6}-*.md](dev/adversarial/)
+- **Full handoff:** [handoff_20260420_nav_keep_awake](../memory/handoff_20260420_nav_keep_awake.md) — **READ THIS FIRST** when resuming. Contains regression invariants, deferred follow-ups, process findings, and commit-by-commit trail.
+- **Tests:** 47/47 green (`node --test frontend/tests/wake-lock/` = 34; `python -m pytest tests/test_wake_lock_static.py` = 13). New `.github/workflows/frontend-ci.yml` running on ubuntu-latest — CI green at `b127060`.
+
+**Resume task — §6.3 manual field acceptance checklist** (spec §6.3, 10 items). This is the ship gate. Agent-complete ≠ ship-complete per the build-robust-features discipline. Checklist items:
+
+1. HTTPS/Tailscale: start nav, set phone down, screen stays on until nav ends.
+2. HTTP/LAN: repeat test 1 via plain HTTP origin. Screen stays on via silent-video fallback.
+3. Phone-call interruption: answer a call during nav, end it, return — screen still on, nav continues without user action.
+4. Arrival: 3-second arrival banner with screen on; normal auto-dim resumes after auto-stop.
+5. iOS Low Power Mode: documented-degradation path; no crashes, no console errors. Screen may dim on normal idle (expected per spec §5.19).
+6. Screen-reader (VoiceOver/TalkBack) during nav: rotor / swipe navigation MUST NOT expose the hidden `<video>` media control.
+7. Voice-TTS with fallback video active (HTTP mode): voice prompts MUST fire normally through the phone speaker while the silent video plays.
+8. Voice-TTS with STT active (HTTPS mode): STT start/stop works; nav voice prompts continue.
+9. Battery cost informational: 30-min nav session on fallback path vs baseline.
+10. Duplicate-tab behavior: two tabs with nav active both hold independent locks.
+
+If all pass → `git switch main && git merge --ff-only dev && git push origin main` (or open PR if preferred). release-please auto-generates the release PR at next trigger.
+
+If any fail → file issues; stay on dev until triaged.
+
+**Known limitation documented in CHANGELOG:** iOS Low Power Mode disables screen keep-awake. Disable LPM or keep phone plugged in for uninterrupted navigation.
+
+**3 minor test-hardening follow-ups** (flagged by Task 9 reviewer, all non-blocking): see handoff section "What's DEFERRED to a future session" #2. None urgent.
+
+---
+
 **Recently completed (2026-04-21 beta-triage marathon — main HEAD `3ba8885`):**
 
 15+ bug fixes shipped in response to a stream of beta-tester screenshots.
