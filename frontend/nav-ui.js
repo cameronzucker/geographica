@@ -160,6 +160,10 @@
     active = true;
     document.body.classList.add('nav-active');
 
+    // DO NOT insert awaited work between classList.add and primeSpeech — breaks
+    // the user-gesture context required by Screen Wake Lock + SpeechSynthesis.
+    WakeLock.acquire();
+
     // Prime speech audio on user gesture
     primeSpeech();
 
@@ -197,6 +201,8 @@
     nav = null;
     active = false;
     document.body.classList.remove('nav-active');
+
+    WakeLock.release();
 
     // Cancel any pending speech
     if (speechAvailable) speechSynthesis.cancel();
