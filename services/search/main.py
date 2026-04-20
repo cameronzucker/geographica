@@ -30,11 +30,12 @@ from pydantic import BaseModel
 import keyring_client
 
 try:
-    from scripts.common.state_bboxes import SLUG_BY_USPS, states_intersecting
+    from scripts.common.state_bboxes import SLUG_BY_USPS, USPS_BY_SLUG, states_intersecting
     _STATE_BBOXES_AVAILABLE = True
 except ImportError:  # search container may not have scripts/ on PYTHONPATH
     _STATE_BBOXES_AVAILABLE = False
     SLUG_BY_USPS: dict = {}  # type: ignore[assignment]
+    USPS_BY_SLUG: dict = {}  # type: ignore[assignment]
 
     def states_intersecting(bbox_str: str) -> list[str]:  # type: ignore[misc]
         return []
@@ -1713,6 +1714,51 @@ def _load_noaa_catalog(data_dir: Path) -> "tuple[dict | None, Path | None]":
         return (None, None)
 
 
+async def _noaa_placename(
+    states: list[str],
+    missing: list[str],
+    bbox: tuple[float, float, float, float],
+    usps_by_slug: dict[str, str],
+) -> str | None:
+    """Resolve the human-readable placename for the estimate card.
+
+    Multi-state or wide-bbox: return "Coverage area across AZ, UT" (USPS list).
+    Single-state, small bbox: Nominatim reverse lookup on centroid.
+    Returns None if Nominatim fails and no multi-state fallback applies.
+
+    Parameters:
+    - states: cataloged state slugs
+    - missing: uncataloged state slugs that intersect the bbox
+    - bbox: (west, south, east, north) tuple
+    - usps_by_slug: dict mapping slug to 2-letter USPS code
+    """
+    all_intersecting = sorted(set(states) | set(missing))
+    west, south, east, north = bbox
+    width = east - west
+    height = north - south
+    is_multi_state = len(all_intersecting) >= 2 or max(width, height) > 5.0
+
+    if is_multi_state:
+        usps_codes = [usps_by_slug.get(slug, slug.upper()) for slug in all_intersecting]
+        return f"Coverage area across {', '.join(usps_codes)}"
+
+    # Single-state, small bbox — Nominatim reverse lookup
+    lat = (south + north) / 2
+    lon = (west + east) / 2
+    try:
+        resp = await state.http_client.get(
+            f"{NOMINATIM_URL}/reverse",
+            params={"format": "jsonv2", "lat": lat, "lon": lon, "zoom": 10},
+            timeout=3.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("display_name") or None
+    except Exception as exc:
+        print(f"WARNING: Nominatim reverse lookup failed: {exc}", flush=True)
+        return None
+
+
 @app.get("/admin/pipeline/noaa/estimate", dependencies=[Depends(require_config_source)])
 async def noaa_estimate(
     bbox: str = Query(..., description="west,south,east,north"),
@@ -1870,6 +1916,11 @@ async def noaa_estimate(
     est_seconds = tile_count * effective_per_tile_s + startup_overhead_s
     est_hours = est_seconds / 3600
 
+    # ------------------------------------------------------------------
+    # 6. Resolve placename (Task 21)
+    # ------------------------------------------------------------------
+    placename = await _noaa_placename(states_list, missing_list, (west, south, east, north), USPS_BY_SLUG)
+
     return {
         # ---- legacy fields (unchanged semantics) ----
         "status": "ok",
@@ -1886,7 +1937,7 @@ async def noaa_estimate(
         # ---- new fields (Task 19) ----
         "states": states_list,
         "missing": missing_list,
-        "placename": None,           # Task 21 fills this in
+        "placename": placename,
         "catalog_snapshot": str(snapshot_path),
         "intermediate_gb": intermediate_gb,
         "peak_required_gb": peak_required_gb,

@@ -179,3 +179,107 @@ def test_estimate_intermediate_and_peak_fields_compute_correctly(fake_catalog_di
 
     # peak > raw (peak must be biggest)
     assert peak > raw, "peak_required should exceed raw"
+
+
+def test_estimate_placename_multi_state_format(fake_catalog_dir):
+    """Bbox spanning AZ + UT (both cataloged) → 'Coverage area across AZ, UT'."""
+    from services.search.main import app
+    client = TestClient(app)
+    with patch("services.search.main._get_disk_free_gb", return_value=500.0), \
+         patch("services.search.main.DATA_DIR", fake_catalog_dir):
+        resp = client.get(
+            "/admin/pipeline/noaa/estimate",
+            params={"bbox": "-114,37,-109,40"},  # AZ + UT
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    data = resp.json()
+    assert data["placename"] is not None
+    assert data["placename"].startswith("Coverage area across")
+    # USPS codes appear
+    assert "AZ" in data["placename"]
+    assert "UT" in data["placename"]
+
+
+def test_estimate_placename_wide_bbox_uses_state_list(fake_catalog_dir):
+    """Bbox width > 5° → state-list placename (no Nominatim call)."""
+    from services.search.main import app
+    client = TestClient(app)
+    with patch("services.search.main._get_disk_free_gb", return_value=500.0), \
+         patch("services.search.main.DATA_DIR", fake_catalog_dir):
+        resp = client.get(
+            "/admin/pipeline/noaa/estimate",
+            params={"bbox": "-114,32,-108,37", "state": "arizona"},  # 6° wide
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    data = resp.json()
+    # Width 6° > 5° threshold → multi-state placename even in state mode
+    assert data["placename"] is not None
+    assert data["placename"].startswith("Coverage area across")
+
+
+def test_estimate_placename_single_state_small_bbox_falls_back_to_nominatim(
+    fake_catalog_dir,
+):
+    """Small bbox in single state → try Nominatim; on failure return None."""
+    from services.search.main import app
+    client = TestClient(app)
+    # Nominatim isn't running in the test env → Exception path → placename None
+    with patch("services.search.main._get_disk_free_gb", return_value=500.0), \
+         patch("services.search.main.DATA_DIR", fake_catalog_dir):
+        resp = client.get(
+            "/admin/pipeline/noaa/estimate",
+            params={"bbox": "-112.1,33.4,-112.0,33.5", "state": "arizona"},
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    data = resp.json()
+    # Either Nominatim returned a real name OR failed and returned None — both OK.
+    # Key invariant: no exception propagates; placename is str or None.
+    assert data["placename"] is None or isinstance(data["placename"], str)
+
+
+def test_estimate_placename_nominatim_mocked_success(fake_catalog_dir):
+    """Nominatim reverse-lookup returns display_name; small single-state bbox gets it."""
+    from services.search.main import app, _noaa_placename
+    import httpx
+    import asyncio
+
+    # Test the helper function directly with a mocked http_client
+    async def test_helper():
+        # Create a fake state object with mocked http_client
+        class FakeState:
+            pass
+
+        class FakeResponse:
+            def __init__(self, json_data):
+                self._json_data = json_data
+
+            def json(self):
+                return self._json_data
+
+            def raise_for_status(self):
+                pass
+
+        class FakeAsyncClient:
+            async def get(self, url, **kwargs):
+                return FakeResponse({"display_name": "Phoenix, Arizona, USA"})
+
+        fake_state = FakeState()
+        fake_state.http_client = FakeAsyncClient()
+
+        # Temporarily swap state
+        import services.search.main as search_main
+        original_state = search_main.state
+        search_main.state = fake_state
+
+        try:
+            result = await _noaa_placename(
+                states=["arizona"],
+                missing=[],
+                bbox=(-112.1, 33.4, -112.0, 33.5),
+                usps_by_slug={"arizona": "AZ"},
+            )
+            assert result == "Phoenix, Arizona, USA"
+        finally:
+            search_main.state = original_state
+
+    asyncio.run(test_helper())
