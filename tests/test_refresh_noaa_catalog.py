@@ -1,4 +1,5 @@
 import json
+import os
 import pytest
 from scripts.refresh_noaa_catalog import validate_catalog_structure, CatalogValidationError
 
@@ -199,3 +200,51 @@ def test_swap_symlink_never_leaves_link_pointing_at_nonexistent(tmp_path):
     swap_symlink(link, t1)
     if link.exists():
         assert link.resolve().exists()
+
+
+def test_lock_acquired_records_pid(tmp_path):
+    from scripts.refresh_noaa_catalog import RefreshLock
+    lock_path = tmp_path / "refresh.lock"
+    with RefreshLock(lock_path) as lock:
+        assert lock.held
+        assert lock_path.exists()
+        data = json.loads(lock_path.read_text())
+        assert data["pid"] == os.getpid()
+        assert "acquired_ts" in data
+    assert not lock_path.exists()
+
+
+def test_lock_contended_returns_holder_info(tmp_path):
+    from scripts.refresh_noaa_catalog import RefreshLock, LockContendedError
+    lock_path = tmp_path / "refresh.lock"
+    with RefreshLock(lock_path):
+        with pytest.raises(LockContendedError) as exc_info:
+            with RefreshLock(lock_path):
+                pass
+        assert exc_info.value.holder_pid == os.getpid()
+
+
+def test_force_unlock_removes_if_pid_dead(tmp_path):
+    from scripts.refresh_noaa_catalog import force_unlock
+    lock_path = tmp_path / "refresh.lock"
+    # Simulate stale lock from a dead PID
+    lock_path.write_text(json.dumps({"pid": 999999, "acquired_ts": "2000-01-01T00:00:00Z"}))
+    result = force_unlock(lock_path)
+    assert result["status"] == "ok"
+    assert not lock_path.exists()
+
+
+def test_force_unlock_refuses_if_pid_alive(tmp_path):
+    from scripts.refresh_noaa_catalog import force_unlock
+    lock_path = tmp_path / "refresh.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid(), "acquired_ts": "2000-01-01T00:00:00Z"}))
+    result = force_unlock(lock_path)
+    assert result["status"] == "lock_holder_alive"
+    assert lock_path.exists()
+
+
+def test_force_unlock_no_lock_file(tmp_path):
+    from scripts.refresh_noaa_catalog import force_unlock
+    lock_path = tmp_path / "refresh.lock"
+    result = force_unlock(lock_path)
+    assert result["status"] == "no_lock"

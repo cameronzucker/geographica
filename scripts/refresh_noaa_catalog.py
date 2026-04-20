@@ -206,3 +206,91 @@ def swap_symlink(link_path: Path, target_path: Path) -> None:
         tmp_link.unlink()
     os.symlink(target_path, tmp_link)
     os.rename(tmp_link, link_path)
+
+
+import fcntl
+import errno
+from datetime import datetime, timezone
+
+
+class LockContendedError(Exception):
+    def __init__(self, holder_pid: int, age_s: float):
+        self.holder_pid = holder_pid
+        self.age_s = age_s
+        super().__init__(f"lock held by pid {holder_pid}, age {age_s:.0f}s")
+
+
+class RefreshLock:
+    """flock-based lockfile context manager.
+
+    Acquires fcntl.flock(LOCK_EX | LOCK_NB). On contention, reads the
+    existing lockfile to surface holder PID + age, then raises
+    LockContendedError. On acquisition, writes {pid, acquired_ts} JSON
+    to the sentinel file. On exit, releases the flock and unlinks
+    the sentinel.
+    """
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.fd: int | None = None
+        self.held = False
+
+    def __enter__(self):
+        self.fd = os.open(self.path, os.O_CREAT | os.O_WRONLY, 0o644)
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as e:
+            if e.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
+                os.close(self.fd)
+                self.fd = None
+                try:
+                    data = json.loads(self.path.read_text())
+                    age_s = (
+                        datetime.now(timezone.utc)
+                        - datetime.fromisoformat(data["acquired_ts"].replace("Z", "+00:00"))
+                    ).total_seconds()
+                    raise LockContendedError(data["pid"], age_s) from None
+                except (OSError, KeyError, ValueError):
+                    raise LockContendedError(-1, 0.0) from None
+            raise
+        os.ftruncate(self.fd, 0)
+        os.write(
+            self.fd,
+            json.dumps({
+                "pid": os.getpid(),
+                "acquired_ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            }).encode(),
+        )
+        self.held = True
+        return self
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            os.close(self.fd)
+            try:
+                self.path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def force_unlock(lock_path: Path) -> dict:
+    """Remove a lockfile only if the holder PID is no longer alive.
+
+    Returns {status: ok | lock_holder_alive | no_lock, previous_holder_pid?}.
+    """
+    lock_path = Path(lock_path)
+    if not lock_path.exists():
+        return {"status": "no_lock"}
+    try:
+        data = json.loads(lock_path.read_text())
+        pid = data.get("pid", -1)
+    except (json.JSONDecodeError, OSError):
+        lock_path.unlink()
+        return {"status": "ok", "previous_holder_pid": None}
+    try:
+        os.kill(pid, 0)
+        return {"status": "lock_holder_alive", "previous_holder_pid": pid}
+    except ProcessLookupError:
+        lock_path.unlink()
+        return {"status": "ok", "previous_holder_pid": pid}
