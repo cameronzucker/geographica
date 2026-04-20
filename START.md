@@ -25,6 +25,20 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## What to work on next
 
+**🚧 IN-FLIGHT WORK — NOAA NAIP CONUS expansion (10/39 tasks done, branch `feat/noaa-conus`):**
+
+A multi-session implementation is in progress on the `feat/noaa-conus` worktree. Phases 0+1 are committed (Tasks 1-10, 13 commits, 113 tests passing in worktree). Phases 2-6 (Tasks 11-39) remain. **The next agent is expected to punch through all remaining work** following the subagent-driven-development protocol.
+
+- **Worktree:** `/home/administrator/Code/geographica/.claude/worktrees/feat-noaa-conus`
+- **Spec:** [docs/superpowers/specs/2026-04-20-noaa-naip-conus-expansion-design.md](docs/superpowers/specs/2026-04-20-noaa-naip-conus-expansion-design.md) (v2 — post 5-round adversarial review, 15 MUST-FIX incorporated)
+- **Plan:** [docs/superpowers/plans/2026-04-20-noaa-naip-conus-expansion.md](docs/superpowers/plans/2026-04-20-noaa-naip-conus-expansion.md) (1796 lines, all 39 tasks specified)
+- **Full handoff:** [handoff_20260420_noaa_conus_phase1_complete](../memory/handoff_20260420_noaa_conus_phase1_complete.md) — **READ THIS FIRST** if you are picking up this work. It contains: execution protocol (subagent-driven-development), per-phase model recommendations (Haiku vs. Sonnet), the critical Task 10 runtime finding (tile-index URL pattern doesn't match NOAA's actual Azure layout — fix lands in Phase 5), pacing estimates (~7-8 hours of focused work remaining), risk callouts for the load-bearing Phase 2 tasks, and "what NOT to do" guardrails.
+- **Quick resume:** `cd .claude/worktrees/feat-noaa-conus && git log --oneline -15` (HEAD should be `fa13f06`).
+
+The 5-round adversarial review (Codex + 4 distinct-lens subagents) on spec v1 surfaced 15 MUST-FIX issues that would have broken production in at least 3 ways (cross-container import, filter-always-runs timeout failure on TX/CA, checkpoint PK silent dedupe of NAIP border quads). v2 spec addresses all 15. Don't redesign — implement.
+
+---
+
 **Recently completed (2026-04-21 beta-triage marathon — main HEAD `3ba8885`):**
 
 15+ bug fixes shipped in response to a stream of beta-tester screenshots.
