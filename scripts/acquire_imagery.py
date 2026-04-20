@@ -104,6 +104,146 @@ def noaa_cache_dir(data_dir: Path, state: str, year: int) -> Path:
     return data_dir / "noaa_cache" / f"{state}_{year}"
 
 
+def resolve_noaa_candidates(catalog: dict, *, state: str | None, bbox: str | None):
+    """Return (candidates: list[entry], missing: list[slug]).
+
+    Maps a state slug or bounding box to catalog entries.
+
+    In state mode: returns the single catalog entry for that state,
+    or raises ValueError if uncataloged.
+
+    In bbox mode: returns all catalog entries whose states intersect
+    the bbox, plus a list of missing state slugs (states that intersect
+    but are not in the catalog).
+
+    Args:
+        catalog: dict with "entries" key mapping state slugs to entry dicts
+        state: state slug (e.g. "arizona"), or None for bbox mode
+        bbox: bbox string "west,south,east,north", or None for state mode
+
+    Returns:
+        (candidates: list of catalog entries, missing: list of uncataloged state slugs)
+    """
+    if state is not None:
+        if state not in catalog["entries"]:
+            raise ValueError(f"state {state} not in catalog")
+        return ([catalog["entries"][state]], [])
+    if bbox is None:
+        raise ValueError("either state or bbox required")
+    slugs = states_intersecting(bbox)
+    if not slugs:
+        return ([], [])
+    candidates = []
+    missing = []
+    for slug in slugs:
+        if slug in catalog["entries"]:
+            candidates.append(catalog["entries"][slug])
+        else:
+            missing.append(slug)
+    return (candidates, missing)
+
+
+def build_state_queue(entry: dict, bbox_or_none: str | None, shapefile_path: Path) -> list[str]:
+    """Build the list of tile filenames for a state, optionally filtered by bbox.
+
+    In whole-state mode (bbox_or_none is None), returns all tiles from the shapefile.
+    In bbox mode, spatially filters to the bounding box with a 300s timeout.
+
+    Args:
+        entry: NOAA catalog entry dict (contains state metadata)
+        bbox_or_none: bbox string "west,south,east,north", or None for whole-state
+        shapefile_path: Path to the tile index shapefile
+
+    Returns:
+        List of GeoTIFF filenames
+    """
+    if bbox_or_none is None:
+        # Whole-state mode: list all tiles in the shapefile
+        result = subprocess.run(
+            [
+                "ogr2ogr", "-f", "CSV", "/dev/stdout",
+                str(shapefile_path),
+                "-select", "filename",
+            ],
+            capture_output=True, text=True, timeout=300,
+        )
+    else:
+        # Bbox mode: spatially filter with -spat
+        west, south, east, north = [float(x) for x in bbox_or_none.split(",")]
+        result = subprocess.run(
+            [
+                "ogr2ogr", "-f", "CSV", "/dev/stdout",
+                str(shapefile_path),
+                "-spat", str(west), str(south), str(east), str(north),
+                "-select", "filename",
+            ],
+            capture_output=True, text=True, timeout=300,
+        )
+
+    if result.returncode != 0:
+        log.error("ogr2ogr tile list failed: %s", result.stderr)
+        return []
+
+    lines = result.stdout.strip().split("\n")
+    if len(lines) <= 1:
+        return []
+
+    # With -select filename, output is: "filename\nfile1.tif\nfile2.tif\n..."
+    filenames = []
+    for line in lines[1:]:
+        fname = line.strip().strip('"')
+        if fname.endswith(".tif"):
+            filenames.append(fname)
+    return filenames
+
+
+# Type alias for queue items: (snapshot_path, usps, filename, blob_url)
+QueueItem = tuple[Path, str, str, str]
+
+
+def _get_shapefile_path(entry: dict, snapshot_path: Path) -> Path:
+    """Get the shapefile path for an entry, given the snapshot path.
+
+    The directory convention is: snapshot_path.parent.parent / "tile-indexes" / entry["dir"] / f"tileindex_{entry['dir']}.shp"
+    This will be validated in the Phase 5 integration test.
+    """
+    return snapshot_path.parent.parent / "tile-indexes" / entry["dir"] / f"tileindex_{entry['dir']}.shp"
+
+
+def build_unified_queue(candidates: list[dict], bbox_or_none: str | None, snapshot_path: Path) -> list[QueueItem]:
+    """Build the unified download queue from resolver candidates.
+
+    Composes the list of NOAA catalog entries and per-state tile lists into
+    a flat queue of (snapshot_path, usps, tile_filename, blob_url) tuples.
+    Each item feeds the 3-stage pipeline.
+
+    Args:
+        candidates: list of NOAA catalog entry dicts (from resolve_noaa_candidates)
+        bbox_or_none: bbox string or None, passed to build_state_queue
+        snapshot_path: Path to the pinned catalog snapshot JSON
+
+    Returns:
+        List of queue items, each with all information needed for download
+    """
+    if not candidates:
+        return []
+
+    queue: list[QueueItem] = []
+
+    for entry in candidates:
+        # Get the tile filenames for this state
+        shapefile_path = _get_shapefile_path(entry, snapshot_path)
+        filenames = build_state_queue(entry, bbox_or_none, shapefile_path)
+
+        # Convert each filename to a queue item tuple
+        for filename in filenames:
+            blob_url = f"{NOAA_BLOB_BASE}/{entry['dir']}/{filename}"
+            queue_item: QueueItem = (snapshot_path, entry["usps"], filename, blob_url)
+            queue.append(queue_item)
+
+    return queue
+
+
 def filter_tiles_by_bbox(
     shapefile_path: Path,
     west: float, south: float, east: float, north: float,
