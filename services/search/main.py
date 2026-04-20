@@ -1857,6 +1857,8 @@ async def noaa_estimate(
     # ------------------------------------------------------------------
     raw_download_gb = tile_count * NOAA_TILE_SIZE_MB / 1024
     final_mbtiles_gb = tile_count * 29 / 1024  # empirical: ~29 MB/tile in MBTiles
+    intermediate_gb = round(raw_download_gb * 0.3, 1)  # reprojected, compressed
+    peak_required_gb = round(raw_download_gb + intermediate_gb + final_mbtiles_gb, 1)
 
     download_concurrency = 4
     reproject_workers = 4
@@ -1886,8 +1888,8 @@ async def noaa_estimate(
         "missing": missing_list,
         "placename": None,           # Task 21 fills this in
         "catalog_snapshot": str(snapshot_path),
-        "intermediate_gb": 0.0,      # Task 20 fills this in
-        "peak_required_gb": 0.0,     # Task 20 fills this in
+        "intermediate_gb": intermediate_gb,
+        "peak_required_gb": peak_required_gb,
     }
 
 

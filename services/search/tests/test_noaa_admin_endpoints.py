@@ -149,3 +149,32 @@ def test_estimate_bbox_mode_returns_cataloged_states(fake_catalog_dir):
     assert set(data["states"]) == {"arizona", "utah"}
     # CO and NM intersect the Four-Corners bbox but are not in the fake catalog
     assert set(data.get("missing", [])) == {"colorado", "new-mexico"}
+
+
+def test_estimate_intermediate_and_peak_fields_compute_correctly(fake_catalog_dir):
+    """intermediate_gb ≈ raw × 0.3; peak_required_gb = raw + intermediate + final."""
+    from services.search.main import app
+    client = TestClient(app)
+    with patch("services.search.main._get_disk_free_gb", return_value=500.0), \
+         patch("services.search.main.DATA_DIR", fake_catalog_dir):
+        resp = client.get(
+            "/admin/pipeline/noaa/estimate",
+            params={"bbox": "-114,32,-109,37", "state": "arizona"},
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    data = resp.json()
+    raw = data["raw_download_gb"]
+    intermediate = data["intermediate_gb"]
+    final = data["final_mbtiles_gb"]
+    peak = data["peak_required_gb"]
+
+    # intermediate ≈ 0.3 × raw
+    assert abs(intermediate - raw * 0.3) < 0.1, \
+        f"intermediate {intermediate} should be ~0.3 × raw {raw}"
+
+    # peak = raw + intermediate + final (within rounding)
+    assert abs(peak - (raw + intermediate + final)) < 0.1, \
+        f"peak {peak} should equal raw {raw} + intermediate {intermediate} + final {final}"
+
+    # peak > raw (peak must be biggest)
+    assert peak > raw, "peak_required should exceed raw"
