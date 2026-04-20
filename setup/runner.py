@@ -234,7 +234,7 @@ def osm_download_cmd(ctx) -> list[str]:
             f"bbox {ctx.get('bbox', '')!r} does not intersect any of the "
             f"48 contiguous US states + DC. Geographica currently supports "
             f"only those regions; update the bbox or extend STATE_BBOXES "
-            f"in setup/runner.py to cover another state/country."
+            f"in scripts/common/state_bboxes.py to cover another state/country."
         )
     states = " ".join(state_list)
     out = f"{ctx['data_path']}/pbf"
