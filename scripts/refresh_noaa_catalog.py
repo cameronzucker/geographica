@@ -7,6 +7,7 @@ Consumed by:
 
 Catalog shape — see docs/superpowers/specs/2026-04-20-noaa-naip-conus-expansion-design.md §3.3.
 """
+import asyncio
 import aiohttp
 import json
 import os
@@ -15,6 +16,7 @@ import subprocess
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Callable
 # Dual-form import: resolves from either the repo root (tests run from there)
 # OR the search container (where ./scripts is bind-mounted at /scripts and
 # services/search/main.py puts /scripts on sys.path).
@@ -163,10 +165,16 @@ async def validate_tile_index(url: str) -> dict | None:
 
 async def fetch_tile_count(url: str, cache_dir: Path) -> int:
     """Download the tile-index ZIP to cache_dir, unpack, and count features
-    via ogr2ogr -ro -so. Returns the feature count. Raises on failure."""
+    via ogr2ogr -ro -so. Returns the feature count. Raises on failure.
+
+    Uses ClientTimeout(total=300) on the download session to bound large ZIP
+    transfers. The ogr2ogr subprocess is dispatched via run_in_executor to
+    keep the event loop responsive during the 10-30 min refresh — critical
+    for /refresh/progress polling to stay under 2s latency.
+    """
     cache_dir.mkdir(parents=True, exist_ok=True)
     zip_path = cache_dir / "tileindex.zip"
-    async with aiohttp.ClientSession() as sess:
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as sess:
         async with sess.get(url) as resp:
             resp.raise_for_status()
             zip_path.write_bytes(await resp.read())
@@ -175,9 +183,14 @@ async def fetch_tile_count(url: str, cache_dir: Path) -> int:
     shps = list(cache_dir.glob("*.shp"))
     if not shps:
         raise RuntimeError(f"no .shp file in {cache_dir} after extracting {url}")
-    result = subprocess.run(
-        ["ogr2ogr", "-ro", "-so", "-f", "CSV", "/dev/stdout", str(shps[0])],
-        capture_output=True, text=True, timeout=60,
+    loop = asyncio.get_running_loop()
+    shp_path = str(shps[0])
+    result = await loop.run_in_executor(
+        None,
+        lambda: subprocess.run(
+            ["ogr2ogr", "-ro", "-so", "-f", "CSV", "/dev/stdout", shp_path],
+            capture_output=True, text=True, timeout=60,
+        ),
     )
     for line in (result.stdout + result.stderr).splitlines():
         if "Feature Count:" in line:
@@ -467,18 +480,42 @@ async def refresh_catalog(
     output: Path | None = None,
     no_lock: bool = False,
     no_pipeline_check: bool = False,
+    progress_cb: Callable[[dict], None] | None = None,
+    cancel_event: "asyncio.Event | None" = None,
 ) -> dict:
     """Full P7 refresh. Returns dict with keys:
 
-    - status: "ok" | "truncated" | "invalid_parse" | "locked" | "blocked_by_pipeline"
+    - status: "ok" | "truncated" | "invalid_parse" | "locked" | "blocked_by_pipeline" | "cancelled"
     - snapshot_path: str (when status=ok)
-    - log_entry: dict (when status in {ok, truncated, invalid_parse})
+    - log_entry: dict (when status in {ok, truncated, invalid_parse, cancelled})
     - lock_holder_pid: int (when status=locked)
     - blocked_by_pipeline: str (when status=blocked_by_pipeline)
+
+    progress_cb: Optional sync callable invoked at phase boundaries and
+        per-state. Receives a single dict with keys drawn from
+        {phase, states_processed, states_total, current_slug,
+        validation_issue_count}. Return value ignored. If the callable
+        raises, the exception is swallowed and the refresh continues;
+        progress listeners must not kill the refresh.
+    cancel_event: Optional asyncio.Event. Checked between state boundaries;
+        when set, refresh_catalog writes a cancelled log entry and returns
+        {"status": "cancelled", "log_entry": ...}.
     """
     data_dir = Path(data_dir)
     ts_iso = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_path = data_dir / "noaa_catalog_refresh_log.jsonl"
+
+    # Local helper: fire-and-forget progress notification.
+    # Swallows all exceptions so a broken listener cannot kill the refresh.
+    def _emit(event: dict) -> None:
+        if progress_cb is None:
+            return
+        try:
+            progress_cb(event)
+        except Exception:
+            # Progress listener crashed; swallow so the refresh proceeds.
+            # Intentionally no logging to stderr here to avoid noise during tests.
+            pass
 
     # Step 0: pipeline check
     if not no_pipeline_check:
@@ -493,6 +530,7 @@ async def refresh_catalog(
     try:
         with lock_ctx:
             # Step 2: list blobs
+            _emit({"phase": "listing", "states_processed": 0, "states_total": 0})
             try:
                 prefixes = await azure_list_blob_prefixes()
             except AzureTruncatedError as e:
@@ -500,10 +538,26 @@ async def refresh_catalog(
                 append_refresh_log(log_path, entry)
                 return {"status": "truncated", "log_entry": entry}
 
+            # Compute total state count for progress reporting
+            states_total = sum(1 for p in prefixes if parse_noaa_dir(p))
+            _emit({"phase": "fetching_tile_indexes", "states_processed": 0,
+                   "states_total": states_total, "validation_issue_count": 0})
+
             # Steps 3-4: parse + validate tile indexes
             entries: dict = {}
             issues: list = []
             for prefix in prefixes:
+                # Cancellation check at the TOP of each iteration (before work)
+                if cancel_event is not None and cancel_event.is_set():
+                    entry = {
+                        "ts": ts_iso,
+                        "validation_status": "cancelled",
+                        "state_count": len(entries),
+                        "reason": "cancelled_by_user",
+                    }
+                    append_refresh_log(log_path, entry)
+                    return {"status": "cancelled", "log_entry": entry}
+
                 parsed = parse_noaa_dir(prefix)
                 if parsed is None:
                     continue
@@ -538,8 +592,19 @@ async def refresh_catalog(
                     "tile_index_url": tile_index_url,
                     "tile_index_sha256": validated["content_md5"],
                 }
+                # Emit per-state progress after successful insertion
+                _emit({
+                    "phase": "fetching_tile_indexes",
+                    "states_processed": len(entries),
+                    "states_total": states_total,
+                    "current_slug": slug,
+                    "validation_issue_count": len(issues),
+                })
 
             # Step 5: structural validation
+            _emit({"phase": "writing_snapshot",
+                   "states_processed": len(entries),
+                   "states_total": len(entries)})
             catalog = {
                 "snapshot_version": ts_iso,
                 "parser_version": 3,

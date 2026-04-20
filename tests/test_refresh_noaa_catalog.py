@@ -405,3 +405,103 @@ def test_request_cancel_sets_flag(tmp_path):
     write_progress_state(path, {"status": "running"})
     request_cancel(path)
     assert read_progress_state(path)["cancel_requested"] is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_catalog_calls_progress_callback(tmp_path, monkeypatch):
+    """refresh_catalog emits per-state progress events via the progress_cb callback."""
+    from scripts.refresh_noaa_catalog import refresh_catalog
+
+    events = []
+
+    async def fake_azure(**kwargs):
+        return ["AZ_NAIP_2021_9596/", "UT_NAIP_2021_9601/"]
+
+    async def fake_validate(url):
+        return {"size_bytes": 1024, "content_md5": "deadbeef"}
+
+    async def fake_fetch_tile_count(url, cache_dir):
+        return 42
+
+    monkeypatch.setattr("scripts.refresh_noaa_catalog.azure_list_blob_prefixes", fake_azure)
+    monkeypatch.setattr("scripts.refresh_noaa_catalog.validate_tile_index", fake_validate)
+    monkeypatch.setattr("scripts.refresh_noaa_catalog.fetch_tile_count", fake_fetch_tile_count)
+
+    result = await refresh_catalog(
+        data_dir=tmp_path,
+        progress_cb=lambda event: events.append(event),
+    )
+
+    assert result["status"] == "ok"
+    phases = [e.get("phase") for e in events]
+    assert "listing" in phases
+    assert "fetching_tile_indexes" in phases
+    assert "writing_snapshot" in phases
+    slugs_seen = {e.get("current_slug") for e in events if e.get("current_slug")}
+    assert "arizona" in slugs_seen
+    assert "utah" in slugs_seen
+    # Final states_processed should reach 2 (both states processed)
+    assert any(e.get("states_processed") == 2 for e in events)
+
+
+@pytest.mark.asyncio
+async def test_refresh_catalog_progress_cb_exception_swallowed(tmp_path, monkeypatch):
+    """A raising progress_cb must NOT crash refresh_catalog."""
+    from scripts.refresh_noaa_catalog import refresh_catalog
+
+    async def fake_azure(**kwargs):
+        return ["AZ_NAIP_2021_9596/"]
+
+    async def fake_validate(url):
+        return {"size_bytes": 1, "content_md5": "x"}
+
+    async def fake_fetch_tile_count(url, cache_dir):
+        return 1
+
+    monkeypatch.setattr("scripts.refresh_noaa_catalog.azure_list_blob_prefixes", fake_azure)
+    monkeypatch.setattr("scripts.refresh_noaa_catalog.validate_tile_index", fake_validate)
+    monkeypatch.setattr("scripts.refresh_noaa_catalog.fetch_tile_count", fake_fetch_tile_count)
+
+    def bad_cb(event):
+        raise RuntimeError("listener is broken")
+
+    result = await refresh_catalog(data_dir=tmp_path, progress_cb=bad_cb)
+    # Refresh must still complete
+    assert result["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_refresh_catalog_cancel_event(tmp_path, monkeypatch):
+    """cancel_event set between states terminates refresh with status=cancelled."""
+    import asyncio
+    from scripts.refresh_noaa_catalog import refresh_catalog
+
+    processed_slugs = []
+
+    async def fake_azure(**kwargs):
+        return ["AZ_NAIP_2021_9596/", "UT_NAIP_2021_9601/", "NM_NAIP_2022_9600/"]
+
+    async def fake_validate(url):
+        return {"size_bytes": 1, "content_md5": "x"}
+
+    cancel_event = asyncio.Event()
+
+    async def fake_fetch_tile_count(url, cache_dir):
+        # After the first state is processed, request cancellation.
+        # The bg loop will observe the Event at the next state boundary.
+        processed_slugs.append(url)
+        if len(processed_slugs) == 1:
+            cancel_event.set()
+        return 1
+
+    monkeypatch.setattr("scripts.refresh_noaa_catalog.azure_list_blob_prefixes", fake_azure)
+    monkeypatch.setattr("scripts.refresh_noaa_catalog.validate_tile_index", fake_validate)
+    monkeypatch.setattr("scripts.refresh_noaa_catalog.fetch_tile_count", fake_fetch_tile_count)
+
+    result = await refresh_catalog(
+        data_dir=tmp_path,
+        cancel_event=cancel_event,
+    )
+
+    assert result["status"] == "cancelled"
+    assert "log_entry" in result
