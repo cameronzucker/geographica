@@ -332,16 +332,22 @@
             gap: 8px;
         }
         .noaa-stale-overlay .stale-msg { flex: 1; }
-        /* Completion summary stub */
-        .noaa-completion-stub {
-            background: rgba(166, 227, 161, 0.08);
-            border: 1px solid rgba(166, 227, 161, 0.30);
+        /* Completion summary banner */
+        .noaa-completion-banner {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            padding: 12px;
             border-radius: 4px;
-            padding: 10px 12px;
-            font-size: 12px;
-            color: #a6e3a1;
             margin: 0 0 12px;
+            font-size: 13px;
         }
+        .noaa-completion-banner .noaa-completion-msg { flex: 1; }
+        .noaa-completion-banner.ok { background: #1b2e1e; border: 1px solid #3f6a46; color: #bfe3c6; }
+        .noaa-completion-banner.cancelled { background: #1a1d22; border: 1px solid #3c434a; color: #c4c9cf; }
+        .noaa-completion-banner.truncated,
+        .noaa-completion-banner.invalid_parse { background: #2b2516; border: 1px solid #6e5a20; color: #f0e4b8; }
+        .noaa-completion-banner.error { background: #2a1a1a; border: 1px solid #6e3030; color: #f0c4c4; }
     </style>
 </head>
 <body>
@@ -1542,8 +1548,8 @@
                     _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), state);
                     _startPolling(body, src);
                 } else if (state.status === 'done') {
-                    // Task 10 renders the full completion summary; stub for now.
-                    _renderCompletionSummaryStub(body, src, state);
+                    // Show the full completion summary (result from last finished refresh).
+                    _renderCompletionSummary(body, src, state);
                 }
                 // status: 'idle' — no-op; normal render proceeds.
             })
@@ -1552,33 +1558,38 @@
                 // handles the empty-banner fallback path.
             });
 
-        cfgFetch('/admin/pipeline/noaa/catalog')
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                // Update banner visibility based on how many states are cataloged
-                var entryCount = (data.status === 'ok' && data.entries) ? Object.keys(data.entries).length : 0;
-                _updateRefreshBannerVisibility(entryCount);
-
-                if (data.status !== 'ok' || !data.entries) return;
-                var opts = [];
-                Object.keys(data.entries).sort().forEach(function(slug) {
-                    var entry = data.entries[slug];
-                    var displayName = slug
-                        .replace(/-us$/, '')
-                        .split('-')
-                        .map(function(p) { return p.charAt(0).toUpperCase() + p.slice(1); })
-                        .join(' ');
-                    var year = entry.year || '';
-                    opts.push('<option value="' + slug + '">' + displayName + (year ? ' ' + year : '') + '</option>');
+        // Shared helper: (re-)fetch the NOAA catalog and repopulate the state dropdown.
+        // Used by both the initial card render and the completion summary [Reload dropdown] button.
+        function _reloadCatalogDropdown(targetBody, targetSrc) {
+            var sel = document.getElementById('card-' + targetSrc.id + '-state');
+            if (!sel) return Promise.resolve(0);
+            return cfgFetch('/admin/pipeline/noaa/catalog')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var entries = (data.status === 'ok' && data.entries) ? data.entries : {};
+                    var slugs = Object.keys(entries).sort();
+                    if (slugs.length) {
+                        sel.innerHTML = slugs.map(function(slug) {
+                            var entry = entries[slug];
+                            var displayName = _humanizeSlug(slug);
+                            var year = entry.year || '';
+                            return '<option value="' + slug + '">' + displayName +
+                                   (year ? ' ' + year : '') + '</option>';
+                        }).join('');
+                    } else {
+                        sel.innerHTML = '<option value="arizona">Arizona</option>';
+                    }
+                    _updateRefreshBannerVisibility(slugs.length);
+                    return slugs.length;
+                })
+                .catch(function() {
+                    _updateRefreshBannerVisibility(0);
+                    return 0;
                 });
-                if (opts.length) {
-                    stateSel.innerHTML = opts.join('');
-                }
-            })
-            .catch(function() {
-                // Catalog fetch failed — show empty-state banner so user has a path forward
-                _updateRefreshBannerVisibility(0);
-            });
+        }
+
+        // Initial catalog fetch — delegates to the shared helper
+        _reloadCatalogDropdown(body, src);
 
         // ---------------------------------------------------------------
         // Shared estimate renderer — populates an estBox with API response
@@ -2040,37 +2051,105 @@
             }
         }
 
-        // Completion summary stub — Task 10 replaces with the full UI.
-        function _renderCompletionSummaryStub(targetBody, targetSrc, state) {
-            // Remove the progress card
-            var card = document.getElementById('card-' + targetSrc.id + '-progress');
-            if (card) card.parentNode.removeChild(card);
+        // Escape user/server-provided strings before injecting into innerHTML.
+        function _escapeHtml(s) {
+            if (s == null) return '';
+            return String(s).replace(/[&<>"']/g, function(c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+        }
 
-            // Show empty banner visibility based on catalog re-fetch (will happen on next panel expand)
-            // For now just show a minimal stub so the user sees something.
-            var stub = document.createElement('div');
-            stub.className = 'noaa-completion-stub';
-            stub.id = 'card-' + targetSrc.id + '-completion-stub';
-            stub.innerHTML =
-                '<strong>Catalog refresh complete.</strong>' +
-                (state.states_total ? ' Processed ' + (state.states_processed || 0) + ' of ' + state.states_total + ' states.' : '') +
-                ' <span style="color:#7a8299;font-size:11px">(Full summary — Task 10)</span>';
+        // Open (and scroll to) the refresh history collapsible panel.
+        function _openRefreshHistoryPanel(targetSrc) {
+            var toggle = document.getElementById('card-' + targetSrc.id + '-refresh-toggle');
+            var panel  = document.getElementById('card-' + targetSrc.id + '-refresh-body');
+            if (toggle && panel && toggle.getAttribute('aria-expanded') !== 'true') {
+                toggle.setAttribute('aria-expanded', 'true');
+                panel.style.display = '';
+                if (typeof loadRefreshLog === 'function') loadRefreshLog();
+            }
+            if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
 
-            var firstChild = targetBody.firstChild;
-            targetBody.insertBefore(stub, firstChild);
+        // Full completion summary — replaces the in-progress card with a status-matched banner.
+        function _renderCompletionSummary(targetBody, targetSrc, state) {
+            var existing = document.getElementById('card-' + targetSrc.id + '-progress');
+            if (existing) existing.remove();
 
-            // Re-show the inline refresh button and update banner visibility
-            var inlineRefresh = document.getElementById('card-' + targetSrc.id + '-refresh-inline');
-            if (inlineRefresh) inlineRefresh.style.display = '';
+            var result      = state.result || {};
+            var resultStatus = result.status || 'unknown';
+            var banner = document.createElement('div');
+            banner.className = 'noaa-completion-banner ' + resultStatus;
+            banner.id = 'card-' + targetSrc.id + '-completion';
 
-            // Reload the catalog and refresh log to pick up new data
-            cfgFetch('/admin/pipeline/noaa/catalog')
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    var count = (data.status === 'ok' && data.entries) ? Object.keys(data.entries).length : 0;
-                    _updateRefreshBannerVisibility(count);
-                })
-                .catch(function() {});
+            if (resultStatus === 'ok') {
+                var count = (result.log_entry && result.log_entry.state_count) || 0;
+                banner.innerHTML =
+                    '<div class="noaa-completion-msg">Catalog refreshed \u2014 ' + count + ' state' +
+                    (count === 1 ? '' : 's') + ' now available.</div>' +
+                    '<button type="button" class="btn-primary" data-action="reload-dropdown">Reload dropdown</button>';
+            } else if (resultStatus === 'cancelled') {
+                var entry      = result.log_entry || {};
+                var stateCount = entry.state_count != null ? entry.state_count : '?';
+                banner.innerHTML =
+                    '<div class="noaa-completion-msg">Refresh cancelled at state ' + stateCount +
+                    '. Previous catalog kept.</div>' +
+                    '<button type="button" class="btn-secondary" data-action="refresh-again">Refresh again</button>';
+            } else if (resultStatus === 'truncated' || resultStatus === 'invalid_parse') {
+                var errText = _escapeHtml(
+                    result.error || (result.log_entry && result.log_entry.error) || 'Refresh produced an invalid catalog.'
+                );
+                banner.innerHTML =
+                    '<div class="noaa-completion-msg">' +
+                    (resultStatus === 'truncated'
+                        ? 'Azure listing was truncated: '
+                        : 'Catalog failed validation: ') +
+                    errText + '</div>' +
+                    '<div class="btn-row">' +
+                    '<button type="button" class="btn-secondary" data-action="retry">Retry</button>' +
+                    '<button type="button" class="btn-secondary" data-action="view-log">View log</button>' +
+                    '</div>';
+            } else if (resultStatus === 'error') {
+                var errMsg = _escapeHtml(result.error || 'Unknown error.');
+                banner.innerHTML =
+                    '<div class="noaa-completion-msg"><strong>Refresh failed:</strong> ' + errMsg + '</div>' +
+                    '<div class="btn-row">' +
+                    '<button type="button" class="btn-secondary" data-action="retry">Retry</button>' +
+                    '<button type="button" class="btn-secondary" data-action="view-log">View log</button>' +
+                    '</div>';
+            } else {
+                banner.innerHTML =
+                    '<div class="noaa-completion-msg">Refresh done (unknown status): ' +
+                    _escapeHtml(resultStatus) + '</div>' +
+                    '<button type="button" class="btn-secondary" data-action="retry">Retry</button>';
+            }
+
+            // Insert above the tab strip (same position the progress card occupied)
+            var tabStrip = targetBody.querySelector('.noaa-tabs');
+            if (tabStrip) tabStrip.parentNode.insertBefore(banner, tabStrip);
+            else targetBody.insertBefore(banner, targetBody.firstChild);
+
+            // Wire banner action buttons
+            banner.querySelectorAll('button[data-action]').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var action = btn.getAttribute('data-action');
+                    if (action === 'reload-dropdown') {
+                        _reloadCatalogDropdown(targetBody, targetSrc);
+                        banner.remove();
+                    } else if (action === 'refresh-again') {
+                        banner.remove();
+                        _updateRefreshBannerVisibility(0);
+                        // User clicks Refresh again to trigger a new dispatch.
+                    } else if (action === 'retry') {
+                        banner.remove();
+                        triggerRefresh(btn);
+                    } else if (action === 'view-log') {
+                        _openRefreshHistoryPanel(targetSrc);
+                    }
+                });
+            });
+
+            // Always reload the refresh-log panel so the new entry is visible
             loadRefreshLog();
         }
 
@@ -2092,7 +2171,7 @@
                             _updateProgressCard(card, state);
                         } else if (state.status === 'done') {
                             _stopPolling(targetBody);
-                            _renderCompletionSummaryStub(targetBody, targetSrc, state);
+                            _renderCompletionSummary(targetBody, targetSrc, state);
                         } else {
                             // idle or unknown — refresh is gone; stop polling, clean up card
                             _stopPolling(targetBody);
