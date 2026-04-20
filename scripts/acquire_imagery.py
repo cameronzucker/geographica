@@ -32,6 +32,8 @@ import aiosqlite
 from tqdm import tqdm
 from pipeline_progress import update_progress as _generic_progress
 
+from common.state_bboxes import states_intersecting
+
 # ---------------------------------------------------------------------------
 # Secrets
 # ---------------------------------------------------------------------------
@@ -102,6 +104,45 @@ def noaa_blob_base_url(state: str, year: int) -> str:
 def noaa_cache_dir(data_dir: Path, state: str, year: int) -> Path:
     """Return the local cache directory for NOAA shapefiles."""
     return data_dir / "noaa_cache" / f"{state}_{year}"
+
+
+def resolve_noaa_candidates(catalog: dict, *, state: str | None, bbox: str | None):
+    """Return (candidates: list[entry], missing: list[slug]).
+
+    Maps a state slug or bounding box to catalog entries.
+
+    In state mode: returns the single catalog entry for that state,
+    or raises ValueError if uncataloged.
+
+    In bbox mode: returns all catalog entries whose states intersect
+    the bbox, plus a list of missing state slugs (states that intersect
+    but are not in the catalog).
+
+    Args:
+        catalog: dict with "entries" key mapping state slugs to entry dicts
+        state: state slug (e.g. "arizona"), or None for bbox mode
+        bbox: bbox string "west,south,east,north", or None for state mode
+
+    Returns:
+        (candidates: list of catalog entries, missing: list of uncataloged state slugs)
+    """
+    if state is not None:
+        if state not in catalog["entries"]:
+            raise ValueError(f"state {state} not in catalog")
+        return ([catalog["entries"][state]], [])
+    if bbox is None:
+        raise ValueError("either state or bbox required")
+    slugs = states_intersecting(bbox)
+    if not slugs:
+        return ([], [])
+    candidates = []
+    missing = []
+    for slug in slugs:
+        if slug in catalog["entries"]:
+            candidates.append(catalog["entries"][slug])
+        else:
+            missing.append(slug)
+    return (candidates, missing)
 
 
 def filter_tiles_by_bbox(
