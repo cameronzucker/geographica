@@ -68,8 +68,9 @@ test('applyReroute clears announcedSet and lastAnnouncementTime', async (t) => {
   );
 });
 
-test('triggerReroute preserves remainingWaypoints in the callback info', async () => {
+test('triggerReroute preserves remainingWaypoints in the callback info', async (t) => {
   const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
   win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
 
   // Route with two intermediate waypoints.
