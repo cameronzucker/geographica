@@ -1382,6 +1382,15 @@
         updateBboxIndicator();
         var bboxInput = document.getElementById('cfg-bbox');
         if (bboxInput) {
+            // Replace any prior NOAA-card listener before attaching a new one:
+            // renderNoaaBody is called on every card expand, and the card body
+            // is torn down on collapse — but #cfg-bbox is a global element
+            // that persists, so without dedup the listeners stack forever.
+            if (bboxInput._noaaBboxListener) {
+                bboxInput.removeEventListener('input', bboxInput._noaaBboxListener);
+                bboxInput.removeEventListener('change', bboxInput._noaaBboxListener);
+            }
+            bboxInput._noaaBboxListener = updateBboxIndicator;
             bboxInput.addEventListener('input', updateBboxIndicator);
             bboxInput.addEventListener('change', updateBboxIndicator);
         }
@@ -1507,9 +1516,19 @@
 
         estBtnWhole.addEventListener('click', function() {
             estBoxWhole.style.display = '';
-            estBoxWhole.textContent = 'Estimating...';
             estBoxWhole.style.color = '#7a8299';
-            var bbox = document.getElementById('cfg-bbox').value;
+            var bbox = (document.getElementById('cfg-bbox').value || '').trim();
+            // Client-side bbox validation — same rules as the Custom-area tab.
+            // Whole-state mode still requires a bbox (the endpoint uses it to
+            // spatially refine tile counts within the state's extent); an
+            // empty/malformed value would surface as a 422 otherwise.
+            var parts = bbox.split(',').map(function(x) { return parseFloat(x.trim()); });
+            if (!(parts.length === 4 && parts.every(function(n) { return Number.isFinite(n); }))) {
+                estBoxWhole.textContent = 'Set a bbox in the Coverage Area panel above before estimating.';
+                estBoxWhole.style.color = '#f9e2af';
+                return;
+            }
+            estBoxWhole.textContent = 'Estimating...';
             var stateSlug = stateSel.value;
             cfgFetch('/admin/pipeline/noaa/estimate?bbox=' + encodeURIComponent(bbox) + '&state=' + encodeURIComponent(stateSlug))
                 .then(function(r) { return r.json(); })
@@ -2102,7 +2121,13 @@
                     failedStates.forEach(function(k) {
                         var li = document.createElement('li');
                         var reason = String(perState[k]).replace(/^failed:\s*/, '');
-                        li.innerHTML = '<b>' + k + '</b>: ' + reason;
+                        // Build via textContent to keep arbitrary backend error
+                        // messages (which may include raw HTML or Python traceback
+                        // fragments) from becoming injection vectors.
+                        var b = document.createElement('b');
+                        b.textContent = k;
+                        li.appendChild(b);
+                        li.appendChild(document.createTextNode(': ' + reason));
                         retryList.appendChild(li);
                     });
                     retryBlock.appendChild(retryList);
