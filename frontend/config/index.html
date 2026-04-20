@@ -183,6 +183,33 @@
             color: #f9e2af;
             margin-bottom: 10px;
         }
+        /* === NOAA Custom-area bbox indicator (Task 29) === */
+        .noaa-bbox-indicator {
+            font-size: 11px;
+            padding: 6px 8px;
+            border-radius: 3px;
+            margin-bottom: 10px;
+            font-family: monospace;
+        }
+        .noaa-bbox-indicator.ok {
+            background: rgba(166, 227, 161, 0.10);
+            border: 1px solid rgba(166, 227, 161, 0.35);
+            color: #b8e0b0;
+        }
+        .noaa-bbox-indicator.empty {
+            background: rgba(249, 226, 175, 0.10);
+            border: 1px solid rgba(249, 226, 175, 0.35);
+            color: #e8d8a0;
+            font-family: inherit;
+        }
+        .noaa-bbox-label {
+            font-family: inherit;
+            color: #7a8299;
+            text-transform: uppercase;
+            font-size: 9px;
+            letter-spacing: 0.5px;
+            margin-right: 4px;
+        }
     </style>
 </head>
 <body>
@@ -1273,6 +1300,45 @@
                     b.style.display = match ? '' : 'none';
                 });
             });
+        });
+
+        // ---------------------------------------------------------------
+        // Task 29 — Custom-area bbox indicator
+        // ---------------------------------------------------------------
+        var customTabBody = body.querySelector('.noaa-tab-custom');
+        var bboxIndicator = document.createElement('div');
+        bboxIndicator.className = 'noaa-bbox-indicator';
+        bboxIndicator.id = 'card-' + src.id + '-bbox-indicator';
+        // Insert before the estimate-box element in the custom tab body
+        var customEstBox = document.getElementById('card-' + src.id + '-est-custom');
+        if (customEstBox) customTabBody.insertBefore(bboxIndicator, customEstBox);
+
+        function updateBboxIndicator() {
+            var v = (document.getElementById('cfg-bbox') || {}).value || '';
+            v = v.trim();
+            var parts = v.split(',').map(function(x) { return parseFloat(x.trim()); });
+            var valid = parts.length === 4 && parts.every(function(n) { return Number.isFinite(n); });
+            if (valid) {
+                bboxIndicator.className = 'noaa-bbox-indicator ok';
+                bboxIndicator.innerHTML = '<span class="noaa-bbox-label">Using bbox:</span> ' +
+                    parts.map(function(n) { return n.toFixed(3); }).join(', ');
+            } else {
+                bboxIndicator.className = 'noaa-bbox-indicator empty';
+                bboxIndicator.textContent = 'Draw a bbox in the Coverage Area panel above, or paste one into the bbox field.';
+            }
+        }
+
+        updateBboxIndicator();
+        var bboxInput = document.getElementById('cfg-bbox');
+        if (bboxInput) {
+            bboxInput.addEventListener('input', updateBboxIndicator);
+            bboxInput.addEventListener('change', updateBboxIndicator);
+        }
+        // Also refresh when the custom tab becomes active (user may have drawn on map before expanding the card)
+        tabs.forEach(function(t) {
+            if (t.getAttribute('data-tab') === 'custom') {
+                t.addEventListener('click', updateBboxIndicator);
+            }
         });
 
         // ---------------------------------------------------------------
