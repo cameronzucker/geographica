@@ -24,11 +24,11 @@ def test_estimate_per_tile_seconds_reflects_3_stage_pipeline():
             headers={"X-Config-Source": "internal", "X-Geographica": "1"},
         )
 
-    # If the NOAA catalog cache isn't present, endpoint returns status=no_index.
-    # Skip the substantive assertion in that case — the test still exercises routing.
+    # If the catalog or tile-index cache isn't present, skip the substantive
+    # assertion — the test still exercises routing.
     data = resp.json()
-    if data.get("status") == "no_index":
-        pytest.skip("NOAA catalog not cached in CI environment")
+    if data.get("status") in ("no_index", "no_catalog"):
+        pytest.skip("NOAA catalog not present in CI environment")
 
     assert resp.status_code == 200
     assert "per_tile_seconds" in data

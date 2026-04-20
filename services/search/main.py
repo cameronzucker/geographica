@@ -29,6 +29,16 @@ from pydantic import BaseModel
 
 import keyring_client
 
+try:
+    from scripts.common.state_bboxes import SLUG_BY_USPS, states_intersecting
+    _STATE_BBOXES_AVAILABLE = True
+except ImportError:  # search container may not have scripts/ on PYTHONPATH
+    _STATE_BBOXES_AVAILABLE = False
+    SLUG_BY_USPS: dict = {}  # type: ignore[assignment]
+
+    def states_intersecting(bbox_str: str) -> list[str]:  # type: ignore[misc]
+        return []
+
 NOMINATIM_URL = os.environ.get("NOMINATIM_URL", "http://nominatim:8080")
 POI_DB_PATH = os.environ.get("POI_DB_PATH", "/data/poi.sqlite")
 DATA_DIR = Path("/data")
@@ -1685,34 +1695,106 @@ async def import_scan():
     }
 
 
+def _load_noaa_catalog(data_dir: Path) -> "tuple[dict | None, Path | None]":
+    """Load the pinned catalog snapshot via the noaa_naip_catalog.json symlink.
+
+    Returns (catalog_dict, resolved_snapshot_path) on success, or (None, None)
+    when the symlink is absent or the file cannot be parsed.
+    """
+    symlink = data_dir / "noaa_naip_catalog.json"
+    if not symlink.exists():
+        return (None, None)
+    try:
+        snapshot_path = symlink.resolve(strict=True)
+        catalog = json.loads(snapshot_path.read_text())
+        return (catalog, snapshot_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"WARNING: Failed to load NOAA catalog: {exc}", flush=True)
+        return (None, None)
+
+
 @app.get("/admin/pipeline/noaa/estimate", dependencies=[Depends(require_config_source)])
 async def noaa_estimate(
     bbox: str = Query(..., description="west,south,east,north"),
-    state: str = Query("AZ"),
-    year: int = Query(2021),
+    state: Optional[str] = Query(None),
+    year: Optional[int] = Query(None),
 ):
-    """Estimate NOAA NAIP download size and time for a given bbox."""
-    # NOAA catalog and helpers — inline to avoid importing acquire_imagery.py
-    # (which pulls in aiohttp, not available in the search container)
-    NOAA_NAIP_CATALOG = {
-        ("AZ", 2021): "AZ_NAIP_2021_9596",
-    }
+    """Estimate NOAA NAIP download size and time for a given bbox.
+
+    Supports two modes:
+    - State mode: ``state=AZ`` (USPS) or ``state=arizona`` (slug). ``year`` is
+      accepted but ignored — the catalog is keyed by slug only.
+    - Bbox mode: omit ``state``; the endpoint resolves all states that both
+      intersect the bbox AND appear in the catalog.
+
+    Returns all legacy fields (``tile_count``, ``raw_download_gb``, etc.) plus
+    the new Task-19 fields: ``states``, ``missing``, ``placename``,
+    ``catalog_snapshot``, ``intermediate_gb``, ``peak_required_gb``.
+    """
+    import struct
+
     NOAA_TILE_SIZE_MB = 486
 
-    if (state, year) not in NOAA_NAIP_CATALOG:
-        raise HTTPException(status_code=422, detail=f"State {state} year {year} not in NOAA catalog")
-
-    # Check for cached shapefile
-    cache = DATA_DIR / "noaa_cache" / f"{state}_{year}"
-    shp_files = list(cache.glob("*.shp")) if cache.exists() else []
-
-    if not shp_files:
+    # ------------------------------------------------------------------
+    # 1. Load catalog from snapshot (replaces the hard-coded dict)
+    # ------------------------------------------------------------------
+    catalog, snapshot_path = _load_noaa_catalog(DATA_DIR)
+    if catalog is None:
         return {
-            "status": "no_index",
-            "message": "Tile index not cached yet. Run the pipeline once to fetch it, then estimates will be available.",
+            "status": "no_catalog",
+            "message": "Run refresh_catalog to populate the NOAA catalog.",
         }
 
-    # Parse bbox
+    entries: dict[str, dict] = catalog.get("entries", {})
+
+    # ------------------------------------------------------------------
+    # 2. Resolve which slugs to use (state mode vs bbox mode)
+    # ------------------------------------------------------------------
+    # Normalise the ``state`` query param: accept USPS (AZ) or slug (arizona).
+    # ``year`` is deprecated — accepted for backward compat, silently ignored.
+    if state is not None:
+        state_upper = state.upper()
+        if state_upper in SLUG_BY_USPS:
+            slug = SLUG_BY_USPS.get(state_upper)
+        else:
+            # Assume it's already a slug
+            slug = state.lower()
+
+        if slug is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"State {state!r} is not supported (Alaska and Hawaii are excluded).",
+            )
+
+        if slug not in entries:
+            # Catalog present but this state isn't cataloged → no_index
+            return {
+                "status": "no_index",
+                "message": f"State {slug!r} is not in the current catalog snapshot. "
+                           "Run refresh_catalog to update.",
+            }
+
+        states_list: list[str] = [slug]
+        # In single-state mode, missing[] is empty — the state IS in the catalog.
+        missing_list: list[str] = []
+
+    else:
+        # Bbox mode: find all states that intersect the bbox, split into
+        # cataloged (states_list) and not-yet-cataloged (missing_list).
+        intersecting = states_intersecting(bbox)
+        states_list = [s for s in intersecting if s in entries]
+        missing_list = [s for s in intersecting if s not in entries]
+
+        if not states_list:
+            return {
+                "status": "no_index",
+                "message": "No cataloged states intersect the provided bbox. "
+                           "Run refresh_catalog to update the catalog.",
+            }
+
+    # ------------------------------------------------------------------
+    # 3. Validate bbox
+    # ------------------------------------------------------------------
     try:
         parts = [float(x.strip()) for x in bbox.split(",")]
         if len(parts) != 4:
@@ -1721,58 +1803,73 @@ async def noaa_estimate(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Invalid bbox: {e}")
 
-    # Spatial filter: read the .dbf file directly (no GDAL needed in search container).
-    # The shapefile extent is in NAD83 geographic coords (lat/lon).
-    # We count total features and estimate based on bbox area ratio.
-    # For exact counts, the user runs the pipeline (which uses ogr2ogr).
-    import struct
+    # ------------------------------------------------------------------
+    # 4. Tile count — sum across all cataloged states in this estimate.
+    #    Use the catalog's tile_count per state; spatial filtering via
+    #    shapefile cache stays as-is when the tile index is available.
+    #    Fall back to catalog tile_count when shapefile isn't cached.
+    # ------------------------------------------------------------------
+    total_tile_count = 0
+    for slug in states_list:
+        entry = entries[slug]
+        catalog_tile_count: int = entry.get("tile_count", 0)
 
-    dbf_path = shp_files[0].with_suffix(".dbf")
-    tile_count = 0
-    try:
-        with open(dbf_path, "rb") as f:
-            # DBF header: byte 4-7 = number of records (little-endian uint32)
-            f.read(4)
-            total_records = struct.unpack("<I", f.read(4))[0]
+        # Check for a cached shapefile (legacy path; preserves per-bbox filtering)
+        usps = entry.get("usps", slug.upper()[:2])
+        entry_year = entry.get("year", 2021)
+        cache = DATA_DIR / "noaa_cache" / f"{usps}_{entry_year}"
+        shp_files = list(cache.glob("*.shp")) if cache.exists() else []
 
-        # Estimate: ratio of user bbox area to full state extent
-        # AZ extent from shapefile: (-114.88, 31.31) to (-108.99, 37.07)
-        state_width = 114.88 - 108.99  # ~5.89 degrees
-        state_height = 37.07 - 31.31   # ~5.76 degrees
-        state_area = state_width * state_height
-
-        user_width = min(east, -108.99) - max(west, -114.88)
-        user_height = min(north, 37.07) - max(south, 31.31)
-        if user_width <= 0 or user_height <= 0:
-            tile_count = 0
+        if shp_files:
+            dbf_path = shp_files[0].with_suffix(".dbf")
+            state_tile_count = 0
+            try:
+                with open(dbf_path, "rb") as f:
+                    f.read(4)
+                    total_records = struct.unpack("<I", f.read(4))[0]
+                # Estimate tile fraction via bbox overlap with state extent
+                from scripts.common.state_bboxes import STATE_BBOXES
+                state_bbox = STATE_BBOXES.get(slug)
+                if state_bbox:
+                    sw, ss, se, sn = state_bbox
+                    state_area = (se - sw) * (sn - ss)
+                    uw = min(east, se) - max(west, sw)
+                    uh = min(north, sn) - max(south, ss)
+                    if uw > 0 and uh > 0 and state_area > 0:
+                        ratio = min(1.0, (uw * uh) / state_area)
+                        state_tile_count = int(total_records * ratio)
+                    else:
+                        state_tile_count = 0
+                else:
+                    state_tile_count = total_records
+            except (OSError, struct.error):
+                state_tile_count = catalog_tile_count
         else:
-            user_area = user_width * user_height
-            ratio = min(1.0, user_area / state_area)
-            tile_count = int(total_records * ratio)
-    except (OSError, struct.error):
-        # Fallback: use total record count
-        tile_count = 7629  # known AZ 2021 count
+            # No shapefile cache — use catalog total
+            state_tile_count = catalog_tile_count
 
+        total_tile_count += state_tile_count
+
+    tile_count = total_tile_count
+
+    # ------------------------------------------------------------------
+    # 5. Derived cost estimates (same economics as before)
+    # ------------------------------------------------------------------
     raw_download_gb = tile_count * NOAA_TILE_SIZE_MB / 1024
     final_mbtiles_gb = tile_count * 29 / 1024  # empirical: ~29 MB/tile in MBTiles
 
-    # 3-stage parallel pipeline economics:
-    # - Download stage: 4 concurrent fetches at ~3 MB/s each → ~160 s/tile raw but parallelized
-    # - Reproject stage: CPU-bound, min(cpu_count, 6) threads → ~45 s/tile wall-clock at 4 cores
-    # - Merge stage: serial, ~20 s/tile (the bottleneck once downloads catch up)
-    # Steady-state per-tile cost = max(download/concurrency, reproject/workers, merge_serial)
     download_concurrency = 4
-    reproject_workers = 4  # typical Pi 5; desktops run faster, this is a conservative floor
+    reproject_workers = 4
     download_per_tile_s = (NOAA_TILE_SIZE_MB / 3.0) / download_concurrency  # ~40 s
     reproject_per_tile_s = 45 / reproject_workers                            # ~11 s
     merge_per_tile_s = 20                                                     # serial bottleneck
     effective_per_tile_s = max(download_per_tile_s, reproject_per_tile_s, merge_per_tile_s)
-    # Add pipeline-fill overhead: first tile must traverse all 3 stages before the meter moves
     startup_overhead_s = 120
     est_seconds = tile_count * effective_per_tile_s + startup_overhead_s
     est_hours = est_seconds / 3600
 
     return {
+        # ---- legacy fields (unchanged semantics) ----
         "status": "ok",
         "tile_count": tile_count,
         "raw_download_gb": round(raw_download_gb, 1),
@@ -1784,6 +1881,13 @@ async def noaa_estimate(
         "download_concurrency": download_concurrency,
         "download_speed_mbs": 3.0,
         "disk_free_gb": round(_get_disk_free_gb(), 1),
+        # ---- new fields (Task 19) ----
+        "states": states_list,
+        "missing": missing_list,
+        "placename": None,           # Task 21 fills this in
+        "catalog_snapshot": str(snapshot_path),
+        "intermediate_gb": 0.0,      # Task 20 fills this in
+        "peak_required_gb": 0.0,     # Task 20 fills this in
     }
 
 
