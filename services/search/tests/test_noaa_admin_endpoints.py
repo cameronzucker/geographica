@@ -309,7 +309,7 @@ def test_refresh_happy_path(tmp_path):
         return fake_result
 
     with patch("services.search.main.DATA_DIR", tmp_path), \
-         patch("scripts.refresh_noaa_catalog.refresh_catalog", fake_refresh):
+         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh):
         resp = client.post(
             "/admin/pipeline/noaa/refresh",
             headers={"X-Config-Source": "internal", "X-Geographica": "1"},
@@ -327,7 +327,7 @@ def test_refresh_locked_returns_409(tmp_path):
         return {"status": "locked", "lock_holder_pid": 12345}
 
     with patch("services.search.main.DATA_DIR", tmp_path), \
-         patch("scripts.refresh_noaa_catalog.refresh_catalog", fake_refresh):
+         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh):
         resp = client.post(
             "/admin/pipeline/noaa/refresh",
             headers={"X-Config-Source": "internal", "X-Geographica": "1"},
@@ -347,7 +347,7 @@ def test_refresh_pipeline_running_returns_409(tmp_path):
         }
 
     with patch("services.search.main.DATA_DIR", tmp_path), \
-         patch("scripts.refresh_noaa_catalog.refresh_catalog", fake_refresh):
+         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh):
         resp = client.post(
             "/admin/pipeline/noaa/refresh",
             headers={"X-Config-Source": "internal", "X-Geographica": "1"},
@@ -365,7 +365,7 @@ def test_refresh_truncated_returns_200(tmp_path):
         return {"status": "truncated", "log_entry": entry}
 
     with patch("services.search.main.DATA_DIR", tmp_path), \
-         patch("scripts.refresh_noaa_catalog.refresh_catalog", fake_refresh):
+         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh):
         resp = client.post(
             "/admin/pipeline/noaa/refresh",
             headers={"X-Config-Source": "internal", "X-Geographica": "1"},
@@ -729,7 +729,7 @@ def test_refresh_invalid_parse_returns_200_with_log_entry(tmp_path):
         return {"status": "invalid_parse", "log_entry": entry}
 
     with patch("services.search.main.DATA_DIR", tmp_path), \
-         patch("scripts.refresh_noaa_catalog.refresh_catalog", fake_refresh):
+         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh):
         resp = client.post(
             "/admin/pipeline/noaa/refresh",
             headers={"X-Config-Source": "internal", "X-Geographica": "1"},
