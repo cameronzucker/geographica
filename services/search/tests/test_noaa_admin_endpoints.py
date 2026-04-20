@@ -375,3 +375,63 @@ def test_refresh_truncated_returns_200(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+
+# Task 23 — POST /admin/pipeline/noaa/rollback
+# ---------------------------------------------------------------------------
+
+def test_rollback_happy_path(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    # Seed: snapshot file + current symlink
+    snaps = tmp_path / "noaa_catalog_snapshots"
+    snaps.mkdir()
+    target = snaps / "2026-04-20T12:00:00Z.json"
+    target.write_text('{"entries": {}}')
+    symlink = tmp_path / "noaa_naip_catalog.json"
+    # Point at a "previous" snapshot (doesn't need to exist for symlink creation)
+    symlink.symlink_to(snaps / "2026-04-19T00:00:00Z.json")
+
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        resp = client.post(
+            "/admin/pipeline/noaa/rollback",
+            json={"to_snapshot": "2026-04-20T12:00:00Z.json"},
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 200
+    assert symlink.resolve() == target.resolve()
+    # log file appended
+    assert (tmp_path / "noaa_catalog_refresh_log.jsonl").exists()
+
+
+def test_rollback_missing_snapshot_returns_404(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    (tmp_path / "noaa_catalog_snapshots").mkdir()
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        resp = client.post(
+            "/admin/pipeline/noaa/rollback",
+            json={"to_snapshot": "nonexistent.json"},
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 404
+
+
+def test_rollback_pipeline_running_returns_409(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    # Create a fake running pipeline state file
+    state = tmp_path / ".pipeline-state.json"
+    state.write_text(json.dumps({"status": "running"}))
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        resp = client.post(
+            "/admin/pipeline/noaa/rollback",
+            json={"to_snapshot": "anything.json"},
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 409
+
+
+# ---------------------------------------------------------------------------

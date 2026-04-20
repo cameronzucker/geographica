@@ -2127,3 +2127,45 @@ async def noaa_refresh():
     # ok, truncated, invalid_parse — 200
     return result
 
+
+class NoaaRollbackBody(BaseModel):
+    to_snapshot: str  # filename like "2026-04-20T12:00:00Z.json"
+
+
+@app.post("/admin/pipeline/noaa/rollback", dependencies=[Depends(require_config_source)])
+async def noaa_rollback(body: NoaaRollbackBody):
+    """Rollback NOAA catalog to a prior snapshot. Atomic symlink swap."""
+    try:
+        from scripts.refresh_noaa_catalog import find_running_pipelines, swap_symlink, append_refresh_log
+    except ImportError:
+        raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
+
+    # Check pipeline
+    running = find_running_pipelines(DATA_DIR)
+    if running:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "blocked_by_pipeline",
+                "blocked_by_pipeline": str(running[0]),
+            },
+        )
+
+    # Check snapshot exists
+    snapshot_path = DATA_DIR / "noaa_catalog_snapshots" / body.to_snapshot
+    if not snapshot_path.exists():
+        raise HTTPException(status_code=404, detail=f"Snapshot not found: {body.to_snapshot}")
+
+    # Perform rollback
+    symlink_path = DATA_DIR / "noaa_naip_catalog.json"
+    swap_symlink(symlink_path, snapshot_path)
+
+    # Log rollback
+    import datetime
+    log_path = DATA_DIR / "noaa_catalog_refresh_log.jsonl"
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    log_entry = {"ts": ts, "status": "rollback", "to_snapshot": body.to_snapshot}
+    append_refresh_log(log_path, log_entry)
+
+    return {"status": "ok", "to_snapshot": body.to_snapshot, "log_entry": log_entry}
+
