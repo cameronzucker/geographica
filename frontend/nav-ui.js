@@ -31,6 +31,7 @@
   var PADDING_RECALC_THRESHOLD = 5; // px -- ignore changes smaller than this
   var rerouteRetries = 0;
   var MAX_REROUTE_RETRIES = 3;
+  var pendingRerouteTimeouts = [];
   var lastNavState = null;  // latest state from engine callback
   var lastGPSSignature = null;
 
@@ -518,10 +519,10 @@
     var seq = info._seq;
 
     rerouteRetries = 0;
-    attemptReroute(body, seq);
+    attemptReroute(body, seq, info);
   }
 
-  function attemptReroute(body, seq) {
+  function attemptReroute(body, seq, info) {
     fetch('/valhalla/route', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -529,7 +530,18 @@
     })
     .then(function (res) { return res.json(); })
     .then(function (data) {
+      if (data && data.error) {
+        // Valhalla returned 200 with {error: "..."} — no trip field.
+        // Treat as a retryable failure, not a silent no-op. (B11)
+        throw new Error('Valhalla error: ' + data.error);
+      }
       if (data.trip && nav) {
+        // Update all four state slots via the unified owner (B2).
+        window._geographicaSetActiveRoute(data.trip, {
+          refitBounds: false,          // keep camera locked during nav
+          costing: info.costing,
+          costingOptions: info.costingOptions || null,
+        });
         var newRouteData = buildRouteData(data.trip);
         if (newRouteData) {
           rerouteRetries = 0;
@@ -543,9 +555,10 @@
       rerouteRetries++;
       if (rerouteRetries <= MAX_REROUTE_RETRIES) {
         var delay = Math.pow(2, rerouteRetries) * 1000; // 2s, 4s, 8s
-        setTimeout(function () {
-          attemptReroute(body, seq);
+        var timeoutId = setTimeout(function () {
+          attemptReroute(body, seq, info);
         }, delay);
+        pendingRerouteTimeouts.push(timeoutId);
       } else {
         rerouteRetries = 0;
         showBanner('Reroute failed \u2014 using current route', 'reroute-failed');
