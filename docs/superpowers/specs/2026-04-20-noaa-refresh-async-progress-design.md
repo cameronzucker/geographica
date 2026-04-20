@@ -1,8 +1,27 @@
 # NOAA catalog refresh — async dispatch + progress UX
 
-**Status:** v1 (pre-adversarial-review)
+**Status:** v2 (post-adversarial-review)
 **Author:** Agent `cairn`, 2026-04-20
-**Supersedes:** N/A (builds on shipped Tasks 22, 31 of the NOAA CONUS expansion)
+**Adversarial review:** [dev/adversarial/2026-04-20-noaa-refresh-async-sonnet.md](../../../dev/adversarial/2026-04-20-noaa-refresh-async-sonnet.md) (Sonnet, 2 Critical + 6 Important findings, all addressed below)
+**Supersedes:** v1 (same file, commit history)
+
+## v2 changes (must-read before implementation)
+
+Review surfaced must-fixes to the v1 design. These are now the canonical behavior:
+
+1. **Task reference retention (Critical A1/E2).** The bg task reference MUST be retained in a module-level variable (`_active_refresh_task: asyncio.Task | None`) to prevent Python's GC from collecting tasks held only in the event loop's weak set. Cleared in the task's `finally`. The module-level reference also enables `/refresh/reset` to cancel the task cleanly (see C2 below).
+2. **Event-loop liveness during `ogr2ogr` + Azure downloads (Critical A3/C1).** `refresh_catalog`'s per-state flow has TWO blocking hazards: `subprocess.run(ogr2ogr)` is synchronous and can block the event loop for up to 60s; the `aiohttp` GET for the tile-index zip has no `ClientTimeout` and can stall indefinitely. Both MUST be fixed:
+   - Wrap the `ogr2ogr` subprocess in `asyncio.get_event_loop().run_in_executor(None, subprocess.run, ...)` so the event loop stays responsive (critical for 2-second `/progress` polling).
+   - Pass `ClientTimeout(total=300)` to the download session in `fetch_tile_count`.
+3. **Cancellation via `asyncio.Event`, not file flag (Important A2/B1).** The bg task and the cancel endpoint run in the SAME Python process. Use a module-level `asyncio.Event` for cross-coroutine signaling. The file-based `cancel_requested` flag stays in progress.json as a read-only UI status, written by the bg task AFTER it observes the event. This eliminates the read-then-write race where `request_cancel`'s write clobbers the bg task's progress update.
+4. **Ghost-task prevention in `/refresh/reset` (Important C2).** Force Clear MUST `await _active_refresh_task.cancel()` before clearing the lockfile + progress.json. Otherwise a still-running old bg task corrupts the new refresh's progress.json.
+5. **Page-navigation rehydration (Important D3).** On `renderNoaaBody`, fetch `/progress` — if `status: running`, restore the in-progress UI immediately (skip the confirm dialog, resume polling). Required by testing invariant #7.
+6. **`progress_cb` contract (Important E1).** Sync callable, receives dict, return value ignored, must not raise. Documented at the function definition and at Task 2.
+7. **`/refresh/reset` endpoint added to API contract (Minor E3).** See §API contract.
+
+All remaining Minor/Open Question items from the review (hardcoded thresholds, native confirm dialog, CI-stub-vs-sparse-real copy nuance, disk-space guards) are deferred to implementation-time discretion or follow-ups; they are not blockers.
+
+---
 
 ## Problem
 
@@ -166,6 +185,22 @@ Phases: `listing` (Azure container enumeration) → `fetching_tile_indexes` (HEA
 ```
 
 Terminal result statuses: `ok`, `truncated`, `invalid_parse`, `cancelled`, `error`. The `result` object mirrors what `refresh_catalog()` returns today (backward-compatible for the refresh-log panel).
+
+### `POST /admin/pipeline/noaa/refresh/reset`
+
+**Force-clear the refresh subsystem** after a stale/stuck refresh. Cancels the active asyncio Task (if any), releases the lockfile, removes progress.json. Single atomic operation to avoid split-brain states.
+
+**Response (200):**
+```json
+{
+  "status": "reset",
+  "task_cancelled": true,
+  "lockfile_removed": true,
+  "progress_removed": true
+}
+```
+
+**Response (404):** when there's nothing to reset (no lockfile, no progress, no task).
 
 ### `POST /admin/pipeline/noaa/refresh/cancel`
 

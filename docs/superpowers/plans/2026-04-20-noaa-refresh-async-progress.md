@@ -1,10 +1,21 @@
-# NOAA refresh async + progress — implementation plan
+# NOAA refresh async + progress — implementation plan (v2)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` or `superpowers:executing-plans` to implement. TDD per task; no worktrees (banned, see CLAUDE.md §Git workflow); every commit trailer includes `Agent: <moniker>`.
 
-**Spec:** [docs/superpowers/specs/2026-04-20-noaa-refresh-async-progress-design.md](../specs/2026-04-20-noaa-refresh-async-progress-design.md)
+**Spec:** [docs/superpowers/specs/2026-04-20-noaa-refresh-async-progress-design.md](../specs/2026-04-20-noaa-refresh-async-progress-design.md) (v2, post-adversarial-review)
+**Adversarial review:** [dev/adversarial/2026-04-20-noaa-refresh-async-sonnet.md](../../../dev/adversarial/2026-04-20-noaa-refresh-async-sonnet.md)
 
-**Scope:** 11 tasks across 3 phases. Estimated execution time: 2–3 hours of focused work.
+**Scope:** 13 tasks across 3 phases (v1: 11, +2 from review). Estimated execution time: 2.5–3.5 hours of focused work.
+
+## v2 changes from review
+
+- Task 2 extended: explicit `progress_cb` contract (sync, takes dict, no raise), PLUS `ClientTimeout(total=300)` on aiohttp GET in `fetch_tile_count`, PLUS `run_in_executor` wrapper around the `ogr2ogr` subprocess.
+- Task 3 extended: module-level `_active_refresh_task: asyncio.Task | None = None` (and `_cancel_event: asyncio.Event`) so the bg task is (a) GC-safe and (b) cancellable by `/refresh/reset`.
+- Task 5 rewritten: cancel uses `_cancel_event.set()`, not a file-based flag. Progress.json's `cancel_requested` becomes a UI-read-only status written by the bg task after observing the event.
+- New Task 9a (rehydration) — on `renderNoaaBody`, fetch `/progress` and restore the in-progress UI if `status: running`.
+- Task 11 rewritten: `/refresh/reset` MUST `_active_refresh_task.cancel()` AND await its finalization BEFORE clearing lockfile + progress.json. Spec's API contract now includes this endpoint.
+- New Task 12 (integration test): end-to-end async dispatch against mock Azure, verifies phase transitions + terminal state + refresh-log append + non-blocking `/progress` during `ogr2ogr`.
+- Task 13 (was Task 12) — review + log + push.
 
 **Repo state at plan creation:** `dev` at `1910e15`. The NOAA CONUS expansion (Phases 0-6) shipped in the preceding session. `refresh_catalog()` + 5 admin endpoints + frontend refresh-log panel exist and are live on the stack. This plan sits ON TOP of that work.
 
