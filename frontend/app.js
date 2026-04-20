@@ -4106,6 +4106,9 @@
     initImport();
     initGPS();
     initAdmin();
+    if (window.VoicePicker && typeof window.VoicePicker.init === 'function') {
+      window.VoicePicker.init();
+    }
     // These need the map to be initialized first
     map.on('load', function () {
       initFreeLookCamera();
