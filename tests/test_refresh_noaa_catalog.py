@@ -112,3 +112,41 @@ async def test_azure_listing_network_error_mid_page_raises_truncated():
         )
         with pytest.raises(AzureTruncatedError, match="page 2"):
             await azure_list_blob_prefixes()
+
+
+def test_parse_noaa_directory_name_valid():
+    from scripts.refresh_noaa_catalog import parse_noaa_dir
+    assert parse_noaa_dir("AZ_NAIP_2021_9596/") == ("AZ", 2021)
+    assert parse_noaa_dir("GA_NAIP_2023_10001/") == ("GA", 2023)
+
+
+def test_parse_noaa_directory_name_invalid_returns_none():
+    from scripts.refresh_noaa_catalog import parse_noaa_dir
+    assert parse_noaa_dir("some_other_dir/") is None
+    assert parse_noaa_dir("AZ_NAIP/") is None
+    assert parse_noaa_dir("AZ_NAIP_2021_9596_v2/") is None  # version suffix not supported
+
+
+def test_parse_noaa_directory_name_unsupported_state_returns_none():
+    from scripts.refresh_noaa_catalog import parse_noaa_dir
+    # Alaska is unsupported
+    assert parse_noaa_dir("AK_NAIP_2021_9999/") is None
+
+
+@pytest.mark.asyncio
+async def test_validate_tile_index_head_success():
+    from scripts.refresh_noaa_catalog import validate_tile_index
+    url = "https://example.com/AZ_NAIP_2021_9596/tileindex/tileindex.zip"
+    with aioresponses() as m:
+        m.head(url, headers={"Content-Length": "1048576", "x-ms-blob-content-md5": "xyz"})
+        result = await validate_tile_index(url)
+        assert result == {"size_bytes": 1048576, "content_md5": "xyz"}
+
+
+@pytest.mark.asyncio
+async def test_validate_tile_index_head_404_returns_none():
+    from scripts.refresh_noaa_catalog import validate_tile_index
+    url = "https://example.com/bogus/tileindex.zip"
+    with aioresponses() as m:
+        m.head(url, status=404)
+        assert await validate_tile_index(url) is None

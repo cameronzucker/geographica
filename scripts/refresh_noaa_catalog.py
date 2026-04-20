@@ -8,7 +8,11 @@ Consumed by:
 Catalog shape — see docs/superpowers/specs/2026-04-20-noaa-naip-conus-expansion-design.md §3.3.
 """
 import aiohttp
+import re
+import subprocess
+import zipfile
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from scripts.common.state_bboxes import STATE_BBOXES, SLUG_BY_USPS
 
 
@@ -115,3 +119,59 @@ async def azure_list_blob_prefixes(
                 return prefixes
 
     raise AzureTruncatedError(f"listing did not terminate in {max_pages} pages")
+
+
+NOAA_DIR_PATTERN = re.compile(r"^([A-Z]{2})_NAIP_(\d{4})_\d+/$")
+
+
+def parse_noaa_dir(name: str) -> tuple[str, int] | None:
+    """Parse 'AZ_NAIP_2021_9596/' → ('AZ', 2021). Returns None on mismatch
+    or unsupported USPS code (AK, HI map to None in SLUG_BY_USPS)."""
+    m = NOAA_DIR_PATTERN.match(name)
+    if not m:
+        return None
+    usps = m.group(1)
+    if SLUG_BY_USPS.get(usps) is None:
+        return None
+    return (usps, int(m.group(2)))
+
+
+async def validate_tile_index(url: str) -> dict | None:
+    """HEAD the tile-index ZIP. Returns {size_bytes, content_md5} on
+    success, None on 404/error. The SHA256 is captured when the ZIP is
+    later downloaded for real; HEAD gives us presence + size only."""
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as sess:
+            async with sess.head(url) as resp:
+                if resp.status != 200:
+                    return None
+                return {
+                    "size_bytes": int(resp.headers.get("Content-Length", "0")),
+                    "content_md5": resp.headers.get("x-ms-blob-content-md5", ""),
+                }
+    except aiohttp.ClientError:
+        return None
+
+
+async def fetch_tile_count(url: str, cache_dir: Path) -> int:
+    """Download the tile-index ZIP to cache_dir, unpack, and count features
+    via ogr2ogr -ro -so. Returns the feature count. Raises on failure."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = cache_dir / "tileindex.zip"
+    async with aiohttp.ClientSession() as sess:
+        async with sess.get(url) as resp:
+            resp.raise_for_status()
+            zip_path.write_bytes(await resp.read())
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(cache_dir)
+    shps = list(cache_dir.glob("*.shp"))
+    if not shps:
+        raise RuntimeError(f"no .shp file in {cache_dir} after extracting {url}")
+    result = subprocess.run(
+        ["ogr2ogr", "-ro", "-so", "-f", "CSV", "/dev/stdout", str(shps[0])],
+        capture_output=True, text=True, timeout=60,
+    )
+    for line in (result.stdout + result.stderr).splitlines():
+        if "Feature Count:" in line:
+            return int(line.split(":")[1].strip())
+    raise RuntimeError(f"Could not determine feature count for {shps[0]}")
