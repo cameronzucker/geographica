@@ -35,6 +35,14 @@
   var BOOTSTRAP_POLL_MAX = 10;
   var BOOTSTRAP_POLL_MS = 500;
 
+  var previewGeneration = 0;
+  var activePreview = null;
+  var previewArmed = false;
+  var idleResetTimer = null;
+  var debounceTimer = null;
+  var IDLE_RESET_MS = 30000;
+  var DEBOUNCE_MS = 150;
+
   var LS_KEY = 'nav-voice-pref';
 
   function readPref() {
@@ -188,6 +196,62 @@
     if (buttons) buttons.classList.add('hidden');
   }
 
+  function formatPreviewPhrase() {
+    var imperial = true;
+    try {
+      var checked = window.document.querySelector('input[name="units"]:checked');
+      if (checked && checked.value === 'metric') imperial = false;
+    } catch (e) {}
+    return imperial
+      ? 'In 500 feet, turn right onto Main Street.'
+      : 'In 150 meters, turn right onto Main Street.';
+  }
+
+  function speakPreview() {
+    try {
+      if (window.document.body && window.document.body.classList.contains('nav-active')) return;
+    } catch (e) {}
+    try { window.speechSynthesis.cancel(); } catch (e) {}
+    var myGen = ++previewGeneration;
+    var Utter = window.SpeechSynthesisUtterance;
+    var utt = new Utter(formatPreviewPhrase());
+    utt.rate = 1.0;
+    var v = getUtteranceVoice();
+    if (v) { utt.voice = v; utt.lang = v.lang || 'en-US'; }
+    else   { utt.lang = 'en-US'; }
+    utt.onerror = function () { if (myGen === previewGeneration) activePreview = null; };
+    activePreview = { utterance: utt, gen: myGen };
+    try { window.speechSynthesis.speak(utt); } catch (e) { activePreview = null; }
+  }
+
+  function speakPreviewDebounced() {
+    if (!previewArmed) return;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(function () { debounceTimer = null; speakPreview(); }, DEBOUNCE_MS);
+  }
+
+  function armPreview() {
+    previewArmed = true;
+    if (idleResetTimer) clearTimeout(idleResetTimer);
+    idleResetTimer = setTimeout(function () { previewArmed = false; idleResetTimer = null; }, IDLE_RESET_MS);
+  }
+
+  function onSidebarClose() {
+    previewArmed = false;
+    if (idleResetTimer) { clearTimeout(idleResetTimer); idleResetTimer = null; }
+    if (activePreview !== null) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+      activePreview = null;
+    }
+  }
+
+  function onVisibilityHidden() {
+    if (activePreview !== null) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+      activePreview = null;
+    }
+  }
+
   function initBootstrap() {
     notifyVoiceListChanged();
     try {
@@ -201,8 +265,19 @@
     bootstrapPollInterval = setInterval(bootstrapPollTick, BOOTSTRAP_POLL_MS);
   }
 
+  function initEventListeners() {
+    try {
+      window.document.addEventListener('geographica:sidebar', function (e) {
+        if (!e.detail || !e.detail.open) onSidebarClose();
+      });
+      window.document.addEventListener('visibilitychange', function () {
+        if (window.document.hidden) onVisibilityHidden();
+      });
+    } catch (e) {}
+  }
+
   window.VoicePicker = {
-    init: function () { initBootstrap(); },
+    init: function () { initBootstrap(); initEventListeners(); },
     getUtteranceVoice: getUtteranceVoice,
     onVoiceListChanged: function (cb) {
       voiceListCallbacks.push(cb);
@@ -217,5 +292,11 @@
     _resolveVoice: resolveVoice,
     _bootstrapPrime: bootstrapPrime,
     _bootstrapTimeoutFired: bootstrapTimeoutFired,
+    _armPreview: armPreview,
+    _speakPreview: speakPreview,
+    _speakPreviewDebounced: speakPreviewDebounced,
+    _activePreview: function () { return activePreview; },
+    _onSidebarClose: onSidebarClose,
+    _onVisibilityHidden: onVisibilityHidden,
   };
 })();
