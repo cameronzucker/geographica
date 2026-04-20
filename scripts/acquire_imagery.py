@@ -145,9 +145,64 @@ def resolve_noaa_candidates(catalog: dict, *, state: str | None, bbox: str | Non
     return (candidates, missing)
 
 
+def build_state_queue(entry: dict, bbox_or_none: str | None, shapefile_path: Path) -> list[str]:
+    """Build the list of tile filenames for a state, optionally filtered by bbox.
+
+    In whole-state mode (bbox_or_none is None), returns all tiles from the shapefile.
+    In bbox mode, spatially filters to the bounding box with a 300s timeout.
+
+    Args:
+        entry: NOAA catalog entry dict (contains state metadata)
+        bbox_or_none: bbox string "west,south,east,north", or None for whole-state
+        shapefile_path: Path to the tile index shapefile
+
+    Returns:
+        List of GeoTIFF filenames
+    """
+    if bbox_or_none is None:
+        # Whole-state mode: list all tiles in the shapefile
+        result = subprocess.run(
+            [
+                "ogr2ogr", "-f", "CSV", "/dev/stdout",
+                str(shapefile_path),
+                "-select", "filename",
+            ],
+            capture_output=True, text=True, timeout=300,
+        )
+    else:
+        # Bbox mode: spatially filter with -spat
+        west, south, east, north = [float(x) for x in bbox_or_none.split(",")]
+        result = subprocess.run(
+            [
+                "ogr2ogr", "-f", "CSV", "/dev/stdout",
+                str(shapefile_path),
+                "-spat", str(west), str(south), str(east), str(north),
+                "-select", "filename",
+            ],
+            capture_output=True, text=True, timeout=300,
+        )
+
+    if result.returncode != 0:
+        log.error("ogr2ogr tile list failed: %s", result.stderr)
+        return []
+
+    lines = result.stdout.strip().split("\n")
+    if len(lines) <= 1:
+        return []
+
+    # With -select filename, output is: "filename\nfile1.tif\nfile2.tif\n..."
+    filenames = []
+    for line in lines[1:]:
+        fname = line.strip().strip('"')
+        if fname.endswith(".tif"):
+            filenames.append(fname)
+    return filenames
+
+
 def filter_tiles_by_bbox(
     shapefile_path: Path,
     west: float, south: float, east: float, north: float,
+    timeout: int = 300,
 ) -> list[str]:
     """Use ogr2ogr to spatially filter a tile index shapefile.
 
@@ -160,7 +215,7 @@ def filter_tiles_by_bbox(
             "-spat", str(west), str(south), str(east), str(north),
             "-select", "filename",
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, timeout=timeout,
     )
     if result.returncode != 0:
         log.error("ogr2ogr spatial filter failed: %s", result.stderr)
