@@ -32,7 +32,7 @@ import aiosqlite
 from tqdm import tqdm
 from pipeline_progress import update_progress as _generic_progress
 
-from common.state_bboxes import states_intersecting
+from common.state_bboxes import states_intersecting, SLUG_BY_USPS, USPS_BY_SLUG
 
 # ---------------------------------------------------------------------------
 # Secrets
@@ -93,6 +93,24 @@ NOAA_NAIP_CATALOG = {
 }
 
 NOAA_TILE_SIZE_MB = 486  # approximate size of each NAIP quad GeoTIFF
+
+
+def _normalize_state_arg(value: str) -> str:
+    """argparse type= for --state. Accepts slug or USPS; warns on USPS.
+
+    Returns the canonical slug. Raises argparse.ArgumentTypeError on unknown values.
+    """
+    if value in USPS_BY_SLUG:
+        # Already a valid slug (e.g. "arizona")
+        return value
+    upper = value.upper()
+    if upper in SLUG_BY_USPS:
+        slug = SLUG_BY_USPS[upper]
+        if slug is None:
+            raise argparse.ArgumentTypeError(f"state {value!r} (USPS {upper}) is not supported by Geographica")
+        log.warning("--state %s is a USPS code; translated to slug %s (prefer slugs in new scripts)", value, slug)
+        return slug
+    raise argparse.ArgumentTypeError(f"unknown state {value!r}; expected slug (e.g. arizona) or USPS (e.g. AZ)")
 
 
 def noaa_blob_base_url(state: str, year: int) -> str:
@@ -2114,7 +2132,10 @@ async def run_noaa(args):
     pipeline_start = time.monotonic()
 
     state = args.state
-    year = args.year
+    # Transitional: --year was removed by Task 17 per Decision #8. The legacy
+    # NOAA_NAIP_CATALOG lookup below still expects (state, year); hardcode 2021
+    # until the catalog-driven path (Phase 3 Task 26) fully replaces this check.
+    year = 2021
     bbox = parse_bbox(args.bbox)
     west, south, east, north = bbox
     output = Path(args.output)
@@ -2810,18 +2831,23 @@ def main():
     )
     parser.add_argument(
         "--state",
-        help="State abbreviation for NOAA mode (e.g. AZ, CA)",
-    )
-    parser.add_argument(
-        "--year", type=int, default=2021,
-        help="NAIP year for NOAA mode (default: %(default)s)",
+        type=_normalize_state_arg,
+        help="State slug (e.g. arizona) or USPS code (e.g. AZ — deprecated). Required for NOAA mode unless --bbox is given.",
     )
 
     args = parser.parse_args()
 
     if args.mode == "noaa":
-        if not args.state:
-            log.error("NOAA mode requires --state (e.g. --state AZ)")
+        # --bbox has a module-level default, so we distinguish "user passed --bbox"
+        # from "default" by checking against DEFAULT_BBOX explicitly. This matches
+        # the existing pattern elsewhere in the CLI.
+        bbox_explicit = args.bbox != DEFAULT_BBOX
+        state_explicit = args.state is not None
+        if not state_explicit and not bbox_explicit:
+            log.error("NOAA mode requires --state (e.g. --state arizona) or --bbox")
+            sys.exit(1)
+        if state_explicit and bbox_explicit:
+            log.error("--state and --bbox are mutually exclusive for NOAA mode; pick one")
             sys.exit(1)
         asyncio.run(run_noaa(args))
     elif args.mode == "tnmaccess":

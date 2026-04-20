@@ -241,3 +241,49 @@ def test_state_file_unreadable_treats_as_fresh(tmp_path):
 
     result = _resolve_or_pin_snapshot(output, tmp_path)
     assert result == snap.resolve()
+
+
+# ---------------------------------------------------------------------------
+# Task 17: CLI argparse changes — USPS-to-slug translation + mutual exclusion
+# ---------------------------------------------------------------------------
+
+def test_normalize_state_arg_accepts_slug():
+    """Slug 'arizona' should be accepted without warning."""
+    from acquire_imagery import _normalize_state_arg
+    assert _normalize_state_arg("arizona") == "arizona"
+
+
+def test_normalize_state_arg_translates_usps_uppercase(caplog):
+    """USPS code 'AZ' should translate to slug 'arizona' with deprecation warning."""
+    import logging
+    from acquire_imagery import _normalize_state_arg
+    with caplog.at_level(logging.WARNING):
+        result = _normalize_state_arg("AZ")
+    assert result == "arizona"
+    assert any("USPS" in rec.message for rec in caplog.records)
+
+
+def test_normalize_state_arg_translates_usps_lowercase(caplog):
+    """Lowercase USPS 'az' should also work and warn."""
+    import logging
+    from acquire_imagery import _normalize_state_arg
+    with caplog.at_level(logging.WARNING):
+        result = _normalize_state_arg("az")
+    assert result == "arizona"
+    assert any("USPS" in rec.message for rec in caplog.records)
+
+
+def test_normalize_state_arg_rejects_unknown():
+    """Unknown state code should raise ArgumentTypeError."""
+    import argparse
+    from acquire_imagery import _normalize_state_arg
+    with pytest.raises(argparse.ArgumentTypeError, match="unknown state"):
+        _normalize_state_arg("XYZ")
+
+
+def test_normalize_state_arg_rejects_unsupported_usps():
+    """AK and HI map to None in SLUG_BY_USPS — not supported by Geographica."""
+    import argparse
+    from acquire_imagery import _normalize_state_arg
+    with pytest.raises(argparse.ArgumentTypeError, match="not supported"):
+        _normalize_state_arg("AK")
