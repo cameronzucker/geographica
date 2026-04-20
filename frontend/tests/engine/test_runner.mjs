@@ -52,7 +52,8 @@ export function fixtureTwoManeuverRoute() {
     coords: [
       [-111.65, 35.20],  // start
       [-111.64, 35.20],  // maneuver 1 boundary (~1 km east)
-      [-111.63, 35.21],  // end (~1 km NE)
+      [-111.63, 35.20],  // maneuver 2 boundary (~1 km ENE)
+      [-111.62, 35.21],  // end (~1 km NE)
     ],
     maneuvers: [
       {
@@ -64,15 +65,23 @@ export function fixtureTwoManeuverRoute() {
         end_shape_index: 1,
       },
       {
+        type: 2,
+        instruction: 'Turn left onto Main Street',
+        verbal_transition_alert_instruction: 'Prepare to turn left',
+        verbal_pre_transition_instruction: 'Turn left onto Main Street',
+        begin_shape_index: 1,
+        end_shape_index: 2,
+      },
+      {
         type: 15,
         instruction: 'You have arrived at your destination',
         begin_shape_index: 2,
-        end_shape_index: 2,
+        end_shape_index: 3,
       },
     ],
-    summary: { length: 2.0, time: 120 },
-    totalDistance: 2000,
-    totalTime: 120,
+    summary: { length: 3.0, time: 150 },
+    totalDistance: 3000,
+    totalTime: 150,
     costing: 'auto',
     remainingWaypoints: [],
   };

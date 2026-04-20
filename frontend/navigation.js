@@ -798,15 +798,11 @@
       currentManeuverIdx = 0;
       offRouteHistory = [];
       inOffRouteState = false;
-      // Clear only forward maneuvers' thresholds
-      var newSet = {};
-      for (var key in announcedSet) {
-        var idx = parseInt(key.split('-')[0]);
-        if (idx <= currentManeuverIdx) {
-          newSet[key] = true;
-        }
-      }
-      announcedSet = newSet;
+      // Full reset: old keys refer to a route that no longer exists.
+      // Voice cooldown also resets so the new route's first announcement
+      // isn't suppressed by the 5 s cooldown from the pre-reroute one.
+      announcedSet = {};
+      lastAnnouncementTime = 0;
       speedHistory = [];
       precomputeDistances();
 
