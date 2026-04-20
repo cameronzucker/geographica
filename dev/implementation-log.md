@@ -37,6 +37,49 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-20 — NOAA NAIP CONUS expansion (in progress)
+
+**Released as:** not yet released (branch `feat/noaa-conus`, worktree at `.claude/worktrees/feat-noaa-conus`)
+**Plan / spec:** [docs/superpowers/specs/2026-04-20-noaa-naip-conus-expansion-design.md](../docs/superpowers/specs/2026-04-20-noaa-naip-conus-expansion-design.md) (v2, committed `0341c00`)
+                 [docs/superpowers/plans/2026-04-20-noaa-naip-conus-expansion.md](../docs/superpowers/plans/2026-04-20-noaa-naip-conus-expansion.md) (committed `0e0a9ae`)
+**Adversarial reviews:** 5 rounds (Codex + 4 general-purpose subagents with distinct lenses: subagent-reader, implementer-skeptic, failure-mode-hunter, operator) — transcripts in session tool-results at `~/.claude/projects/.../tool-results/bsdkk6a2n.txt` + subagent returns
+
+### Summary
+
+Expanding NOAA NAIP imagery from Arizona-only to all 48 CONUS + DC. Adds a bbox-based custom-area mode and a snapshot-pinned versioned catalog (P7). Brainstorm originally paused 2026-04-19 at fatigue limit after 9 decisions were locked; resumed 2026-04-20 with Sections 3-6 completed and a 5-round adversarial review that surfaced 15 MUST-FIX issues before the plan phase. Plan v1 would have broken production in at least 3 ways (import from `setup/runner.py` inside a pipeline container that doesn't mount `setup/`, filter-always-runs with a 60s timeout that fails on TX/CA, checkpoint PK that would silently dedupe NAIP border quads); v2 addresses all 15. 39-task plan with phase-level review checkpoints.
+
+### Key decisions
+
+- **One pipeline, two CLI entry points** (`--state` slug / `--bbox`) rather than separate scripts. Code reuse of the 3-stage parallel pipeline matters more than path purity.
+- **Filter short-circuits for whole-state mode** (reversal of original "always-on filter" design). `ogr2ogr -spat` has a 60s timeout that can't handle TX/CA shapefiles.
+- **P7 catalog refresh** with snapshot pinning (every pipeline run pins at Start; refresh/rollback only affect future runs). Replaces an earlier threshold-based atomic-swap that was rejected as arbitrary.
+- **Disk-relative big-bbox confirmation**, peak-working-set (raw + intermediate + final), not GB-magic-number.
+- **Pre-merge real-Azure test as GitHub Action** (not local harness) — env drift is Geographica's dominant bug class per 2026-04-21 beta-triage marathon.
+- **Checkpoint PK = `(catalog_snapshot, state_usps, tile_filename)`** — NAIP border quads are shipped in both states' directories, and old PK of `tile_filename` alone would silently dedupe.
+- **Partial-coverage policy:** pre-run uncataloged states surfaced at estimate time and explicitly acknowledged; mid-run state failure produces terminal `partial_failed` status (never silent partial coverage via TileServer auto-registration).
+
+### Notable findings from adversarial review
+
+- **Codex C1** (code-verified): `setup/runner.py` not in pipeline container. Would have crashed on first pipeline run. → Task 1 extracts to `scripts/common/state_bboxes.py`.
+- **Codex C2**: open question #5 (snapshot pinning) was not optional — without it, estimate/start/resume can use three different catalogs. → Decision #11 revised; pipeline pins at Start.
+- **R3-C1** (code-verified): v1 claim that this work closed pre-existing bugs B2/B3 was factually wrong. Those bugs target NAIP/Sentinel, not NOAA. NOAA already works. Including them would regress the just-shipped TileServer handoff fix. → §"Pre-existing bugs closed" removed from v2.
+- **R1-C3**: disk model used `total_size_mb > free_disk_mb`, ignoring reproject + intermediate staging. Would strand jobs at 80% progress. → Decision #12 revised to peak-working-set.
+
+### Commits
+
+- `8041478` — v1 spec (dev branch, then superseded)
+- `0341c00` — v2 spec (post-adversarial-review; dev branch)
+- `0e0a9ae` — plan (dev branch)
+- `cc03d42` — Phase 0 Task 1: extract `scripts/common/state_bboxes.py` (feat/noaa-conus)
+- `519790c` — Phase 0 Task 1 follow-up: stale error message fix (feat/noaa-conus)
+- `85e8dac` — Phase 0 Task 2: canonicalization table + `display_name` (feat/noaa-conus)
+
+### Outcome (in progress)
+
+Phase 0 complete (2/39 tasks). 74 tests passing in worktree (up from 68 baseline + 6 new + 4 new). Phases 1-6 deferred to future sessions — the full 39-task plan is a multi-session execution; Phase 0 demonstrates the subagent-driven-development flow works against this plan and validates the extracted primitive survives contact with the setup-side test suite.
+
+---
+
 ## 2026-04-19 NIGHT — Beta-tester preflight unblocker + wizard harness rebuild
 
 **Released as:** `fix(setup): unblock beta testers stuck in preflight + bootstrap loops` (commit `5e400c5` on main). Harness rewrite lands with this commit on main.
