@@ -16,13 +16,18 @@ const SOURCE = fs.readFileSync(
   'utf-8'
 );
 
-function loadModule({
-  hasWakeLock = true,
-  wakeLockOpts = {},
-  silentVideoLock = makeSilentVideoLockMock(),
-  document: docParam,
-  matchMedia,
-} = {}) {
+function loadModule(opts = {}) {
+  const {
+    hasWakeLock = true,
+    wakeLockOpts = {},
+    document: docParam,
+    matchMedia,
+  } = opts;
+  // Respect an explicit `silentVideoLock: undefined` (to simulate absence)
+  // rather than letting default-parameter semantics substitute a mock.
+  const silentVideoLock = 'silentVideoLock' in opts
+    ? opts.silentVideoLock
+    : makeSilentVideoLockMock();
   const doc = docParam || makeDocumentMock();
   const win = {
     document: doc,
@@ -71,4 +76,44 @@ test('acquire() is idempotent — calling twice issues only one request', async 
 test('status() returns "idle" initially', () => {
   const { module } = loadModule();
   assert.strictEqual(module.status(), 'idle');
+});
+
+test('primary unavailable — acquire() falls to SilentVideoLock', async () => {
+  const silentVideoLock = makeSilentVideoLockMock();
+  const { module } = loadModule({ hasWakeLock: false, silentVideoLock });
+  await module.acquire();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(silentVideoLock.enable.mock.callCount(), 1);
+  assert.strictEqual(module.status(), 'fallback');
+});
+
+test('primary rejects — acquire() falls to SilentVideoLock', async () => {
+  const silentVideoLock = makeSilentVideoLockMock();
+  const err = new Error('NotAllowedError');
+  const { module } = loadModule({
+    wakeLockOpts: { rejectWith: err },
+    silentVideoLock,
+  });
+  await module.acquire();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(silentVideoLock.enable.mock.callCount(), 1);
+  assert.strictEqual(module.status(), 'fallback');
+});
+
+test('SilentVideoLock missing — acquire() degrades silently with warning', async () => {
+  const { module } = loadModule({
+    hasWakeLock: false,
+    silentVideoLock: undefined,
+  });
+  await module.acquire();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(module.status(), 'none');
+});
+
+test('SilentVideoLock.enable() rejects — acquire() degrades silently', async () => {
+  const silentVideoLock = makeSilentVideoLockMock({ rejectWith: new Error('autoplay blocked') });
+  const { module } = loadModule({ hasWakeLock: false, silentVideoLock });
+  await module.acquire();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(module.status(), 'none');
 });

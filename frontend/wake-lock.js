@@ -29,7 +29,22 @@
       }
     }
 
-    // Fallback path will be filled in next task
+    // Fallback path
+    if (!shouldBeActive || myGen !== acquireGeneration) return;
+    if (!window.SilentVideoLock) {
+      console.warn('[wake-lock] SilentVideoLock not loaded, no fallback available');
+      return;
+    }
+    try {
+      await window.SilentVideoLock.enable();
+      if (!shouldBeActive || myGen !== acquireGeneration) {
+        window.SilentVideoLock.disable();
+        return;
+      }
+      fallbackActive = true;
+    } catch (err) {
+      console.warn('[wake-lock] SilentVideoLock.enable() rejected', err);
+    }
   }
 
   async function release() {
