@@ -294,3 +294,23 @@ def force_unlock(lock_path: Path) -> dict:
     except ProcessLookupError:
         lock_path.unlink()
         return {"status": "ok", "previous_holder_pid": pid}
+
+
+def find_running_pipelines(data_dir: Path) -> list[Path]:
+    """Scan data_dir recursively for .pipeline-state.json files with
+    status=running. Returns the list of state file paths.
+
+    Malformed JSON and non-running statuses are silently skipped —
+    this function's job is only to identify live pipelines, not
+    validate state file format.
+    """
+    data_dir = Path(data_dir)
+    running: list[Path] = []
+    for state_file in data_dir.rglob(".pipeline-state.json"):
+        try:
+            data = json.loads(state_file.read_text())
+            if data.get("status") == "running":
+                running.append(state_file)
+        except (json.JSONDecodeError, OSError):
+            continue
+    return running

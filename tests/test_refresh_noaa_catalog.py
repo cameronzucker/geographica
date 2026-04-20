@@ -248,3 +248,41 @@ def test_force_unlock_no_lock_file(tmp_path):
     lock_path = tmp_path / "refresh.lock"
     result = force_unlock(lock_path)
     assert result["status"] == "no_lock"
+
+
+def test_find_running_pipelines_empty(tmp_path):
+    from scripts.refresh_noaa_catalog import find_running_pipelines
+    assert find_running_pipelines(tmp_path) == []
+
+
+def test_find_running_pipelines_detects_running_state(tmp_path):
+    from scripts.refresh_noaa_catalog import find_running_pipelines
+    (tmp_path / "foo").mkdir()
+    state_file = tmp_path / "foo" / ".pipeline-state.json"
+    state_file.write_text('{"status": "running", "mode": "noaa"}')
+    running = find_running_pipelines(tmp_path)
+    assert len(running) == 1
+    assert running[0] == state_file
+
+
+def test_find_running_pipelines_ignores_complete(tmp_path):
+    from scripts.refresh_noaa_catalog import find_running_pipelines
+    (tmp_path / "foo").mkdir()
+    (tmp_path / "foo" / ".pipeline-state.json").write_text('{"status": "complete"}')
+    assert find_running_pipelines(tmp_path) == []
+
+
+def test_find_running_pipelines_ignores_malformed(tmp_path):
+    from scripts.refresh_noaa_catalog import find_running_pipelines
+    (tmp_path / "foo").mkdir()
+    (tmp_path / "foo" / ".pipeline-state.json").write_text("not json")
+    assert find_running_pipelines(tmp_path) == []
+
+
+def test_find_running_pipelines_detects_multiple(tmp_path):
+    from scripts.refresh_noaa_catalog import find_running_pipelines
+    (tmp_path / "a").mkdir(); (tmp_path / "a" / ".pipeline-state.json").write_text('{"status": "running"}')
+    (tmp_path / "b").mkdir(); (tmp_path / "b" / ".pipeline-state.json").write_text('{"status": "running"}')
+    (tmp_path / "c").mkdir(); (tmp_path / "c" / ".pipeline-state.json").write_text('{"status": "complete"}')
+    running = find_running_pipelines(tmp_path)
+    assert len(running) == 2
