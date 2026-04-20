@@ -1326,3 +1326,95 @@ def test_refresh_bg_task_cancelled_error_writes_reset_endpoint_reason(tmp_path, 
         assert state["result"].get("reason") == "reset_endpoint"
 
     asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/pipeline/noaa/refresh/reset (Task 11)
+# ---------------------------------------------------------------------------
+
+def test_noaa_refresh_reset_when_idle_returns_404(tmp_path, monkeypatch):
+    """POST /reset returns 404 when there's nothing to reset."""
+    from services.search.main import app
+    from services.search import main as main_module
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+    main_module._active_refresh_task = None
+    main_module._cancel_event = None
+    client = TestClient(app)
+    r = client.post(
+        "/admin/pipeline/noaa/refresh/reset",
+        headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+    )
+    assert r.status_code == 404
+
+
+def test_noaa_refresh_reset_clears_lockfile_and_progress(tmp_path, monkeypatch):
+    """POST /reset atomically removes the lockfile + progress.json and returns 200."""
+    from services.search.main import app
+    from services.search import main as main_module
+    from refresh_noaa_catalog import PROGRESS_FILENAME, write_progress_state
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+    main_module._active_refresh_task = None
+    main_module._cancel_event = None
+    # Seed a stuck lockfile + progress.json
+    lock_path = tmp_path / "noaa_catalog_refresh.lock"
+    lock_path.write_text('{"pid": 99999, "acquired_ts": "2026-04-20T10:00:00Z"}')
+    write_progress_state(tmp_path / PROGRESS_FILENAME, {
+        "status": "running", "phase": "fetching_tile_indexes",
+    })
+    client = TestClient(app)
+    r = client.post(
+        "/admin/pipeline/noaa/refresh/reset",
+        headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "reset"
+    assert body["lockfile_removed"] is True
+    assert body["progress_removed"] is True
+    assert body["task_cancelled"] is False
+    # Files are gone
+    assert not lock_path.exists()
+    assert not (tmp_path / PROGRESS_FILENAME).exists()
+
+
+@pytest.mark.asyncio
+async def test_noaa_refresh_reset_cancels_active_task(tmp_path, monkeypatch):
+    """POST /reset cancels _active_refresh_task and awaits its finalization."""
+    import asyncio
+    from services.search import main as main_module
+    from refresh_noaa_catalog import PROGRESS_FILENAME, write_progress_state
+
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+
+    async def long_running():
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            raise
+
+    task = asyncio.create_task(long_running())
+    await asyncio.sleep(0.01)  # let the task start
+    main_module._active_refresh_task = task
+    main_module._cancel_event = asyncio.Event()
+    write_progress_state(tmp_path / PROGRESS_FILENAME, {"status": "running"})
+
+    # Call the endpoint function directly (avoids TestClient event-loop conflicts)
+    from services.search.main import noaa_refresh_reset
+    body = await noaa_refresh_reset()
+
+    assert body["status"] == "reset"
+    assert body["task_cancelled"] is True
+    assert body["progress_removed"] is True
+    # After reset, module refs are cleared
+    assert main_module._active_refresh_task is None
+    assert main_module._cancel_event is None
+
+
+def test_noaa_refresh_reset_requires_internal_header(tmp_path, monkeypatch):
+    """POST /reset requires X-Config-Source auth."""
+    from services.search.main import app
+    from services.search import main as main_module
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+    client = TestClient(app)
+    r = client.post("/admin/pipeline/noaa/refresh/reset")
+    assert r.status_code in (401, 403)

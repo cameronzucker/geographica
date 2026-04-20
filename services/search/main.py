@@ -2573,6 +2573,77 @@ async def noaa_refresh_cancel():
     }
 
 
+@app.post(
+    "/admin/pipeline/noaa/refresh/reset",
+    dependencies=[Depends(require_config_source)],
+)
+async def noaa_refresh_reset():
+    """Atomically reset the NOAA catalog refresh subsystem.
+
+    Cancels the active bg task (if any), awaits finalization, then removes
+    the lockfile and progress.json. Returns 404 when there's nothing to
+    reset. Used by the frontend's Force Clear action when a stale refresh
+    is detected (progress.last_updated > 10 min while status=running).
+
+    Per spec v2 §change #4: cancellation MUST happen BEFORE lockfile +
+    progress removal to prevent a still-running old bg task from
+    corrupting the next refresh's progress.json.
+    """
+    global _active_refresh_task, _cancel_event
+    try:
+        from refresh_noaa_catalog import PROGRESS_FILENAME
+    except ImportError:
+        raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
+
+    lock_path = DATA_DIR / "noaa_catalog_refresh.lock"
+    progress_path = DATA_DIR / PROGRESS_FILENAME
+    has_task = _active_refresh_task is not None and not _active_refresh_task.done()
+    has_lock = lock_path.exists()
+    has_progress = progress_path.exists()
+
+    if not (has_task or has_lock or has_progress):
+        raise HTTPException(status_code=404, detail="Nothing to reset")
+
+    task_cancelled = False
+    if has_task:
+        _active_refresh_task.cancel()
+        try:
+            await _active_refresh_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            # Other exceptions are already logged in progress.json by the
+            # bg task's try/except/finally. We consumed them here so the
+            # reset can still proceed.
+            pass
+        task_cancelled = True
+    _active_refresh_task = None
+    _cancel_event = None
+
+    lockfile_removed = False
+    if has_lock:
+        try:
+            lock_path.unlink()
+            lockfile_removed = True
+        except OSError:
+            pass
+
+    progress_removed = False
+    if has_progress:
+        try:
+            progress_path.unlink()
+            progress_removed = True
+        except OSError:
+            pass
+
+    return {
+        "status": "reset",
+        "task_cancelled": task_cancelled,
+        "lockfile_removed": lockfile_removed,
+        "progress_removed": progress_removed,
+    }
+
+
 @app.post("/admin/pipeline/noaa/rollback", dependencies=[Depends(require_config_source)])
 async def noaa_rollback(body: NoaaRollbackBody):
     """Rollback NOAA catalog to a prior snapshot. Atomic symlink swap."""

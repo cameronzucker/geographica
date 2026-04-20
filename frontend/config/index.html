@@ -1545,7 +1545,7 @@
                     // still going — skip the confirm dialog; jump straight to
                     // the in-progress UI + polling.
                     _showProgressCard(body, src);
-                    _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), state);
+                    _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), state, body, src);
                     _startPolling(body, src);
                 } else if (state.status === 'done') {
                     // Show the full completion summary (result from last finished refresh).
@@ -1994,7 +1994,7 @@
         }
 
         // Apply a progress state snapshot to the card element.
-        function _updateProgressCard(card, state) {
+        function _updateProgressCard(card, state, body, src) {
             var pct = (state.percent != null) ? Math.round(state.percent) : 0;
             var proc = (state.states_processed != null) ? state.states_processed : null;
             var total = (state.states_total != null && state.states_total > 0) ? state.states_total : null;
@@ -2032,15 +2032,51 @@
                     overlay.className = 'noaa-stale-overlay';
                     overlay.innerHTML =
                         '<span class="stale-msg">\u26a0 Progress data may be stale. The refresh worker may have stalled.</span>' +
-                        '<button type="button" class="btn-secondary" data-testid="noaa-force-clear-btn" disabled ' +
-                        'title="Force-clear wiring lands in Task 11">[Force Clear]</button>';
+                        '<button type="button" class="btn-secondary" data-testid="noaa-force-clear-btn" ' +
+                        'data-action="force-clear">[Force Clear]</button>';
                     card.appendChild(overlay);
+                    if (body && src) _wireForceClearButton(card, body, src);
                 }
             } else {
                 // Remove stale overlay if it was there before
                 var staleEl = card.querySelector('.noaa-stale-overlay');
                 if (staleEl) staleEl.parentNode.removeChild(staleEl);
             }
+        }
+
+        function _wireForceClearButton(card, body, src) {
+            var btn = card.querySelector('[data-action="force-clear"]');
+            if (!btn || btn._wired) return;
+            btn._wired = true;
+            btn.disabled = false;
+            btn.addEventListener('click', function() {
+                if (!confirm('Force clear the stuck refresh state? This will abort any ' +
+                             'running refresh and return the subsystem to idle.')) return;
+                btn.disabled = true;
+                btn.textContent = 'Clearing\u2026';
+                cfgFetch('/admin/pipeline/noaa/refresh/reset', { method: 'POST' })
+                    .then(function(r) {
+                        if (!r.ok) throw new Error('Reset failed (' + r.status + ')');
+                        return r.json();
+                    })
+                    .then(function() {
+                        // Transition back to idle UI
+                        _stopPolling(body);
+                        var progressCard = document.getElementById('card-' + src.id + '-progress');
+                        if (progressCard) progressCard.remove();
+                        var completionBanner = document.getElementById('card-' + src.id + '-completion');
+                        if (completionBanner) completionBanner.remove();
+                        // Reload the catalog dropdown to reflect current state
+                        _reloadCatalogDropdown(body, src);
+                        // Reload refresh log in case the reset left a log entry
+                        if (typeof loadRefreshLog === 'function') loadRefreshLog();
+                    })
+                    .catch(function(e) {
+                        btn.disabled = false;
+                        btn.textContent = '[Force Clear]';
+                        alert('Force clear failed: ' + (e.message || 'unknown error'));
+                    });
+            });
         }
 
         // Stop polling — clear the interval and remove the stored id.
@@ -2168,7 +2204,7 @@
                                 // Card was removed (e.g. panel collapse/expand); re-show it
                                 card = _showProgressCard(targetBody, targetSrc);
                             }
-                            _updateProgressCard(card, state);
+                            _updateProgressCard(card, state, targetBody, targetSrc);
                         } else if (state.status === 'done') {
                             _stopPolling(targetBody);
                             _renderCompletionSummary(targetBody, targetSrc, state);
@@ -2220,7 +2256,7 @@
                         _showProgressCard(body, src);
                         // Seed the card with whatever the 202 body provides
                         if (r.data && r.data.progress) {
-                            _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), r.data.progress);
+                            _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), r.data.progress, body, src);
                         }
                         _startPolling(body, src);
                     } else if (r.status === 409) {
@@ -2229,7 +2265,7 @@
                         } else if (r.data && r.data.progress) {
                             // locked — show progress card from existing state
                             _showProgressCard(body, src);
-                            _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), r.data.progress);
+                            _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), r.data.progress, body, src);
                             _startPolling(body, src);
                         } else {
                             alert('Refresh already in progress (409). Check the progress bar.');
