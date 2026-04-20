@@ -82,7 +82,23 @@ Expanding NOAA NAIP imagery from Arizona-only to all 48 CONUS + DC. Adds a bbox-
 
 **Known follow-up (surfaced during Task 10's live-run attempt):** the tile-index URL template assembled by `refresh_catalog()` (`{AZURE_BASE}/{dir}/tileindex/tileindex_{dir}.zip`) does NOT match NOAA's actual Azure blob layout. All 103 directory prefixes parsed correctly, but every `validate_tile_index` HEAD returned 404. A stub baseline (just the AZ entry) was committed to unblock Phase 2-4; real baseline generation is deferred to Phase 5 where the CI-tier integration test + the pre-merge GitHub Action will force discovery of the correct URL pattern. Two likely fixes: (a) per-directory blob listing with `prefix=<dir>/tileindex/` to discover the actual ZIP name, or (b) URL-pattern correction once confirmed against live Azure. Logged in Task 10's commit message (`c45a0b7`).
 
-**Phases 2-6 deferred to future sessions.** Branch `feat/noaa-conus` at commit `c45a0b7` as of this pause. 12 commits on the branch. Subagent-driven-development flow (implementer → combined spec+quality review → TDD preamble → fix loop) proven reliable for these mechanical tasks at the Haiku tier; Phase 2's more complex refactor tasks (checkpoint PK migration, snapshot pinning, partial-failed terminal state) may warrant Sonnet-tier implementers.
+**Phase 2 complete (Tasks 11-18).** Pipeline refactor landed: resolver (`resolve_noaa_candidates`), per-state queue build with whole-state filter short-circuit (`build_state_queue`), unified download queue of `(snapshot, usps, filename, blob_url)` tuples (`build_unified_queue`), composite-PK checkpoint migration with `NOT NULL DEFAULT ''` transitional semantics (`_init_noaa_checkpoint` / `_record_tile_complete`), Start-time snapshot pinning (`pin_catalog_snapshot` + `_resolve_or_pin_snapshot`) with `SnapshotPrunedError` resume guard, CLI `--state` slug/USPS normalization with `--year` removed (BREAKING), and `partial_failed` terminal status via `_finalize_noaa_status`. 8 commits (`4a67164` → `eb30eb3`) plus review-closeout fix commit `3cd2e58`. 
+
+**Phase 2 review loop** (2 rounds: Sonnet architectural + Haiku test coverage; Codex adversarial blocked by v0.118.0 CLI flag conflict — deferred to full-branch pass) surfaced 1 Critical + 3 Important issues fixed in `3cd2e58`:
+- `services/search/main.py` still passed `--year` + both `--state`+`--bbox` to the CLI (would have broken every admin-initiated NOAA pipeline launch).
+- `_finalize_noaa_status` clobbered `status=error` with `partial_failed` on total-failure single-state runs.
+- `FileNotFoundError` (missing catalog) and `SnapshotPrunedError` (pruned resume) produced raw tracebacks instead of actionable error messages.
+- `tests/test_noaa_naip.py::test_argparse_accepts_noaa_mode` validated a local parser with `--year` rather than the real CLI — test defunct, deleted.
+
+Review notes in [dev/adversarial/2026-04-20-noaa-phase2-review.md](../dev/adversarial/2026-04-20-noaa-phase2-review.md). Pre-merge hardening deferred (Round 2 edge-case tests, `_init_noaa_checkpoint` per-tile optimization) documented there.
+
+**Incident during Phase 2:** implementer subagent for Task 13 silently escaped the worktree and committed to `dev` (on top of the parallel agent's WakeLock work). Recovered via `git revert` on dev (`bdd3157`); all subsequent implementer prompts require a pre-flight `pwd` / `git branch --show-current` / `git rev-parse HEAD` assertion, and the controller independently verifies `git branch --contains <sha>` before accepting DONE status. Saved to memory as `feedback_worktree_escape.md`.
+
+**Test counts:** 905 passed (pre-fix-commit) → 911 passed (post-fix, +6 new admin-endpoint tests). 27 pre-existing `test_setup_main.py` / `test_bootstrap_messaging.py` failures unchanged throughout.
+
+**Known follow-up** (same as Phase 1): tile-index URL template still assembles `{AZURE_BASE}/{dir}/tileindex/tileindex_{dir}.zip` which doesn't match NOAA's actual Azure layout. Phase 5 integration test will force discovery via live-Azure listing. Phase 2 doesn't exercise the tile-index URL path (it builds queues from synthetic inputs in unit tests); Arizona-only runs through the legacy `NOAA_NAIP_CATALOG` dict still work because that path never touches `refresh_catalog`'s URL builder.
+
+**Phases 3-6 remain.** Phase 3 (admin endpoints, 8 tasks) next. Subagent-driven-development flow with combined spec+quality review (single reviewer for mechanical Haiku tasks, separate two-stage for Sonnet load-bearing) proven efficient — ~2 min per per-task review, ~5 min per Sonnet implementer dispatch.
 
 ---
 
