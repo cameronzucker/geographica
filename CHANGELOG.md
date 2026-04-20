@@ -7,6 +7,13 @@ project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries
 from v1.1.0 onward are generated automatically by `release-please` from
 Conventional Commits.
 
+## [1.5.3](https://github.com/cameronzucker/geographica/compare/v1.5.2...v1.5.3) (2026-04-20)
+
+
+### Bug Fixes
+
+* **pipeline:** use public catalog endpoint for PAD-US download ([1f597aa](https://github.com/cameronzucker/geographica/commit/1f597aaf866c8d97e45cf00a9f186e35fdf4af07))
+
 ## [1.5.2](https://github.com/cameronzucker/geographica/compare/v1.5.1...v1.5.2) (2026-04-19)
 
 
