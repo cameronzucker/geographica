@@ -15,6 +15,7 @@ import shutil
 import sqlite3
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -29,10 +30,25 @@ from pydantic import BaseModel
 
 import keyring_client
 
+# Make `scripts/` modules importable in BOTH:
+#   - the search container, where docker-compose bind-mounts `./scripts:/scripts:ro`
+#     (so /scripts is a directory full of .py files, NOT a Python package — `from
+#     scripts.X import ...` fails with ModuleNotFoundError).
+#   - local dev / test, where the repo root is on sys.path and scripts/ is a
+#     namespace package (Python 3.3+).
+# Insert both candidate paths so `from common.state_bboxes import ...` and
+# `from refresh_noaa_catalog import ...` resolve either way.
+for _scripts_dir in (
+    Path("/scripts"),
+    Path(__file__).resolve().parent.parent.parent / "scripts",
+):
+    if _scripts_dir.is_dir() and str(_scripts_dir) not in sys.path:
+        sys.path.insert(0, str(_scripts_dir))
+
 try:
-    from scripts.common.state_bboxes import SLUG_BY_USPS, USPS_BY_SLUG, states_intersecting
+    from common.state_bboxes import SLUG_BY_USPS, USPS_BY_SLUG, states_intersecting
     _STATE_BBOXES_AVAILABLE = True
-except ImportError:  # search container may not have scripts/ on PYTHONPATH
+except ImportError:  # scripts/ unavailable in some minimal test environments
     _STATE_BBOXES_AVAILABLE = False
     SLUG_BY_USPS: dict = {}  # type: ignore[assignment]
     USPS_BY_SLUG: dict = {}  # type: ignore[assignment]
@@ -1879,7 +1895,7 @@ def _count_noaa_tiles(
             with open(dbf_path, "rb") as f:
                 f.read(4)
                 total_records = struct.unpack("<I", f.read(4))[0]
-            from scripts.common.state_bboxes import STATE_BBOXES
+            from common.state_bboxes import STATE_BBOXES
             state_bbox = STATE_BBOXES.get(slug)
             if state_bbox is None:
                 total += total_records
@@ -2268,7 +2284,7 @@ async def naip_county_lookup(bbox: str = Query(..., description="west,south,east
 async def noaa_refresh():
     """Trigger a NOAA catalog refresh. Wraps refresh_catalog()."""
     try:
-        from scripts.refresh_noaa_catalog import refresh_catalog
+        from refresh_noaa_catalog import refresh_catalog
     except ImportError:
         raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
     result = await refresh_catalog(data_dir=DATA_DIR)
@@ -2297,7 +2313,7 @@ class NoaaRollbackBody(BaseModel):
 async def noaa_rollback(body: NoaaRollbackBody):
     """Rollback NOAA catalog to a prior snapshot. Atomic symlink swap."""
     try:
-        from scripts.refresh_noaa_catalog import find_running_pipelines, swap_symlink, append_refresh_log
+        from refresh_noaa_catalog import find_running_pipelines, swap_symlink, append_refresh_log
     except ImportError:
         raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
 
@@ -2344,7 +2360,7 @@ async def noaa_rollback(body: NoaaRollbackBody):
 async def noaa_force_unlock():
     """Remove a stale refresh lockfile (PID no longer alive)."""
     try:
-        from scripts.refresh_noaa_catalog import force_unlock
+        from refresh_noaa_catalog import force_unlock
     except ImportError:
         raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
     lock_path = DATA_DIR / "noaa_catalog_refresh.lock"

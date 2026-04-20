@@ -15,7 +15,13 @@ import subprocess
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from scripts.common.state_bboxes import STATE_BBOXES, SLUG_BY_USPS
+# Dual-form import: resolves from either the repo root (tests run from there)
+# OR the search container (where ./scripts is bind-mounted at /scripts and
+# services/search/main.py puts /scripts on sys.path).
+try:
+    from scripts.common.state_bboxes import STATE_BBOXES, SLUG_BY_USPS
+except ImportError:
+    from common.state_bboxes import STATE_BBOXES, SLUG_BY_USPS
 
 
 class CatalogValidationError(Exception):
