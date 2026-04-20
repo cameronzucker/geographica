@@ -37,6 +37,45 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-20 — NOAA catalog refresh async+progress (Phase 1 complete, Phase 2 pending)
+
+**Released as:** not yet released (in-progress on `dev`)
+**Plan / spec:** [docs/superpowers/specs/2026-04-20-noaa-refresh-async-progress-design.md](../docs/superpowers/specs/2026-04-20-noaa-refresh-async-progress-design.md), [docs/superpowers/plans/2026-04-20-noaa-refresh-async-progress.md](../docs/superpowers/plans/2026-04-20-noaa-refresh-async-progress.md)
+**Adversarial reviews:** [dev/adversarial/2026-04-20-noaa-refresh-async-sonnet.md](adversarial/2026-04-20-noaa-refresh-async-sonnet.md) (v1→v2); Phase 1 closeout: Sonnet architectural + Sonnet adversarial + Codex (`/tmp/phase1-codex-review.log`)
+
+### Summary
+Follow-on to the 2026-04-20 NOAA NAIP CONUS expansion (39 tasks shipped). First live refresh attempt surfaced three UX failures: nginx 60s `proxy_read_timeout` returning a 504 HTML page (browser `JSON.parse` → SyntaxError), no progress reporting for the 10–30 min operation, and the Refresh button buried inside a collapsible labeled "history". Phase 1 converts the endpoint from a single synchronous HTTP call to a **dispatch + poll** pattern: `POST /refresh` returns 202 Accepted in <1s and schedules `refresh_catalog()` on `asyncio.create_task()`; a progress callback atomically writes `/data/noaa_catalog_refresh.progress.json`; `GET /refresh/progress` returns the state; `POST /refresh/cancel` sets a module-level `asyncio.Event`. Frontend wiring lands in Phase 2.
+
+### Key decisions
+- **asyncio.Event (not file flag) for cancel signalling.** Spec v2 §change #3 — eliminates the read-then-write race where the cancel endpoint's file write would clobber the bg task's progress update. The file flag stays in progress.json as UI-readable status only, written by the bg task *after* observing the Event.
+- **Module-level `_active_refresh_task` reference retention.** Spec v2 §change #1 — prevents Python's GC from collecting tasks held only in the event loop's weak set; also enables future `/refresh/reset` to cancel the task cleanly.
+- **run_in_executor for blocking ops.** `fetch_tile_count`'s `ogr2ogr` subprocess, the ZIP file write, and `ZipFile.extractall()` are all dispatched through the executor so the event loop stays responsive for `/progress` polling during the 10–30 min refresh.
+- **RefreshCancelled exception for mid-state cancel routing.** Spec v2 §Failure mode 3 targeted ≤15s typical cancel latency — state-boundary polling alone was ~360s+ worst case inside a large tile-index download + extract. `fetch_tile_count` now checks `cancel_event` at four points and raises `RefreshCancelled`, which `refresh_catalog`'s per-state loop catches and routes to the same cancelled-log-entry path as its loop-top check.
+
+### Notable bugs caught (by the Phase 1 closeout 3-round review)
+- **Cancel latency unbounded** — `sess.get(total=300)` + `write_bytes` + `extractall` + `ogr2ogr(60s)` could stall cancel for minutes (all 3 rounds) → `fe8db7d`.
+- **Duplicate refresh-log entries** — `refresh_catalog` logs on all ok/truncated/cancelled/invalid_parse paths; bg-task wrapper's generic `except Exception` was appending a second `validation_status=error` entry (Sonnet Round 2 + Codex) → `fe8db7d`.
+- **_is_progress_stale `TypeError`** on tz-naive ISO timestamps — `GET /progress` 500 instead of gracefully non-stale (Sonnet Round 2 + Codex) → `fe8db7d`.
+- **Test gaps** — bg-task error path round-trip, CancelledError branch, POST /cancel auth, naive-ISO stale path. All added in `fe8db7d`.
+
+### Commits (Phase 1)
+- `6fdac47` feat(noaa): progress-state helpers
+- `3956dff` feat(noaa): refresh_catalog progress callback + event-loop-safe fetch_tile_count
+- `015a325` feat(noaa): async-dispatch POST /refresh
+- `b3b4a39` feat(noaa): GET /refresh/progress
+- `5238834` feat(noaa): POST /refresh/cancel
+- `dcce6c5` feat(noaa): stale-refresh heuristic
+- `fe8db7d` fix(noaa): Phase 1 review closeout — 3 bugs + 4 test gaps
+
+### Known latent issues (deferred to a separate ops-hardening spec)
+- **Multi-worker double-dispatch**: module-level `_active_refresh_task` doesn't serialize across uvicorn workers. Currently single-worker, so inactive. (Codex flagged.)
+- **Single-temp-file race** in `write_progress_state`: fixed `.tmp` filename is not multi-writer safe under the multi-worker scenario above. Same mitigation. (Codex flagged.)
+
+### Outcome
+Phase 1 complete: 6 Task commits + 1 closeout commit = 7 commits on `dev`. 95 passing tests (up from 90 at start of Phase 1) across `tests/test_refresh_noaa_catalog.py` (43) + `services/search/tests/test_noaa_admin_endpoints.py` (52). No regressions in the pre-existing 2 M2M failures or 18 Nominatim-env errors. Phase 2 (frontend: Tasks 7-11) is next.
+
+---
+
 ## 2026-04-21 — Nav UX beta-bug remediation (13 bugs closed, B1 deferred)
 
 **Released as:** not yet released (pending main merge + runtime validation)
