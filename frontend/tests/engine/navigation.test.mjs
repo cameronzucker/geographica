@@ -577,3 +577,71 @@ test('TTM edge: cooldown regression guard — adjacent near-prompts both fire', 
   assert.ok(mulberry.length >= 1, 'Mulberry near-tier must fire');
   assert.ok(oak.length >= 1, 'Oak near-tier must fire in the next tick — no cooldown');
 });
+
+test('TTM bicycle: near-tier does not fire outside 30m floor', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  // 55m west of maneuver 1. At walking pace (1 m/s), TTM=55s >> bicycle far(20s),
+  // so neither far-tier (TTM>20s) nor near-tier (dist>30m floor, TTM>3s) fires.
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64060, heading: 90, speed: 1 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  const bikeRoute = { ...fixtureRouteWithTwoTurns(), costing: 'bicycle' };
+  nav.start(bikeRoute);
+  // Advance to ~35m from maneuver — still outside 30m floor.
+  // At 1 m/s, TTM = 35/1 = 35s > 20s far-threshold → far does NOT fire.
+  // 35m > 30m floor → near does NOT fire by floor.
+  // TTM 35s > 3s near-threshold → near does NOT fire by TTM.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64038, heading: 90, speed: 1 });
+
+  assert.equal(voiceFires.length, 0,
+    'bicycle at 35m from maneuver at walking pace: outside 30m floor and TTM>20s, should not fire');
+});
+
+test('TTM bicycle: near-tier fires when inside 30m floor', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64025, heading: 90, speed: 3 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  const bikeRoute = { ...fixtureRouteWithTwoTurns(), costing: 'bicycle' };
+  nav.start(bikeRoute);
+  // 25m from maneuver, inside 30m bicycle floor.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64023, heading: 90, speed: 3 });
+  assert.ok(voiceFires.length >= 1,
+    'bicycle inside 30m floor must fire near-tier');
+});
+
+test('TTM pedestrian: near-tier fires inside 15m floor', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  // 12m west of maneuver 1 (inside pedestrian 15m floor).
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64012, heading: 90, speed: 1.5 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  const walkRoute = { ...fixtureRouteWithTwoTurns(), costing: 'pedestrian' };
+  nav.start(walkRoute);
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64010, heading: 90, speed: 1.5 });
+  assert.ok(voiceFires.length >= 1,
+    'pedestrian inside 15m floor must fire near-tier');
+});
+
+test('TTM pedestrian: outside 15m floor at walking pace does not fire near', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  // 20m west of maneuver 1 (outside 15m floor), walking 1 m/s.
+  // TTM = 20/1 = 20s; pedestrian far threshold is 15s, so 20 > 15 → far does NOT fire.
+  // 2s near at 1 m/s = 2m → near via TTM not met.
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64020, heading: 90, speed: 1 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  const walkRoute = { ...fixtureRouteWithTwoTurns(), costing: 'pedestrian' };
+  nav.start(walkRoute);
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64018, heading: 90, speed: 1 });
+  assert.equal(voiceFires.length, 0,
+    'pedestrian at 18m from maneuver, outside 15m floor and 15s TTM, should not fire');
+});
