@@ -37,11 +37,11 @@ Production results, test counts, any surprises.
 
 ---
 
-## 2026-04-20 — NOAA catalog refresh async+progress (Phase 1 complete, Phase 2 pending)
+## 2026-04-20 — NOAA catalog refresh async+progress (13 tasks complete, awaiting push)
 
-**Released as:** not yet released (in-progress on `dev`)
+**Released as:** not yet released (shipped on `dev`, not yet pushed to origin)
 **Plan / spec:** [docs/superpowers/specs/2026-04-20-noaa-refresh-async-progress-design.md](../docs/superpowers/specs/2026-04-20-noaa-refresh-async-progress-design.md), [docs/superpowers/plans/2026-04-20-noaa-refresh-async-progress.md](../docs/superpowers/plans/2026-04-20-noaa-refresh-async-progress.md)
-**Adversarial reviews:** [dev/adversarial/2026-04-20-noaa-refresh-async-sonnet.md](adversarial/2026-04-20-noaa-refresh-async-sonnet.md) (v1→v2); Phase 1 closeout: Sonnet architectural + Sonnet adversarial + Codex (`/tmp/phase1-codex-review.log`)
+**Adversarial reviews:** [dev/adversarial/2026-04-20-noaa-refresh-async-sonnet.md](adversarial/2026-04-20-noaa-refresh-async-sonnet.md) (v1→v2); Phase 1 closeout: Sonnet architectural + Sonnet adversarial + Codex (`/tmp/phase1-codex-review.log`); Phase 2 closeout: Sonnet integration + Codex (`/tmp/phase2-codex-review.log`)
 
 ### Summary
 Follow-on to the 2026-04-20 NOAA NAIP CONUS expansion (39 tasks shipped). First live refresh attempt surfaced three UX failures: nginx 60s `proxy_read_timeout` returning a 504 HTML page (browser `JSON.parse` → SyntaxError), no progress reporting for the 10–30 min operation, and the Refresh button buried inside a collapsible labeled "history". Phase 1 converts the endpoint from a single synchronous HTTP call to a **dispatch + poll** pattern: `POST /refresh` returns 202 Accepted in <1s and schedules `refresh_catalog()` on `asyncio.create_task()`; a progress callback atomically writes `/data/noaa_catalog_refresh.progress.json`; `GET /refresh/progress` returns the state; `POST /refresh/cancel` sets a module-level `asyncio.Event`. Frontend wiring lands in Phase 2.
@@ -71,8 +71,37 @@ Follow-on to the 2026-04-20 NOAA NAIP CONUS expansion (39 tasks shipped). First 
 - **Multi-worker double-dispatch**: module-level `_active_refresh_task` doesn't serialize across uvicorn workers. Currently single-worker, so inactive. (Codex flagged.)
 - **Single-temp-file race** in `write_progress_state`: fixed `.tmp` filename is not multi-writer safe under the multi-worker scenario above. Same mitigation. (Codex flagged.)
 
+### Phase 2 (frontend — Tasks 7-11) — shipped
+
+- `00f939e` feat(frontend): promote NOAA Refresh to primary empty-state CTA
+- `ea7956f` feat(frontend): cite 10-30 min duration in NOAA refresh confirm dialog
+- `24639b7` feat(frontend): live progress bar + ETA for NOAA catalog refresh (with page-nav rehydration per spec testing invariant #7)
+- `72c496d` feat(frontend): NOAA refresh completion summary + dropdown reload
+- `edc8744` feat(noaa): POST /refresh/reset endpoint + Force Clear wiring
+
+### Phase 2 closeout (2026-04-20, 3-round review — Sonnet + Codex)
+
+- **Bug 1 (Critical lifecycle)** — Progress polling leaked across NOAA card collapse/expand (interval fired on detached DOM; re-expand stacked a second interval). Codex only. → `5b97549`.
+- **Bug 2 (Critical correctness)** — Force Clear vs. in-flight poll race; stale `/progress` fetch after `/reset` could re-render progress card with obsolete state. Codex only. Fixed with per-card force-clear generation counter. → `5b97549`.
+- **Bug 3 (Important)** — Rehydration vs. catalog-fetch race: `/catalog` could show the empty banner over a running refresh. Both rounds. Fixed by gating `_updateRefreshBannerVisibility` behind absence of progress/completion card. → `5b97549`.
+- **Bug 4 (Important)** — `/refresh/reset` could hang indefinitely if the bg task refused to finalize after `.cancel()`. Sonnet only. Fixed with `asyncio.wait_for(task, timeout=30)`; module refs cleared + files removed even on TimeoutError. → `5b97549`.
+- **Bug 5 (Important)** — Completion banner `className` concatenated server-provided `result.status` without sanitization. Sonnet only. Whitelisted against known statuses. → `5b97549`.
+- 3 UX polish items (zero-state copy, 24h staleness on completion banner, cancelled copy). → `5b97549`.
+
+### Task 12 — terminal-state gap tests
+
+- `5cfda6b` test(noaa): bg-task terminal-state round-trip coverage (ok/truncated/invalid_parse/cancelled). Spec testing invariant #4 now has full 5-branch coverage (with error + reset_endpoint from Phase 1 closeout).
+
 ### Outcome
-Phase 1 complete: 6 Task commits + 1 closeout commit = 7 commits on `dev`. 95 passing tests (up from 90 at start of Phase 1) across `tests/test_refresh_noaa_catalog.py` (43) + `services/search/tests/test_noaa_admin_endpoints.py` (52). No regressions in the pre-existing 2 M2M failures or 18 Nominatim-env errors. Phase 2 (frontend: Tasks 7-11) is next.
+
+- **15 commits** on `dev` (6 Phase 1 + 1 Phase 1 closeout + 1 log + 5 Phase 2 + 1 Phase 2 closeout + 1 gap tests + 1 Phase 2 log update).
+- **104 passing tests** (up from 90 at start of Phase 1) across `tests/test_refresh_noaa_catalog.py` (43) + `services/search/tests/test_noaa_admin_endpoints.py` (61). No regressions in the pre-existing 2 M2M failures or the Nominatim-env errors.
+- Runtime validation pending — Cameron will exercise the new admin-panel refresh flow (dispatch, progress bar, cancel, completion summary, stale Force Clear) against the live dev stack before merging to main.
+
+### Known latent issues (deferred to a separate ops-hardening spec, tracked in START.md)
+
+- **Multi-worker double-dispatch**: module-level `_active_refresh_task` doesn't serialize across uvicorn workers. Currently single-worker (active), so inactive. Codex Phase 1.
+- **Single-temp-file race** in `write_progress_state`: fixed `.tmp` filename is not multi-writer safe under the multi-worker scenario above. Codex Phase 1.
 
 ---
 
