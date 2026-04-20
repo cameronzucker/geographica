@@ -1423,6 +1423,29 @@
                 linesWrap.appendChild(document.createTextNode(line));
             });
             estBox.appendChild(linesWrap);
+
+            // Peak-working-set disk warning (Spec §3.7, Task 30a)
+            var peak = d.peak_required_gb || 0;
+            var free = d.disk_free_gb || 0;
+            estBox._diskBlocked = false;
+            if (peak > 0 && free > 0) {
+                var pct = peak / free;
+                if (pct > 1.0) {
+                    estBox.appendChild(document.createElement('br'));
+                    var block = document.createElement('span');
+                    block.style.color = '#f38ba8';
+                    block.style.fontWeight = '600';
+                    block.textContent = '\u26d4 Peak working set (' + peak.toFixed(1) + ' GB) exceeds free disk (' + free.toFixed(1) + ' GB). Start is disabled.';
+                    estBox.appendChild(block);
+                    estBox._diskBlocked = true;
+                } else if (pct > 0.85) {
+                    estBox.appendChild(document.createElement('br'));
+                    var warn = document.createElement('span');
+                    warn.style.color = '#f9e2af';
+                    warn.textContent = '\u26a0 Peak working set ' + peak.toFixed(1) + ' GB is ' + Math.round(pct * 100) + '% of your ' + free.toFixed(1) + ' GB free disk. You can continue but should monitor.';
+                    estBox.appendChild(warn);
+                }
+            }
         }
 
         // ---------------------------------------------------------------
@@ -1459,7 +1482,19 @@
         });
 
         document.getElementById('card-' + src.id + '-start-whole').addEventListener('click', function() {
-            startPipeline(src, { state: stateSel.value });
+            // Task 30a — peak-disk gate
+            if (estBoxWhole && estBoxWhole._diskBlocked) {
+                alert('Cannot start: peak working set exceeds free disk.\nEither free space or shrink the bbox, then re-Estimate.');
+                return;
+            }
+            // Task 30b — acknowledge_missing gate
+            var ackCheckboxWhole = estBoxWhole ? estBoxWhole.querySelector('#card-' + src.id + '-ack-missing') : null;
+            if (ackCheckboxWhole && !ackCheckboxWhole.checked) {
+                alert('This bbox intersects non-cataloged state(s). Check the \u201cI understand\u201d box to proceed with partial coverage.');
+                return;
+            }
+            var ackMissingWhole = ackCheckboxWhole ? ackCheckboxWhole.checked : false;
+            startPipeline(src, { state: stateSel.value, acknowledge_missing: ackMissingWhole });
         });
 
         // ---------------------------------------------------------------
@@ -1472,9 +1507,12 @@
             estBoxCustom.style.display = '';
             estBoxCustom.textContent = 'Estimating...';
             estBoxCustom.style.color = '#7a8299';
-            var bbox = document.getElementById('cfg-bbox').value;
-            if (!bbox || bbox.trim() === '') {
-                estBoxCustom.textContent = 'No bbox set \u2014 draw a box on the Coverage Area map first.';
+            // Task 30c — parse-based bbox validation before hitting the API
+            var bbox = document.getElementById('cfg-bbox').value.trim();
+            var bboxParts = bbox.split(',').map(function(x) { return parseFloat(x.trim()); });
+            if (!(bboxParts.length === 4 && bboxParts.every(function(n) { return Number.isFinite(n); }))) {
+                estBoxCustom.style.display = '';
+                estBoxCustom.textContent = 'Set a bbox in the Coverage Area panel above before estimating.';
                 estBoxCustom.style.color = '#f9e2af';
                 return;
             }
@@ -1501,7 +1539,19 @@
 
         document.getElementById('card-' + src.id + '-start-custom').addEventListener('click', function() {
             var bbox = document.getElementById('cfg-bbox').value;
-            startPipeline(src, { bbox: bbox });
+            // Task 30a — peak-disk gate
+            if (estBoxCustom && estBoxCustom._diskBlocked) {
+                alert('Cannot start: peak working set exceeds free disk.\nEither free space or shrink the bbox, then re-Estimate.');
+                return;
+            }
+            // Task 30b — acknowledge_missing gate
+            var ackCheckboxCustom = estBoxCustom ? estBoxCustom.querySelector('#card-' + src.id + '-ack-missing') : null;
+            if (ackCheckboxCustom && !ackCheckboxCustom.checked) {
+                alert('This bbox intersects non-cataloged state(s). Check the \u201cI understand\u201d box to proceed with partial coverage.');
+                return;
+            }
+            var ackMissingCustom = ackCheckboxCustom ? ackCheckboxCustom.checked : false;
+            startPipeline(src, { bbox: bbox, acknowledge_missing: ackMissingCustom });
         });
 
         if (_anyPipelineRunning) {
