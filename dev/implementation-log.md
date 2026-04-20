@@ -279,7 +279,33 @@ Commits on dev (Phase 3 only, in order): `c74a935` (19), `5719b3b` (20), `f20d51
 
 **Pending: Cameron's manual visual check** of the live admin UI against the mockup. The tests green (32 passing in `services/search/tests/test_noaa_admin_endpoints.py`) don't exercise the DOM — the admin panel lacks Playwright/jsdom infra, documented as a Phase 4 follow-up.
 
-**Phases 5-6 remain.** Phase 5 (testing infrastructure, 5 tasks) includes the live-Azure integration test expected to discover the real tile-index URL pattern (the known-bad template from Task 10). Phase 6 (regression, 2 tasks) captures an Arizona baseline MBTiles from pre-refactor `dev` and verifies the setup-runner `STATE_BBOXES` extraction.
+**Phase 5 complete (Tasks 33-37).**
+
+- **Tile-index URL pattern fix (`4ffd658`).** Task 10's template `{AZURE_BASE}/{dir}/tileindex/tileindex_{dir}.zip` never matched NOAA's real Azure layout — every HEAD returned 404. Live-listing verified the actual pattern across four independent directories (AZ/AL/AR/CA): the zip is `tileindex_{USPS}_NAIP_{year}.zip` in the directory root (no `/tileindex/` subdir, no trailing hash). Fix lands in `scripts/refresh_noaa_catalog.py`; Task 35's integration test now regression-guards it.
+- **Task 33 (`5c82fda`)**: synthetic tile-index shapefiles at `tests/fixtures/noaa_tile_indexes/{arizona,utah}_test.shp` + helper. Both shapefiles include `m_border.tif` to exercise the composite-PK checkpoint case. Helper script has 4 fallbacks (osgeo → ogr2ogr-cli → pyshp → raw binary) — on this Pi the osgeo path isn't pip-installable, so the script uses the CLI path.
+- **Task 34 (`d192624`)**: Azure XML fixture set extended with `empty_container.xml` + `mixed_valid_invalid.xml` alongside the three existing Task 4 fixtures.
+- **Task 35 (`89e27ba`)**: `tests/integration/test_noaa_multistate.py` — 9 tests covering refresh → resolver → queue → checkpoint end-to-end against mocked Azure. Includes an explicit regression guard for the URL pattern fix.
+- **Task 36 (`f9fd810`)**: `.github/workflows/noaa-real-azure.yml` — manual-dispatch only (weekly cron deliberately commented out until Cameron confirms runtime budget). Refreshes catalog against real Azure, spot-checks the resulting entries, resolves a Four Corners bbox and asserts AZ/UT/CO/NM are all accounted for. Uploads refreshed catalog.json as a 7-day artifact.
+- **Task 37 (`f9fd810`)**: new "Catalog refresh (NOAA)" section in `dev/harness/exploratory_agent/bug_classes.md` with four actionable symptoms: fewer-states-than-expected, URL-pattern drift, stale symlink after rollback, dead-PID lockfile discoverability.
+
+**Phase 5 review** (1 Haiku round on URL correctness + integration-test rigor + fixture completeness + GH Action safety + seed quality) — approved, no fixes required.
+
+**Phase 6 complete (Tasks 38-39).**
+
+- **Task 38 (`994363d`)**: `tests/test_noaa_semantic_equivalence.py` — three env-gated regression tests that compare a pre-refactor baseline MBTiles against a post-refactor Arizona run. Equivalence is NOT byte-for-byte; it's tile-count-by-zoom + metadata-key subset + SHA256 hash match on a 10-point probe grid at z15. Tests skip gracefully when `GEOGRAPHICA_NOAA_BASELINE_MBTILES` / `GEOGRAPHICA_NOAA_CURRENT_MBTILES` are unset. Docstring documents the manual baseline-capture workflow.
+- **Task 39**: verification only — `tests/test_setup_runner.py` still passes 68 tests post-extraction of `STATE_BBOXES` to `scripts/common`. No new test required.
+
+**All 39 tasks shipped.** Branch `dev` commits ahead of `origin/dev` at closeout: Phase-0 → Phase-6 inclusive.
+
+**Test counts at Phase-6 closeout:** 1005 passed, 4 skipped (3 new `test_noaa_semantic_equivalence.py` + 1 pre-existing), 30 pre-existing failures unchanged (`test_setup_main.py`, `test_wake_lock_static.py`, `test_pipeline_status_m2m.py`).
+
+**Known follow-ups (documented in plan + reviews):**
+- Phase 4 manual visual verification against `.superpowers/brainstorm/869511-1776625800/content/whole-page-flow-v4.html` — the admin panel has no headless browser test infra; Cameron to validate the NOAA card's six tabs / buttons / banners interactively before merge to main.
+- Task 38 baseline capture — run a pre-refactor AZ whole-state pipeline once to produce `noaa_az_baseline.mbtiles`, then run current-tip code against the same state for comparison. Both pipelines take ~20-40 min each and ~39 GB disk.
+- Task 36's weekly cron schedule — still commented out; enable after one manual dispatch confirms the runtime budget.
+- Pre-merge hardening items from Phase-2 Round-2 review (edge-case test coverage for snapshot non-string values, CLI whitespace, partial migration states) and Phase-4 Round-1 review — all non-blocking for merge but worth closing before the release PR.
+
+**Integration path to `main`.** The branch is now plain `dev`; no feature branches remain. The normal release-please PR flow merges dev → main. Cameron: when ready, merge the Release PR at `origin/release-please--branches--main` to cut the next version. Given the BREAKING CHANGE footer on commit `bf27867` (`--year` removed from `acquire_imagery.py`), release-please will propose a major bump.
 
 
 ---
