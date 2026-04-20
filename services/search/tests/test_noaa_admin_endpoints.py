@@ -1,4 +1,5 @@
-"""Tests for the extended /admin/pipeline/noaa/estimate endpoint (Task 19).
+"""Tests for the extended /admin/pipeline/noaa/estimate endpoint (Task 19)
+and the catalog management endpoints (Tasks 22–25).
 
 Covers:
 - New response fields: states, missing, placename, catalog_snapshot,
@@ -7,8 +8,13 @@ Covers:
 - no_catalog fallback when symlink is absent.
 - USPS state param backward compat (state=AZ → slug=arizona).
 - Bbox mode: cataloged vs. missing state resolution.
+- POST /admin/pipeline/noaa/refresh (Task 22)
+- POST /admin/pipeline/noaa/rollback (Task 23)
+- POST /admin/pipeline/noaa/force-unlock (Task 24)
+- GET  /admin/pipeline/noaa/refresh-log (Task 25)
 """
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -283,3 +289,89 @@ def test_estimate_placename_nominatim_mocked_success(fake_catalog_dir):
             search_main.state = original_state
 
     asyncio.run(test_helper())
+
+
+# ---------------------------------------------------------------------------
+# Task 22 — POST /admin/pipeline/noaa/refresh
+# ---------------------------------------------------------------------------
+
+def test_refresh_happy_path(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    fake_result = {
+        "status": "ok",
+        "snapshot_path": str(tmp_path / "snap.json"),
+        "log_entry": {"ts": "2026-04-20T12:00:00Z", "status": "ok"},
+    }
+
+    async def fake_refresh(*, data_dir, **kwargs):
+        return fake_result
+
+    with patch("services.search.main.DATA_DIR", tmp_path), \
+         patch("scripts.refresh_noaa_catalog.refresh_catalog", fake_refresh):
+        resp = client.post(
+            "/admin/pipeline/noaa/refresh",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+def test_refresh_locked_returns_409(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+
+    async def fake_refresh(*, data_dir, **kwargs):
+        return {"status": "locked", "lock_holder_pid": 12345}
+
+    with patch("services.search.main.DATA_DIR", tmp_path), \
+         patch("scripts.refresh_noaa_catalog.refresh_catalog", fake_refresh):
+        resp = client.post(
+            "/admin/pipeline/noaa/refresh",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 409
+
+
+def test_refresh_pipeline_running_returns_409(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+
+    async def fake_refresh(*, data_dir, **kwargs):
+        return {
+            "status": "blocked_by_pipeline",
+            "blocked_by_pipeline": "/data/.pipeline-state.json",
+        }
+
+    with patch("services.search.main.DATA_DIR", tmp_path), \
+         patch("scripts.refresh_noaa_catalog.refresh_catalog", fake_refresh):
+        resp = client.post(
+            "/admin/pipeline/noaa/refresh",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 409
+
+
+def test_refresh_truncated_returns_200(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    entry = {"ts": "2026-04-20T12:00:00Z", "status": "truncated", "error": "Azure paginator malformed"}
+
+    async def fake_refresh(*, data_dir, **kwargs):
+        return {"status": "truncated", "log_entry": entry}
+
+    with patch("services.search.main.DATA_DIR", tmp_path), \
+         patch("scripts.refresh_noaa_catalog.refresh_catalog", fake_refresh):
+        resp = client.post(
+            "/admin/pipeline/noaa/refresh",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "truncated"
+
+
+# ---------------------------------------------------------------------------

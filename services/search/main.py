@@ -2097,3 +2097,33 @@ async def naip_county_lookup(bbox: str = Query(..., description="west,south,east
         "states": states,
         "estimated_gb": round(estimated_gb, 2),
     }
+
+
+# ---------------------------------------------------------------------------
+# NOAA catalog management endpoints (Tasks 22–25)
+# ---------------------------------------------------------------------------
+
+@app.post("/admin/pipeline/noaa/refresh", dependencies=[Depends(require_config_source)])
+async def noaa_refresh():
+    """Trigger a NOAA catalog refresh. Wraps refresh_catalog()."""
+    try:
+        from scripts.refresh_noaa_catalog import refresh_catalog
+    except ImportError:
+        raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
+    result = await refresh_catalog(data_dir=DATA_DIR)
+    if result["status"] == "locked":
+        raise HTTPException(
+            status_code=409,
+            detail={"status": "locked", "lock_holder_pid": result.get("lock_holder_pid")},
+        )
+    if result["status"] == "blocked_by_pipeline":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "blocked_by_pipeline",
+                "blocked_by_pipeline": result.get("blocked_by_pipeline"),
+            },
+        )
+    # ok, truncated, invalid_parse — 200
+    return result
+
