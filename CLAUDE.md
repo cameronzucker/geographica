@@ -168,6 +168,33 @@ Implications:
   of the repo (commits, CHANGELOG, versioning, CI) teaches Cameron what
   "good" looks like and builds habits that transfer.
 
+## Agent identity — pick a moniker at session start
+
+**At the very start of every session** (after reading START.md and the most-recent handoff, before taking any action on the repo), pick a short moniker for yourself and state it in your first user-facing message. The moniker:
+
+- Must be a single word, lowercase, no spaces, no punctuation.
+- Must be **ctrl+F-friendly** — avoid words that already appear in the codebase/docs (run `grep -rci <name> .` mentally; if there are many hits, pick something else). Plant/animal/geographic nouns work well (`juniper`, `hemlock`, `sparrow`, `flint`).
+- Avoid human first names to prevent confusion with Cameron, beta testers, or co-authors.
+- Persists for the entire session — do not change it mid-session.
+- Passes through to every subagent you dispatch: include `"You are agent <moniker>; use this in your commit trailers."` in each Agent tool prompt so subagent-authored commits are grep-discoverable too.
+
+**Include the moniker in every git action as a commit trailer:** `Agent: <moniker>` on its own line in the commit message, alongside the existing `Co-Authored-By:` trailer.
+
+```
+<subject>
+
+<body paragraphs>
+
+Agent: juniper
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+```
+
+**Also include in:** branch names when creating them (`agent-<moniker>/<topic>` for throwaway branches; regular `feat/` / `fix/` prefixes are fine for shared feature branches but still add the trailer inside commits), and PR titles if you open one (`[juniper] <subject>`).
+
+**Why:** triage + forensics. When a session goes sideways — a mysterious `git reset --hard`, a stale regression, an unclear commit authorship — Cameron needs to grep the commit graph for "which agent did this" without reconstructing it from timestamps. `git log --grep="^Agent: juniper"` returns the full trail for this session. `git log --all --grep="^Agent:"` enumerates every agent that has ever touched the repo.
+
+**If you forget to set a moniker early in the session:** pick one now and apply it to all forward commits. Do not retroactively amend earlier commits (amending shared/recent commits is banned — see below).
+
 ## Git workflow — worktrees are BANNED
 
 Do NOT use `git worktree` in this project. All branch work happens via `git checkout` in the main repo at `/home/administrator/Code/geographica`.

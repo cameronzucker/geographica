@@ -15,13 +15,15 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 1. **Read MEMORY.md** at `~/.claude/projects/-home-administrator-Code-geographica/memory/MEMORY.md` — it indexes all session handoffs. Start with the most recent.
 
-2. **Read CLAUDE.md** in the repo root — project structure, commands, hardware specs, skill routing.
+2. **Read CLAUDE.md** in the repo root — project structure, commands, hardware specs, skill routing. **After reading this file and the most-recent handoff, before your first action on the repo, pick a short lowercase moniker for yourself** and state it in your first user-facing message. The moniker goes into every commit as an `Agent: <moniker>` trailer, into any branch names you create, and into subagent prompts you dispatch. See CLAUDE.md §"Agent identity — pick a moniker at session start" for the full convention.
 
 3. **Data lives OUTSIDE the repo** at `/srv/geographica/data/` (symlinked from `data/`). Never create large files inside the git repo tree.
 
 4. **Git push works from terminal** — `gh auth git-credential` is configured.
 
 5. **Never stop the production stack** (`docker compose down`) without explicit user permission.
+
+6. **Worktrees and destructive git commands are BANNED.** See CLAUDE.md §"Git workflow — worktrees are BANNED" and §"Git workflow — destructive commands are BANNED". If a situation seems to require one, stop and ask.
 
 ## What to work on next
 
