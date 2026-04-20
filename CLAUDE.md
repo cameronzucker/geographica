@@ -91,6 +91,31 @@ Key routing rules:
 
 ## Extended capabilities available on this dev Pi
 
+### OpenAI Codex CLI — for `build-robust-features`' "at least one adversarial round via Codex" requirement
+
+**Codex IS installed on this Pi. It is NOT on `$PATH`.** `which codex` returns nothing, which is why assistants keep missing it. Invoke via `npx`:
+
+```bash
+# Non-interactive agent call
+npx --yes @openai/codex exec "<prompt>"        # alias: codex e
+
+# Purpose-built code review (what adversarial rounds typically want)
+npx --yes @openai/codex review --commit <SHA> "<attack-angle prompt>"
+npx --yes @openai/codex review --uncommitted "<prompt>"      # staged + unstaged + untracked
+npx --yes @openai/codex review --base main    "<prompt>"     # current branch vs base
+
+# Optional: stdin-piped prompt
+cat spec.md | npx --yes @openai/codex exec -
+```
+
+- **Version on this Pi:** v0.118.0 (check: `npx --yes @openai/codex --version`).
+- **Authentication:** ChatGPT-mode, cached at `~/.codex/auth.json`. Already authenticated — no setup needed.
+- **Cached at:** `~/.npm/_npx/c8ab89660c602c20/node_modules/@openai/codex/`. Stays cached across runs; the `npx --yes` prefix won't redownload.
+- **When to use:** when a workflow (notably `superpowers:build-robust-features`) explicitly calls for "at least one round via Codex." Substitute Claude agents only when this is genuinely unavailable — it isn't unavailable here.
+- **MCP-server mode:** `npx --yes @openai/codex mcp-server` — expose Codex as an MCP server if you want the main loop to call it like a tool.
+
+Write adversarial-review output to `dev/adversarial/<date>-<topic>-codex.md` to match the existing naming pattern.
+
 ### `url-to-markdown` skill — fetch FULL webpages, not summaries
 
 Installed at `/home/administrator/.claude/skills/url-to-markdown/`. Invoke via the `Skill` tool (name: `url-to-markdown`) or directly:
