@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-from acquire_imagery import resolve_noaa_candidates, build_state_queue
+from acquire_imagery import resolve_noaa_candidates, build_state_queue, build_unified_queue
 
 
 SAMPLE_CATALOG = {
@@ -101,3 +101,31 @@ def test_build_queue_bbox_calls_ogr2ogr_spat_with_300s_timeout():
 
     # Should parse output correctly
     assert result == ["tile1.tif", "tile2.tif"]
+
+
+def test_build_unified_queue_produces_per_tile_tuples(tmp_path):
+    snapshot = tmp_path / "snapshots" / "snap.json"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text("{}")
+
+    az = {"usps": "AZ", "dir": "AZ_NAIP_2021_9596", "year": 2021,
+          "tile_count": 2, "tile_index_url": "...", "tile_index_sha256": "..."}
+    ut = {"usps": "UT", "dir": "UT_NAIP_2021_9601", "year": 2021,
+          "tile_count": 1, "tile_index_url": "...", "tile_index_sha256": "..."}
+
+    def fake_build_state_queue(entry, bbox, shp):
+        return {"AZ": ["a1.tif", "a2.tif"], "UT": ["u1.tif"]}[entry["usps"]]
+
+    with patch("acquire_imagery.build_state_queue", side_effect=fake_build_state_queue):
+        items = build_unified_queue([az, ut], bbox_or_none=None, snapshot_path=snapshot)
+
+    base = "https://coastalimagery.blob.core.windows.net/digitalcoast"
+    assert items == [
+        (snapshot, "AZ", "a1.tif", f"{base}/AZ_NAIP_2021_9596/a1.tif"),
+        (snapshot, "AZ", "a2.tif", f"{base}/AZ_NAIP_2021_9596/a2.tif"),
+        (snapshot, "UT", "u1.tif", f"{base}/UT_NAIP_2021_9601/u1.tif"),
+    ]
+
+
+def test_build_unified_queue_empty_candidates_returns_empty(tmp_path):
+    assert build_unified_queue([], bbox_or_none=None, snapshot_path=tmp_path / "x.json") == []

@@ -234,6 +234,39 @@ def filter_tiles_by_bbox(
     return filenames
 
 
+# Type alias: (catalog_snapshot_path, state_usps, tile_filename, blob_url)
+QueueItem = tuple[Path, str, str, str]
+
+
+def _noaa_tile_index_shapefile_path(entry: dict, snapshot_path: Path) -> Path:
+    """Convention-based shapefile path for a catalog entry.
+
+    Phase 5's integration test validates that refresh_catalog() lays down
+    shapefiles at snapshot_path.parent.parent/tile-indexes/<dir>/tileindex_<dir>.shp.
+    """
+    return snapshot_path.parent.parent / "tile-indexes" / entry["dir"] / f"tileindex_{entry['dir']}.shp"
+
+
+def build_unified_queue(
+    candidates: list[dict],
+    bbox_or_none: str | None,
+    snapshot_path: Path,
+) -> list[QueueItem]:
+    """Compose the per-tile download queue from resolver candidates.
+
+    Each QueueItem carries the pinned snapshot path (so a concurrent catalog
+    refresh cannot poison an in-flight run) and the Azure blob URL built from
+    the entry's directory.
+    """
+    queue: list[QueueItem] = []
+    for entry in candidates:
+        shp_path = _noaa_tile_index_shapefile_path(entry, snapshot_path)
+        for filename in build_state_queue(entry, bbox_or_none, shp_path):
+            blob_url = f"{NOAA_BLOB_BASE}/{entry['dir']}/{filename}"
+            queue.append((snapshot_path, entry["usps"], filename, blob_url))
+    return queue
+
+
 def nationalmap_tile_url(z: int, x: int, y: int) -> str:
     """Convert z/x/y tile coordinates to an ImageServer exportImage URL.
 
