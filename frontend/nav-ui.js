@@ -253,8 +253,14 @@
       if (leg.maneuvers) {
         leg.maneuvers.forEach(function (m) {
           var mc = Object.assign({}, m);
-          mc.begin_shape_index = (mc.begin_shape_index || 0) - indexAdjust + shapeOffset;
-          mc.end_shape_index = (mc.end_shape_index || 0) - indexAdjust + shapeOffset;
+          // Clamp at zero before offsetting: a leg-start maneuver has
+          // begin_shape_index=0 and we slice off the first coord for
+          // legs after the first (indexAdjust=1). Without clamp, the
+          // index would land in the previous leg's last segment.
+          var beginRaw = Math.max(0, (mc.begin_shape_index || 0) - indexAdjust);
+          var endRaw = Math.max(0, (mc.end_shape_index || 0) - indexAdjust);
+          mc.begin_shape_index = beginRaw + shapeOffset;
+          mc.end_shape_index = endRaw + shapeOffset;
           allManeuvers.push(mc);
         });
       }

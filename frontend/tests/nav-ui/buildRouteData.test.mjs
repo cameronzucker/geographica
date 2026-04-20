@@ -172,3 +172,44 @@ test('buildRouteData handles missing trip.locations gracefully', () => {
   // Use length check: vm sandbox arrays are cross-realm and fail deepStrictEqual([]).
   assert.equal(result.remainingWaypoints.length, 0);
 });
+
+test('buildRouteData clamps begin_shape_index=0 for subsequent legs', () => {
+  const internals = loadNavUIInternals();
+  // A 2-leg trip where the 2nd leg starts with a begin_shape_index=0 maneuver.
+  const trip = {
+    legs: [
+      {
+        shape: 'gxz_}Anbf}E', // any decodable polyline
+        maneuvers: [{
+          type: 1, instruction: 'Head east',
+          begin_shape_index: 0, end_shape_index: 0,
+        }],
+      },
+      {
+        shape: 'gxz_}Anbf}E',
+        maneuvers: [{
+          type: 1, instruction: 'Continue east from waypoint B',
+          begin_shape_index: 0, end_shape_index: 0,
+        }],
+      },
+    ],
+    summary: { length: 2, time: 120 },
+    locations: [
+      { lat: 35.20, lon: -111.65 },
+      { lat: 35.21, lon: -111.64, type: 'through' },
+      { lat: 35.22, lon: -111.63 },
+    ],
+    _costing: 'auto',
+  };
+
+  const result = internals.buildRouteData(trip);
+
+  // Find the maneuver for leg 2. Its begin_shape_index must be >= the
+  // shapeOffset of that leg (not shapeOffset - 1).
+  const leg2Maneuvers = result.maneuvers.slice(1); // first from leg 1, rest from leg 2
+  assert.ok(leg2Maneuvers.length >= 1);
+  assert.ok(
+    leg2Maneuvers[0].begin_shape_index >= 1,
+    `expected begin_shape_index >= 1 for leg 2 start maneuver; got ${leg2Maneuvers[0].begin_shape_index}`
+  );
+});
