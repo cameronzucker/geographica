@@ -1892,6 +1892,63 @@ async def _noaa_fetch_tile_index(
     return shp_files[0]
 
 
+def _init_noaa_checkpoint(db_path: Path) -> None:
+    """Create or migrate the _noaa_checkpoint table to the composite-PK schema.
+
+    Migration logic: if the table already exists with the OLD single-column PK
+    (tile_filename only), DROP it and recreate.  Checkpoint rows are transient
+    staging data — they can always be reconstructed via _repair_noaa_checkpoint
+    — so discarding them is safe.
+
+    New schema:
+        PRIMARY KEY (catalog_snapshot, state_usps, tile_filename)
+    with empty-string defaults on catalog_snapshot and state_usps so that
+    legacy callsites that only write tile_filename continue to work during the
+    progressive migration (Tasks 15/18 will plumb real values through).
+    """
+    con = sqlite3.connect(str(db_path))
+    try:
+        rows = con.execute("PRAGMA table_info(_noaa_checkpoint)").fetchall()
+        if rows:
+            # Table exists — check whether it has the new columns
+            col_names = {r[1] for r in rows}
+            if "catalog_snapshot" not in col_names or "state_usps" not in col_names:
+                # Old schema: DROP and recreate (transient data, safe to discard)
+                con.execute("DROP TABLE _noaa_checkpoint")
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS _noaa_checkpoint ("
+            "  catalog_snapshot TEXT NOT NULL DEFAULT '',"
+            "  state_usps       TEXT NOT NULL DEFAULT '',"
+            "  tile_filename    TEXT NOT NULL,"
+            "  PRIMARY KEY (catalog_snapshot, state_usps, tile_filename)"
+            ")"
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def _record_tile_complete(
+    db_path: Path, catalog_snapshot: str, state_usps: str, tile_filename: str
+) -> None:
+    """Record a NAIP quad as successfully merged into the output MBTiles.
+
+    Uses INSERT OR IGNORE so duplicate calls are idempotent.  The composite
+    PK (catalog_snapshot, state_usps, tile_filename) lets border quads that
+    appear in two states' directories each get their own row.
+    """
+    con = sqlite3.connect(str(db_path))
+    try:
+        con.execute(
+            "INSERT OR IGNORE INTO _noaa_checkpoint "
+            "(catalog_snapshot, state_usps, tile_filename) VALUES (?, ?, ?)",
+            (catalog_snapshot, state_usps, tile_filename),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
 def _repair_noaa_checkpoint(output_path: Path, tile_coord_map: dict) -> int:
     """Detect and warn on _noaa_checkpoint/tiles divergence from a prior crash.
 
@@ -1927,10 +1984,11 @@ def _repair_noaa_checkpoint(output_path: Path, tile_coord_map: dict) -> int:
         ).fetchone()
         if row is None:
             return 0
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS _noaa_checkpoint "
-            "(tile_filename TEXT PRIMARY KEY)"
-        )
+        # Ensure checkpoint table uses composite PK schema (migration included)
+        _init_noaa_checkpoint(output_path)
+        # Re-open connection after _init_noaa_checkpoint closed its own connection
+        conn.close()
+        conn = sqlite3.connect(str(output_path))
 
         tile_count = conn.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
         ckpt_count = conn.execute("SELECT COUNT(*) FROM _noaa_checkpoint").fetchone()[0]
@@ -2428,13 +2486,17 @@ async def run_noaa(args):
                         log.info("[%d/%d] Tile %s done (%d/%d complete)",
                                  idx + 1, total_tiles, tile_fname,
                                  tiles_done, total_tiles)
-                        # Checkpoint: record this quad as merged so re-runs skip it
+                        # Checkpoint: record this quad as merged so re-runs skip it.
+                        # _init_noaa_checkpoint ensures the composite-PK schema is in
+                        # place (and migrates from the old tile_filename-only schema
+                        # if this MBTiles was created before Task 14).
+                        _init_noaa_checkpoint(output)
                         import sqlite3 as stdlib_sqlite3
                         with stdlib_sqlite3.connect(str(output)) as ckpt_conn:
-                            ckpt_conn.execute(
-                                "CREATE TABLE IF NOT EXISTS _noaa_checkpoint "
-                                "(tile_filename TEXT PRIMARY KEY)"
-                            )
+                            # TRANSITIONAL: catalog_snapshot and state_usps default to
+                            # '' until Task 15 plumbs real values through and replaces
+                            # this callsite with _record_tile_complete(output, snapshot,
+                            # usps, tile_fname).
                             ckpt_conn.execute(
                                 "INSERT OR IGNORE INTO _noaa_checkpoint (tile_filename) VALUES (?)",
                                 (tile_fname,)
