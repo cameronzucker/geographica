@@ -71,5 +71,32 @@
     return 'none';
   }
 
+  document.addEventListener('visibilitychange', function () {
+    if (!shouldBeActive) return;
+    if (document.visibilityState !== 'visible') return;
+
+    if ('wakeLock' in navigator && wakeLockSentinel === null) {
+      var myGen = ++acquireGeneration;
+      navigator.wakeLock.request('screen').then(function (s) {
+        if (!shouldBeActive || myGen !== acquireGeneration) {
+          s.release().catch(function () {});
+          return;
+        }
+        wakeLockSentinel = s;
+        s.addEventListener('release', function () {
+          if (wakeLockSentinel === s) wakeLockSentinel = null;
+        });
+      }).catch(function (err) {
+        console.warn('[wake-lock] visibility-re-acquire rejected', err);
+      });
+    }
+
+    if (!('wakeLock' in navigator) && fallbackActive && window.SilentVideoLock) {
+      if (!window.SilentVideoLock.isActive()) {
+        window.SilentVideoLock.enable().catch(function () {});
+      }
+    }
+  });
+
   window.WakeLock = { acquire: acquire, release: release, status: status };
 })();
