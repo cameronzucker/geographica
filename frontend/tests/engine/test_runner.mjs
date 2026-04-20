@@ -87,6 +87,62 @@ export function fixtureRouteWithTwoTurns() {
   };
 }
 
+// Fixture: 4-maneuver route with 3 close-spaced turns ("Villa Rita class").
+// maneuver[0] is the depart leg (not spoken).
+// maneuver[1], maneuver[2], maneuver[3] are the 3 spoken turns.
+// Coords in [lng, lat] order. Each turn is ~30m east of the previous at lat 35.20
+// (1° longitude ≈ 91 km at lat 35, so 30 m ≈ 0.00033°).
+export function fixtureVillaRitaCluster() {
+  return {
+    coords: [
+      [-111.65000, 35.20],  // depart start (index 0)
+      [-111.64967, 35.20],  // maneuver 1 boundary (30m east of depart)
+      [-111.64934, 35.20],  // maneuver 2 boundary (30m east of maneuver 1)
+      [-111.64901, 35.20],  // maneuver 3 boundary (30m east of maneuver 2)
+      [-111.64868, 35.20],  // route end
+    ],
+    maneuvers: [
+      {
+        type: 1,
+        instruction: 'Head east',
+        verbal_transition_alert_instruction: 'In 100 feet, turn left',
+        verbal_pre_transition_instruction: 'Head east',
+        begin_shape_index: 0,
+        end_shape_index: 1,
+      },
+      {
+        type: 15,
+        instruction: 'Turn left onto Mulberry',
+        verbal_transition_alert_instruction: 'In 100 feet, turn left onto Mulberry',
+        verbal_pre_transition_instruction: 'Turn left onto Mulberry',
+        begin_shape_index: 1,
+        end_shape_index: 2,
+      },
+      {
+        type: 10,
+        instruction: 'Turn right onto Oak',
+        verbal_transition_alert_instruction: 'In 100 feet, turn right onto Oak',
+        verbal_pre_transition_instruction: 'Turn right onto Oak',
+        begin_shape_index: 2,
+        end_shape_index: 3,
+      },
+      {
+        type: 4,
+        instruction: 'Turn left onto Villa Rita',
+        verbal_transition_alert_instruction: 'In 100 feet, turn left onto Villa Rita',
+        verbal_pre_transition_instruction: 'Turn left onto Villa Rita',
+        begin_shape_index: 3,
+        end_shape_index: 4,
+      },
+    ],
+    summary: { length: 0.12, time: 12 },
+    totalDistance: 120,
+    totalTime: 12,
+    costing: 'auto',
+    remainingWaypoints: [],
+  };
+}
+
 // Backward-compat alias: earlier plan tasks reference the old name.
 // Remove when all plan tasks have been converted.
 export const fixtureTwoManeuverRoute = fixtureRouteWithTwoTurns;
