@@ -415,10 +415,12 @@ The vendored media asset `frontend/vendor/silent.mp4` MUST satisfy:
 **Canonical generation command** (run once; output committed):
 
 ```bash
-ffmpeg -y -f lavfi -i "color=c=black:s=1x1:d=1" \
-  -c:v libx264 -pix_fmt yuv420p -movflags +faststart -an \
+ffmpeg -y -f lavfi -i "color=c=black:s=2x2:r=1:d=1" \
+  -c:v libx264 -pix_fmt yuv420p -movflags +faststart -an -frames:v 1 \
   frontend/vendor/silent.mp4
 ```
+
+Command notes: **2×2** not 1×1 because `libx264` + `yuv420p` requires dimensions divisible by 2 (chroma subsampling alignment); 1×1 fails at encode time. **`-frames:v 1` + `-r 1`** because the default 25 fps × 1 s produces a ~2.2 KB file exceeding the < 2 KB budget. The on-screen element is CSS-hidden (§4.9), so 2×2 is dimensionally indistinguishable from 1×1 to users.
 
 Why "no audio track at all" matters (R6 F6.4): browsers distinguish *muted audio* from *no audio stream* in media-session routing, autoplay policy, and lock-screen affordance exposure. A muted-audio asset can: (a) unexpectedly claim the OS media session, competing with `speechSynthesis.speak()`; (b) surface a "now playing" affordance on iOS lock screens; (c) require stricter autoplay gating on some Android builds. No-audio-track eliminates all three classes of interaction.
 
@@ -849,13 +851,15 @@ Why a bespoke first-party asset rather than a third-party library:
 Regenerate with:
 
 ```bash
-ffmpeg -y -f lavfi -i "color=c=black:s=1x1:d=1" \
-  -c:v libx264 -pix_fmt yuv420p -movflags +faststart -an \
+ffmpeg -y -f lavfi -i "color=c=black:s=2x2:r=1:d=1" \
+  -c:v libx264 -pix_fmt yuv420p -movflags +faststart -an -frames:v 1 \
   frontend/vendor/silent.mp4
 # Verify:
 ffprobe -v error -select_streams a -show_entries stream=codec_type frontend/vendor/silent.mp4  # must be empty
 stat --printf="%s\n" frontend/vendor/silent.mp4                                                  # must be < 2048
 ```
+
+See §4.8 for rationale on the 2×2 dimensions and the `-frames:v 1` / `-r 1` flags.
 
 ## Appendix B — Why only `'screen'` wake lock type
 

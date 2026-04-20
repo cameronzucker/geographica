@@ -41,10 +41,11 @@ Carefully review the batch of work from multiple perspectives. Do a minimum of t
 
 Run from repo root:
 ```bash
-ffmpeg -y -f lavfi -i "color=c=black:s=1x1:d=1" \
-  -c:v libx264 -pix_fmt yuv420p -movflags +faststart -an \
+ffmpeg -y -f lavfi -i "color=c=black:s=2x2:r=1:d=1" \
+  -c:v libx264 -pix_fmt yuv420p -movflags +faststart -an -frames:v 1 \
   frontend/vendor/silent.mp4
 ```
+Note: 2×2 (not 1×1) because `libx264` + `yuv420p` requires dimensions divisible by 2. `-frames:v 1 -r 1` keeps the file under 2 KB. See spec §4.8.
 
 - [ ] **Step 2: Verify no audio stream**
 
