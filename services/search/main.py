@@ -2315,7 +2315,12 @@ def _is_progress_stale(last_updated_iso: str, now_fn=None) -> tuple[bool, int]:
         last = datetime.fromisoformat(last_updated_iso.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
         return (False, 0)
-    age = (now_fn() - last).total_seconds()
+    try:
+        age = (now_fn() - last).total_seconds()
+    except TypeError:
+        # last_updated was a tz-naive ISO timestamp (no Z, no offset); aware-minus-naive
+        # arithmetic raises TypeError. Treat as non-stale — caller should not 500.
+        return (False, 0)
     return (age > _REFRESH_STALE_THRESHOLD_SEC, int(age))
 
 
@@ -2412,14 +2417,13 @@ async def _refresh_bg_task(
             },
         })
         write_progress_state(progress_path, state)
-        try:
-            append_refresh_log(log_path, {
-                "ts": started_at,
-                "validation_status": "error",
-                "error": str(e),
-            })
-        except Exception:
-            pass
+        # NOTE: we do NOT call append_refresh_log here. refresh_catalog owns all
+        # non-exception log writes (ok, truncated, invalid_parse, cancelled). If
+        # refresh_catalog raised before reaching any of those paths, there is no
+        # valid log entry to write — the error is captured in progress.json
+        # (result.status=error, traceback). Writing a log entry here would
+        # produce a duplicate on the rare path where refresh_catalog itself
+        # succeeded but a subsequent write_progress_state call raised.
     finally:
         # Clear module-level refs so the next refresh can dispatch.
         # The lockfile is released by refresh_catalog's RefreshLock __exit__.

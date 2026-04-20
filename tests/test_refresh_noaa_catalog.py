@@ -420,7 +420,7 @@ async def test_refresh_catalog_calls_progress_callback(tmp_path, monkeypatch):
     async def fake_validate(url):
         return {"size_bytes": 1024, "content_md5": "deadbeef"}
 
-    async def fake_fetch_tile_count(url, cache_dir):
+    async def fake_fetch_tile_count(url, cache_dir, **kwargs):
         return 42
 
     monkeypatch.setattr("scripts.refresh_noaa_catalog.azure_list_blob_prefixes", fake_azure)
@@ -455,7 +455,7 @@ async def test_refresh_catalog_progress_cb_exception_swallowed(tmp_path, monkeyp
     async def fake_validate(url):
         return {"size_bytes": 1, "content_md5": "x"}
 
-    async def fake_fetch_tile_count(url, cache_dir):
+    async def fake_fetch_tile_count(url, cache_dir, **kwargs):
         return 1
 
     monkeypatch.setattr("scripts.refresh_noaa_catalog.azure_list_blob_prefixes", fake_azure)
@@ -486,7 +486,7 @@ async def test_refresh_catalog_cancel_event(tmp_path, monkeypatch):
 
     cancel_event = asyncio.Event()
 
-    async def fake_fetch_tile_count(url, cache_dir):
+    async def fake_fetch_tile_count(url, cache_dir, **kwargs):
         # After the first state is processed, request cancellation.
         # The bg loop will observe the Event at the next state boundary.
         processed_slugs.append(url)
@@ -505,3 +505,18 @@ async def test_refresh_catalog_cancel_event(tmp_path, monkeypatch):
 
     assert result["status"] == "cancelled"
     assert "log_entry" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_tile_count_cancel_event_aborts_before_download(tmp_path):
+    """fetch_tile_count raises RefreshCancelled if cancel_event is set at entry."""
+    import asyncio
+    from scripts.refresh_noaa_catalog import fetch_tile_count, RefreshCancelled
+    event = asyncio.Event()
+    event.set()
+    with pytest.raises(RefreshCancelled):
+        await fetch_tile_count(
+            "https://coastalimagery.blob.core.windows.net/digitalcoast/bogus/tileindex_BOGUS.zip",
+            tmp_path / "cache",
+            cancel_event=event,
+        )

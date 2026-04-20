@@ -1212,3 +1212,117 @@ def test_noaa_refresh_progress_done_not_stale_even_if_old(tmp_path, monkeypatch)
     assert r.status_code == 200
     body = r.json()
     assert body.get("stale") in (False, None)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 review closeout — 4 tests for 3 bugs surfaced in 3-round review
+# ---------------------------------------------------------------------------
+
+def test_refresh_bg_task_error_writes_status_error_no_log_duplicate(tmp_path, monkeypatch):
+    """Bg task error path writes progress.json with status=done, result.status=error,
+    and does NOT append a duplicate log entry (refresh_catalog owns all non-exception logs)."""
+    import asyncio
+    from services.search import main as main_module
+    from refresh_noaa_catalog import PROGRESS_FILENAME, write_progress_state
+    import json
+
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+
+    async def fake_refresh(**kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("refresh_noaa_catalog.refresh_catalog", fake_refresh)
+
+    async def _run():
+        cancel_event = asyncio.Event()
+        started_at = "2026-04-20T21:30:00Z"
+        progress_path = tmp_path / PROGRESS_FILENAME
+        write_progress_state(progress_path, {"status": "running", "started_at": started_at})
+
+        await main_module._refresh_bg_task(tmp_path, progress_path, started_at, cancel_event)
+
+        state = json.loads(progress_path.read_text())
+        assert state["status"] == "done"
+        assert state["result"]["status"] == "error"
+        assert state["result"]["error"] == "boom"
+
+        # No log entries should exist (refresh_catalog never reached a logging path
+        # because it raised before any log write).
+        log_path = tmp_path / "noaa_catalog_refresh_log.jsonl"
+        assert not log_path.exists() or log_path.read_text().strip() == ""
+
+    asyncio.run(_run())
+
+
+def test_noaa_refresh_progress_handles_naive_last_updated(tmp_path, monkeypatch):
+    """GET /progress does not 500 when last_updated is a naive ISO timestamp."""
+    from services.search.main import app
+    from services.search import main as main_module
+    from refresh_noaa_catalog import PROGRESS_FILENAME
+    import json
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+    progress_path = tmp_path / PROGRESS_FILENAME
+    progress_path.write_text(json.dumps({
+        "status": "running", "phase": "fetching_tile_indexes",
+        "last_updated": "2026-04-20T12:00:00",  # naive, no Z, no offset
+    }))
+    client = TestClient(app)
+    r = client.get(
+        "/admin/pipeline/noaa/refresh/progress",
+        headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "running"
+    # Non-stale because the parse failed gracefully — not a 500.
+    assert body.get("stale") in (False, None)
+
+
+def test_noaa_refresh_cancel_requires_internal_header(tmp_path, monkeypatch):
+    """POST /cancel rejects requests without X-Config-Source header."""
+    from services.search.main import app
+    from services.search import main as main_module
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+    client = TestClient(app)
+    r = client.post("/admin/pipeline/noaa/refresh/cancel")
+    assert r.status_code in (401, 403)
+
+
+def test_refresh_bg_task_cancelled_error_writes_reset_endpoint_reason(tmp_path, monkeypatch):
+    """Bg task cancelled via task.cancel() writes result.reason=reset_endpoint."""
+    import asyncio
+    from services.search import main as main_module
+    from refresh_noaa_catalog import PROGRESS_FILENAME, write_progress_state
+    import json
+
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+
+    async def slow_refresh(**kwargs):
+        # Simulates a refresh that's cancelled mid-way by task.cancel()
+        await asyncio.sleep(5)
+        return {"status": "ok", "snapshot_path": "x", "log_entry": {"ts": "x", "state_count": 0}}
+
+    monkeypatch.setattr("refresh_noaa_catalog.refresh_catalog", slow_refresh)
+
+    async def _run():
+        cancel_event = asyncio.Event()
+        started_at = "2026-04-20T21:30:00Z"
+        progress_path = tmp_path / PROGRESS_FILENAME
+        write_progress_state(progress_path, {"status": "running", "started_at": started_at})
+
+        bg_task = asyncio.create_task(
+            main_module._refresh_bg_task(tmp_path, progress_path, started_at, cancel_event)
+        )
+        await asyncio.sleep(0.1)
+        bg_task.cancel()
+        try:
+            await bg_task
+        except asyncio.CancelledError:
+            pass
+
+        state = json.loads(progress_path.read_text())
+        assert state["status"] == "done"
+        assert state["result"]["status"] == "cancelled"
+        assert state["result"].get("reason") == "reset_endpoint"
+
+    asyncio.run(_run())

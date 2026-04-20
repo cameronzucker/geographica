@@ -30,6 +30,10 @@ class CatalogValidationError(Exception):
     """Raised when a catalog JSON fails structural validation."""
 
 
+class RefreshCancelled(Exception):
+    """Raised when cancel_event is set during a long-running fetch."""
+
+
 REQUIRED_TOP_KEYS = {
     "snapshot_version", "parser_version", "source_listing_url",
     "validation_status", "entries",
@@ -163,39 +167,85 @@ async def validate_tile_index(url: str) -> dict | None:
         return None
 
 
-async def fetch_tile_count(url: str, cache_dir: Path) -> int:
-    """Download the tile-index ZIP to cache_dir, unpack, and count features
-    via ogr2ogr -ro -so. Returns the feature count. Raises on failure.
+def _extract_and_find_shp(zip_path: Path, cache_dir: Path) -> Path:
+    """Extract a ZIP archive and return the path of the first .shp file found.
 
-    Uses ClientTimeout(total=300) on the download session to bound large ZIP
-    transfers. The ogr2ogr subprocess is dispatched via run_in_executor to
-    keep the event loop responsive during the 10-30 min refresh — critical
-    for /refresh/progress polling to stay under 2s latency.
+    Raises RuntimeError if no .shp file is found after extraction.
+    Called via run_in_executor to keep the event loop responsive.
     """
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = cache_dir / "tileindex.zip"
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as sess:
-        async with sess.get(url) as resp:
-            resp.raise_for_status()
-            zip_path.write_bytes(await resp.read())
     with zipfile.ZipFile(zip_path) as zf:
         zf.extractall(cache_dir)
     shps = list(cache_dir.glob("*.shp"))
     if not shps:
-        raise RuntimeError(f"no .shp file in {cache_dir} after extracting {url}")
+        raise RuntimeError(f"no .shp file in {cache_dir} after extracting {zip_path}")
+    return shps[0]
+
+
+async def fetch_tile_count(
+    url: str,
+    cache_dir: Path,
+    *,
+    cancel_event: "asyncio.Event | None" = None,
+) -> int:
+    """Download the tile-index ZIP to cache_dir, unpack, and count features
+    via ogr2ogr -ro -so. Returns the feature count. Raises on failure.
+
+    cancel_event: When set, raises RefreshCancelled at the next checkpoint
+    (before download, after download, after extract, after ogr2ogr).
+    Worst-case latency ≈ one ogr2ogr call (~60s) after the event is set.
+
+    All blocking operations (file write, ZIP extract, ogr2ogr) are
+    dispatched via run_in_executor to keep the event loop responsive
+    during the 10-30 min refresh — critical for /refresh/progress
+    polling to stay under 2s latency.
+    """
+    # Cancel checkpoint 1: before any I/O
+    if cancel_event is not None and cancel_event.is_set():
+        raise RefreshCancelled("cancelled before download")
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = cache_dir / "tileindex.zip"
+
+    # Download to in-memory buffer
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as sess:
+        async with sess.get(url) as resp:
+            resp.raise_for_status()
+            data = await resp.read()
+
+    # Cancel checkpoint 2: after download, before file write
+    if cancel_event is not None and cancel_event.is_set():
+        raise RefreshCancelled("cancelled after download")
+
     loop = asyncio.get_running_loop()
-    shp_path = str(shps[0])
+
+    # Write the ZIP off the event loop
+    await loop.run_in_executor(None, lambda: zip_path.write_bytes(data))
+
+    # Cancel checkpoint 3: after write, before extract
+    if cancel_event is not None and cancel_event.is_set():
+        raise RefreshCancelled("cancelled after write")
+
+    # Extract off the event loop
+    shp_path = await loop.run_in_executor(
+        None, lambda: _extract_and_find_shp(zip_path, cache_dir)
+    )
+
+    # Cancel checkpoint 4: after extract, before ogr2ogr
+    if cancel_event is not None and cancel_event.is_set():
+        raise RefreshCancelled("cancelled after extract")
+
+    # ogr2ogr off the event loop (unchanged)
     result = await loop.run_in_executor(
         None,
         lambda: subprocess.run(
-            ["ogr2ogr", "-ro", "-so", "-f", "CSV", "/dev/stdout", shp_path],
+            ["ogr2ogr", "-ro", "-so", "-f", "CSV", "/dev/stdout", str(shp_path)],
             capture_output=True, text=True, timeout=60,
         ),
     )
     for line in (result.stdout + result.stderr).splitlines():
         if "Feature Count:" in line:
             return int(line.split(":")[1].strip())
-    raise RuntimeError(f"Could not determine feature count for {shps[0]}")
+    raise RuntimeError(f"Could not determine feature count for {shp_path}")
 
 
 def write_snapshot(snapshots_dir: Path, catalog: dict, *, ts: str) -> Path:
@@ -582,7 +632,20 @@ async def refresh_catalog(
                     continue
                 cache_dir = data_dir / "noaa_cache" / f"{slug}_{year}"
                 try:
-                    tile_count = await fetch_tile_count(tile_index_url, cache_dir)
+                    tile_count = await fetch_tile_count(
+                        tile_index_url, cache_dir, cancel_event=cancel_event
+                    )
+                except RefreshCancelled:
+                    # Cancel observed mid-download — route to the same cancelled
+                    # log entry as the loop-top check above.
+                    entry = {
+                        "ts": ts_iso,
+                        "validation_status": "cancelled",
+                        "state_count": len(entries),
+                        "reason": "cancelled_by_user",
+                    }
+                    append_refresh_log(log_path, entry)
+                    return {"status": "cancelled", "log_entry": entry}
                 except Exception as e:
                     issues.append({"slug": slug, "reason": f"tile_count_failed:{e}"})
                     continue
