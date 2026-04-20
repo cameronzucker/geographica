@@ -440,3 +440,140 @@ test('TTM I10: past-maneuver early-return (negative distToNext does not fire pro
   assert.equal(m1Prompts.length, 0,
     'I10: no prompts for already-passed maneuver 1');
 });
+
+test('TTM edge: empty verbal instructions do not fire onVoiceCb', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64030, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+
+  // Custom route: maneuver 1 has no verbal text and no instruction.
+  const silentRoute = fixtureRouteWithTwoTurns();
+  silentRoute.maneuvers[1].verbal_pre_transition_instruction = '';
+  silentRoute.maneuvers[1].verbal_transition_alert_instruction = '';
+  silentRoute.maneuvers[1].instruction = '';
+  nav.start(silentRoute);
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64025, heading: 90, speed: 10 });
+
+  assert.equal(voiceFires.length, 0,
+    'onVoiceCb must not fire with an empty string');
+});
+
+test('TTM edge: unknown costing falls back to auto without crashing', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64030, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+
+  const truckRoute = fixtureRouteWithTwoTurns();
+  truckRoute.costing = 'truck'; // not in VOICE_TTM
+  nav.start(truckRoute);
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64025, heading: 90, speed: 10 });
+
+  // Must not throw; must fire prompts using auto thresholds.
+  assert.ok(voiceFires.length >= 1,
+    'unknown costing "truck" must fall back to auto and fire prompts');
+});
+
+test('TTM edge: distance clamp — simulated negative distance does not fire', async (t) => {
+  // Test is indirect: start past maneuver 1. findManeuverForSegment advances
+  // currentManeuverIdx past m1 on the first tick.
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+
+  // Start 10m PAST maneuver 1 (east of lng -111.64).
+  win._geographicaGPSData = { lat: 35.20, lon: -111.6399, heading: 90, speed: 10 };
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureRouteWithTwoTurns());
+  nav.updateGPS({ latitude: 35.20, longitude: -111.6398, heading: 90, speed: 10 });
+
+  // maneuver 1's prompts must not fire retroactively.
+  const m1Prompts = voiceFires.filter(t => /Main Street/.test(t));
+  assert.equal(m1Prompts.length, 0,
+    'prompts for already-passed maneuver must not fire');
+});
+
+test('TTM I8: muted state — announcedSet still populates, un-mute does not replay', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64030, heading: 90, speed: 10 };
+  const i = win._geographicaNavEngineInternals;
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.setMuted(true);
+  nav.start(fixtureRouteWithTwoTurns());
+  // First movement tick — near-tier condition met (inside 50m floor).
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64025, heading: 90, speed: 10 });
+
+  assert.equal(voiceFires.length, 0, 'muted: no voice fires');
+  const keys = i._getAnnouncedKeys();
+  assert.ok(keys.length >= 2, 'muted: announcedSet must still populate (I8)');
+  assert.ok(keys.includes('1-far') && keys.includes('1-near'),
+    'muted: both far and near keys marked (D1 suppression applied)');
+
+  // Un-mute: previous thresholds must NOT replay.
+  nav.setMuted(false);
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64023, heading: 90, speed: 10 });
+  assert.equal(voiceFires.length, 0,
+    'un-mute must not replay already-crossed thresholds (I8)');
+});
+
+test('TTM I7: next-after-next chain fires on near-tier only, never on far-tier', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  // Use fixtureRouteWithTwoTurns: maneuver 1 at -111.64 (Main Street), next-after-next
+  // is the arrival maneuver at index 2 (begin_shape_index=2 at coord -111.63), 1km away.
+  // distBetween = 1000m > 500m → chain NOT appended. Assert that the far-tier
+  // prompt (fired first, at ~300m) has no ", then " chain.
+  win._geographicaGPSData = { lat: 35.20, lon: -111.645, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureRouteWithTwoTurns());
+
+  // Drive far-tier first (at 300m / TTM=30s).
+  nav.updateGPS({ latitude: 35.20, longitude: -111.6425, heading: 90, speed: 10 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.642, heading: 90, speed: 10 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.6415, heading: 90, speed: 10 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.641, heading: 90, speed: 10 });
+
+  assert.ok(voiceFires.length >= 1, 'at least one prompt must have fired');
+  const first = voiceFires[0];
+  assert.ok(!/, then /.test(first),
+    'I7: far-tier prompt must not include next-after-next chain');
+});
+
+test('TTM edge: cooldown regression guard — adjacent near-prompts both fire', async (t) => {
+  // Critical regression guard per R3 F3.7 / spec §6.6. If a later refactor
+  // silently reintroduces a cooldown, two near-prompts firing in quick
+  // succession across adjacent maneuvers would drop one. This test fails
+  // loudly in that case.
+  const { fixtureVillaRitaCluster } = await import('./test_runner.mjs');
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+
+  // Start 10m west of maneuver 1 (inside the floor), 10 m/s.
+  // Coords: maneuver 1 at -111.64967, so start at -111.64978 (10m west).
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64978, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push({ text, at: Date.now() }));
+  nav.start(fixtureVillaRitaCluster());
+
+  // Tick through maneuver 1 and into maneuver 2's near-tier in rapid succession.
+  // Each step is ~5m; full traversal takes ~3 ticks.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64972, heading: 90, speed: 10 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64950, heading: 90, speed: 10 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64935, heading: 90, speed: 10 });
+
+  const mulberry = voiceFires.filter(v => /Mulberry/.test(v.text));
+  const oak = voiceFires.filter(v => /Oak/.test(v.text));
+  assert.ok(mulberry.length >= 1, 'Mulberry near-tier must fire');
+  assert.ok(oak.length >= 1, 'Oak near-tier must fire in the next tick — no cooldown');
+});
