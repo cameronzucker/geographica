@@ -8,6 +8,8 @@ Consumed by:
 Catalog shape — see docs/superpowers/specs/2026-04-20-noaa-naip-conus-expansion-design.md §3.3.
 """
 import aiohttp
+import json
+import os
 import re
 import subprocess
 import zipfile
@@ -175,3 +177,32 @@ async def fetch_tile_count(url: str, cache_dir: Path) -> int:
         if "Feature Count:" in line:
             return int(line.split(":")[1].strip())
     raise RuntimeError(f"Could not determine feature count for {shps[0]}")
+
+
+def write_snapshot(snapshots_dir: Path, catalog: dict, *, ts: str) -> Path:
+    """Write snapshot atomically: tmp + fsync + rename.
+
+    Returns the final snapshot path.
+    """
+    final_path = snapshots_dir / f"{ts}.json"
+    tmp_path = final_path.with_suffix(".json.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(catalog, f, indent=2, sort_keys=True)
+        f.flush()
+        os.fsync(f.fileno())
+    os.rename(tmp_path, final_path)
+    return final_path
+
+
+def swap_symlink(link_path: Path, target_path: Path) -> None:
+    """Atomic symlink replacement via tmp-symlink + rename.
+
+    After this call (modulo power-fail during os.rename):
+    - link_path is a symlink pointing at target_path, OR
+    - link_path does not exist (never dangling or pointing elsewhere)
+    """
+    tmp_link = link_path.with_suffix(link_path.suffix + ".tmp")
+    if tmp_link.is_symlink() or tmp_link.exists():
+        tmp_link.unlink()
+    os.symlink(target_path, tmp_link)
+    os.rename(tmp_link, link_path)

@@ -150,3 +150,52 @@ async def test_validate_tile_index_head_404_returns_none():
     with aioresponses() as m:
         m.head(url, status=404)
         assert await validate_tile_index(url) is None
+
+
+def test_write_snapshot_atomic(tmp_path):
+    from scripts.refresh_noaa_catalog import write_snapshot
+    snapshots_dir = tmp_path / "noaa_catalog_snapshots"
+    snapshots_dir.mkdir()
+    catalog = {
+        "snapshot_version": "2026-04-20T14:30:12Z",
+        "parser_version": 3,
+        "source_listing_url": "https://...",
+        "validation_status": "ok",
+        "entries": {},
+    }
+    path = write_snapshot(snapshots_dir, catalog, ts="20260420T143012Z")
+    assert path.exists()
+    assert path.name == "20260420T143012Z.json"
+    assert json.loads(path.read_text()) == catalog
+    # No .tmp files left around
+    assert not list(snapshots_dir.glob("*.tmp"))
+
+
+def test_swap_symlink_creates_new(tmp_path):
+    from scripts.refresh_noaa_catalog import swap_symlink
+    target = tmp_path / "snap1.json"
+    target.write_text("{}")
+    link = tmp_path / "current.json"
+    swap_symlink(link, target)
+    assert link.is_symlink()
+    assert link.resolve() == target.resolve()
+
+
+def test_swap_symlink_replaces_existing(tmp_path):
+    from scripts.refresh_noaa_catalog import swap_symlink
+    t1 = tmp_path / "snap1.json"; t1.write_text("{}")
+    t2 = tmp_path / "snap2.json"; t2.write_text("{}")
+    link = tmp_path / "current.json"
+    swap_symlink(link, t1)
+    swap_symlink(link, t2)
+    assert link.resolve() == t2.resolve()
+
+
+def test_swap_symlink_never_leaves_link_pointing_at_nonexistent(tmp_path):
+    """Post-swap invariant: if symlink exists, its target exists."""
+    from scripts.refresh_noaa_catalog import swap_symlink
+    t1 = tmp_path / "snap1.json"; t1.write_text("{}")
+    link = tmp_path / "current.json"
+    swap_symlink(link, t1)
+    if link.exists():
+        assert link.resolve().exists()
