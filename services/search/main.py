@@ -2296,6 +2296,29 @@ def _read_lock_holder_pid(lock_path: Path) -> "int | None":
         return None
 
 
+_REFRESH_STALE_THRESHOLD_SEC = 600  # 10 min — see spec §Failure mode 2.
+
+
+def _is_progress_stale(last_updated_iso: str, now_fn=None) -> tuple[bool, int]:
+    """Return (is_stale, age_seconds) for a progress.last_updated ISO 8601 ts.
+
+    A progress is stale when it claims to be running but hasn't written a
+    heartbeat in >10 min — evidence the bg task crashed without writing a
+    terminal state. The UI surfaces this as a recoverable-error state
+    with a Force Clear affordance (Task 11).
+    """
+    from datetime import datetime, timezone
+
+    if now_fn is None:
+        now_fn = lambda: datetime.now(timezone.utc)
+    try:
+        last = datetime.fromisoformat(last_updated_iso.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return (False, 0)
+    age = (now_fn() - last).total_seconds()
+    return (age > _REFRESH_STALE_THRESHOLD_SEC, int(age))
+
+
 def _make_refresh_progress_cb(progress_path: Path, started_at: str, cancel_event: asyncio.Event):
     """Return a sync progress callback that enriches the raw event dict
     from refresh_catalog with derived fields (percent, rate_per_sec,
@@ -2492,12 +2515,25 @@ async def noaa_refresh_progress():
     - {status: idle} when no refresh is in flight and no progress.json exists.
     - {status: running, phase, states_processed, ...} while a bg task writes.
     - {status: done, result: {...}} after the bg task terminates.
+    - Stamps stale: true when running state hasn't updated in >10 min (spec §Failure mode 2).
     """
     try:
         from refresh_noaa_catalog import read_progress_state, PROGRESS_FILENAME
     except ImportError:
         raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
-    return read_progress_state(DATA_DIR / PROGRESS_FILENAME)
+    state = read_progress_state(DATA_DIR / PROGRESS_FILENAME)
+    # Stamp stale flag ONLY for running state (terminal states are never stale).
+    if state.get("status") == "running":
+        last = state.get("last_updated")
+        if last:
+            is_stale, age_s = _is_progress_stale(last)
+            if is_stale:
+                state["stale"] = True
+                state["stale_reason"] = (
+                    f"No progress update in {age_s}s; refresh task may have crashed. "
+                    "Use Force Clear to reset the refresh subsystem."
+                )
+    return state
 
 
 @app.post(

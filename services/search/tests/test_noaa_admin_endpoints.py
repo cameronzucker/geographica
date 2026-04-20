@@ -1134,3 +1134,81 @@ def test_noaa_refresh_cancel_idempotent(tmp_path, monkeypatch):
     )
     assert r.status_code == 200
     main_module._cancel_event = None
+
+
+# ---------------------------------------------------------------------------
+# Task 6 — stale-detection heuristic for running refresh
+# ---------------------------------------------------------------------------
+
+def test_noaa_refresh_progress_stale_flagged_when_last_updated_old(tmp_path, monkeypatch):
+    """GET /progress stamps stale: true when running state hasn't updated in >10 min."""
+    from services.search.main import app
+    from services.search import main as main_module
+    from refresh_noaa_catalog import PROGRESS_FILENAME
+    from datetime import datetime, timezone, timedelta
+    import json
+
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+    progress_path = tmp_path / PROGRESS_FILENAME
+    # Build progress.json manually so we control last_updated; DON'T use
+    # write_progress_state (which always stamps last_updated to now).
+    fake_old = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+    progress_path.write_text(json.dumps({
+        "status": "running",
+        "phase": "fetching_tile_indexes",
+        "last_updated": fake_old,
+    }))
+    client = TestClient(app)
+    r = client.get(
+        "/admin/pipeline/noaa/refresh/progress",
+        headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["stale"] is True
+    assert "stale_reason" in body
+
+
+def test_noaa_refresh_progress_fresh_running_not_stale(tmp_path, monkeypatch):
+    """GET /progress does NOT stamp stale when running state was updated recently."""
+    from services.search.main import app
+    from services.search import main as main_module
+    from refresh_noaa_catalog import write_progress_state, PROGRESS_FILENAME
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+    # write_progress_state stamps last_updated to now()
+    write_progress_state(tmp_path / PROGRESS_FILENAME, {
+        "status": "running", "phase": "fetching_tile_indexes",
+    })
+    client = TestClient(app)
+    r = client.get(
+        "/admin/pipeline/noaa/refresh/progress",
+        headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("stale") in (False, None)  # either explicitly False or absent
+
+
+def test_noaa_refresh_progress_done_not_stale_even_if_old(tmp_path, monkeypatch):
+    """Terminal (done) states are NEVER flagged stale regardless of last_updated age."""
+    from services.search.main import app
+    from services.search import main as main_module
+    from refresh_noaa_catalog import PROGRESS_FILENAME
+    from datetime import datetime, timezone, timedelta
+    import json
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+    progress_path = tmp_path / PROGRESS_FILENAME
+    fake_old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    progress_path.write_text(json.dumps({
+        "status": "done",
+        "last_updated": fake_old,
+        "result": {"status": "ok"},
+    }))
+    client = TestClient(app)
+    r = client.get(
+        "/admin/pipeline/noaa/refresh/progress",
+        headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("stale") in (False, None)
