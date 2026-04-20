@@ -2088,11 +2088,11 @@
         btn.textContent = 'Get Route';
 
         if (data.trip) {
-          lastRouteTrip = data.trip;
-          window._geographicaLastTrip = data.trip;
-          window._geographicaLastTrip._costing = costing;
-          window._geographicaLastTrip._costingOptions = body.costing_options || null;
-          renderRoute(data.trip);
+          setActiveRoute(data.trip, {
+            refitBounds: true,
+            costing: costing,
+            costingOptions: body.costing_options || null,
+          });
           document.getElementById('export-route-btn').classList.remove('hidden');
         } else if (data.error) {
           alert('Routing error: ' + (data.error || 'Unknown error'));
@@ -2220,91 +2220,6 @@
 
   // Expose for nav-ui.js reroute path.
   window._geographicaSetActiveRoute = setActiveRoute;
-
-  /**
-   * Render a Valhalla trip response on the map and display directions.
-   * @param {Object} trip - Valhalla trip object
-   */
-  function renderRoute(trip) {
-    // Decode polyline from each leg and merge
-    var allCoords = [];
-    var allManeuvers = [];
-
-    trip.legs.forEach(function (leg) {
-      var coords = decodePolyline(leg.shape);
-      allCoords = allCoords.concat(coords);
-      if (leg.maneuvers) {
-        allManeuvers = allManeuvers.concat(leg.maneuvers);
-      }
-    });
-
-    // Store decoded coords for spatial search context
-    lastRouteCoords = allCoords.slice();
-
-    // Update route source
-    var geojson = {
-      type: 'Feature',
-      geometry: {
-        type: 'LineString',
-        coordinates: allCoords
-      }
-    };
-
-    var source = map.getSource('route');
-    if (source) {
-      source.setData(geojson);
-    }
-
-    // Fit map to route bounds
-    var bounds = allCoords.reduce(function (b, coord) {
-      return b.extend(coord);
-    }, new maplibregl.LngLatBounds(allCoords[0], allCoords[0]));
-
-    var isMobileRoute = window.innerWidth < 768;
-    var sidebarWRoute = parseInt(getComputedStyle(document.documentElement)
-      .getPropertyValue('--sidebar-width')) || 320;
-    map.fitBounds(bounds, {
-      padding: isMobileRoute
-        ? { top: 40, bottom: 100, left: 20, right: 20 }
-        : { top: 60, bottom: 60, left: sidebarWRoute + 20, right: 60 }
-    });
-
-    // Show route summary
-    var summary = trip.summary || {};
-    var dist    = (summary.length || 0);
-    var distStr = useImperial ? dist.toFixed(1) + ' mi' : dist.toFixed(1) + ' km';
-    var timeSec = summary.time || 0;
-    var hours   = Math.floor(timeSec / 3600);
-    var minutes = Math.round((timeSec % 3600) / 60);
-    var timeStr = hours > 0 ? hours + 'h ' + minutes + 'min' : minutes + ' min';
-
-    var summaryEl = document.getElementById('route-summary');
-    // Build summary using safe DOM methods
-    while (summaryEl.firstChild) {
-      summaryEl.removeChild(summaryEl.firstChild);
-    }
-    var strong = document.createElement('strong');
-    strong.textContent = distStr;
-    summaryEl.appendChild(strong);
-    summaryEl.appendChild(document.createTextNode(' \u00B7 ' + timeStr));
-    summaryEl.classList.remove('hidden');
-
-    // Show turn-by-turn directions (safe DOM construction)
-    var dirList = document.getElementById('route-directions');
-    while (dirList.firstChild) {
-      dirList.removeChild(dirList.firstChild);
-    }
-    allManeuvers.forEach(function (m) {
-      var li = document.createElement('li');
-      var instruction = m.instruction || m.verbal_pre_transition_instruction || '';
-      if (m.length) {
-        var unit = useImperial ? ' mi' : ' km';
-        instruction += ' (' + m.length.toFixed(1) + unit + ')';
-      }
-      li.textContent = instruction;
-      dirList.appendChild(li);
-    });
-  }
 
   function clearRoute() {
     clearTimeout(routeRegenTimer);  // cancel any pending debounced regen
