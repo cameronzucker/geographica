@@ -339,3 +339,36 @@ def test_prune_preserves_pinned(tmp_path):
         (tmp_path / f"other_{i:02d}.json").write_text("{}")
     prune_snapshots(tmp_path, keep_user=5, current_target=None, pinned={pinned_path})
     assert pinned_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_refresh_catalog_truncated_records_log_entry(tmp_path):
+    """When Azure returns a network error mid-pagination, refresh aborts
+    and writes a log entry, leaving the catalog symlink unchanged."""
+    from scripts.refresh_noaa_catalog import refresh_catalog, AZURE_LISTING_BASE
+    with aioresponses() as m:
+        m.get(
+            f"{AZURE_LISTING_BASE}?restype=container&comp=list&delimiter=/&prefix=",
+            status=503,
+        )
+        result = await refresh_catalog(
+            data_dir=tmp_path, output=None, no_lock=True, no_pipeline_check=True
+        )
+        assert result["status"] == "truncated"
+        log_path = tmp_path / "noaa_catalog_refresh_log.jsonl"
+        assert log_path.exists()
+        entry = json.loads(log_path.read_text().splitlines()[0])
+        assert entry["validation_status"] == "truncated"
+
+
+@pytest.mark.asyncio
+async def test_refresh_catalog_blocked_by_pipeline(tmp_path):
+    """If a pipeline is running, refresh refuses with 'blocked_by_pipeline' status."""
+    from scripts.refresh_noaa_catalog import refresh_catalog
+    (tmp_path / "x").mkdir()
+    (tmp_path / "x" / ".pipeline-state.json").write_text('{"status": "running"}')
+    result = await refresh_catalog(
+        data_dir=tmp_path, output=None, no_lock=True, no_pipeline_check=False
+    )
+    assert result["status"] == "blocked_by_pipeline"
+    assert "blocked_by_pipeline" in result

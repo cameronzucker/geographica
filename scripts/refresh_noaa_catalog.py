@@ -369,3 +369,217 @@ def prune_snapshots(
     # Keep `keep_user` newest; delete the rest
     for s in user_candidates[keep_user:]:
         s.unlink()
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator helpers
+# ---------------------------------------------------------------------------
+from contextlib import nullcontext
+
+
+def _truncated_log_entry(ts: str, error_msg: str) -> dict:
+    return {
+        "ts": ts,
+        "validation_status": "truncated",
+        "error": error_msg,
+    }
+
+
+def _load_previous_snapshot(symlink_path: Path, new_snapshot: Path, snapshots_dir: Path) -> dict:
+    """Return the previously-active snapshot dict (for computing diff).
+
+    Resolves symlink to find the prior snapshot. If symlink didn't exist
+    before this refresh, returns {} so the diff shows every state as added.
+    """
+    if not symlink_path.is_symlink():
+        return {}
+    try:
+        prev_path = symlink_path.resolve()
+        if prev_path == new_snapshot.resolve():
+            # Symlink already points at the new snapshot (shouldn't happen
+            # before we swap, but defensive); return empty diff
+            return {}
+        return json.loads(prev_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _collect_pinned_snapshots(data_dir: Path) -> set[str]:
+    """Scan .pipeline-state.json files for catalog_snapshot fields and return
+    the set of absolute paths they pin."""
+    pinned: set[str] = set()
+    for state_file in Path(data_dir).rglob(".pipeline-state.json"):
+        try:
+            data = json.loads(state_file.read_text())
+            snap = data.get("catalog_snapshot")
+            if snap:
+                pinned.add(snap)
+        except (json.JSONDecodeError, OSError):
+            continue
+    return pinned
+
+
+# ---------------------------------------------------------------------------
+# Main orchestrator
+# ---------------------------------------------------------------------------
+async def refresh_catalog(
+    *,
+    data_dir: Path,
+    output: Path | None = None,
+    no_lock: bool = False,
+    no_pipeline_check: bool = False,
+) -> dict:
+    """Full P7 refresh. Returns dict with keys:
+
+    - status: "ok" | "truncated" | "invalid_parse" | "locked" | "blocked_by_pipeline"
+    - snapshot_path: str (when status=ok)
+    - log_entry: dict (when status in {ok, truncated, invalid_parse})
+    - lock_holder_pid: int (when status=locked)
+    - blocked_by_pipeline: str (when status=blocked_by_pipeline)
+    """
+    data_dir = Path(data_dir)
+    ts_iso = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    log_path = data_dir / "noaa_catalog_refresh_log.jsonl"
+
+    # Step 0: pipeline check
+    if not no_pipeline_check:
+        running = find_running_pipelines(data_dir)
+        if running:
+            return {"status": "blocked_by_pipeline",
+                    "blocked_by_pipeline": str(running[0])}
+
+    # Step 1: lock
+    lock_path = data_dir / "noaa_catalog_refresh.lock"
+    lock_ctx = RefreshLock(lock_path) if not no_lock else nullcontext()
+    try:
+        with lock_ctx:
+            # Step 2: list blobs
+            try:
+                prefixes = await azure_list_blob_prefixes()
+            except AzureTruncatedError as e:
+                entry = _truncated_log_entry(ts_iso, str(e))
+                append_refresh_log(log_path, entry)
+                return {"status": "truncated", "log_entry": entry}
+
+            # Steps 3-4: parse + validate tile indexes
+            entries: dict = {}
+            issues: list = []
+            for prefix in prefixes:
+                parsed = parse_noaa_dir(prefix)
+                if parsed is None:
+                    continue
+                usps, year = parsed
+                slug = SLUG_BY_USPS[usps]
+                dir_stem = prefix.rstrip("/")
+                tile_index_url = (
+                    f"{AZURE_LISTING_BASE}/{dir_stem}/tileindex/"
+                    f"tileindex_{dir_stem}.zip"
+                )
+                validated = await validate_tile_index(tile_index_url)
+                if validated is None:
+                    issues.append({"slug": slug, "reason": "tile_index_missing"})
+                    continue
+                cache_dir = data_dir / "noaa_cache" / f"{slug}_{year}"
+                try:
+                    tile_count = await fetch_tile_count(tile_index_url, cache_dir)
+                except Exception as e:
+                    issues.append({"slug": slug, "reason": f"tile_count_failed:{e}"})
+                    continue
+                entries[slug] = {
+                    "usps": usps, "year": year, "dir": dir_stem,
+                    "tile_count": tile_count,
+                    "tile_index_url": tile_index_url,
+                    "tile_index_sha256": validated["content_md5"],
+                }
+
+            # Step 5: structural validation
+            catalog = {
+                "snapshot_version": ts_iso,
+                "parser_version": 3,
+                "source_listing_url": (
+                    f"{AZURE_LISTING_BASE}?restype=container&comp=list"
+                    "&delimiter=/&prefix="
+                ),
+                "validation_status": "ok",
+                "entries": entries,
+                "validation_issues": issues,
+            }
+            try:
+                validate_catalog_structure(catalog)
+            except CatalogValidationError as e:
+                entry = {"ts": ts_iso, "validation_status": "invalid_parse",
+                         "error": str(e), "state_count": len(entries)}
+                append_refresh_log(log_path, entry)
+                return {"status": "invalid_parse", "log_entry": entry}
+
+            # CI-baseline mode: write to explicit output, no snapshot/symlink/log.
+            if output is not None:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(json.dumps(catalog, indent=2, sort_keys=True))
+                return {"status": "ok", "output": str(output)}
+
+            # Steps 6-7: atomic snapshot + symlink swap
+            snapshots_dir = data_dir / "noaa_catalog_snapshots"
+            snapshots_dir.mkdir(parents=True, exist_ok=True)
+            snap_path = write_snapshot(snapshots_dir, catalog, ts=ts_iso)
+            symlink_path = data_dir / "noaa_naip_catalog.json"
+            prev_catalog = _load_previous_snapshot(
+                symlink_path, snap_path, snapshots_dir
+            )
+            swap_symlink(symlink_path, snap_path)
+
+            # Step 8: log (with diff vs. previous)
+            added = sorted(set(entries) - set(prev_catalog.get("entries", {})))
+            removed = sorted(set(prev_catalog.get("entries", {})) - set(entries))
+            entry = {
+                "ts": ts_iso, "snapshot_path": str(snap_path),
+                "parser_version": 3, "state_count": len(entries),
+                "added": added, "removed": removed,
+                "validation_status": "ok", "validation_issues": issues,
+            }
+            append_refresh_log(log_path, entry)
+
+            # Step 9: prune (respecting pinned snapshots)
+            pinned = {Path(s) for s in _collect_pinned_snapshots(data_dir)}
+            prune_snapshots(snapshots_dir, keep_user=10,
+                            current_target=snap_path, pinned=pinned)
+
+            return {"status": "ok", "snapshot_path": str(snap_path),
+                    "log_entry": entry}
+    except LockContendedError as e:
+        return {"status": "locked", "lock_holder_pid": e.holder_pid,
+                "lock_age_s": e.age_s}
+
+
+# ---------------------------------------------------------------------------
+# CLI entry
+# ---------------------------------------------------------------------------
+def _main() -> None:
+    import argparse
+    import asyncio
+    parser = argparse.ArgumentParser(
+        description="Refresh the NOAA NAIP catalog via Azure blob listing."
+    )
+    parser.add_argument("--data-dir", type=Path,
+                        default=Path("/srv/geographica/data"),
+                        help="Runtime data dir (default: /srv/geographica/data)")
+    parser.add_argument("--output", type=Path, default=None,
+                        help="CI-baseline mode: write catalog JSON here, "
+                             "skip snapshot/symlink/log")
+    parser.add_argument("--no-lock", action="store_true",
+                        help="Skip flock acquisition (CI mode)")
+    parser.add_argument("--no-pipeline-check", action="store_true",
+                        help="Skip the pipeline-running block (CI mode)")
+    args = parser.parse_args()
+    result = asyncio.run(refresh_catalog(
+        data_dir=args.data_dir, output=args.output,
+        no_lock=args.no_lock, no_pipeline_check=args.no_pipeline_check,
+    ))
+    print(json.dumps(result, indent=2, default=str))
+    if result.get("status") not in ("ok",):
+        import sys
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    _main()
