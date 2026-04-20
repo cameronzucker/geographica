@@ -47,9 +47,15 @@ log = logging.getLogger(__name__)
 DEFAULT_BBOX = "-124.8,31.3,-102.0,49.0"
 SAMPLE_BBOX = "-115.5,35.5,-113.5,36.5"
 
-# PAD-US 4.1 Geodatabase download URL (USGS ScienceBase)
+# PAD-US 4.1 Geodatabase download URL (USGS ScienceBase).
+# Must use the /catalog/file/get/<item_id>?name=<filename> endpoint — the older
+# /manager/download/<cuid> route now serves the ScienceBase React admin SPA
+# (HTML "You need to enable JavaScript") instead of the file. The /catalog/...
+# endpoint correctly proxies the S3-hosted ZIP (Content-Type: application/zip).
+# Item 652d4fc5d34e44db0e2ee45e is "PAD-US 4.1 Full Inventory Database".
 DEFAULT_PADUS_URL = (
-    "https://sciencebase.usgs.gov/manager/download/cm8wlveow001d0upn7bqaepz8"
+    "https://www.sciencebase.gov/catalog/file/get/652d4fc5d34e44db0e2ee45e"
+    "?name=PADUS4_1Geodatabase.zip"
 )
 
 # Census Bureau TIGER/Line AIANNH (American Indian/Alaska Native/Native Hawaiian) boundaries

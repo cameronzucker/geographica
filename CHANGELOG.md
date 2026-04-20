@@ -7,6 +7,13 @@ project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries
 from v1.1.0 onward are generated automatically by `release-please` from
 Conventional Commits.
 
+## [1.5.2](https://github.com/cameronzucker/geographica/compare/v1.5.1...v1.5.2) (2026-04-19)
+
+
+### Bug Fixes
+
+* **pipeline:** expand supported regions to 48 states + DC; pipeline scripts use /usr/bin/python3 ([fe05fac](https://github.com/cameronzucker/geographica/commit/fe05facc0b73a649fe18a2d989051b14f10d3105))
+
 ## [1.5.1](https://github.com/cameronzucker/geographica/compare/v1.5.0...v1.5.1) (2026-04-19)
 
 
