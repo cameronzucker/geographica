@@ -314,3 +314,58 @@ def find_running_pipelines(data_dir: Path) -> list[Path]:
         except (json.JSONDecodeError, OSError):
             continue
     return running
+
+
+BASELINE_FILENAME = "0000_ci_baseline.json"
+
+
+def append_refresh_log(log_path: Path, entry: dict) -> None:
+    """Append one JSON object per line to the refresh-log JSONL file."""
+    log_path = Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, sort_keys=True))
+        f.write("\n")
+
+
+def prune_snapshots(
+    snapshots_dir: Path,
+    keep_user: int,
+    current_target: Path | None,
+    pinned: set[Path],
+) -> None:
+    """Prune snapshots in-place.
+
+    Preserves (never deletes):
+    - The CI baseline (filename == BASELINE_FILENAME) — immortal
+    - current_target if provided — the symlink's current target
+    - Every path in `pinned` — snapshots pinned by active pipelines
+    - The `keep_user` newest remaining user-generated snapshots by mtime
+
+    Everything else is deleted.
+    """
+    snapshots_dir = Path(snapshots_dir)
+    all_snapshots = list(snapshots_dir.glob("*.json"))
+
+    protected: set[Path] = set()
+    for s in all_snapshots:
+        if s.name == BASELINE_FILENAME:
+            protected.add(s.resolve())
+
+    if current_target is not None:
+        protected.add(Path(current_target).resolve())
+
+    for p in pinned:
+        protected.add(Path(p).resolve())
+
+    # Candidates for possible deletion: user-generated, not already protected
+    user_candidates = [
+        s for s in all_snapshots
+        if s.resolve() not in protected
+    ]
+    # Sort newest first by mtime
+    user_candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+    # Keep `keep_user` newest; delete the rest
+    for s in user_candidates[keep_user:]:
+        s.unlink()

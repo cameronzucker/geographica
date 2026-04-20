@@ -286,3 +286,56 @@ def test_find_running_pipelines_detects_multiple(tmp_path):
     (tmp_path / "c").mkdir(); (tmp_path / "c" / ".pipeline-state.json").write_text('{"status": "complete"}')
     running = find_running_pipelines(tmp_path)
     assert len(running) == 2
+
+
+def test_append_refresh_log(tmp_path):
+    from scripts.refresh_noaa_catalog import append_refresh_log
+    log_path = tmp_path / "log.jsonl"
+    entry = {"ts": "2026-04-20T14:30:12Z", "validation_status": "ok",
+             "added": [], "removed": [], "state_count": 48}
+    append_refresh_log(log_path, entry)
+    lines = log_path.read_text().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0]) == entry
+
+
+def test_append_refresh_log_appends(tmp_path):
+    from scripts.refresh_noaa_catalog import append_refresh_log
+    log_path = tmp_path / "log.jsonl"
+    append_refresh_log(log_path, {"ts": "2026-04-20T14:30:12Z", "state_count": 48})
+    append_refresh_log(log_path, {"ts": "2026-04-20T15:45:00Z", "state_count": 49})
+    lines = log_path.read_text().splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["state_count"] == 48
+    assert json.loads(lines[1])["state_count"] == 49
+
+
+def test_prune_preserves_baseline(tmp_path):
+    from scripts.refresh_noaa_catalog import prune_snapshots
+    (tmp_path / "0000_ci_baseline.json").write_text("{}")
+    for i in range(15):
+        (tmp_path / f"20260401T1200{i:02d}Z.json").write_text("{}")
+    prune_snapshots(tmp_path, keep_user=10, current_target=None, pinned=set())
+    remaining = sorted(p.name for p in tmp_path.glob("*.json"))
+    assert "0000_ci_baseline.json" in remaining
+    assert len(remaining) == 1 + 10  # baseline + 10 newest
+
+
+def test_prune_preserves_current_target(tmp_path):
+    from scripts.refresh_noaa_catalog import prune_snapshots
+    old_target = tmp_path / "old.json"
+    old_target.write_text("{}")
+    for i in range(20):
+        (tmp_path / f"new_{i:02d}.json").write_text("{}")
+    prune_snapshots(tmp_path, keep_user=10, current_target=old_target, pinned=set())
+    assert old_target.exists()
+
+
+def test_prune_preserves_pinned(tmp_path):
+    from scripts.refresh_noaa_catalog import prune_snapshots
+    pinned_path = tmp_path / "pinned.json"
+    pinned_path.write_text("{}")
+    for i in range(20):
+        (tmp_path / f"other_{i:02d}.json").write_text("{}")
+    prune_snapshots(tmp_path, keep_user=5, current_target=None, pinned={pinned_path})
+    assert pinned_path.exists()
