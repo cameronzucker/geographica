@@ -13,6 +13,8 @@ import { chromium } from 'playwright';
 const argv = process.argv.slice(2);
 const urlArg = argv.find((a) => a.startsWith('--url='));
 const baseUrl = urlArg ? urlArg.slice(6) : 'http://localhost:8088';
+const modeArg = argv.find((a) => a.startsWith('--mode='));
+const mode = modeArg ? modeArg.slice(7) : 'b2';  // default: B2 assertion
 
 const ORIGINAL_ROUTE_SHAPE = 'gxz_}Anbf}E_|@_|@';  // stub polyline
 const REROUTE_SHAPE = 'abc123reroute_shape_different_from_original';
@@ -22,6 +24,18 @@ async function mockValhalla(page) {
     const body = JSON.parse(req.postData() || '{}');
     const isReroute = body.locations && body.locations.length > 0 &&
                        Math.abs(body.locations[0].lat - 35.25) < 0.1;
+
+    // In error mode, reroute requests return 200 with { error: "..." }
+    if (mode === 'error' && isReroute) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'No route found' }),
+      });
+      return;
+    }
+
+    // Default behavior: return valid route (B2 mode or initial route fetch)
     const shape = isReroute ? REROUTE_SHAPE : ORIGINAL_ROUTE_SHAPE;
     await route.fulfill({
       status: 200,
@@ -108,7 +122,22 @@ async function mainAsserts() {
     await page.waitForTimeout(600);  // > 500 ms feedGPS interval
   }
 
-  // Wait for map 'route' source to be updated with REROUTE_SHAPE's coords.
+  // If mode === 'error', assert banner surfaces after MAX_REROUTE_RETRIES backoff.
+  if (mode === 'error') {
+    // Retries: 2s + 4s + 8s = 14s maximum. Add fudge for async propagation.
+    await page.waitForFunction(() => {
+      const b = document.getElementById('nav-banner');
+      return b && !b.classList.contains('hidden') && b.textContent.includes('Reroute failed');
+    }, null, { timeout: 20_000 }).catch(() => {
+      console.error('ASSERT FAIL (B11): no Reroute failed banner after error-mode reroute');
+      process.exit(1);
+    });
+    console.log('PASS: Reroute failed banner surfaces on Valhalla 200-with-error (B11)');
+    await browser.close();
+    return;
+  }
+
+  // Default B2 mode: wait for map 'route' source to be updated with REROUTE_SHAPE's coords.
   await page.waitForFunction((originalCount) => {
     const s = window._geographicaMap.getSource('route');
     const coords = s && s._data && s._data.geometry ? s._data.geometry.coordinates : [];
