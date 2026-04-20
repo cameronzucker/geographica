@@ -1329,6 +1329,151 @@ def test_refresh_bg_task_cancelled_error_writes_reset_endpoint_reason(tmp_path, 
 
 
 # ---------------------------------------------------------------------------
+# Task 12 — bg-task terminal-state round-trip coverage (4 missing statuses)
+# ---------------------------------------------------------------------------
+
+def test_refresh_bg_task_ok_writes_result_ok_to_progress(tmp_path, monkeypatch):
+    """Bg task success path writes progress.json with status=done, result.status=ok."""
+    import asyncio
+    from services.search import main as main_module
+    from refresh_noaa_catalog import PROGRESS_FILENAME, write_progress_state
+    import json
+
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+
+    async def fake_refresh(**kwargs):
+        return {
+            "status": "ok",
+            "snapshot_path": str(tmp_path / "snap.json"),
+            "log_entry": {
+                "ts": "2026-04-20T21:30:00Z", "state_count": 49,
+                "added": ["alabama"], "removed": []
+            },
+        }
+
+    monkeypatch.setattr("refresh_noaa_catalog.refresh_catalog", fake_refresh)
+
+    async def _run():
+        cancel_event = asyncio.Event()
+        started_at = "2026-04-20T21:30:00Z"
+        progress_path = tmp_path / PROGRESS_FILENAME
+        write_progress_state(progress_path, {"status": "running", "started_at": started_at})
+        await main_module._refresh_bg_task(tmp_path, progress_path, started_at, cancel_event)
+        state = json.loads(progress_path.read_text())
+        assert state["status"] == "done"
+        assert state["result"]["status"] == "ok"
+        assert state["result"]["snapshot_path"].endswith("snap.json")
+        assert state["result"]["log_entry"]["state_count"] == 49
+        assert "ended_at" in state
+
+    asyncio.run(_run())
+
+
+def test_refresh_bg_task_truncated_writes_result_truncated_to_progress(tmp_path, monkeypatch):
+    """Bg task truncated-result path writes progress.json with status=done, result.status=truncated."""
+    import asyncio
+    from services.search import main as main_module
+    from refresh_noaa_catalog import PROGRESS_FILENAME, write_progress_state
+    import json
+
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+
+    async def fake_refresh(**kwargs):
+        return {
+            "status": "truncated",
+            "log_entry": {
+                "ts": "2026-04-20T21:30:00Z", "validation_status": "truncated",
+                "error": "page 3 returned HTTP 503"
+            },
+        }
+
+    monkeypatch.setattr("refresh_noaa_catalog.refresh_catalog", fake_refresh)
+
+    async def _run():
+        cancel_event = asyncio.Event()
+        started_at = "2026-04-20T21:30:00Z"
+        progress_path = tmp_path / PROGRESS_FILENAME
+        write_progress_state(progress_path, {"status": "running", "started_at": started_at})
+        await main_module._refresh_bg_task(tmp_path, progress_path, started_at, cancel_event)
+        state = json.loads(progress_path.read_text())
+        assert state["status"] == "done"
+        assert state["result"]["status"] == "truncated"
+        assert "log_entry" in state["result"]
+
+    asyncio.run(_run())
+
+
+def test_refresh_bg_task_invalid_parse_writes_result_invalid_parse_to_progress(tmp_path, monkeypatch):
+    """Bg task invalid_parse path writes progress.json with status=done, result.status=invalid_parse."""
+    import asyncio
+    from services.search import main as main_module
+    from refresh_noaa_catalog import PROGRESS_FILENAME, write_progress_state
+    import json
+
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+
+    async def fake_refresh(**kwargs):
+        return {
+            "status": "invalid_parse",
+            "log_entry": {
+                "ts": "2026-04-20T21:30:00Z", "validation_status": "invalid_parse",
+                "error": "missing top-level keys: ['parser_version']"
+            },
+        }
+
+    monkeypatch.setattr("refresh_noaa_catalog.refresh_catalog", fake_refresh)
+
+    async def _run():
+        cancel_event = asyncio.Event()
+        started_at = "2026-04-20T21:30:00Z"
+        progress_path = tmp_path / PROGRESS_FILENAME
+        write_progress_state(progress_path, {"status": "running", "started_at": started_at})
+        await main_module._refresh_bg_task(tmp_path, progress_path, started_at, cancel_event)
+        state = json.loads(progress_path.read_text())
+        assert state["status"] == "done"
+        assert state["result"]["status"] == "invalid_parse"
+
+    asyncio.run(_run())
+
+
+def test_refresh_bg_task_cancel_event_writes_result_cancelled_to_progress(tmp_path, monkeypatch):
+    """Bg task where refresh_catalog returns status=cancelled (user Cancel) writes
+    progress.json with result.status=cancelled and does NOT use the reset_endpoint reason."""
+    import asyncio
+    from services.search import main as main_module
+    from refresh_noaa_catalog import PROGRESS_FILENAME, write_progress_state
+    import json
+
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+
+    async def fake_refresh(**kwargs):
+        return {
+            "status": "cancelled",
+            "log_entry": {
+                "ts": "2026-04-20T21:30:00Z", "validation_status": "cancelled",
+                "state_count": 12, "reason": "cancelled_by_user"
+            },
+        }
+
+    monkeypatch.setattr("refresh_noaa_catalog.refresh_catalog", fake_refresh)
+
+    async def _run():
+        cancel_event = asyncio.Event()
+        started_at = "2026-04-20T21:30:00Z"
+        progress_path = tmp_path / PROGRESS_FILENAME
+        write_progress_state(progress_path, {"status": "running", "started_at": started_at})
+        await main_module._refresh_bg_task(tmp_path, progress_path, started_at, cancel_event)
+        state = json.loads(progress_path.read_text())
+        assert state["status"] == "done"
+        assert state["result"]["status"] == "cancelled"
+        # Distinct from the reset_endpoint reason written by the CancelledError branch
+        assert state["result"].get("reason") != "reset_endpoint"
+        assert state["result"].get("log_entry", {}).get("reason") == "cancelled_by_user"
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
 # POST /admin/pipeline/noaa/refresh/reset (Task 11)
 # ---------------------------------------------------------------------------
 
