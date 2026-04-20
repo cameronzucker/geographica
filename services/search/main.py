@@ -1751,6 +1751,8 @@ async def noaa_estimate(
     raw_download_gb = tile_count * NOAA_TILE_SIZE_MB / 1024
     final_mbtiles_gb = tile_count * 29 / 1024  # empirical: ~29 MB/tile in MBTiles
 
+    intermediate_gb = round(raw_download_gb * 0.3, 1)  # reprojected, compressed
+    peak_required_gb = round(raw_download_gb + intermediate_gb + final_mbtiles_gb, 1)
     # 3-stage parallel pipeline economics:
     # - Download stage: 4 concurrent fetches at ~3 MB/s each → ~160 s/tile raw but parallelized
     # - Reproject stage: CPU-bound, min(cpu_count, 6) threads → ~45 s/tile wall-clock at 4 cores
