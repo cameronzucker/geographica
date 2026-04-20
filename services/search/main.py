@@ -1303,6 +1303,24 @@ async def pipeline_start(body: PipelineStartBody):
     # the lock, so recording snapshot_path here is an effective pin.
     if is_noaa:
         missing, peak_required_gb, snapshot_path = _noaa_peak_and_snapshot(body)
+        # Final review blocker B1: reject Start if no catalog can be resolved
+        # (snapshot_path is None when _load_noaa_catalog fails OR when the
+        # user's state/bbox yields zero cataloged entries). Without this guard
+        # the pipeline container spawns and crashes inside with FileNotFoundError
+        # from pin_catalog_snapshot — the user sees a traceback, not a 409.
+        if snapshot_path is None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "status": "no_catalog",
+                    "message": (
+                        "No NOAA catalog loaded, or the requested state/bbox "
+                        "yielded zero cataloged entries. "
+                        "POST to /admin/pipeline/noaa/refresh first, or pick "
+                        "a bbox that intersects a cataloged state."
+                    ),
+                },
+            )
         if missing and not body.acknowledge_missing:
             raise HTTPException(
                 status_code=409,

@@ -776,3 +776,28 @@ def test_catalog_endpoint_handles_missing_symlink(tmp_path):
     data = resp.json()
     assert data["status"] == "no_catalog"
     assert data["entries"] == {}
+
+
+def test_start_noaa_with_no_catalog_returns_409(tmp_path):
+    """Final-review blocker B1: Start must 409 cleanly when no catalog is loaded
+    rather than letting the pipeline container crash inside with FileNotFoundError."""
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    # tmp_path has no noaa_naip_catalog.json symlink → _load_noaa_catalog returns None
+    with patch("services.search.main._get_disk_free_gb", return_value=500.0), \
+         patch("services.search.main.DATA_DIR", tmp_path):
+        resp = client.post(
+            "/admin/pipeline/start",
+            json={
+                "type": "imagery",
+                "mode": "noaa",
+                "state": "arizona",
+                "bbox": "-112.1,33.4,-112.0,33.5",
+            },
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 409
+    detail = resp.json().get("detail", {})
+    assert detail.get("status") == "no_catalog"
+    assert "refresh" in detail.get("message", "").lower()
