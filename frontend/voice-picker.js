@@ -296,6 +296,11 @@
     _speakPreview: speakPreview,
     _speakPreviewDebounced: speakPreviewDebounced,
     _activePreview: function () { return activePreview; },
+    _isArmed: function () { return previewArmed; },
+    _fireIdleTimer: function () {
+      if (idleResetTimer) { clearTimeout(idleResetTimer); idleResetTimer = null; }
+      previewArmed = false;
+    },
     _onSidebarClose: onSidebarClose,
     _onVisibilityHidden: onVisibilityHidden,
   };
