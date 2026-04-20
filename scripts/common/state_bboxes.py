@@ -100,3 +100,52 @@ def _states_intersecting(bbox_str: str) -> list[str]:
 # Public alias for new code. The underscore prefix on _states_intersecting
 # is for backwards compatibility with setup/runner.py callers.
 states_intersecting = _states_intersecting
+
+
+# USPS postal code → Geographica internal slug
+# AK and HI intentionally map to None — not supported by Geographica
+SLUG_BY_USPS: dict[str, str | None] = {
+    "AL": "alabama", "AK": None, "AZ": "arizona", "AR": "arkansas",
+    "CA": "california", "CO": "colorado", "CT": "connecticut",
+    "DE": "delaware", "DC": "district-of-columbia", "FL": "florida",
+    "GA": "georgia-us", "HI": None, "ID": "idaho", "IL": "illinois",
+    "IN": "indiana", "IA": "iowa", "KS": "kansas", "KY": "kentucky",
+    "LA": "louisiana", "ME": "maine", "MD": "maryland",
+    "MA": "massachusetts", "MI": "michigan", "MN": "minnesota",
+    "MS": "mississippi", "MO": "missouri", "MT": "montana",
+    "NE": "nebraska", "NV": "nevada", "NH": "new-hampshire",
+    "NJ": "new-jersey", "NM": "new-mexico", "NY": "new-york",
+    "NC": "north-carolina", "ND": "north-dakota", "OH": "ohio",
+    "OK": "oklahoma", "OR": "oregon", "PA": "pennsylvania",
+    "RI": "rhode-island", "SC": "south-carolina", "SD": "south-dakota",
+    "TN": "tennessee", "TX": "texas", "UT": "utah", "VT": "vermont",
+    "VA": "virginia", "WA": "washington", "WV": "west-virginia",
+    "WI": "wisconsin", "WY": "wyoming",
+}
+
+USPS_BY_SLUG: dict[str, str] = {
+    slug: usps
+    for usps, slug in SLUG_BY_USPS.items()
+    if slug is not None
+}
+
+
+def display_name(slug: str) -> str:
+    """Render a slug as a human display name.
+
+    'arizona' → 'Arizona'
+    'georgia-us' → 'Georgia' (strip the disambiguation suffix)
+    'district-of-columbia' → 'District of Columbia'
+    'new-hampshire' → 'New Hampshire'
+    """
+    if slug == "georgia-us":
+        return "Georgia"
+    parts = slug.split("-")
+    # Capitalize first part always, keep 'of' and 'the' lowercase
+    result = [parts[0].capitalize()]
+    for part in parts[1:]:
+        if part in ("of", "the"):
+            result.append(part)
+        else:
+            result.append(part.capitalize())
+    return " ".join(result)
