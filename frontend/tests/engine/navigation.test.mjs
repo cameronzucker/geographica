@@ -428,7 +428,13 @@ test('TTM I10: past-maneuver early-return (negative distToNext does not fire pro
   // by an overshoot (the engine-level invariant is that checkVoice for maneuver N does
   // not fire if driver has already crossed it).
   const keys = win._geographicaNavEngineInternals._getAnnouncedKeys();
-  assert.ok(keys.length >= 0, 'announcedSet keys returned');
+  // I10 is mechanistic: announcedSet must NOT contain maneuver-1 keys on
+  // overshoot. A pure "no prompt text" assertion would pass even if keys
+  // were set and then checked — we want to verify the early-return fired
+  // BEFORE the mutation block was reached.
+  const m1Keys = keys.filter(k => k.startsWith('1-'));
+  assert.equal(m1Keys.length, 0,
+    'I10: announcedSet must not contain maneuver-1 keys on overshoot');
   // A prompt for maneuver 1 would be text containing "Main" or "Oak"; assert none.
   const m1Prompts = voiceFires.filter(t => /Main Street/.test(t));
   assert.equal(m1Prompts.length, 0,

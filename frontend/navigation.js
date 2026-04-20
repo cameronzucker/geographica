@@ -382,6 +382,9 @@
 
   // ─── Voice announcements ────────────────────────────────────────────
 
+  // Orphaned as of T3 (TTM rewrite) — no call sites. Deleted in T9 alongside
+  // lastAnnouncementTime + VOICE_COOLDOWN. Retained here only to keep the
+  // plan's §8 step-7 deletion atomic. Do NOT reintroduce calls to this.
   function announce(text, key) {
     if (muted || !text || !onVoiceCb) return false;
     var now = Date.now();
@@ -409,16 +412,13 @@
     var ttmPair = VOICE_TTM[costing] || VOICE_TTM.auto;
     var floor = VOICE_DISTANCE_FLOOR[costing] || VOICE_DISTANCE_FLOOR.auto;
 
-    // distanceToManeuver can return negative on overshoot / U-turn /
-    // GPS jitter at maneuver boundaries. Negative would make every TTM
-    // threshold trivially true, firing for wrong maneuvers.
-    var rawDist = distanceToManeuver(snap, nextIdx);
-    var distToNext = Math.max(0, rawDist);
-    if (distToNext <= 0) {
-      // Driver is AT or past the maneuver — findManeuverForSegment()
-      // advances currentManeuverIdx on the next tick.
-      return;
-    }
+    // distanceToManeuver can return negative on overshoot / U-turn / GPS
+    // jitter at maneuver boundaries. Guard by early-returning on AT-or-past
+    // — we don't want to fire near-tier for a maneuver the driver is
+    // crossing right now; findManeuverForSegment() advances currentManeuverIdx
+    // on the next tick.
+    var distToNext = distanceToManeuver(snap, nextIdx);
+    if (distToNext <= 0) return;
 
     var speed = Math.max(speedMedian(), MIN_SPEED_FLOOR);
     var ttm = distToNext / speed;
