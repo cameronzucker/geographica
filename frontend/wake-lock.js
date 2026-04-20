@@ -1,6 +1,14 @@
 (function () {
   'use strict';
-  if (window.WakeLock) return; // duplicate-load guard
+  // Duplicate-load guard — but ONLY for our own exported API. The browser
+  // Screen Wake Lock API spec exposes a native `WakeLock` interface
+  // constructor on `window.WakeLock` (it's the sentinel class name), so
+  // a plain `if (window.WakeLock) return` short-circuits in every
+  // Wake-Lock-capable browser (Chrome 84+, Safari 16.4+) — leaving the
+  // native constructor in place of our { acquire, release, status } helper
+  // and causing TypeError on the first `WakeLock.acquire()` call from
+  // nav-ui's startNavigation (before the Start->Stop button swap runs).
+  if (window.WakeLock && typeof window.WakeLock.acquire === 'function') return;
 
   var shouldBeActive = false;
   var acquireGeneration = 0;
