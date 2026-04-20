@@ -394,61 +394,65 @@
 
   /**
    * Check if we should fire a voice announcement for the upcoming maneuver.
-   * Uses three distance thresholds (far, medium, near) based on costing.
+   * TTM algorithm (spec v2 §4.3): ttm = distToNext / speedMedian.
+   * Two tiers per maneuver: far (alert) and near (pre-transition).
+   * D1 suppression: when near fires, far is also marked to skip duplicates.
    */
   function checkVoice(snap) {
     if (!route || !route.maneuvers) return;
 
-    // Speed gate: suppress below 2 m/s UNLESS within 50m of next maneuver
-    if (lastSpeed < VOICE_SPEED_GATE) {
-      var nextCheckIdx = currentManeuverIdx + 1;
-      if (nextCheckIdx < route.maneuvers.length) {
-        var distCheck = distanceToManeuver(snap, nextCheckIdx);
-        if (distCheck > VOICE_NEAR_ANNOUNCE_DISTANCE) return;
-      } else {
-        return;
-      }
-    }
-
-    var thresholds = VOICE_THRESHOLDS[route.costing] || VOICE_THRESHOLDS.auto;
     var nextIdx = currentManeuverIdx + 1;
     if (nextIdx >= route.maneuvers.length) return;
 
-    var distToNext = distanceToManeuver(snap, nextIdx);
     var m = route.maneuvers[nextIdx];
+    var costing = route.costing || "auto";
+    var ttmPair = VOICE_TTM[costing] || VOICE_TTM.auto;
+    var floor = VOICE_DISTANCE_FLOOR[costing] || VOICE_DISTANCE_FLOOR.auto;
 
-    for (var ti = 0; ti < thresholds.length; ti++) {
-      var key = nextIdx + "-" + ti;
-      if (announcedSet[key]) continue;
+    // distanceToManeuver can return negative on overshoot / U-turn /
+    // GPS jitter at maneuver boundaries. Negative would make every TTM
+    // threshold trivially true, firing for wrong maneuvers.
+    var rawDist = distanceToManeuver(snap, nextIdx);
+    var distToNext = Math.max(0, rawDist);
+    if (distToNext <= 0) {
+      // Driver is AT or past the maneuver — findManeuverForSegment()
+      // advances currentManeuverIdx on the next tick.
+      return;
+    }
 
-      if (distToNext <= thresholds[ti]) {
-        var text;
-        var isNearTier = ti === thresholds.length - 1;
-        if (!isNearTier) {
-          // Pre-final tier(s): use alert instruction ("in X meters, turn left").
-          // Threshold-count-agnostic: works with [far, near] OR [far, medium, near].
-          text = m.verbal_transition_alert_instruction || m.instruction;
-        } else {
-          // Near (final) tier: use pre-transition instruction ("turn left onto Oak").
-          text = m.verbal_pre_transition_instruction || m.instruction;
+    var speed = Math.max(speedMedian(), MIN_SPEED_FLOOR);
+    var ttm = distToNext / speed;
 
-          // Next-after-next: if maneuver[current+2] is close, append it.
-          // Preserves the "turn left, then right" chain readout on the
-          // near-tier only so it doesn't duplicate across tiers.
-          var afterIdx = nextIdx + 1;
-          if (afterIdx < route.maneuvers.length) {
-            var distBetween = distanceToManeuver(
-              { segmentIndex: m.begin_shape_index, t: 0 }, afterIdx
-            );
-            if (distBetween <= NEXT_AFTER_NEXT_DISTANCE) {
-              var afterM = route.maneuvers[afterIdx];
-              text += ", then " + (afterM.instruction || "");
-            }
-          }
+    var farKey = nextIdx + "-far";
+    var nearKey = nextIdx + "-near";
+
+    var nearWouldFire = !announcedSet[nearKey] &&
+      (ttm <= ttmPair[1] || distToNext <= floor);
+    var farWouldFire = !announcedSet[farKey] && ttm <= ttmPair[0];
+
+    if (nearWouldFire) {
+      var text = m.verbal_pre_transition_instruction || m.instruction || "";
+      // Next-after-next chain — preserved from band-aid behavior.
+      var afterIdx = nextIdx + 1;
+      if (afterIdx < route.maneuvers.length) {
+        var distBetween = distanceToManeuver(
+          { segmentIndex: m.begin_shape_index, t: 0 }, afterIdx
+        );
+        if (distBetween <= NEXT_AFTER_NEXT_DISTANCE) {
+          var afterText = route.maneuvers[afterIdx].instruction || "";
+          if (afterText) text += ", then " + afterText;
         }
-
-        if (!announce(text, key)) break;
       }
+      announcedSet[nearKey] = true;
+      announcedSet[farKey] = true;  // D1 suppression
+      if (!muted && text && onVoiceCb) onVoiceCb(text);
+      return;
+    }
+
+    if (farWouldFire) {
+      var farText = m.verbal_transition_alert_instruction || m.instruction || "";
+      announcedSet[farKey] = true;
+      if (!muted && farText && onVoiceCb) onVoiceCb(farText);
     }
   }
 
@@ -943,7 +947,8 @@
     SPEED_WINDOW_SIZE: SPEED_WINDOW_SIZE,
     MAX_SPEED_DELTA_PER_TICK: MAX_SPEED_DELTA_PER_TICK,
     _getSpeedSamples: function () { return Array.from(speedSamples); },
-    _speedMedian: function () { return speedMedian(); }
+    _speedMedian: function () { return speedMedian(); },
+    _getAnnouncedKeys: function () { return Object.keys(announcedSet).sort(); }
   };
 
 })();

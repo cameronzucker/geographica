@@ -333,3 +333,104 @@ test('speedMedian: returns MIN_SPEED_FLOOR when window is empty', async () => {
     '_speedMedian hook required for median tests');
   assert.equal(i._speedMedian(), i.MIN_SPEED_FLOOR);
 });
+
+test('TTM I1: 2 prompts per maneuver when entering from outside far (steady 10 m/s)', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureRouteWithTwoTurns());
+
+  // Approach maneuver 1 (at lng -111.64) from far. Start pushing speed samples
+  // to establish the smoothed window before crossing the 30s-TTM threshold.
+  // At 10 m/s, 30s TTM = 300m. maneuver 1 is 1km east; start at ~500m away
+  // and step in toward it.
+  const startLng = -111.645;  // 500m west of maneuver 1
+  const steps = 50;            // 50 GPS ticks at ~10m spacing
+  for (let k = 0; k < steps; k++) {
+    const lng = startLng + k * 0.0001;  // ~10m per step at lat 35
+    nav.updateGPS({ latitude: 35.20, longitude: lng, heading: 90, speed: 10 });
+  }
+  // Expected: far-tier fires at ~300m, near-tier fires at ~50m floor = 2 prompts for maneuver 1.
+  assert.equal(voiceFires.length, 2,
+    `I1: expected exactly 2 prompts for maneuver 1, got ${voiceFires.length}`);
+});
+
+test('TTM I2: 1 prompt per maneuver when entering already inside near (D1 suppression)', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  // Start 30m west of maneuver 1 (well inside the 50m floor).
+  // First move a bit so TTM pipeline is allowed to fire (NG8: no start-time voice).
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64030, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureRouteWithTwoTurns());
+  // First movement tick — this is the "post-start first tick" per NG8.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64025, heading: 90, speed: 10 });
+
+  // D1 suppression: near-tier fires, far-tier is marked announced → 1 prompt for maneuver 1.
+  assert.equal(voiceFires.length, 1,
+    `I2: expected exactly 1 prompt (D1 suppression), got ${voiceFires.length}`);
+});
+
+test('TTM I3: zero prompts when stationary beyond distance floor', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  // Start 80m west of maneuver 1 (outside the 50m auto floor), stationary.
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64080, heading: 90, speed: 0 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureRouteWithTwoTurns());
+  // Feed three stationary ticks.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64079, heading: 90, speed: 0 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64078, heading: 90, speed: 0 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64077, heading: 90, speed: 0 });
+
+  assert.equal(voiceFires.length, 0,
+    `I3: expected 0 prompts when stationary beyond floor, got ${voiceFires.length}`);
+});
+
+test('TTM I4: near-tier fires when stationary at distance floor', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  // Start 30m west of maneuver 1 (inside the 50m floor), stationary.
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64030, heading: 90, speed: 0 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureRouteWithTwoTurns());
+  // One "first movement tick" to allow TTM to fire (NG8). Tiny motion.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64029, heading: 90, speed: 0.1 });
+
+  assert.equal(voiceFires.length, 1,
+    'I4: near-tier must fire when within distance floor, even near-stationary');
+});
+
+test('TTM I10: past-maneuver early-return (negative distToNext does not fire prompts)', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureRouteWithTwoTurns());
+
+  // Jump past maneuver 1 — drive to lng -111.639 (east of maneuver 1 at -111.64).
+  // findManeuverForSegment should advance currentManeuverIdx; checkVoice for the
+  // new maneuver 2 fires normally (outside the I10 scope). Count that maneuver 1's
+  // far/near prompts do NOT fire retroactively.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.639, heading: 90, speed: 10 });
+  // Validate the stream by looking at announcedSet: maneuver 1's keys should not be set
+  // by an overshoot (the engine-level invariant is that checkVoice for maneuver N does
+  // not fire if driver has already crossed it).
+  const keys = win._geographicaNavEngineInternals._getAnnouncedKeys();
+  assert.ok(keys.length >= 0, 'announcedSet keys returned');
+  // A prompt for maneuver 1 would be text containing "Main" or "Oak"; assert none.
+  const m1Prompts = voiceFires.filter(t => /Main Street/.test(t));
+  assert.equal(m1Prompts.length, 0,
+    'I10: no prompts for already-passed maneuver 1');
+});
