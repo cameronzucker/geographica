@@ -1,43 +1,69 @@
 # Nav Keep-Awake — Design Spec
 
 **Date:** 2026-04-20
-**Scope:** Prevent mobile device screen-dim / auto-lock from silently stopping turn-by-turn navigation.
-**Files:** `frontend/wake-lock.js` (new), `frontend/nav-ui.js`, `frontend/index.html`, `frontend/vendor/nosleep.min.js` (new vendored asset), `tests/test_wake_lock_static.py` (new), `tests/wake-lock/` (new, JS unit tests).
-**Related:** Spec B (field-mode / Pi-as-AP) is being researched in parallel. This spec is deliberately independent — it ships regardless of Spec B's timeline.
+**Scope:** Prevent mobile device screen-dim / auto-lock from silently stopping turn-by-turn navigation — specifically, prevent the *driver-distraction* scenario where a silent/dim phone causes the driver to look down to investigate.
+**Files:** `frontend/wake-lock.js` (new), `frontend/silent-video-lock.js` (new), `frontend/vendor/silent.mp4` (new, vendored media asset), `frontend/nav-ui.js`, `frontend/index.html`, `tests/test_wake_lock_static.py` (new Python structural tests), `frontend/tests/wake-lock/` (new JS unit tests — NOT under `tests/`), `frontend/vendor/README.md` (updated entry).
+**Related:** Spec B (field-mode / Pi-as-AP) is researched separately at [dev/research/2026-04-20-spec-b-field-mode-research.md](../../../dev/research/2026-04-20-spec-b-field-mode-research.md); future voice-continuity spec ("Spec C'") will address tab-backgrounding voice-prompt reliability separately.
+
+## Revision history
+
+- **v2 (2026-04-20)** — Post-adversarial rewrite. Six-round review (5× Claude agents via `general-purpose`, 1× Codex v0.118.0 cross-validation) surfaced **18 MUST-FIX + 21 SHOULD-FIX** items across API correctness, concurrency safety, testing sufficiency, subagent executability, product framing, and spec-level consistency. Major structural changes:
+  - **NoSleep.js dependency eliminated** (R1 F1.1, R6 F6.1). NoSleep v0.12.0 internally calls `navigator.wakeLock` first, so it was a duplicate of the primary path, not an independent fallback. Replaced with a bespoke first-party `SilentVideoLock` helper.
+  - **Generation-counter race safety** in `acquire()` / `release()` (R2 F2.1/2/3/8). `release()` is now async-awaitable.
+  - **Explicit accessibility contract** on the injected `<video>` (R6 F6.3).
+  - **Explicit media contract** — the silent video MUST have no audio track, not merely muted silence (R6 F6.4).
+  - **Explicit CSP / Permissions-Policy reservation** for the same-origin media source (R6 F6.2).
+  - **Static tests use AST-ish scoped regex**, not bare `grep` (R3 F3.1, R4 F4.9).
+  - **JS unit tests live at `frontend/tests/wake-lock/`**, not `tests/wake-lock/`, to avoid pytest collection collision (R3 F3.11).
+  - **Safety framing** reoriented around driver distraction (R5 F5.1).
+  - **Voice-continuity** elevated from buried §9 footnote to explicit out-of-scope boundary, with a sibling-spec placeholder (R5 F5.5, user decision B).
+  - **Deployment / cache-busting** added (R4 F4.15).
+  - Full reviews at [dev/adversarial/2026-04-20-nav-keep-awake-r{1..6}-*.md](../../../dev/adversarial/).
+- **v1 (2026-04-20)** — Initial design, commit `0cfd989`. Based on NoSleep.js fallback. Invalidated by R1 discovery that NoSleep is not independent of `navigator.wakeLock`.
 
 ---
 
 ## 1. Summary
 
-On mobile devices, Geographica's navigation mode silently breaks when the phone dims its screen or auto-locks: browsers pause or heavily throttle JavaScript in backgrounded / screen-off tabs, so the GPS feed stops, the stale-GPS watchdog stops, turn-by-turn voice announcements stop firing, and reroute detection stops. A driver whose attention is on the road may not notice their phone has stopped navigating for them — a safety-of-life failure mode.
+On mobile devices, Geographica's navigation mode silently breaks when the phone's screen dims or auto-locks: the browser throttles or suspends JavaScript in inactive tabs, so the GPS feed stops, voice announcements stop firing, and reroute detection stops. The driver's phone goes dark, the audio goes quiet, and **the driver looks down to check why** — the real safety hazard, in terms of eyes-off-road distraction at driving speeds.
 
-This spec specifies a keep-awake mechanism that holds the screen on for the duration of an active nav session, using the modern Screen Wake Lock API where available (Secure Context) and a universally-compatible NoSleep.js fallback where not. The mechanism is fully passive — no UI indicator, no audible chime, no user interaction required. When nav ends (explicit stop, arrival auto-stop, reroute failure, page unload), the lock releases and the device resumes normal power management.
+This spec specifies a mechanism that holds the device screen awake for the duration of an active nav session, using:
+
+- **Primary:** the W3C Screen Wake Lock API (`navigator.wakeLock`), available on Secure Context origins (HTTPS, localhost).
+- **Fallback:** a small first-party `SilentVideoLock` helper that plays a silent 1×1 pixel video with no audio track, which keeps mobile browsers from dimming the screen on any origin including plain HTTP (Geographica's AREDN-mesh and Pi-hotspot paths).
+
+The mechanism is entirely passive to the driver — no UI indicator, no audible chime, no modal, no banner. The feature is self-evidencing via the existing nav UI staying visible. When nav ends (explicit Stop, arrival auto-stop, page unload, any error path), the lock releases and normal power management resumes.
+
+**What this spec does NOT address (explicitly out of scope, not a bug):**
+- **Voice-prompt continuity during tab-backgrounding** (user answers a phone call, switches apps). That's a distinct failure mode in the voice-announcement pipeline, addressed in a separate future spec (working title: nav-voice-continuity). This spec reduces how often backgrounding happens (by keeping the screen on, drivers don't need to unlock to check the phone), which reduces the *frequency* of the voice-continuity problem — but doesn't eliminate it.
+- **Offline-HTTPS infrastructure.** Tracked in Spec B.
 
 ## 2. Goals & non-goals
 
 ### Goals
 
-- G1. While navigation is active, the device screen does not auto-dim or auto-lock due to idle timeout.
-- G2. Mechanism works in both `isSecureContext === true` (HTTPS, Tailscale) and `isSecureContext === false` (plain HTTP on LAN / AREDN mesh / future Pi hotspot).
-- G3. Mechanism releases promptly and reliably when navigation ends via any path (explicit Stop, arrival, page unload, catastrophic error).
-- G4. Mechanism is entirely silent to the driver — no visual indicator, no audible chime, no banner, no modal. The feature is self-evidencing (the screen staying on IS the evidence that it works).
-- G5. Mechanism is offline-safe — no CDN, no runtime network dependency.
-- G6. Mechanism survives tab-hide / tab-show transitions (phone call interrupts, home button, app switch) without the driver having to take any action.
-- G7. Code lives in its own module (`frontend/wake-lock.js`), not in `nav-ui.js` or `app.js` — consistent with [docs/pitfalls/implementation-pitfalls.md](../../pitfalls/implementation-pitfalls.md) #9 (frontend module boundaries).
+- **G1.** While navigation is active, the device screen does not auto-dim or auto-lock due to idle timeout.
+- **G2.** Mechanism works on both Secure Context (HTTPS/Tailscale) and plain HTTP (LAN / AREDN / future Pi-hotspot) origins.
+- **G3.** Mechanism releases promptly and deterministically when navigation ends via any path.
+- **G4.** Mechanism is entirely silent to the driver — no *additional* UI chrome beyond what the existing nav banner already provides. The already-visible nav banner IS the evidence that keep-awake is active; we are not adding a badge.
+- **G5.** Mechanism is offline-safe — no CDN, no runtime network dependency, all assets vendored first-party.
+- **G6.** Mechanism survives tab-hide / tab-show transitions (phone call, app switch, home button) without the driver taking action — on return, the lock is re-acquired automatically.
+- **G7.** Module boundaries: new code lives in dedicated files (`frontend/wake-lock.js` + `frontend/silent-video-lock.js`), not in `app.js` or `nav-ui.js`. Per [docs/pitfalls/implementation-pitfalls.md](../../pitfalls/implementation-pitfalls.md) #9.
+- **G8.** Race-free lifecycle: concurrent in-flight acquires, release-during-pending-acquire, and visibility-triggered re-acquires cannot orphan a wake-lock sentinel or create dual-activation (both primary + fallback held at once).
+- **G9.** The injected `<video>` element imposes no accessibility burden: invisible to AT focus order, no media controls, no accessible name, no picture-in-picture or remote-playback affordance.
 
 ### Non-goals
 
-- NG1. Keeping the screen at full brightness. We prevent dimming-to-off; we do not override the user's brightness setting.
-- NG2. Preventing user-initiated screen lock (power button press). That is a legitimate user action and cannot be overridden by a web app.
-- NG3. Alerting the driver when the tab is backgrounded. Audible or visual alarms during driving are rejected as hostile — the existing nav state machine self-heals via its stale-GPS watchdog ([navigation.js:683](../../../frontend/navigation.js#L683)) and off-route detector ([navigation.js:633](../../../frontend/navigation.js#L633)) when the tab returns.
-- NG4. Any UI indicator that keep-awake is active. Rejected in brainstorm — redundant with the evidence the screen itself provides.
-- NG5. Preventing the browser spec-mandated behavior of releasing the Wake Lock on tab-hide. That's non-negotiable; we re-acquire on tab-show instead.
-- NG6. Addressing the offline-HTTPS gating problem (Device GPS, STT). Those features remain gated on Secure Context independently. This spec is scoped to wake-lock only.
-- NG7. Adding a new frontend test runner. We use Node's built-in `node:test` module for JS unit tests (zero dependencies) and Python static checks for structural invariants.
+- **NG1.** Keeping the screen at full brightness. We prevent dimming-to-off; we do not override user brightness.
+- **NG2.** Preventing user-initiated screen lock (power button press).
+- **NG3.** Alerting the driver when the tab is backgrounded. Audible or visual alarms during driving are rejected as hostile — the existing nav state machine's stale-GPS watchdog ([navigation.js:683](../../../frontend/navigation.js#L683)) and off-route detector ([navigation.js:633](../../../frontend/navigation.js#L633)) self-heal silently on tab return. (Caveat: a brief voice confirmation on return from *long* backgrounding may be designed in a future voice-continuity spec — this spec neither adds nor prohibits it.)
+- **NG4.** A dedicated "keep-awake is on" visual indicator. The existing nav banner already serves this role.
+- **NG5.** Preventing the W3C-spec-mandated release of the Wake Lock on tab-hide. That's non-negotiable; we re-acquire on tab-show.
+- **NG6.** Addressing the offline-HTTPS gating problem (Device GPS, STT) — Spec B.
+- **NG7.** Replaying stale voice announcements that fired during a backgrounding window. Rejected: a stale prompt is worse than silence because the turn has already happened and the information is misleading. See §9.
+- **NG8.** Adding a new JS test runner toolchain. We use Node.js's built-in `node:test` module (stable since Node 20) — zero dependencies beyond Node itself.
 
 ## 3. Architecture overview
-
-Three layers, each serving a different failure mode.
 
 ```
    ┌──────────────────────────────────────────────────────────────┐
@@ -47,479 +73,806 @@ Three layers, each serving a different failure mode.
                   │ acquire()                   │ release()
                   ▼                             ▼
    ┌──────────────────────────────────────────────────────────────┐
-   │  frontend/wake-lock.js (new)                                 │
-   │  - Owns: shouldBeActive flag, wakeLockSentinel, noSleep inst │
-   │  - Attempts: navigator.wakeLock (primary)                    │
-   │  - Falls through to: NoSleep.js (fallback)                   │
+   │  frontend/wake-lock.js (new, first-party)                    │
+   │  State: shouldBeActive, acquireGeneration, wakeLockSentinel, │
+   │         fallbackActive                                       │
+   │  - Attempts: navigator.wakeLock.request('screen') (primary)  │
+   │  - Falls through to: SilentVideoLock (fallback)              │
    │  - Re-acquires on visibilitychange when shouldBeActive       │
+   │  - Idempotent; generation-counter race-safe                  │
    └──────────────┬─────────────────────────────┬─────────────────┘
                   │                             │
-                  ▼ primary                     ▼ fallback
-   ┌──────────────────────────┐    ┌──────────────────────────┐
-   │ navigator.wakeLock       │    │ NoSleep.js (vendored)    │
-   │ ('screen')               │    │ silent-video autoplay    │
-   │ Secure Context only      │    │ works on HTTP            │
-   └──────────────────────────┘    └──────────────────────────┘
+                  ▼ primary (Secure Context)    ▼ fallback (any origin)
+   ┌──────────────────────────┐    ┌──────────────────────────────┐
+   │ navigator.wakeLock       │    │ frontend/silent-video-lock.js│
+   │ ('screen')               │    │ (new, first-party)           │
+   │                          │    │ - Injects a 1×1 <video>      │
+   │                          │    │ - Plays frontend/vendor/     │
+   │                          │    │   silent.mp4 (no audio track)│
+   │                          │    │ - a11y-hidden, off-screen,   │
+   │                          │    │   PiP/remote disabled        │
+   └──────────────────────────┘    └──────────────────────────────┘
 ```
 
-Keep-awake is a property of the nav state, not a feature the user opts into. Nav on → screen stays awake. Nav off → screen resumes its normal behavior.
+The two layers are **independent**: the primary uses a browser API, the fallback uses a media element. Crucially — unlike NoSleep.js, which internally tries `navigator.wakeLock` first — the fallback never touches the Wake Lock API. If the primary rejects on a Secure Context (Low Power Mode, iOS PWA pre-18.4, permissions-policy), the fallback is a genuinely independent recovery path.
 
 ## 4. Design details
 
 ### 4.1 Primary: Screen Wake Lock API
 
+Invocation inside `wake-lock.js`:
+
 ```js
-// Inside wake-lock.js
-async function requestPrimary() {
-  if (!('wakeLock' in navigator)) return null;
+if ('wakeLock' in navigator) {
   try {
     const sentinel = await navigator.wakeLock.request('screen');
-    sentinel.addEventListener('release', onSentinelReleased);
-    return sentinel;
+    // race-safe handoff (see §4.3)
   } catch (err) {
-    console.warn('[wake-lock] navigator.wakeLock.request rejected', err);
-    return null;
+    // fall through to fallback
   }
 }
 ```
 
 Constraints:
 
-- **Must be called from a user gesture context.** The `request('screen')` call is permitted only within a short grace window of a user-initiated event. `startNavigation()` is called synchronously from the Start-Nav button click handler ([nav-ui.js:141](../../../frontend/nav-ui.js#L141)). We MUST NOT await any promise between the click and the wake-lock request, or the gesture grace window closes and the request rejects.
-- **Must be Secure Context.** `navigator.wakeLock` is undefined on plain HTTP. Detection is via `'wakeLock' in navigator`, which returns false on non-Secure-Context origins.
-- **Auto-releases when tab hides.** Per the [W3C Screen Wake Lock spec](https://www.w3.org/TR/screen-wake-lock/), a released sentinel is signaled via the `release` event. We re-request on `visibilitychange` → `visible` if `shouldBeActive === true`.
-- **Auto-releases on page unload.** No explicit cleanup needed for the navigate-away case, but we DO want to release on `stopNavigation()` for the case where nav ends but the page stays open (user returns to search, etc.).
+- **Detect via `'wakeLock' in navigator`.** Returns `false` on non-Secure-Context origins in spec-conforming browsers. Some non-conforming WebViews (Samsung Internet, in-app browsers) may expose the property but reject at call time with `NotAllowedError` — handled by the outer `try/catch`.
+- **User-gesture synchronous path is preserved** for *operational* safety. The W3C Screen Wake Lock editor's draft does NOT currently require transient activation for `request()`, but (a) [w3c/screen-wake-lock#350](https://github.com/w3c/screen-wake-lock/issues/350) proposes adding that requirement in a future revision, and (b) the `<video>.play()` call in the fallback path *does* require it. We preserve the synchronous-from-click invariant for both layers.
+- **Browser auto-releases on tab-hide.** The sentinel fires a `release` event. Our handler clears our reference; the visibility listener re-acquires on tab return (§4.5).
+- **`request('screen')` may reject** from permissions-policy (iframe `allow` attribute missing), iOS Low Power Mode (sometimes), or tab hidden at request time. The `try/catch` handles all rejection classes uniformly.
+- **iOS Home Screen PWA (standalone mode) on iOS < 18.4:** `navigator.wakeLock` is present but silently non-functional — [WebKit #254545](https://bugs.webkit.org/show_bug.cgi?id=254545). Detected at runtime and handled per §5.21.
 
-### 4.2 Fallback: NoSleep.js
+### 4.2 Fallback: bespoke `SilentVideoLock` helper
 
-NoSleep.js ([github.com/richtr/NoSleep.js](https://github.com/richtr/NoSleep.js), MIT, ~3 KB minified, version 0.12.0) works by autoplaying a tiny silent `<video>` element in a loop. As long as a `<video>` is playing, iOS and Android will not dim or lock the screen, regardless of Secure Context.
+`frontend/silent-video-lock.js` is a ~60-line first-party module. It plays a tiny silent video that keeps the mobile browser from dimming the screen, on any origin regardless of Secure Context. Replaces the (invalidated) NoSleep.js dependency from v1.
+
+**Media contract** (mandatory — see §4.8 for full details):
+
+- Source: `frontend/vendor/silent.mp4` — same-origin, vendored.
+- **NO audio track** (not merely muted silence). `-an` flag on the ffmpeg generation command. See §4.8 for the canonical generation recipe.
+- Format: H.264/MP4 (universal mobile compatibility).
+- Dimensions: 1×1 pixel, 1 frame minimum, <2 KB file size.
+
+**Element contract** (mandatory — see §4.9 for full details):
+
+- `<video>` created programmatically, never authored in HTML.
+- Properties: `muted`, `playsInline`, `loop`; `disablePictureInPicture = true`; `disableRemotePlayback = true`.
+- Attributes: `aria-hidden="true"`, `tabindex="-1"`.
+- No `controls`, no `title`, no `alt`, no accessible name anywhere.
+- Styled off-screen: `position:fixed; top:-9999px; left:-9999px; width:1px; height:1px; opacity:0; pointer-events:none`.
+
+**Canonical `silent-video-lock.js`:**
 
 ```js
-// Inside wake-lock.js
-let noSleep = null;
-function requestFallback() {
-  if (!window.NoSleep) {
-    console.warn('[wake-lock] NoSleep.js not loaded, no fallback available');
-    return false;
+(function () {
+  'use strict';
+  if (window.SilentVideoLock) return; // duplicate-load guard
+
+  var video = null;
+
+  function createVideo() {
+    var v = document.createElement('video');
+    v.muted = true;
+    v.playsInline = true;
+    v.loop = true;
+    v.disablePictureInPicture = true;
+    v.disableRemotePlayback = true;
+    v.setAttribute('aria-hidden', 'true');
+    v.setAttribute('tabindex', '-1');
+    v.style.cssText =
+      'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
+    v.src = 'vendor/silent.mp4';
+    return v;
   }
-  if (!noSleep) noSleep = new window.NoSleep();
-  try {
-    noSleep.enable();      // returns a Promise; enable() must be called from a user gesture
-    return true;
-  } catch (err) {
-    console.warn('[wake-lock] NoSleep.enable() threw', err);
-    return false;
+
+  function enable() {
+    if (video) {
+      // Idempotent: re-kick play() in case the browser paused it on tab-hide.
+      return video.play().catch(function () {});
+    }
+    video = createVideo();
+    document.body.appendChild(video);
+    return video.play(); // returns Promise; may reject on autoplay policy
   }
-}
+
+  function disable() {
+    if (!video) return;
+    try { video.pause(); } catch (err) { /* ignore */ }
+    video.remove();
+    video = null;
+  }
+
+  function isActive() {
+    return video !== null && !video.paused;
+  }
+
+  window.SilentVideoLock = { enable: enable, disable: disable, isActive: isActive };
+})();
 ```
 
 Constraints:
 
-- **Must be called from a user gesture context**, same as primary. Same pattern: synchronous within click handler.
-- **Vendored, not CDN.** Per [docs/pitfalls/implementation-pitfalls.md](../../pitfalls/implementation-pitfalls.md) #6 (offline-first). File: `frontend/vendor/nosleep.min.js`. Script tag added to `frontend/index.html` BEFORE `nav-ui.js` so `window.NoSleep` is defined at nav-ui.js load time.
-- **Low Power Mode on iOS disables `<video>` autoplay.** The fallback becomes a no-op. This degradation is acceptable — in Low Power Mode, the user has explicitly prioritized battery over features, and the nav engine's dead-reckoning still keeps state sensible. Documented in §5 "Failure modes."
-- **NoSleep is instantiated lazily** (on first `enable()` call), not at module load. This avoids injecting a `<video>` element into DOM for users who never start nav.
+- **Must be invoked from a user-gesture context.** `<video>.play()` requires transient activation. Our `acquire()` runs synchronously from the nav-start click; no `await`, no `setTimeout` between click and `enable()`.
+- **iOS Low Power Mode disables `<video>` autoplay.** `enable()` rejects; `acquire()` catches it; we remain in "degraded mode" per §5.4. Battery-conscious user made their choice.
+- **Same-origin asset** — requires only the default `media-src 'self'` CSP (no policy exists today; see §13 for future reservation).
 
-### 4.3 Progressive enhancement + visibility handling
+### 4.3 Canonical `acquire()` / `release()` with generation-counter race safety
 
-The public API of `wake-lock.js`:
+The canonical code below MUST be followed literally by the implementer. Deviations from the generation-counter pattern will reintroduce the orphan-lock bugs the v1 spec shipped with (R2 F2.1/2.2/2.3/2.8).
+
+**State:**
 
 ```js
-// Call from nav-ui.js startNavigation() — synchronously, no await between click and this call
-WakeLock.acquire();
-
-// Call from nav-ui.js stopNavigation() — safe to call even if never acquired
-WakeLock.release();
-
-// Diagnostic — returns 'wakelock' | 'nosleep' | 'none' | 'idle'
-WakeLock.status();
+var shouldBeActive = false;       // target state
+var acquireGeneration = 0;        // monotonic counter; each new acquire bumps it
+var wakeLockSentinel = null;      // primary path observed state
+var fallbackActive = false;       // fallback path observed state
 ```
 
-The module's internal state machine:
-
-```
-        ┌──────────────────────────────────────────┐
-        │  shouldBeActive (boolean)                │
-        │  wakeLockSentinel (object | null)        │
-        │  noSleepActive (boolean)                 │
-        └──────────────────────────────────────────┘
-
-       acquire()
-         │
-         ▼
-       shouldBeActive = true
-         │
-         ├─── navigator.wakeLock available? ──yes──► request('screen')
-         │                                              │
-         │                                              ├─ success → sentinel held, done
-         │                                              └─ reject → fall to NoSleep
-         │
-         └─── no / rejected ──► noSleep.enable()
-                                    │
-                                    ├─ success → noSleepActive = true, done
-                                    └─ error → log warning, no further action
-
-
-       release()
-         │
-         ▼
-       shouldBeActive = false
-         │
-         ├─── wakeLockSentinel ? → sentinel.release() (awaited, errors swallowed)
-         └─── noSleepActive ? → noSleep.disable()
-
-
-       visibilitychange event (listener attached at module load, never detached)
-         │
-         ▼
-       if shouldBeActive AND document.visibilityState === 'visible':
-         if wakeLockSentinel === null AND 'wakeLock' in navigator:
-           request('screen') again  ← browser released it on hide; re-acquire on show
-         if noSleepActive AND !document.querySelector('video').currentTime advanced:
-           noSleep.enable() again  ← may be a no-op or may re-kick the video
-```
-
-**Key invariant:** `shouldBeActive` is the *target* state. The actual lock state (sentinel existence, NoSleep active) is *observed* state. They can diverge briefly (lock released by browser, not yet re-acquired) without the driver noticing, because the re-acquisition is automatic on visibility return.
-
-**Concrete `acquire()` implementation** (canonical — the subagent MUST follow this structure to correctly handle the race in §5.7):
+**`acquire()` (async; caller fires-and-forgets):**
 
 ```js
 async function acquire() {
-  // Idempotency: already acquired, nothing to do.
-  if (shouldBeActive && wakeLockSentinel) return;
+  // Idempotency: already holding a lock → nothing to do.
+  if (shouldBeActive && (wakeLockSentinel !== null || fallbackActive)) return;
   shouldBeActive = true;
+  var myGen = ++acquireGeneration;
 
-  // Try primary path. Note: no await between shouldBeActive = true and the request call,
-  // so the user-gesture grace window is preserved.
+  // Primary path: Screen Wake Lock API
   if ('wakeLock' in navigator) {
     try {
-      const sentinel = await navigator.wakeLock.request('screen');
-      if (!shouldBeActive) {
-        // Race (§5.7): release() was called while the request was in flight.
-        // The request resolved after the intent flipped to released. Discard the sentinel.
+      var sentinel = await navigator.wakeLock.request('screen');
+      // Race check: release() or another acquire() may have run while we awaited.
+      if (!shouldBeActive || myGen !== acquireGeneration) {
         sentinel.release().catch(function () {});
         return;
       }
       wakeLockSentinel = sentinel;
       sentinel.addEventListener('release', function () {
-        // Browser released the lock (e.g., tab hidden). Clear our reference; visibilitychange
-        // handler will re-acquire when the tab returns if shouldBeActive is still true.
-        wakeLockSentinel = null;
+        // Only clear if THIS sentinel is still the current one (prevents
+        // late release events from a stale sentinel nulling a live one).
+        if (wakeLockSentinel === sentinel) wakeLockSentinel = null;
       });
       return;
     } catch (err) {
       console.warn('[wake-lock] navigator.wakeLock.request rejected', err);
-      // Fall through to NoSleep fallback.
+      // fall through to fallback
     }
   }
 
-  // Fallback path. Check shouldBeActive again in case release() fired during the try block.
-  if (!shouldBeActive) return;
-  if (!window.NoSleep) {
-    console.warn('[wake-lock] NoSleep.js not loaded, no fallback available');
+  // Fallback path: bespoke SilentVideoLock
+  if (!shouldBeActive || myGen !== acquireGeneration) return;
+  if (!window.SilentVideoLock) {
+    console.warn('[wake-lock] SilentVideoLock not loaded, no fallback available');
     return;
   }
-  if (!noSleep) noSleep = new window.NoSleep();
   try {
-    noSleep.enable();
-    noSleepActive = true;
+    await window.SilentVideoLock.enable();
+    // Race check again after awaited enable().
+    if (!shouldBeActive || myGen !== acquireGeneration) {
+      window.SilentVideoLock.disable();
+      return;
+    }
+    fallbackActive = true;
   } catch (err) {
-    console.warn('[wake-lock] NoSleep.enable() threw', err);
+    console.warn('[wake-lock] SilentVideoLock.enable() rejected', err);
+    // Degraded: shouldBeActive === true but no mechanism active. Per §5.4.
   }
 }
 ```
 
-**Concrete `release()` implementation:**
+**`release()` (async; callers may await but nav-ui.js does not):**
 
 ```js
-function release() {
+async function release() {
   shouldBeActive = false;
-  if (wakeLockSentinel) {
-    wakeLockSentinel.release().catch(function () {});
+  ++acquireGeneration; // invalidate any pending acquire() continuations
+
+  if (wakeLockSentinel !== null) {
+    var s = wakeLockSentinel;
     wakeLockSentinel = null;
+    try { await s.release(); } catch (err) { /* swallow */ }
   }
-  if (noSleepActive && noSleep) {
-    try { noSleep.disable(); } catch (err) { /* swallow */ }
-    noSleepActive = false;
+  if (fallbackActive) {
+    fallbackActive = false;
+    if (window.SilentVideoLock) {
+      try { window.SilentVideoLock.disable(); } catch (err) { /* swallow */ }
+    }
   }
 }
 ```
 
-### 4.4 Integration points (`nav-ui.js`)
+**Why the generation counter is load-bearing** (reproducing the v1 bug if omitted): two independent in-flight `acquire()` calls (e.g., Start → Stop → Start rapidly, or explicit click racing with visibility-triggered re-acquire) can each resolve their `request('screen')` and both store their sentinel into `wakeLockSentinel` — the later write wins and the earlier sentinel is orphaned (holds the screen on until page unload with no JS reference). The generation counter, captured locally per `acquire()` call and compared to the module-level counter on resume, detects staleness and releases the orphaned sentinel.
 
-Two call sites, both already well-defined in the existing nav-ui.js structure:
+### 4.4 Integration points in `nav-ui.js`
 
-**At [nav-ui.js:160](../../../frontend/nav-ui.js#L160), immediately after `active = true; document.body.classList.add('nav-active');`:**
+Line numbers are advisory as of 2026-04-20; if they have drifted by the time of implementation, locate the hooks via the literal strings below — they are unique and stable.
+
+**Acquire hook:** inside `function startNavigation()`, immediately after `document.body.classList.add('nav-active');`:
 
 ```js
 active = true;
 document.body.classList.add('nav-active');
 
-// NEW: Acquire wake-lock synchronously within the user-gesture grace window.
-// Must be called BEFORE any awaited promise or setTimeout/setInterval.
+// DO NOT insert awaited work between classList.add and primeSpeech — breaks
+// the user-gesture context required by Screen Wake Lock + SpeechSynthesis.
 WakeLock.acquire();
+
+primeSpeech();
 ```
 
-**At [nav-ui.js:199](../../../frontend/nav-ui.js#L199), inside `stopNavigation()`, immediately after `document.body.classList.remove('nav-active');`:**
+**Release hook:** inside `function stopNavigation()`, immediately after `document.body.classList.remove('nav-active');`:
 
 ```js
 document.body.classList.remove('nav-active');
 
-// NEW: Release wake-lock. Safe to call unconditionally.
 WakeLock.release();
 ```
 
-**Why the class-toggle is the hook and not a new callback:** existing nav hook points are the class additions/removals, which already fire exactly once per nav session. Piggybacking keeps the call graph simple and ensures we never miss a release.
-
 **Do NOT:**
-- Hook into `nav.onArrival()`, `nav.onReroute()`, or any engine-level callbacks. The release contract is tied to nav-UI lifecycle, not engine internals.
-- Add a call in `primeSpeech()`, `startGPSFeed()`, or any other sub-operation of `startNavigation()`. The acquire call must be synchronous within the click handler's grace window.
-- Wrap the acquire call in a `try/catch` at the call site. Error handling lives inside `wake-lock.js` so the call site stays clean.
 
-### 4.5 Visibility listener attachment
+1. Move `WakeLock.acquire()` above the early-return guards (`if (!trip || !window.GeographicaNav) return;` and `if (!routeData) return;`). Those guards are intentional — if nav doesn't start, we don't want a lock held.
+2. Add a call in `primeSpeech()`, `startGPSFeed()`, or any sub-operation of `startNavigation()`. The acquire call must be a statement of `startNavigation` itself.
+3. Hook into `nav.onArrival()`, `nav.onReroute()`, or any engine-level callback. The release contract is tied to nav-UI lifecycle, not engine internals.
+4. Wrap the acquire call in `try/catch` at the call site. Error handling lives inside `wake-lock.js`.
+5. Observe `nav-active` class changes via `MutationObserver` — hook both call sites explicitly.
+6. Combine `WakeLock.acquire()` with `primeSpeech()` into a single helper — they must be two separate statements.
+7. Gate `WakeLock.acquire()` behind `isSecureContext` at the call site — the module itself decides which path to use.
+8. Insert any line between the class toggle and `primeSpeech()` containing `await`, `fetch(`, `setTimeout(`, or `.then(`.
+9. Reorder lines 161 (class add) → acquire call → 164 (primeSpeech) — this ordering is LOAD-BEARING.
 
-Attached at module load time, never detached:
+### 4.5 Visibility-change handler
+
+Attached once at module load, never detached:
 
 ```js
 document.addEventListener('visibilitychange', function () {
-  if (!shouldBeActive) return;                            // no nav active; ignore
-  if (document.visibilityState !== 'visible') return;     // tab going hidden; browser handles release
+  if (!shouldBeActive) return;                           // no nav; ignore
+  if (document.visibilityState !== 'visible') return;    // going hidden; browser handles release
 
-  // Tab came back visible. Re-acquire if the sentinel was released by the browser.
-  if ('wakeLock' in navigator && !wakeLockSentinel) {
-    requestPrimary().then(function (s) { wakeLockSentinel = s; });
+  // Re-acquire primary if the browser released it on tab-hide.
+  if ('wakeLock' in navigator && wakeLockSentinel === null) {
+    var myGen = ++acquireGeneration;
+    navigator.wakeLock.request('screen').then(function (s) {
+      if (!shouldBeActive || myGen !== acquireGeneration) {
+        s.release().catch(function () {});
+        return;
+      }
+      wakeLockSentinel = s;
+      s.addEventListener('release', function () {
+        if (wakeLockSentinel === s) wakeLockSentinel = null;
+      });
+    }).catch(function (err) {
+      console.warn('[wake-lock] visibility-re-acquire rejected', err);
+    });
   }
-  if (noSleepActive && noSleep) {
-    // NoSleep.js: its own videoplay loop usually survives hide/show, but re-kick defensively.
-    noSleep.enable().catch(function () { /* swallow */ });
+
+  // Fallback: re-kick only if primary is UNAVAILABLE and fallback was active.
+  // Do NOT run both simultaneously — dual-activation wastes battery and can
+  // create internal state drift (§5.21).
+  if (!('wakeLock' in navigator) && fallbackActive && window.SilentVideoLock) {
+    if (!window.SilentVideoLock.isActive()) {
+      window.SilentVideoLock.enable().catch(function () {});
+    }
   }
 });
 ```
 
-**Why attach at module load, not at acquire-time:** the listener is idempotent and cheap when `shouldBeActive === false` (single boolean check + early return). Attaching/detaching adds a failure mode (detach-on-release racing with a visibilitychange event) with no benefit.
+Note: `++acquireGeneration` is incremented by the visibility handler's own re-acquire so that if a user-initiated `acquire()` races with a visibility-triggered re-acquire, the generation-counter check detects the race and releases the stale sentinel.
 
-### 4.6 Module layout
+### 4.6 Module file layout
 
-`frontend/wake-lock.js` — self-contained, namespace-exported as `window.WakeLock`. Pattern follows existing `window.GeographicaNav` / `window.GeographicaSearch` pattern in nav-ui.js. No ES modules, no build step.
+**`frontend/wake-lock.js`** — self-contained IIFE, exports as `window.WakeLock`.
 
 ```js
 (function () {
   'use strict';
+  if (window.WakeLock) return; // duplicate-load guard (duplicate <script> tags,
+                                // HMR, test-harness re-import)
 
-  var shouldBeActive = false;
-  var wakeLockSentinel = null;
-  var noSleep = null;
-  var noSleepActive = false;
-
-  async function acquire() { /* ... */ }
-  function release() { /* ... */ }
-  function status() { /* ... */ }
-
-  // Visibility listener attached once on first load.
-  document.addEventListener('visibilitychange', /* ... */);
+  // ... state, acquire(), release(), status(), visibility listener ...
 
   window.WakeLock = { acquire: acquire, release: release, status: status };
 })();
 ```
 
-`frontend/index.html` — script tags in order:
+**`frontend/silent-video-lock.js`** — same pattern, exports as `window.SilentVideoLock`.
+
+**`frontend/index.html`** — script tags in this order (BEFORE `nav-ui.js`):
 
 ```html
-<script src="vendor/nosleep.min.js"></script>
-<script src="wake-lock.js"></script>
-<!-- existing: -->
-<script src="navigation.js"></script>
-<script src="nav-ui.js"></script>
+<script src="silent-video-lock.js?v=20260420"></script>
+<script src="wake-lock.js?v=20260420"></script>
+<!-- existing -->
+<script src="navigation.js?v=20260420"></script>
+<script src="nav-ui.js?v=20260420"></script>
 ```
 
-NoSleep must load before wake-lock.js so `window.NoSleep` is available at module init.
+See §12 for why all script tags (not just the new ones) gain the `?v=` cache-buster.
+
+### 4.7 `status()` — diagnostic API
+
+Returns one of four strings. Definitions are the source of truth; any test or consumer MUST use exactly these mappings.
+
+| Return | Condition | When you see this |
+|---|---|---|
+| `'idle'` | `shouldBeActive === false` | Before first acquire, or after `release()` fully completes. |
+| `'wakelock'` | `shouldBeActive === true && wakeLockSentinel !== null` | Primary path held a sentinel. Happy path on Secure Context. |
+| `'fallback'` | `shouldBeActive === true && wakeLockSentinel === null && fallbackActive === true` | Fallback path engaged (plain HTTP or primary rejected). |
+| `'none'` | `shouldBeActive === true && wakeLockSentinel === null && fallbackActive === false` | Intent-to-hold but no mechanism active. Happens in §5.4 (both paths failed), §5.18 (tab hid during pending acquire), §5.21 (iOS PWA pre-18.4), or transiently between a browser release and our re-acquire. |
+
+### 4.8 Silent-video media contract (normative)
+
+The vendored media asset `frontend/vendor/silent.mp4` MUST satisfy:
+
+- **No audio track whatsoever.** Not a muted audio track — no audio stream in the container. Use `-an` on the ffmpeg generation command.
+- **Codec:** H.264 (`libx264`), `pix_fmt yuv420p` for mobile compatibility.
+- **Resolution:** 1×1 pixel.
+- **Duration:** ≤ 1 second, single keyframe preferred.
+- **Container:** MP4 with `+faststart` muxer flag.
+- **File size:** < 2 KB on disk.
+- **License:** MIT, generated fresh by the project (so not subject to a 3rd-party license).
+
+**Canonical generation command** (run once; output committed):
+
+```bash
+ffmpeg -y -f lavfi -i "color=c=black:s=1x1:d=1" \
+  -c:v libx264 -pix_fmt yuv420p -movflags +faststart -an \
+  frontend/vendor/silent.mp4
+```
+
+Why "no audio track at all" matters (R6 F6.4): browsers distinguish *muted audio* from *no audio stream* in media-session routing, autoplay policy, and lock-screen affordance exposure. A muted-audio asset can: (a) unexpectedly claim the OS media session, competing with `speechSynthesis.speak()`; (b) surface a "now playing" affordance on iOS lock screens; (c) require stricter autoplay gating on some Android builds. No-audio-track eliminates all three classes of interaction.
+
+**Verification commands** (run in test harness):
+
+```bash
+ffprobe -v error -select_streams a -show_entries stream=codec_type frontend/vendor/silent.mp4
+# Expected output: empty (no audio stream present)
+
+stat --printf="%s\n" frontend/vendor/silent.mp4
+# Expected: < 2048
+```
+
+### 4.9 Accessibility contract (normative)
+
+The `<video>` element created by `SilentVideoLock` MUST:
+
+- Set `aria-hidden="true"`.
+- Set `tabindex="-1"`.
+- Have no `controls`, no `title` attribute, no inline text content, no `aria-label`, no `aria-labelledby`, no associated `<label>`.
+- Have no `id` that could be referenced externally.
+- Be placed outside any `<main>`, `<nav>`, `<article>`, `<section>`, or other landmark — `document.body` directly is the correct parent.
+- Be CSS-positioned off-screen (`top:-9999px; left:-9999px`) and sized 1×1 with `opacity:0; pointer-events:none`.
+- Disable picture-in-picture (`video.disablePictureInPicture = true`).
+- Disable remote playback (`video.disableRemotePlayback = true`).
+
+Manual acceptance step (§6.3 #6): with VoiceOver (iOS) or TalkBack (Android) active during navigation, rotor/swipe-left-right navigation MUST NOT expose a media control; tab key sequence (if a Bluetooth keyboard is present) MUST NOT focus the element. If any of these surfaces the video, fix the contract before shipping.
 
 ## 5. Failure modes and edge cases
 
-For each, the expected behavior is specified precisely so subagents writing tests don't have to guess.
+For each, expected behavior is specified precisely.
 
 ### 5.1 `navigator.wakeLock` undefined (HTTP origin, old browser)
 Detection: `!('wakeLock' in navigator)`.
-Behavior: `requestPrimary()` returns `null` immediately. Fall through to NoSleep.
-Test: mock `navigator` without `wakeLock` property; assert `acquire()` calls NoSleep.
+Behavior: primary path is skipped (not attempted). Fallback engages.
+Test: §6.2 `test_primary_unavailable_falls_to_silent_video`.
 
-### 5.2 `navigator.wakeLock.request()` rejects
-Causes: permissions policy (iframe), Low Power Mode on some browsers, tab already hidden at request time.
-Behavior: caught `try/catch`, `console.warn`, fall through to NoSleep.
-Test: mock `request` to throw; assert NoSleep path runs.
+### 5.2 `navigator.wakeLock.request()` rejects synchronously or async
+Causes: permissions-policy block, Low Power Mode on some browsers, tab hidden at request time, WebView non-conformance.
+Behavior: caught; `console.warn`; fallback engages.
+Test: §6.2 `test_primary_reject_falls_to_silent_video`.
 
-### 5.3 NoSleep.js not loaded (vendored file missing / 404)
-Detection: `!window.NoSleep` at acquire-time.
-Behavior: `console.warn`, `acquire()` completes silently with `shouldBeActive === true` but no actual lock. Next nav start or visibility return will retry, same outcome. No crash.
-Test: leave `window.NoSleep` undefined; assert `acquire()` does not throw and logs warning.
+### 5.3 `SilentVideoLock` not loaded (`window.SilentVideoLock` undefined)
+Cause: script tag missing in index.html, vendor file 404, script load error.
+Behavior: `console.warn`; `acquire()` returns with `shouldBeActive === true` and no mechanism active. `status() === 'none'`. Degraded: screen will dim on next idle.
+Test: §6.2 `test_silent_video_lock_missing_degrades_silently`.
 
-### 5.4 NoSleep.js `enable()` throws or rejects
-Causes: autoplay policy (iOS Low Power Mode, Safari's autoplay restrictions on new tabs), audio context creation fails.
-Behavior: caught `try/catch`, `console.warn`, no further recovery. `shouldBeActive` remains `true` but neither mechanism is active. **Degraded mode**: the driver's phone will auto-dim on normal idle timeout. The nav engine itself continues to work as-is when the tab is visible.
-Test: mock `NoSleep.enable()` to throw; assert no crash, warning logged.
+### 5.4 `SilentVideoLock.enable()` rejects (autoplay policy, iOS LPM, asset load failure)
+Behavior: caught; `console.warn`; `fallbackActive` remains `false`; degraded per §5.3 semantics. `status() === 'none'`.
+Test: §6.2 `test_silent_video_lock_enable_rejects_degrades_silently`.
 
-### 5.5 `startNavigation()` called twice without intervening `stopNavigation()`
-Behavior: `acquire()` is idempotent — if `shouldBeActive === true && wakeLockSentinel !== null`, do nothing. If `shouldBeActive === true && wakeLockSentinel === null` (e.g., released by browser), attempt to re-acquire. Never double-acquire.
-Test: call `acquire()` twice; assert only one `request()` call to the mock.
+### 5.5 `acquire()` called twice without intervening `release()`
+Behavior: idempotent. First non-trivial completion holds; second call returns immediately at the top guard.
+Test: §6.2 `test_acquire_idempotent`.
 
-### 5.6 `stopNavigation()` called before `startNavigation()` or after a previous `stopNavigation()`
-Behavior: `release()` is idempotent — sets `shouldBeActive = false`, releases the sentinel if present, disables NoSleep if active. Safe to call on a fresh module load with no prior acquire.
-Test: call `release()` with no prior `acquire()`; assert no error, `status()` returns `'idle'`.
+### 5.6 `release()` called before `acquire()`, or twice in a row
+Behavior: idempotent. `shouldBeActive = false`; releasing null sentinel is a no-op; `fallbackActive === false` short-circuits. `status() === 'idle'` afterward.
+Test: §6.2 `test_release_without_acquire_is_noop`.
 
-### 5.7 `stopNavigation()` called while `acquire()` is still awaiting a rejected promise
-Race: user taps Start → `request('screen')` is in flight → user taps Stop before the promise resolves/rejects → `shouldBeActive` goes true then false → promise eventually resolves with a sentinel.
-Behavior: after `request('screen')` resolves, check `shouldBeActive`. If false, immediately release the sentinel and discard. Prevents orphaned locks.
-Test: inject a delayed-resolve `request()` mock; call `acquire()` then `release()` before the mock resolves; assert the returned sentinel's `.release()` is called exactly once.
+### 5.7 `release()` called while `acquire()`'s primary-path `request()` is pending
+Scenario: user taps Start → `request('screen')` pending → user taps Stop → `release()` runs synchronously (async release itself is fast) → eventually primary Promise resolves.
+Behavior: the generation-counter check in `acquire()` resume detects `myGen !== acquireGeneration` (because `release()` bumped the generation), releases the resolved sentinel, exits. No orphan.
+Test: §6.2 `test_release_during_pending_primary_releases_sentinel`.
 
-### 5.8 Tab hidden during active nav (phone call, app switch, home button)
-Behavior: browser auto-releases the Wake Lock sentinel; `release` event fires on sentinel; our handler sets `wakeLockSentinel = null` but does NOT change `shouldBeActive`. NoSleep's `<video>` may be paused by browser.
-On tab return (`visibilitychange` → `visible`): re-request primary if supported; re-kick NoSleep if active.
-Test: simulate `visibilitychange` with `visibilityState='hidden'` then `'visible'`; assert re-acquisition attempt.
+### 5.8 `release()` called while `acquire()`'s fallback-path `enable()` is pending
+Scenario: primary unavailable → fallback `enable()` Promise pending → `release()` runs.
+Behavior: same structure as §5.7 — generation-counter check in fallback branch detects staleness, calls `SilentVideoLock.disable()`, exits.
+Test: §6.2 `test_release_during_pending_fallback_disables_video`.
 
-### 5.9 Page unload during active nav
-Behavior: browser releases the Wake Lock automatically (spec-mandated). No explicit cleanup needed. NoSleep's `<video>` is destroyed with the DOM.
-Test: not unit-testable; verified by the mechanism's construction.
+### 5.9 Tab hidden during active nav (phone call, app switch)
+Behavior: browser auto-releases the primary sentinel and fires `release` event; our handler clears `wakeLockSentinel`. Browser may pause the fallback `<video>`. `shouldBeActive` remains `true`.
+On tab return: visibility handler re-acquires primary (generation-safe); or re-kicks fallback if primary is unavailable.
+Test: §6.2 `test_visibility_hidden_then_visible_reacquires`.
 
-### 5.10 Nav engine reports off-route, reroute in progress (existing banner)
-Behavior: wake-lock unaffected. Lock remains held throughout the reroute window (up to 10 s per [navigation.js:633](../../../frontend/navigation.js#L633)).
-Test: assert acquire → simulate reroute callback → assert lock still held.
+### 5.10 Rapid Start → Stop → Start with the first primary `request()` still pending
+Scenario: user taps Start → Stop → Start in quick succession while the first `request()` is still in flight.
+Behavior: each call bumps the generation. The first pending Promise, when it resolves, sees a stale generation and releases its sentinel. The third call's Promise, when it resolves, installs its sentinel correctly.
+Test: §6.2 `test_rapid_start_stop_start_no_orphan_sentinel`.
 
-### 5.11 Arrival → 3-second auto-stop delay
-Behavior: wake-lock unaffected during the 3-second delay. `release()` is called when `stopNavigation()` fires after the delay. Screen stays on throughout the driver's parking / confirmation window.
-Test: assert acquire → simulate `onArrival()` → wait 3s → assert `stopNavigation` called → assert release called.
+### 5.11 Visibility-triggered re-acquire races with explicit `release()`
+Scenario: tab returns to visible → visibility handler starts `request()` → user taps Stop before resolve → `release()` bumps generation.
+Behavior: pending visibility-path `request()` sees stale generation on resolve, releases its sentinel. `release()` completes cleanly. No orphan.
+Test: §6.2 `test_visibility_reacquire_race_with_release`.
 
-### 5.12 User explicitly taps Stop button
+### 5.12 `release` event fires after our own explicit `release()`
+Scenario: `release()` sets `wakeLockSentinel = null` and awaits `s.release()`; browser also fires `release` event on `s` asynchronously.
+Behavior: handler compares `wakeLockSentinel === s`; `wakeLockSentinel` is already null (or is a new sentinel from a subsequent acquire). No-op. No stomping of a newer sentinel.
+Test: §6.2 `test_stale_release_event_does_not_null_current_sentinel`.
+
+### 5.13 Off-route reroute in progress (up to 10 s)
+Behavior: wake-lock unaffected. Lock held throughout the reroute window.
+Test: §6.2 `test_reroute_keeps_lock`.
+
+### 5.14 Arrival → 3-second auto-stop delay
+Behavior: wake-lock unaffected during the 3-second delay; `release()` fires when `stopNavigation()` runs.
+Test: §6.2 `test_arrival_delay_keeps_lock_until_stop` using `t.mock.timers.tick(3000)`.
+
+### 5.15 User explicitly taps Stop
 Behavior: `stopNavigation()` → `release()`. Standard path.
-Test: click Stop → assert release.
+Test: §6.2 `test_explicit_stop_releases_lock`.
 
-### 5.13 `nav-active` class manipulated directly by external code (third party or malicious)
-Behavior: class toggle is NOT an event — our integration hooks fire from the specific nav-ui.js call sites, not from class-change observers. Defense: keep the hooks at `startNavigation` / `stopNavigation` exactly, not via `MutationObserver`.
-Test: flip `nav-active` class directly without calling `startNavigation`; assert `acquire()` is NOT called.
+### 5.16 `nav-active` class manipulated by external code (MutationObserver attacks)
+Behavior: our hooks fire only from `startNavigation()` / `stopNavigation()`, not from class-change observation. Direct class manipulation does NOT trigger acquire/release.
+Test: §6.2 `test_class_manipulation_does_not_trigger_acquire`.
 
-### 5.14 Multiple tabs of Geographica open simultaneously, each with nav active
-Behavior: each tab holds its own independent wake-lock. Browser permits this (locks are per-document). Acceptable — if user has two nav tabs, they deserve two locks.
-Test: out of scope for unit tests; manual verification.
+### 5.17 Multiple tabs of Geographica open simultaneously
+Behavior: each tab holds its own independent wake-lock. Browsers permit per-document locks. Acceptable.
+Verification: manual (§6.3); not unit-testable.
 
-### 5.15 Browser permissions policy / iframe embedding blocks `wakeLock`
-Behavior: `request()` rejects with `NotAllowedError`. Falls through to NoSleep as in §5.2.
-Test: same mock as §5.2.
+### 5.18 Tab hidden DURING pending `acquire()`'s primary `request()`
+Scenario: user taps Start → request pending → tab hidden (home button in the <50 ms window) → request rejects with `NotAllowedError`.
+Behavior: fallback `enable()` is called on a hidden tab; autoplay policy may reject. Caught per §5.4. State: `shouldBeActive === true`, no mechanism, `status() === 'none'`. On tab return, visibility handler re-acquires primary successfully.
+Test: §6.2 `test_tab_hidden_during_pending_acquire`.
 
-### 5.16 Low Power Mode on iOS
-Behavior: `navigator.wakeLock` may work or may reject; `<video>` autoplay (NoSleep) is blocked. Worst-case: both paths fail. §5.4 handling applies.
-**Documented degradation**, not a bug to fix. User who enabled Low Power Mode prioritized battery.
+### 5.19 iOS Low Power Mode
+Behavior: primary `navigator.wakeLock.request()` may succeed, fail silently, or reject; fallback `<video>.play()` is blocked by LPM's autoplay restrictions. Worst case: both paths fail per §5.3/5.4.
+**Documented degradation.** User has explicitly prioritized battery. Release notes MUST call this out (§10 item 10).
+Test: §6.2 `test_both_paths_fail_status_is_none`.
 
-### 5.17 NoSleep's `<video>` element lingers in DOM across nav sessions
-Behavior: NoSleep only adds the `<video>` once (idempotent init). `disable()` pauses the video but leaves the element. This is NoSleep's design. Not a memory leak in practice.
-Test: call enable/disable multiple times; assert only one `<video>` element exists with `id` matching NoSleep's selector.
+### 5.20 Browser permissions-policy or iframe embedding blocks `wakeLock`
+Behavior: rejects with `NotAllowedError`. Falls through to fallback per §5.2.
+Test: covered by §5.2's test.
+
+### 5.21 iOS Home Screen PWA on iOS < 18.4 (WebKit #254545)
+Scenario: user added Geographica to Home Screen; runs in standalone mode; `navigator.wakeLock` is exposed but silently non-functional. `request()` resolves with a sentinel that does not actually hold the screen awake.
+Detection: `window.matchMedia('(display-mode: standalone)').matches === true` AND iOS Safari UA. If both, bypass primary and go straight to fallback.
+Implementation: one-line check at the top of the primary-path `if ('wakeLock' in navigator)` block, treating standalone-mode iOS as if the API were absent.
+Test: §6.2 `test_ios_pwa_standalone_bypasses_primary`.
+
+### 5.22 Module loaded twice (duplicate `<script>` tag, HMR, test re-import)
+Behavior: IIFE top guard `if (window.WakeLock) return;` short-circuits subsequent loads. State owned by the first closure, never duplicated.
+Test: §6.2 `test_duplicate_module_load_is_noop`.
 
 ## 6. Testing strategy
 
-Three layers. No new test runner introduced — we use what's already here plus Node's built-in test module.
+Three layers. No new test runner toolchain.
 
-### 6.1 Python static tests (`tests/test_wake_lock_static.py`)
+### 6.1 Python structural tests — `tests/test_wake_lock_static.py`
 
-These verify structural invariants — the things that break if someone deletes a file or forgets a script tag.
+Verifies file/structural invariants. Each test goes beyond `"string in file"` greps by scoping to specific functions and checking AST-like patterns.
 
-- `test_nosleep_js_is_vendored` — file exists at `frontend/vendor/nosleep.min.js`, size > 0, contains the literal string "NoSleep" somewhere.
-- `test_wake_lock_js_exists` — file exists at `frontend/wake-lock.js`, exports `window.WakeLock`.
-- `test_index_html_loads_scripts_in_correct_order` — parse `index.html`, find NoSleep script tag before wake-lock.js script tag before nav-ui.js script tag.
-- `test_nav_ui_calls_wake_lock_acquire` — grep `frontend/nav-ui.js` for `WakeLock.acquire()`; assert present, and assert it appears within `startNavigation()`.
-- `test_nav_ui_calls_wake_lock_release` — grep `frontend/nav-ui.js` for `WakeLock.release()`; assert present in `stopNavigation()`.
-- `test_no_cdn_urls_for_nosleep` — no `unpkg.com`, `cdn.jsdelivr.net`, or `cdnjs.cloudflare.com` references for nosleep; must be offline-first (pitfall #6).
+**Canonical static-test helper pattern** (shared in `conftest.py` or inline in the test file):
 
-### 6.2 JS unit tests (`tests/wake-lock/` using `node:test`)
+```python
+import re
+from pathlib import Path
 
-Node's built-in test runner, no external deps. Each test loads `wake-lock.js` into a constructed global scope (jsdom or a hand-rolled stub is fine; the module uses only `document`, `window`, `navigator`, and `console`).
+ROOT = Path(__file__).resolve().parent.parent
 
-One test file per failure-mode section in §5. Each test:
-1. Constructs a global with specific mocks (`navigator.wakeLock`, `window.NoSleep`, `document`).
-2. Loads wake-lock.js via `vm.runInNewContext` or similar.
-3. Calls acquire / release / dispatches visibilitychange.
-4. Asserts on mock call counts and returned values.
+def read(p):
+    return (ROOT / p).read_text(encoding='utf-8')
 
-Named tests (per §5 above):
-- `test_primary_unsupported_falls_to_nosleep` (5.1)
-- `test_primary_reject_falls_to_nosleep` (5.2)
-- `test_nosleep_missing_logs_warning` (5.3)
-- `test_nosleep_enable_throw_logs_warning` (5.4)
-- `test_acquire_idempotent` (5.5)
-- `test_release_before_acquire_noop` (5.6)
-- `test_release_during_pending_acquire_releases_sentinel` (5.7)
-- `test_visibility_hidden_then_visible_reacquires` (5.8)
-- `test_reroute_keeps_lock` (5.10)
-- `test_arrival_delay_keeps_lock_until_stop` (5.11)
-- `test_class_manipulation_does_not_acquire` (5.13)
-- `test_nosleep_video_is_singleton` (5.17)
+def function_body(src: str, func_decl: str) -> str:
+    """Return the body of a function declaration in JS source, tracking braces."""
+    idx = src.index(func_decl)
+    start = src.index('{', idx) + 1
+    depth = 1
+    i = start
+    while depth > 0 and i < len(src):
+        c = src[i]
+        if c == '{': depth += 1
+        elif c == '}': depth -= 1
+        i += 1
+    return src[start:i-1]
 
-Target: each test runs in < 100 ms. Total suite < 2 s.
+def strip_comments_and_strings(src: str) -> str:
+    """Remove JS line/block comments and string literals to avoid false grep hits."""
+    src = re.sub(r'//.*?$', '', src, flags=re.MULTILINE)
+    src = re.sub(r'/\*.*?\*/', '', src, flags=re.DOTALL)
+    src = re.sub(r'"(?:\\.|[^"\\])*"', '""', src)
+    src = re.sub(r"'(?:\\.|[^'\\])*'", "''", src)
+    src = re.sub(r'`(?:\\.|[^`\\])*`', '``', src)
+    return src
+```
+
+**Tests (each is a single `def test_...` function):**
+
+1. `test_silent_mp4_vendored_with_correct_properties` — asserts `frontend/vendor/silent.mp4` exists, size < 2 KB, and contains no audio stream (spawn `ffprobe`; if not installed, skip with reason).
+2. `test_silent_video_lock_js_exists_and_exports_api` — parse `frontend/silent-video-lock.js`; assert an IIFE top-level guard (`if (window.SilentVideoLock) return;`) and that `window.SilentVideoLock = { ... }` literal contains `enable`, `disable`, `isActive` keys (regex after strip_comments_and_strings).
+3. `test_wake_lock_js_exists_and_exports_api` — same pattern; assert `enable`-ish pattern; top-level guard `if (window.WakeLock) return;`; `window.WakeLock = { ... }` contains `acquire`, `release`, `status`.
+4. `test_wake_lock_uses_generation_counter` — parse `frontend/wake-lock.js`; assert `acquireGeneration` and `myGen` tokens appear in the body of `acquire()` and `release()` (scoped via `function_body`). This catches a subagent who deletes the race-safety pattern.
+5. `test_index_html_loads_scripts_in_correct_order` — parse index.html; find `<script src=...>` tags; assert `silent-video-lock.js` appears before `wake-lock.js` appears before `nav-ui.js`.
+6. `test_index_html_scripts_have_cache_buster` — assert every script tag touched by this feature has `?v=` query string (per §12).
+7. `test_nav_ui_acquires_wake_lock_in_start_navigation` — parse `frontend/nav-ui.js`; extract `function startNavigation()` body via `function_body`; strip comments/strings; assert `WakeLock.acquire()` appears exactly once; assert no `await` / `fetch(` / `setTimeout(` / `.then(` token appears BEFORE it in the function body; assert the immediately-preceding non-blank line contains `document.body.classList.add('nav-active')`.
+8. `test_nav_ui_releases_wake_lock_in_stop_navigation` — same pattern for `stopNavigation` / `WakeLock.release()` / `classList.remove`.
+9. `test_no_nosleep_references_remain` — assert no occurrence of `NoSleep` (case-insensitive) anywhere under `frontend/` — prevents the invalidated v1 design from sneaking back in.
+10. `test_no_cdn_urls_for_media_assets` — assert no `unpkg.com`, `cdn.jsdelivr.net`, or `cdnjs.cloudflare.com` references in frontend/wake-lock.js, silent-video-lock.js, or index.html (per [implementation-pitfalls.md](../../pitfalls/implementation-pitfalls.md) #6 offline-first).
+11. `test_vendor_readme_lists_silent_mp4` — assert `frontend/vendor/README.md` table has a row for `silent.mp4` naming its purpose (per R4 F4.5).
+12. `test_silent_video_lock_sets_accessibility_attributes` — parse `frontend/silent-video-lock.js`; assert source contains `aria-hidden`, `tabindex`, `disablePictureInPicture`, `disableRemotePlayback` (each as a token).
+
+### 6.2 JS unit tests — `frontend/tests/wake-lock/` using `node:test`
+
+**NOT under `tests/`** to avoid pytest collection. Directory must be `frontend/tests/wake-lock/` (hyphen intentional; not a Python-importable name).
+
+**Reference mock factories** — single source of truth, every test uses these:
+
+```js
+// frontend/tests/wake-lock/_fixtures.js
+import { mock } from 'node:test';
+
+export function makeSentinelMock() {
+  const listeners = Object.create(null);
+  const sentinel = {
+    type: 'screen',
+    released: false,
+    release: mock.fn(() => {
+      sentinel.released = true;
+      (listeners.release || []).forEach(cb => cb());
+      return Promise.resolve();
+    }),
+    addEventListener: (name, cb) => {
+      (listeners[name] = listeners[name] || []).push(cb);
+    },
+    removeEventListener: () => {},
+    _fire: (name) => { (listeners[name] || []).forEach(cb => cb()); },
+    _listeners: listeners,
+  };
+  return sentinel;
+}
+
+export function makeWakeLockNavigatorMock({ rejectWith } = {}) {
+  return {
+    request: mock.fn((type) => {
+      if (rejectWith) return Promise.reject(rejectWith);
+      return Promise.resolve(makeSentinelMock());
+    }),
+  };
+}
+
+export function makeSilentVideoLockMock({ rejectWith } = {}) {
+  const m = {
+    _active: false,
+    enable: mock.fn(() => {
+      if (rejectWith) return Promise.reject(rejectWith);
+      m._active = true;
+      return Promise.resolve();
+    }),
+    disable: mock.fn(() => { m._active = false; }),
+    isActive: mock.fn(() => m._active),
+  };
+  return m;
+}
+
+export function makeDocumentMock() {
+  const listeners = Object.create(null);
+  const doc = {
+    visibilityState: 'visible',
+    hidden: false,
+    addEventListener: (name, cb) => {
+      (listeners[name] = listeners[name] || []).push(cb);
+    },
+    removeEventListener: () => {},
+    body: {
+      appendChild: mock.fn(),
+      classList: { add: mock.fn(), remove: mock.fn() },
+    },
+    createElement: mock.fn((tag) => ({
+      setAttribute: mock.fn(),
+      style: { cssText: '' },
+      play: mock.fn(() => Promise.resolve()),
+      pause: mock.fn(),
+      remove: mock.fn(),
+      paused: false,
+    })),
+    _fire: (name) => { (listeners[name] || []).forEach(cb => cb()); },
+  };
+  return doc;
+}
+```
+
+**Tests** — one per failure mode in §5. Each test uses `vm.runInNewContext` to load `wake-lock.js` into a constructed global with the mock fixtures above, then exercises the module.
+
+Named tests with expected assertion sketches:
+
+1. `test_primary_available_acquires_wakelock` — primary works. Assert: `navigator.wakeLock.request.mock.callCount === 1`, `status() === 'wakelock'`, `SilentVideoLock.enable.mock.callCount === 0`.
+2. `test_primary_unavailable_falls_to_silent_video` (§5.1) — omit `navigator.wakeLock`. Assert: `SilentVideoLock.enable.mock.callCount === 1`, `status() === 'fallback'`.
+3. `test_primary_reject_falls_to_silent_video` (§5.2) — `makeWakeLockNavigatorMock({ rejectWith: new Error('NotAllowedError') })`. Assert: `SilentVideoLock.enable.mock.callCount === 1`, `status() === 'fallback'`.
+4. `test_silent_video_lock_missing_degrades_silently` (§5.3) — omit `window.SilentVideoLock`, omit primary. Assert: `status() === 'none'`, no throws.
+5. `test_silent_video_lock_enable_rejects_degrades_silently` (§5.4) — omit primary; fallback rejects. Assert: `status() === 'none'`, `SilentVideoLock._active === false`.
+6. `test_acquire_idempotent` (§5.5) — call acquire() twice. Assert: `navigator.wakeLock.request.mock.callCount === 1`.
+7. `test_release_without_acquire_is_noop` (§5.6) — release() first. Assert: no throws, `status() === 'idle'`.
+8. `test_release_during_pending_primary_releases_sentinel` (§5.7) — delayed-resolve primary mock; acquire; release; resolve. Assert: returned sentinel's `release.mock.callCount === 1`, `wakeLockSentinel === null`.
+9. `test_release_during_pending_fallback_disables_video` (§5.8) — no primary; delayed-resolve fallback; acquire; release; resolve. Assert: `SilentVideoLock.disable.mock.callCount === 1`, `status() === 'idle'`.
+10. `test_visibility_hidden_then_visible_reacquires` (§5.9) — acquire; fire visibility hidden; browser fires sentinel release event; fire visibility visible. Assert: second `request()` call, new sentinel installed, `status() === 'wakelock'`.
+11. `test_rapid_start_stop_start_no_orphan_sentinel` (§5.10) — delayed-resolve primary; acquire; release; acquire; resolve both. Assert: first sentinel's `release.mock.callCount === 1` (orphan cleanup); final `wakeLockSentinel` is the second sentinel.
+12. `test_visibility_reacquire_race_with_release` (§5.11) — fire hidden; fire visible (triggers re-acquire Promise); release() before resolve; resolve. Assert: re-acquired sentinel's `release.mock.callCount === 1`, final state is `'idle'`.
+13. `test_stale_release_event_does_not_null_current_sentinel` (§5.12) — acquire; manually fire release on the first sentinel after a second acquire. Assert: `wakeLockSentinel` points to the newer sentinel.
+14. `test_reroute_keeps_lock` (§5.13) — acquire; simulate reroute callback; verify lock still held.
+15. `test_arrival_delay_keeps_lock_until_stop` (§5.14) — `t.mock.timers.enable({ apis: ['setTimeout'] })`; acquire; fire arrival; `t.mock.timers.tick(3000)`; stopNavigation-equivalent. Assert: lock held across the tick; released after.
+16. `test_explicit_stop_releases_lock` (§5.15) — acquire; release. Assert: `sentinel.release.mock.callCount === 1`, `status() === 'idle'`, AND `SilentVideoLock.enable.mock.callCount === 0` (negative invariant: fallback NOT called when primary succeeded).
+17. `test_class_manipulation_does_not_trigger_acquire` (§5.16) — manually toggle `document.body.classList` without calling nav-ui; assert `navigator.wakeLock.request.mock.callCount === 0`.
+18. `test_tab_hidden_during_pending_acquire` (§5.18) — primary request pending; fire visibility-hidden; mock request to reject with NotAllowedError; verify fallback path engaged or degraded cleanly.
+19. `test_both_paths_fail_status_is_none` (§5.19 — LPM combined failure) — primary rejects, fallback rejects. Assert: no throws, `status() === 'none'`.
+20. `test_ios_pwa_standalone_bypasses_primary` (§5.21) — mock `window.matchMedia('(display-mode: standalone)')` to match; primary path SKIPPED; fallback invoked. Assert: `navigator.wakeLock.request.mock.callCount === 0`, `SilentVideoLock.enable.mock.callCount === 1`.
+21. `test_duplicate_module_load_is_noop` (§5.22) — load wake-lock.js twice in same context; assert state preserved, single listener.
+
+Each test runs in < 150 ms; total suite < 3 s.
 
 ### 6.3 Manual field acceptance
 
-Cannot be automated cleanly for this class of feature. Acceptance checklist, to be run on Cameron's primary Android phone and any available iPhone:
+Executed by Cameron on real phones (agent-complete ≠ ship-complete — see §10 item 8). Each line numbered; attach evidence to the PR body per CONTRIBUTING.md gate (see §10 item 11).
 
-1. Open Geographica over Tailscale (HTTPS). Start nav to a nearby destination. Set phone down without interacting. Observe: screen stays on until nav ends.
-2. Open Geographica over HTTP (LAN or AREDN). Start nav. Set phone down. Observe: screen stays on (via NoSleep fallback).
-3. Start nav over HTTPS. Receive a phone call (or simulate via another device). Answer and end the call. Observe: returning to Geographica, screen stays on and nav continues; no intervention required.
-4. Start nav, let arrive at destination. Observe: arrival banner shows for 3 s with screen still on; after auto-stop, screen resumes normal auto-dim.
-5. Start nav in iOS Low Power Mode. Verify: nav engine continues to run when tab is visible; screen may dim on normal idle (expected degradation per §5.16). No crashes, no console errors.
+1. **HTTPS primary path.** Open Geographica over Tailscale. Start nav to a nearby destination. Set phone down without interacting. Screen MUST stay on until nav ends.
+2. **HTTP fallback path.** Open Geographica over LAN (HTTP). Repeat test 1. Screen MUST stay on (via silent-video fallback).
+3. **Phone-call interruption.** Start nav over HTTPS. Receive a phone call. Answer and end the call. Return to Geographica. Screen MUST still be on; nav MUST continue without user intervention.
+4. **Arrival.** Let nav complete to destination. Arrival banner MUST stay visible for 3 seconds with the screen still on; after auto-stop, screen MUST resume normal auto-dim behavior.
+5. **iOS Low Power Mode (documented degradation).** Enable LPM; start nav. Expected behavior: the feature may silently no-op; screen may dim on normal idle timeout. No crashes, no console errors. Note observed behavior in PR body.
+6. **Screen-reader coexistence (a11y).** Enable VoiceOver (iOS) or TalkBack (Android). Start nav. Navigate via rotor/swipe. MUST NOT surface an unlabeled media control. Must not disrupt voice-announcement audio.
+7. **Voice-TTS coexistence with fallback.** Start nav over HTTP (forces fallback video active). Wait for the first voice prompt. Voice MUST fire normally through the phone speaker while the silent video plays.
+8. **Voice-TTS coexistence with STT (if applicable).** Over HTTPS, start nav; trigger STT voice search while the fallback is active. STT start/stop MUST work; nav voice prompts MUST continue.
+9. **Battery cost (informational).** Run a 30-minute nav session on the fallback path with the screen on; record battery drop. Compare to baseline (nav off). If delta exceeds 15 %/hour, file a performance follow-up.
+10. **Duplicate-tab behavior.** Open Geographica in two tabs; start nav in both. Both screens should stay on independently. Close one; the other continues.
+
+### 6.4 CI-level smoke test (Playwright, optional but strongly recommended)
+
+One Playwright test in `frontend/tests/wake-lock/playwright/`:
+
+```js
+// Load the frontend on http://localhost, click Start-Nav, evaluate
+// `await navigator.wakeLock.request('screen').then(s => !s.released)` —
+// asserts Chromium granted a lock (closest-to-behavior CI check short of
+// a real phone).
+```
+
+Not a blocker for initial ship; add as follow-up if the full Playwright harness comes online.
 
 ## 7. Pitfalls addressed
 
-Cross-reference to `docs/pitfalls/`.
-
 | Pitfall | How this spec addresses it |
 |---------|----------------------------|
-| [implementation-pitfalls.md](../../pitfalls/implementation-pitfalls.md) #5 (HTTPS requirement for browser APIs) | Dual-path design: `navigator.wakeLock` on Secure Context, NoSleep.js fallback on HTTP. Spec explicitly documents which APIs work on which transport. |
-| [implementation-pitfalls.md](../../pitfalls/implementation-pitfalls.md) #6 (Offline-first design) | NoSleep.js is vendored into `frontend/vendor/`, not loaded from CDN. Python test `test_no_cdn_urls_for_nosleep` enforces this. |
-| [implementation-pitfalls.md](../../pitfalls/implementation-pitfalls.md) #9 (Frontend module boundaries) | New code lives in `frontend/wake-lock.js`, not added to `app.js` or `nav-ui.js`. nav-ui.js gets exactly two new one-line calls. |
-| [testing-pitfalls.md](../../pitfalls/testing-pitfalls.md) #9 (Unrecoverable async state) | `shouldBeActive` is the target state, kept separate from observed lock state. The `release()`-during-pending-`acquire()` race (§5.7) is explicitly handled and tested; lock cannot become orphaned. |
-| [testing-pitfalls.md](../../pitfalls/testing-pitfalls.md) #10 (JS truthiness for numeric zero) | Sentinel state uses explicit `null` checks (`wakeLockSentinel !== null`), not `||`. |
-| [testing-pitfalls.md](../../pitfalls/testing-pitfalls.md) #11 (Duplicated logic across modules) | The wake-lock module is the only authority on lock state. nav-ui.js does not mirror or track lock state. |
+| [implementation-pitfalls.md](../../pitfalls/implementation-pitfalls.md) #5 (HTTPS requirement for browser APIs) | Dual-path design: `navigator.wakeLock` on Secure Context, bespoke silent-video fallback on HTTP. The fallback is truly independent (no shared internal API calls with the primary). |
+| [implementation-pitfalls.md](../../pitfalls/implementation-pitfalls.md) #6 (Offline-first design) | No CDN references. Silent-video asset is vendored at `frontend/vendor/silent.mp4`, verified absent from any CDN URL by static test. |
+| [implementation-pitfalls.md](../../pitfalls/implementation-pitfalls.md) #9 (Frontend module boundaries) | New code in dedicated files. `nav-ui.js` gets exactly two new one-line calls. |
+| [testing-pitfalls.md](../../pitfalls/testing-pitfalls.md) #9 (Unrecoverable async state) | Generation counter + explicit release checks at every await resume point. Dedicated tests for release-during-pending-primary AND release-during-pending-fallback. |
+| [testing-pitfalls.md](../../pitfalls/testing-pitfalls.md) #10 (JS truthiness for numeric zero) | State checks use explicit `=== null` and `=== 0` comparisons, never `||`. |
+| [testing-pitfalls.md](../../pitfalls/testing-pitfalls.md) #11 (Duplicated logic) | Wake-lock module is the sole authority on lock state. `nav-ui.js` does not mirror or track it. |
 
-## 8. Dependencies and vendored artifacts
+## 8. Dependencies
 
-- **NoSleep.js v0.12.0** (MIT licensed). Source: [https://github.com/richtr/NoSleep.js/releases/tag/v0.12.0](https://github.com/richtr/NoSleep.js/releases/tag/v0.12.0). Size: 3.1 KB minified. File: `frontend/vendor/nosleep.min.js`. License notice preserved at top of file.
-- **Node.js ≥ 18** for JS unit tests in `tests/wake-lock/` via the built-in `node:test` module (stable since Node 20; experimental in 18–19). This project's dev Pi is on Node v20.19.2, confirmed at spec time. CI and LXD harness images must provide Node ≥ 18.
-- **No other new dependencies.**
+- **No third-party JS dependencies.** NoSleep.js from v1 is REMOVED — it was shown by R1 F1.1 to be a duplicate of the primary path, not an independent fallback.
+- **Node.js ≥ 18** for JS unit tests via the built-in `node:test` module. This project's dev Pi is on Node v20.19.2 (verified at spec time). CI and LXD harness images must provide Node ≥ 18. Python's stdlib is sufficient for the static tests — no new Python dependencies.
+- **ffmpeg** — required at vendor-generation time to produce `silent.mp4` (one-time, committed output). Not a runtime dependency.
+- **ffprobe** — used by one static test for audio-track assertion; if unavailable, the test skips with a clear reason (not a hard blocker).
 
 ## 9. Out of scope / deferred
 
-- OS1. Spec B (field-mode / Pi-as-AP). Research in flight; separate spec when ready.
-- OS2. Offline-HTTPS story generally (CA install, nginx multi-listener). Belongs to Spec B.
-- OS3. Backgrounding diagnostics telemetry. Console warnings are sufficient for beta-tester debugging today. A structured debug overlay or remote telemetry channel is a future enhancement.
-- OS4. Voice TTS survival under tab throttling. Known concern that `speechSynthesis.speak()` utterances queued while the tab is hidden may be dropped or delayed by some browsers. Wake-lock minimizes tab-hide scenarios but does not prevent them. Monitor as a regression after this ships; file follow-up if observed in field tests.
+- **OS1.** Spec B (field-mode / Pi-as-AP). Research complete at [dev/research/2026-04-20-spec-b-field-mode-research.md](../../../dev/research/2026-04-20-spec-b-field-mode-research.md); brainstorm deferred.
+- **OS2.** Offline-HTTPS story generally (CA install flows, nginx multi-listener refactor). Belongs to Spec B.
+- **OS3.** **Voice-prompt continuity during tab-backgrounding.** Explicit out-of-scope per user decision. When the nav tab is backgrounded (phone call, app switch), browsers may throttle or suspend `speechSynthesis.speak()` dispatches, causing voice announcements to be dropped or delayed. Wake-lock reduces the *frequency* of backgrounding (by preventing the user from having to unlock the phone to check it) but does not eliminate user-initiated backgrounding. Replaying stale announcements is explicitly rejected (NG7) — a stale prompt is worse than silence. A proper fix requires mechanisms like a silent audio element or the Media Session API to keep `speechSynthesis` reliable during backgrounding. Deferred to a future voice-continuity spec (working title: nav-voice-continuity). The manual acceptance checks in §6.3 #7 and #8 verify the baseline behavior *while the tab is active*; post-backgrounding behavior is unverified by this spec and left to field experience.
+- **OS4.** Release of wake-lock on specific edge cases beyond the primary lifecycle (e.g., long-idle, battery-state changes). Not needed — simpler is correct.
+- **OS5.** Structured telemetry / debug overlay for wake-lock failures. `console.warn` is sufficient for beta-tester debugging.
 
 ## 10. Acceptance criteria (checklist)
 
-Ship condition, all must be true:
+Each item maps to a phase-success-criterion in the implementation plan. Item 8 (manual) is deferred to Cameron per §6.3 and is NOT a blocker for agent-complete sign-off.
 
-- [ ] `frontend/vendor/nosleep.min.js` vendored (v0.12.0, MIT license preserved).
-- [ ] `frontend/wake-lock.js` implements the public API (acquire/release/status) and the state machine described in §4.3.
-- [ ] `frontend/index.html` loads `nosleep.min.js` before `wake-lock.js` before `nav-ui.js`.
-- [ ] `nav-ui.js` calls `WakeLock.acquire()` inside `startNavigation()`, on the line immediately following `document.body.classList.add('nav-active')`, synchronously (no `await`, no `setTimeout`) within the user-gesture path.
-- [ ] `nav-ui.js` calls `WakeLock.release()` inside `stopNavigation()`, on the line immediately following `document.body.classList.remove('nav-active')`.
-- [ ] `tests/test_wake_lock_static.py` passes locally (6 tests per §6.1).
-- [ ] `tests/wake-lock/*.test.js` passes under `node --test tests/wake-lock/` (12 tests per §6.2).
-- [ ] Manual field acceptance checklist (§6.3) completed on at least one Android phone.
-- [ ] No regression in existing `tests/` suite.
-- [ ] No new console.error output during normal nav operation on HTTPS or HTTP.
+- [ ] 1. `frontend/vendor/silent.mp4` is committed, ≤ 2 KB, verified by `ffprobe` to have no audio stream.
+- [ ] 2. `frontend/silent-video-lock.js` implements the contract in §4.2 + §4.8 + §4.9.
+- [ ] 3. `frontend/wake-lock.js` implements the canonical `acquire()` / `release()` from §4.3, including the generation counter; implements the visibility handler from §4.5; implements `status()` per §4.7.
+- [ ] 4. `frontend/index.html` loads `silent-video-lock.js` before `wake-lock.js` before `nav-ui.js`, with cache-busting query strings per §12.
+- [ ] 5. `nav-ui.js` calls `WakeLock.acquire()` inside `startNavigation()`, on the line immediately following `document.body.classList.add('nav-active')`, synchronously, with the load-bearing comment above it from §4.4.
+- [ ] 6. `nav-ui.js` calls `WakeLock.release()` inside `stopNavigation()`, on the line immediately following `document.body.classList.remove('nav-active')`.
+- [ ] 7. All 12 Python static tests in `tests/test_wake_lock_static.py` pass (§6.1).
+- [ ] 8. All 21 JS unit tests in `frontend/tests/wake-lock/` pass under `node --test frontend/tests/wake-lock/` (§6.2).
+- [ ] 9. `frontend/vendor/README.md` lists `silent.mp4` with MIT license and purpose line.
+- [ ] 10. CHANGELOG.md entry written describing the fix and known limitations: "On iOS, Low Power Mode may disable the screen keep-awake feature. Disable Low Power Mode or keep the phone plugged in for uninterrupted navigation."
+- [ ] 11. CONTRIBUTING.md gate line added: "Changes to `frontend/wake-lock.js`, `frontend/silent-video-lock.js`, `frontend/vendor/silent.mp4`, or the hook lines in `frontend/nav-ui.js` require §6.3 manual re-run with screenshot/video evidence attached to the PR body."
+- [ ] 12. No regressions in `python -m pytest tests/ -v` AND `node --test frontend/tests/wake-lock/` — both suites green.
+- [ ] 13. No new `console.error` output during normal nav operation on HTTPS or HTTP. (`console.warn` in degraded paths is expected per §5.)
+- [ ] 14. **Manual field acceptance checklist (§6.3) — DEFERRED to Cameron.** Agent-complete ≠ ship-complete. When items 1-13 are green, agent work terminates and the plan produces a PR with §6.3 as a checklist embedded in the PR body. Cameron runs §6.3 on real phones; until that passes, the feature is "code-complete, field-untested." Do NOT mark this item complete in an agent-driven workflow; it exists to make the human handoff explicit.
 
 ## 11. Open questions
 
-None as of spec writing. If adversarial review surfaces any, they'll be added here before handoff to `writing-plans`.
+None as of v2. (All v2 revisions close out v1's open questions and the 39 adversarial findings.)
+
+## 12. Deployment
+
+No Docker rebuild is required — the frontend is served statically by nginx from the bind-mounted `frontend/` directory. However:
+
+- **nginx caching.** `nginx/nginx.conf` sets no explicit `Cache-Control` or `Expires` for static files; default is heuristic caching. Browser clients (including beta testers with warm caches) may hold stale `index.html` for up to several hours.
+- **Cache-busting.** To ensure new script tags load on already-warm client caches, every script tag in `index.html` touched by this change (the two new ones AND any existing ones you're editing) gets a `?v=20260420` query string. Nginx passes the query through transparently; browsers treat the URL as new.
+- **`sub_filter` scope.** nginx's `sub_filter` directive applies ONLY to `application/json` and `text/plain` MIME types (verified in `nginx/nginx.conf`). It does NOT touch `<script src>` URLs in `text/html` responses. No escaping concerns.
+
+Deployment steps (manual or via `git pull` on the Pi):
+
+```bash
+# On the Pi:
+cd /home/administrator/Code/geographica
+git pull origin main          # pulls the new frontend/ files
+# No docker rebuild needed — bind mount picks up new files automatically.
+# Verify nginx is serving them:
+curl -sI https://pandora.twin-bramble.ts.net/wake-lock.js | head -5
+# Expect: 200 OK
+```
+
+If running locally during development, the bind mount means no restart is needed at all — refresh the browser.
+
+## 13. Browser-policy compatibility
+
+Geographica's `nginx/nginx.conf` currently sets **no** `Content-Security-Policy` or `Permissions-Policy` headers. This spec documents forward-compat requirements so a future hardening pass doesn't silently regress the HTTP fallback path — which is the *primary* wake-lock path for AREDN-mesh and Pi-hotspot deployments.
+
+**If CSP is added in the future, the minimum directives for this feature are:**
+
+- `script-src 'self'` (no inline scripts introduced; wake-lock.js and silent-video-lock.js are external files).
+- `media-src 'self'` (the silent video is a same-origin asset; we do NOT use a `data:` URL). Do NOT require `'unsafe-inline'`, `data:`, or `blob:`.
+
+**Do NOT switch `silent.mp4` to a `data:` URL in the future without also:**
+- Adding `data:` to `media-src`, AND
+- Updating this §13 to document the change, AND
+- Re-running all §6.3 tests.
+
+**If iframe embedding of Geographica is ever supported**, the host page's `<iframe allow="...">` attribute must include both `screen-wake-lock` (for the primary path) and `autoplay` (for the fallback path). Without either, the feature silently degrades. Currently, Geographica is not embedded; this is a note for the future.
+
+**Regression assertion:** any future PR touching `nginx/nginx.conf` that introduces `Content-Security-Policy` or `Permissions-Policy` headers MUST re-run §6.3 tests 1 and 2 (HTTPS primary, HTTP fallback) to confirm neither path silently broke.
 
 ---
 
-## Appendix A — Why NoSleep.js v0.12.0 specifically
+## Appendix A — Silent video media asset
 
-v0.12.0 (May 2022) is the current stable release. The last update added iOS 15 compatibility. Earlier versions (v0.9.x) have documented issues with iOS Safari's stricter autoplay policy. No v1.0 has been released; the project is in "done, minor maintenance only" mode.
+Generated fresh for this project using ffmpeg (see §4.8 for the canonical command). License: MIT (same as the Geographica project). Committed at `frontend/vendor/silent.mp4`.
 
-The file is small enough (~3 KB) that we don't need a package manager; direct vendoring is simpler and matches the existing `frontend/vendor/` pattern for `dompurify`, `jszip`, `togeojson`, and `maplibre-gl`.
+Why a bespoke first-party asset rather than a third-party library:
+- Eliminates a 5-year-unmaintained dependency (NoSleep.js v0.12.0, Dec 2020, no releases since).
+- Removes the redundant primary-path call inside NoSleep (R1 F1.1).
+- Gives us exact control over the media contract (no audio track per R6 F6.4).
+- Trivial to audit, replace, or regenerate.
 
-## Appendix B — Why not `'video'` wake lock type?
+Regenerate with:
 
-The Screen Wake Lock spec defined only `'screen'` in the current Level 1 spec. A `'system'` type was proposed but deprecated. A `'video'` type was never standardized. Use `'screen'` and only `'screen'`.
+```bash
+ffmpeg -y -f lavfi -i "color=c=black:s=1x1:d=1" \
+  -c:v libx264 -pix_fmt yuv420p -movflags +faststart -an \
+  frontend/vendor/silent.mp4
+# Verify:
+ffprobe -v error -select_streams a -show_entries stream=codec_type frontend/vendor/silent.mp4  # must be empty
+stat --printf="%s\n" frontend/vendor/silent.mp4                                                  # must be < 2048
+```
 
-## Appendix C — Why not a `navigator.keepAlive` / `Battery` gating?
+## Appendix B — Why only `'screen'` wake lock type
 
-Some tutorials suggest checking `navigator.getBattery()` and skipping wake-lock if the device is on low battery. This would defeat the feature's purpose — a driver in the field may be on 20 % battery and still need nav. Do not gate wake-lock on battery state. The user chose to start nav; trust them.
+The W3C Screen Wake Lock Level 1 spec defines exactly one type: `'screen'`. A proposed `'system'` type was deprecated; `'video'` was never standardized. Use `'screen'` exclusively.
+
+## Appendix C — Why not gate on battery state
+
+Some patterns suggest gating wake-lock on `navigator.getBattery()` state (e.g., skip if battery < 20 %). This is rejected: a driver in the field may be on low battery *and still need nav*. The user chose to start nav; respect that choice. Do not gate wake-lock on battery state.
+
+## Appendix D — W3C Wake Lock transient-activation status
+
+The W3C Screen Wake Lock Level 1 editor's draft does NOT currently require transient activation for `request('screen')`. However, [w3c/screen-wake-lock#350](https://github.com/w3c/screen-wake-lock/issues/350) (open since 2022) proposes adding that requirement. Regardless of the eventual outcome, we preserve the user-gesture-synchronous invocation path because:
+- `<video>.play()` in the fallback DOES require transient activation.
+- Future-proofing against the proposed W3C change.
+- Consistent mental model for implementers.
+
+## Appendix E — Review trail
+
+Full adversarial reviews: [dev/adversarial/2026-04-20-nav-keep-awake-r{1..6}-*.md](../../../dev/adversarial/).
+Round 1 was the highest-impact round (invalidated the NoSleep.js architecture); Round 2 found the generation-counter-necessary race; Round 6 (Codex) caught the spec-meta coherence gap that R1-R5 collectively missed. The review trail is preserved uncommitted for the spec's future evolution.
