@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<EnumerationResults ServiceEndpoint="https://coastalimagery.blob.core.windows.net/" ContainerName="digitalcoast">
+  <Prefix></Prefix>
+  <Delimiter>/</Delimiter>
+  <Blobs>
+  </Blobs>
+  <NextMarker />
+</EnumerationResults>
