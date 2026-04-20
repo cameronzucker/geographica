@@ -210,6 +210,44 @@
             letter-spacing: 0.5px;
             margin-right: 4px;
         }
+        /* === NOAA catalog refresh-history panel (Task 31) === */
+        .noaa-refresh-panel { border-top: 1px solid #2d3548; padding-top: 10px; margin-top: 12px; }
+        .noaa-refresh-toggle {
+            background: transparent; border: none; color: #9aa4bf; padding: 0;
+            font-size: 12px; cursor: pointer; font-family: inherit;
+        }
+        .noaa-refresh-toggle[aria-expanded="true"] { color: #e8ecf4; }
+        .noaa-refresh-entries { font-size: 11px; max-height: 220px; overflow-y: auto; }
+        .noaa-refresh-entry {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 6px 8px; border: 1px solid #2d3548; border-radius: 3px;
+            margin-bottom: 4px; background: #0f1420;
+        }
+        .noaa-refresh-entry.status-ok { border-color: rgba(166, 227, 161, 0.35); }
+        .noaa-refresh-entry.status-truncated,
+        .noaa-refresh-entry.status-invalid_parse { border-color: rgba(249, 226, 175, 0.35); }
+        .noaa-refresh-entry.status-rollback { border-color: rgba(74, 127, 191, 0.35); }
+        .noaa-refresh-entry .meta { flex: 1; color: #b0b8cc; }
+        .noaa-refresh-entry .ts { font-family: monospace; color: #7a8299; margin-right: 8px; }
+        .noaa-refresh-entry .btn-rollback {
+            font-size: 11px; padding: 3px 8px; background: #2d3548;
+            color: #d0d6e4; border: 1px solid #3d4558; border-radius: 3px;
+            cursor: pointer;
+        }
+        .noaa-refresh-entry .btn-rollback:disabled { opacity: 0.4; cursor: not-allowed; }
+        /* === NOAA partial_failed retry block (Task 32) === */
+        .noaa-retry-block {
+            background: rgba(243, 139, 168, 0.08);
+            border: 1px solid rgba(243, 139, 168, 0.30);
+            border-radius: 4px;
+            padding: 10px;
+            margin-top: 8px;
+            font-size: 12px;
+        }
+        .noaa-retry-label { color: #f38ba8; font-weight: 600; margin-bottom: 4px; }
+        .noaa-retry-list { margin: 4px 0; padding-left: 20px; color: #b0b8cc; }
+        .noaa-retry-list li { margin: 2px 0; }
+        .noaa-retry-btn { margin-top: 6px; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -1283,6 +1321,19 @@
                     '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start-custom">Download</button>' +
                 '</div>' +
                 '<p style="font-size:11px;color:#7a8299;margin-top:8px">Uses the bbox in the Coverage Area panel at the top of the page.</p>' +
+            '</div>' +
+            // ---- Catalog refresh-history panel (Task 31) ----
+            '<div class="noaa-refresh-panel">' +
+                '<button type="button" class="noaa-refresh-toggle" id="card-' + src.id + '-refresh-toggle" aria-expanded="false">' +
+                    '&#9658; Catalog refresh history' +
+                '</button>' +
+                '<div class="noaa-refresh-body" id="card-' + src.id + '-refresh-body" style="display:none">' +
+                    '<div class="btn-row" style="margin-bottom:8px">' +
+                        '<button type="button" class="btn-secondary" id="card-' + src.id + '-refresh-now">Refresh catalog now</button>' +
+                        '<button type="button" class="btn-secondary" id="card-' + src.id + '-refresh-reload" style="flex:none" title="Reload the log">&#8635;</button>' +
+                    '</div>' +
+                    '<div class="noaa-refresh-entries" id="card-' + src.id + '-refresh-entries"></div>' +
+                '</div>' +
             '</div>';
 
         // ---------------------------------------------------------------
@@ -1558,6 +1609,110 @@
             document.getElementById('card-' + src.id + '-start-whole').disabled = true;
             document.getElementById('card-' + src.id + '-start-custom').disabled = true;
         }
+
+        // ---------------------------------------------------------------
+        // Task 31 — Catalog refresh-history panel wiring
+        // ---------------------------------------------------------------
+        var refreshToggle = document.getElementById('card-' + src.id + '-refresh-toggle');
+        var refreshBody = document.getElementById('card-' + src.id + '-refresh-body');
+        var refreshEntries = document.getElementById('card-' + src.id + '-refresh-entries');
+
+        function renderRefreshEntries(entries) {
+            if (!entries || entries.length === 0) {
+                refreshEntries.innerHTML = '<div style="color:#7a8299;padding:8px">No refreshes yet. Click \u201cRefresh catalog now\u201d to start.</div>';
+                return;
+            }
+            refreshEntries.innerHTML = entries.map(function(e) {
+                var statusClass = 'status-' + (e.status || 'unknown').replace(/[^a-z_]/gi, '');
+                var ts = (e.ts || '').replace('T', ' ').replace('Z', '');
+                var label = e.status + (e.to_snapshot ? ' \u2192 ' + e.to_snapshot : e.snapshot_path ? ' (new snapshot)' : '');
+                var filename = e.to_snapshot || (e.snapshot_path ? e.snapshot_path.split('/').pop() : '');
+                var canRollback = e.rollback_available && filename && e.status !== 'rollback';
+                var btn = canRollback
+                    ? '<button type="button" class="btn-rollback" data-snap="' + filename + '">Rollback</button>'
+                    : '<button type="button" class="btn-rollback" disabled>\u2014</button>';
+                return '<div class="noaa-refresh-entry ' + statusClass + '">' +
+                         '<div class="meta"><span class="ts">' + ts + '</span>' + label + '</div>' +
+                         btn +
+                       '</div>';
+            }).join('');
+
+            // Wire rollback buttons
+            refreshEntries.querySelectorAll('.btn-rollback:not([disabled])').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var snap = btn.getAttribute('data-snap');
+                    if (!confirm('Rollback catalog to ' + snap + '?\nThis overwrites the current symlink and is logged.')) return;
+                    btn.disabled = true;
+                    btn.textContent = '...';
+                    cfgFetch('/admin/pipeline/noaa/rollback', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ to_snapshot: snap }),
+                    })
+                    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d, status: r.status }; }); })
+                    .then(function(r) {
+                        if (!r.ok) {
+                            alert('Rollback failed (' + r.status + '): ' + JSON.stringify(r.data.detail || r.data));
+                            btn.disabled = false;
+                            btn.textContent = 'Rollback';
+                            return;
+                        }
+                        // Success: reload the log
+                        loadRefreshLog();
+                    })
+                    .catch(function(err) {
+                        alert('Rollback failed: ' + err);
+                        btn.disabled = false;
+                        btn.textContent = 'Rollback';
+                    });
+                });
+            });
+        }
+
+        function loadRefreshLog() {
+            refreshEntries.innerHTML = '<div style="color:#7a8299;padding:8px">Loading...</div>';
+            cfgFetch('/admin/pipeline/noaa/refresh-log')
+                .then(function(r) { return r.json(); })
+                .then(function(d) { renderRefreshEntries(d.entries || []); })
+                .catch(function() {
+                    refreshEntries.innerHTML = '<div style="color:#f38ba8;padding:8px">Failed to load refresh log.</div>';
+                });
+        }
+
+        refreshToggle.addEventListener('click', function() {
+            var expanded = refreshToggle.getAttribute('aria-expanded') === 'true';
+            refreshToggle.setAttribute('aria-expanded', !expanded);
+            refreshToggle.textContent = (expanded ? '\u25B8' : '\u25BE') + ' Catalog refresh history';
+            refreshBody.style.display = expanded ? 'none' : '';
+            if (!expanded) loadRefreshLog();
+        });
+
+        document.getElementById('card-' + src.id + '-refresh-reload').addEventListener('click', loadRefreshLog);
+
+        document.getElementById('card-' + src.id + '-refresh-now').addEventListener('click', function() {
+            if (!confirm('Refresh the NOAA catalog now?\nThis re-lists the Azure blob container, which can take a few minutes. A running pipeline will block this.')) return;
+            var btn = this;
+            btn.disabled = true;
+            var orig = btn.textContent;
+            btn.textContent = 'Refreshing...';
+            cfgFetch('/admin/pipeline/noaa/refresh', { method: 'POST' })
+                .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d, status: r.status }; }); })
+                .then(function(r) {
+                    btn.disabled = false;
+                    btn.textContent = orig;
+                    if (!r.ok) {
+                        alert('Refresh returned ' + r.status + ': ' + JSON.stringify(r.data.detail || r.data));
+                    } else if (r.data.status === 'truncated' || r.data.status === 'invalid_parse') {
+                        alert('Refresh finished with status=' + r.data.status + '. See log for details.');
+                    }
+                    loadRefreshLog();
+                })
+                .catch(function(err) {
+                    btn.disabled = false;
+                    btn.textContent = orig;
+                    alert('Refresh failed: ' + err);
+                });
+        });
     }
 
     // -----------------------------------------------------------------------
