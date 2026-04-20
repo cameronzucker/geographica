@@ -53,6 +53,26 @@ Listed here so future runs against a more-capable harness look for these:
 - Stale-artifact leakage: a prior run with a wider bbox left files on
   disk; a subsequent narrower-bbox run's glob-based merge pulls them in.
 
+## Catalog refresh (NOAA)
+Symptoms to probe once the NOAA CONUS expansion ships:
+- **Catalog refresh returned fewer states than expected.** The symlink was
+  swapped but the new snapshot's `entries{}` has fewer states than the prior
+  snapshot. Likely cause: Azure listing got truncated (NextMarker issues,
+  intermittent 5xx) but `refresh_catalog` committed the partial result anyway.
+  Test shape: compare `len(snapshot.entries)` across consecutive snapshots; a
+  >5% drop without a corresponding `status=truncated` refresh-log entry is a bug.
+- **Tile-index URL pattern drift.** NOAA changes the zip-naming convention
+  upstream. `refresh_catalog` HEAD-validates every candidate; all fail; catalog
+  silently rebuilds with zero entries. Test shape: a successful refresh with
+  `len(entries) == 0` is suspicious — compare against prior snapshot's entry count.
+- **Stale symlink after rollback.** `noaa_naip_catalog.json` points at a snapshot
+  file that has been pruned. `pin_catalog_snapshot` raises FileNotFoundError.
+  Expected: actionable error surfaced in admin UI + CLI exit 1, not a raw
+  Python traceback.
+- **Lockfile held by dead PID.** Refresh process crashed mid-run; next user
+  hits 409 "locked" forever. The force-unlock affordance must be discoverable
+  from the refresh-log panel's 409 response.
+
 ## Already-known bug classes (don't re-discover these)
 - Debian Trixie docker-buildx file-conflict in bootstrap.sh (FIXED 59f00b5)
 - websockets missing from setup/requirements.txt (FIXED ef28cd8)
