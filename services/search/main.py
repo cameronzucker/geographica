@@ -103,6 +103,7 @@ class PipelineStartBody(BaseModel):
     counties: Optional[str] = None  # comma-separated FIPS codes (for NAIP — overrides bbox county lookup)
     state: Optional[str] = None   # for NOAA mode
     year: Optional[int] = None    # for NOAA mode
+    acknowledge_missing: bool = False  # for NOAA mode: accept partial coverage when missing[] non-empty
 
 
 # ---------------------------------------------------------------------------
@@ -1162,6 +1163,71 @@ def _get_disk_free_gb() -> float:
     return usage.free / (1024 ** 3)
 
 
+def _noaa_peak_and_snapshot(
+    body: "PipelineStartBody",
+) -> "tuple[list[str], float, str | None]":
+    """Return (missing_slugs, peak_required_gb, catalog_snapshot_path).
+
+    Resolves which states intersect the requested bbox/state, splits into
+    cataloged vs. missing, and computes the peak disk requirement using the
+    same economics as noaa_estimate.
+
+    Returns ([], 0.0, None) when the catalog isn't loadable — callers must
+    handle this gracefully (treat as no-disk-constraint / no-missing-states).
+
+    Design note (Task 26): The pipeline-not-running gate on /refresh and
+    /rollback ensures the catalog symlink cannot be atomically swapped while
+    a pipeline is running.  Recording the resolved snapshot_path here is
+    therefore an effective pin: if this function is called before entering
+    _pipeline_lock, and the pipeline was not running at call time, the
+    snapshot remains stable for the lifetime of that pipeline run.
+    """
+    NOAA_TILE_SIZE_MB = 486
+
+    catalog, snapshot_path = _load_noaa_catalog(DATA_DIR)
+    if catalog is None:
+        return ([], 0.0, None)
+
+    entries: dict = catalog.get("entries", {})
+
+    # Resolve which slugs to process — mirrors noaa_estimate logic.
+    if body.state is not None:
+        state_upper = body.state.upper()
+        if state_upper in SLUG_BY_USPS:
+            slug = SLUG_BY_USPS.get(state_upper)
+        else:
+            slug = body.state.lower()
+
+        if slug is None or slug not in entries:
+            # Unknown or uncataloged state — treat as no constraint.
+            return ([], 0.0, None)
+
+        states_list: list[str] = [slug]
+        missing_list: list[str] = []
+    else:
+        if not body.bbox:
+            return ([], 0.0, None)
+        intersecting = states_intersecting(body.bbox)
+        states_list = [s for s in intersecting if s in entries]
+        missing_list = [s for s in intersecting if s not in entries]
+
+        if not states_list:
+            return ([], 0.0, None)
+
+    # Compute total tile count from catalog (no shapefile refinement needed here).
+    total_tile_count = sum(
+        entries[s].get("tile_count", 0) for s in states_list
+    )
+
+    # Same disk-cost formula as noaa_estimate.
+    raw_download_gb = total_tile_count * NOAA_TILE_SIZE_MB / 1024
+    final_mbtiles_gb = total_tile_count * 29 / 1024
+    intermediate_gb = raw_download_gb * 0.3
+    peak_required_gb = round(raw_download_gb + intermediate_gb + final_mbtiles_gb, 1)
+
+    return (missing_list, peak_required_gb, str(snapshot_path))
+
+
 @app.post("/admin/pipeline/start", dependencies=[Depends(require_config_source)])
 async def pipeline_start(body: PipelineStartBody):
     """Start an imagery, elevation, or OSM POI pipeline."""
@@ -1228,6 +1294,39 @@ async def pipeline_start(body: PipelineStartBody):
         cred_status = keyring_client.get_status()
         if not cred_status.get("m2m_configured"):
             raise HTTPException(status_code=422, detail="M2M credentials not configured. POST to /admin/credentials first.")
+
+    # Task 26: NOAA-mode snapshot pinning, missing-state ack gate, fresh disk recheck.
+    # These checks run BEFORE acquiring the pipeline lock so that we return 409/507
+    # without blocking other endpoints.  The pipeline-not-running invariant enforced
+    # by /refresh and /rollback means the catalog snapshot is stable once we enter
+    # the lock, so recording snapshot_path here is an effective pin.
+    if is_noaa:
+        missing, peak_required_gb, snapshot_path = _noaa_peak_and_snapshot(body)
+        if missing and not body.acknowledge_missing:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "status": "missing_unacknowledged",
+                    "missing": missing,
+                    "message": (
+                        "Non-cataloged states intersect this bbox. "
+                        "Retry with acknowledge_missing=true to proceed with partial coverage."
+                    ),
+                },
+            )
+        fresh_free_gb = _get_disk_free_gb()
+        if peak_required_gb > 0 and fresh_free_gb < peak_required_gb:
+            raise HTTPException(
+                status_code=507,
+                detail={
+                    "status": "insufficient_disk",
+                    "disk_free_gb": round(fresh_free_gb, 1),
+                    "peak_required_gb": round(peak_required_gb, 1),
+                    "message": (
+                        "Free disk dropped below peak requirement between estimate and Start."
+                    ),
+                },
+            )
 
     async with _pipeline_lock:
         client = _get_docker_client()

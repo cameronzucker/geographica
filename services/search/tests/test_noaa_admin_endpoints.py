@@ -562,3 +562,109 @@ def test_refresh_log_rollback_available_flag(tmp_path):
     entries = resp.json()["entries"]
     assert entries[0]["rollback_available"] is True   # newest, file exists
     assert entries[1]["rollback_available"] is False  # file pruned
+
+
+# ---------------------------------------------------------------------------
+# Task 26 — POST /admin/pipeline/start (NOAA mode extension)
+# ---------------------------------------------------------------------------
+
+def test_start_noaa_requires_acknowledge_missing_when_missing_nonempty(
+    fake_catalog_dir,
+):
+    """If bbox spans uncataloged states, Start returns 409 without acknowledge_missing."""
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    with patch("services.search.main._get_disk_free_gb", return_value=500.0), \
+         patch("services.search.main.DATA_DIR", fake_catalog_dir):
+        resp = client.post(
+            "/admin/pipeline/start",
+            json={
+                "type": "imagery",
+                "mode": "noaa",
+                "bbox": "-109.1,36.9,-108.9,37.1",  # Four Corners: AZ+UT cataloged, CO+NM missing
+            },
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 409
+    body = resp.json()
+    # FastAPI wraps HTTPException detail under "detail"
+    detail = body.get("detail", body)
+    assert detail.get("status") == "missing_unacknowledged"
+    assert "colorado" in detail.get("missing", []) or "new-mexico" in detail.get("missing", [])
+
+
+def test_start_noaa_with_acknowledge_missing_proceeds(fake_catalog_dir):
+    """With acknowledge_missing=true, the endpoint accepts missing states and progresses."""
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    # Mock docker so we don't actually spawn a container.
+    # Disk must be large enough to pass the peak_required_gb check (AZ+UT ≈ 50,706 GB).
+    with patch("services.search.main._get_disk_free_gb", return_value=500_000.0), \
+         patch("services.search.main.DATA_DIR", fake_catalog_dir), \
+         patch("services.search.main._get_docker_client", return_value=None):
+        resp = client.post(
+            "/admin/pipeline/start",
+            json={
+                "type": "imagery",
+                "mode": "noaa",
+                "bbox": "-109.1,36.9,-108.9,37.1",
+                "acknowledge_missing": True,
+            },
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    # With docker mocked to None, we expect 503 "Docker socket not available"
+    # — not 409. The important thing is we got PAST the missing-states check.
+    assert resp.status_code == 503
+    assert "Docker" in resp.json().get("detail", "")
+
+
+def test_start_noaa_disk_recheck_returns_507_if_insufficient(fake_catalog_dir):
+    """If free disk dropped below peak between estimate and Start, return 507."""
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    # tile_count=50124 for AZ → raw ≈ 23,789 GB → peak ≈ 32,345 GB.
+    # Mock free disk at 10 GB — way below.
+    with patch("services.search.main._get_disk_free_gb", return_value=10.0), \
+         patch("services.search.main.DATA_DIR", fake_catalog_dir):
+        resp = client.post(
+            "/admin/pipeline/start",
+            json={
+                "type": "imagery",
+                "mode": "noaa",
+                "bbox": "-114,32,-109,37",
+                "state": "arizona",
+            },
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 507
+    detail = resp.json().get("detail", {})
+    assert detail.get("status") == "insufficient_disk"
+    assert "disk_free_gb" in detail
+    assert "peak_required_gb" in detail
+    assert detail["peak_required_gb"] > detail["disk_free_gb"]
+
+
+def test_start_noaa_single_state_no_missing_no_ack_needed(fake_catalog_dir):
+    """Single-state run (no missing[]) proceeds without acknowledge_missing."""
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    # Mock docker to None so Start short-circuits at Docker check, not earlier
+    with patch("services.search.main._get_disk_free_gb", return_value=500000.0), \
+         patch("services.search.main.DATA_DIR", fake_catalog_dir), \
+         patch("services.search.main._get_docker_client", return_value=None):
+        resp = client.post(
+            "/admin/pipeline/start",
+            json={
+                "type": "imagery",
+                "mode": "noaa",
+                "state": "arizona",
+                "bbox": "-112.1,33.4,-112.0,33.5",
+            },
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    # Expected: 503 (docker unavailable) — means we got past all NOAA validation.
+    assert resp.status_code == 503
