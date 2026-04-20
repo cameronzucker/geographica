@@ -160,3 +160,84 @@ def test_pin_catalog_snapshot_dangling_symlink_raises(tmp_path):
     from acquire_imagery import pin_catalog_snapshot
     with pytest.raises(FileNotFoundError):
         pin_catalog_snapshot(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Task 16: _resolve_or_pin_snapshot — resume-refuse semantics
+# ---------------------------------------------------------------------------
+
+def _make_snapshot(tmp_path: Path, name: str = "snap1.json") -> Path:
+    """Helper: create a real snapshot file in a snapshots sub-dir."""
+    snap_dir = tmp_path / "noaa_catalog_snapshots"
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    snap = snap_dir / name
+    snap.write_text('{"entries": {}}')
+    return snap
+
+
+def test_resume_with_pruned_snapshot_raises(tmp_path):
+    """State file records a snapshot path that no longer exists → SnapshotPrunedError."""
+    from acquire_imagery import _resolve_or_pin_snapshot, SnapshotPrunedError
+
+    output = tmp_path / "imagery.mbtiles"
+    state_path = tmp_path / ".pipeline-state.json"
+    # Write state pointing at a non-existent snapshot
+    import json
+    state_path.write_text(json.dumps({"catalog_snapshot": str(tmp_path / "noaa_catalog_snapshots" / "gone.json")}))
+
+    with pytest.raises(SnapshotPrunedError, match="Cannot resume"):
+        _resolve_or_pin_snapshot(output, tmp_path)
+
+
+def test_resume_with_existing_snapshot_reuses_it(tmp_path):
+    """State file records a snapshot that still exists → returned without re-pinning."""
+    from acquire_imagery import _resolve_or_pin_snapshot
+
+    output = tmp_path / "imagery.mbtiles"
+    state_path = tmp_path / ".pipeline-state.json"
+    snap = _make_snapshot(tmp_path)
+
+    import json
+    state_path.write_text(json.dumps({"catalog_snapshot": str(snap)}))
+
+    # Deliberately do NOT create the noaa_naip_catalog.json symlink;
+    # if the function tried to re-pin it would raise FileNotFoundError.
+    result = _resolve_or_pin_snapshot(output, tmp_path)
+    assert result == snap
+
+
+def test_fresh_run_pins_new_snapshot(tmp_path):
+    """No state file → calls pin_catalog_snapshot, writes state, returns path."""
+    from acquire_imagery import _resolve_or_pin_snapshot
+
+    output = tmp_path / "imagery.mbtiles"
+    snap = _make_snapshot(tmp_path)
+    # Create the symlink that pin_catalog_snapshot reads
+    symlink = tmp_path / "noaa_naip_catalog.json"
+    symlink.symlink_to(snap)
+
+    result = _resolve_or_pin_snapshot(output, tmp_path)
+    assert result == snap.resolve()
+
+    # State file must have been written with the snapshot path
+    import json
+    state_path = tmp_path / ".pipeline-state.json"
+    assert state_path.exists()
+    state = json.loads(state_path.read_text())
+    assert state["catalog_snapshot"] == str(snap.resolve())
+
+
+def test_state_file_unreadable_treats_as_fresh(tmp_path):
+    """Corrupt state JSON → logs warning and falls back to fresh-run pin."""
+    from acquire_imagery import _resolve_or_pin_snapshot
+
+    output = tmp_path / "imagery.mbtiles"
+    state_path = tmp_path / ".pipeline-state.json"
+    state_path.write_text("NOT VALID JSON {{{")
+
+    snap = _make_snapshot(tmp_path)
+    symlink = tmp_path / "noaa_naip_catalog.json"
+    symlink.symlink_to(snap)
+
+    result = _resolve_or_pin_snapshot(output, tmp_path)
+    assert result == snap.resolve()

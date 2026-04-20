@@ -341,6 +341,10 @@ def write_pipeline_state(output_path: Path, state: dict):
         log.warning("Failed to write pipeline state: %s", exc)
 
 
+class SnapshotPrunedError(RuntimeError):
+    """Raised when a resume tries to use a catalog snapshot that was pruned."""
+
+
 def pin_catalog_snapshot(data_dir: Path) -> Path:
     """Resolve the noaa_naip_catalog.json symlink to an absolute snapshot path.
 
@@ -353,6 +357,50 @@ def pin_catalog_snapshot(data_dir: Path) -> Path:
     """
     symlink = Path(data_dir) / "noaa_naip_catalog.json"
     return symlink.resolve(strict=True)
+
+
+def _resolve_or_pin_snapshot(output: Path, data_dir: Path) -> Path:
+    """Return the catalog snapshot path for this run.
+
+    Resume semantics (Task 16):
+    - If .pipeline-state.json records a ``catalog_snapshot`` path and that
+      file still exists on disk: return that path unchanged.  Do NOT re-pin.
+    - If the recorded path no longer exists: raise ``SnapshotPrunedError``
+      so the caller aborts cleanly rather than silently downgrading to a
+      mismatched catalog.
+    - If there is no prior state (fresh run) or the state file is corrupt:
+      call ``pin_catalog_snapshot``, persist the result, and return it.
+
+    Raises SnapshotPrunedError if the prior pin was pruned.
+    Raises FileNotFoundError (from pin_catalog_snapshot) if fresh run but
+    the catalog symlink is absent or dangling.
+    """
+    state_path = Path(output).parent / ".pipeline-state.json"
+    prior_snapshot_str: str | None = None
+    if state_path.exists():
+        try:
+            prior_state = json.loads(state_path.read_text())
+            prior_snapshot_str = prior_state.get("catalog_snapshot")
+        except (json.JSONDecodeError, OSError) as exc:
+            log.warning(
+                "Could not read prior pipeline state: %s — treating as fresh run", exc
+            )
+
+    if prior_snapshot_str:
+        pinned = Path(prior_snapshot_str)
+        if not pinned.exists():
+            raise SnapshotPrunedError(
+                f"Cannot resume: pinned snapshot {pinned} was pruned. "
+                "Restart from scratch or rollback the catalog."
+            )
+        log.info("Resuming with pinned catalog snapshot: %s", pinned)
+        return pinned
+
+    # Fresh run: pin a new snapshot and persist it.
+    snapshot_path = pin_catalog_snapshot(data_dir)
+    write_pipeline_state(output, {"catalog_snapshot": str(snapshot_path)})
+    log.info("Catalog snapshot pinned: %s", snapshot_path)
+    return snapshot_path
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
@@ -2072,14 +2120,11 @@ async def run_noaa(args):
     output = Path(args.output)
     data_dir = output.parent
 
-    # Task 15: pin the catalog symlink to an absolute snapshot path at Start.
+    # Tasks 15+16: pin (fresh run) or reuse (resume) the catalog snapshot.
     # Refresh/rollback can freely change the current symlink without affecting
-    # this run. Raises FileNotFoundError if the catalog is missing or dangling.
-    snapshot_path = pin_catalog_snapshot(data_dir)
-    write_pipeline_state(output, {"catalog_snapshot": str(snapshot_path)})
-    log.info("Catalog snapshot pinned: %s", snapshot_path)
-    # TODO(task-16): resume path must read catalog_snapshot from pipeline state
-    # and pass it directly to build_unified_queue instead of re-resolving.
+    # this run. Raises FileNotFoundError if the catalog is missing (fresh run).
+    # Raises SnapshotPrunedError if a prior run's snapshot has since been pruned.
+    snapshot_path = _resolve_or_pin_snapshot(output, data_dir)
 
     # B13 fix: detect (and where possible repair) checkpoint divergence
     # from a prior crash between tile commit and checkpoint commit.
