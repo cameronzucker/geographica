@@ -184,7 +184,7 @@ Supporting:
 
 ## 2026-04-20 — NOAA NAIP CONUS expansion (in progress)
 
-**Released as:** not yet released (branch `feat/noaa-conus`, worktree at `.claude/worktrees/feat-noaa-conus`)
+**Released as:** not yet released (work landed on `dev` via cherry-pick; `feat/noaa-conus` worktree + branch retired 2026-04-20 per the new worktree ban)
 **Plan / spec:** [docs/superpowers/specs/2026-04-20-noaa-naip-conus-expansion-design.md](../docs/superpowers/specs/2026-04-20-noaa-naip-conus-expansion-design.md) (v2, committed `0341c00`)
                  [docs/superpowers/plans/2026-04-20-noaa-naip-conus-expansion.md](../docs/superpowers/plans/2026-04-20-noaa-naip-conus-expansion.md) (committed `0e0a9ae`)
 **Adversarial reviews:** 5 rounds (Codex + 4 general-purpose subagents with distinct lenses: subagent-reader, implementer-skeptic, failure-mode-hunter, operator) — transcripts in session tool-results at `~/.claude/projects/.../tool-results/bsdkk6a2n.txt` + subagent returns
@@ -243,7 +243,27 @@ Review notes in [dev/adversarial/2026-04-20-noaa-phase2-review.md](../dev/advers
 
 **Known follow-up** (same as Phase 1): tile-index URL template still assembles `{AZURE_BASE}/{dir}/tileindex/tileindex_{dir}.zip` which doesn't match NOAA's actual Azure layout. Phase 5 integration test will force discovery via live-Azure listing. Phase 2 doesn't exercise the tile-index URL path (it builds queues from synthetic inputs in unit tests); Arizona-only runs through the legacy `NOAA_NAIP_CATALOG` dict still work because that path never touches `refresh_catalog`'s URL builder.
 
-**Phases 3-6 remain.** Phase 3 (admin endpoints, 8 tasks) next. Subagent-driven-development flow with combined spec+quality review (single reviewer for mechanical Haiku tasks, separate two-stage for Sonnet load-bearing) proven efficient — ~2 min per per-task review, ~5 min per Sonnet implementer dispatch.
+**Phase 3 complete (Tasks 19-26).** Admin endpoints shipped to [services/search/main.py](../services/search/main.py):
+
+- **Task 19** `GET /admin/pipeline/noaa/estimate` extended — catalog-driven via `_load_noaa_catalog`, USPS↔slug normalization, bbox-mode state resolution, new response fields (`states`, `missing`, `placename`, `catalog_snapshot`, `intermediate_gb`, `peak_required_gb`) alongside all 12 preserved legacy fields.
+- **Task 20** peak-working-set disk estimate: `intermediate_gb = raw × 0.3`, `peak_required_gb = raw + intermediate + final`.
+- **Task 21** `_noaa_placename` — multi-state (≥2 cataloged OR width/height > 5°) returns `"Coverage area across AZ, UT"`; single-state + small bbox uses Nominatim reverse lookup with 3s timeout.
+- **Tasks 22-25** four admin endpoints (`POST /refresh`, `POST /rollback`, `POST /force-unlock`, `GET /refresh-log`) wrapping `scripts.refresh_noaa_catalog` helpers. Rollback gates on pipeline-not-running + 404 on missing snapshot + rejects path traversal. Refresh-log returns entries reverse-chronological with per-entry `rollback_available` flag.
+- **Task 26** `POST /admin/pipeline/start` extended for NOAA mode — `_noaa_peak_and_snapshot` helper gates on `acknowledge_missing` (409) and rechecks disk (507) before entering `_pipeline_lock`.
+
+Commits on dev (Phase 3 only, in order): `c74a935` (19), `5719b3b` (20), `f20d517` (20 follow-up), `3dc72e3` (21), `b1fb1cb` (22), `53055cc` (23), `52b9d96` (24), `d347701` (25), `7159080` (23 hardening — path traversal), `8adb061` (26), `649ed3d` (review closeout).
+
+**Phase 3 review loop** (2 rounds: Sonnet architectural + Haiku test coverage) surfaced 1 Important divergence and 2 Minor issues plus 3 Critical test gaps, all closed in `649ed3d`:
+- `_noaa_peak_and_snapshot` used catalog totals while `noaa_estimate` used shapefile-refined per-bbox counts → spurious 507s on sub-state bboxes with cached `.dbf`. Extracted `_count_noaa_tiles(slugs, bbox, entries, data_dir)` shared helper.
+- `_noaa_peak_and_snapshot` docstring claimed the returned `snapshot_path` was an "effective pin" — caller discards it; the real pin happens container-side. Docstring rewritten to describe the actual mechanism.
+- `noaa_force_unlock` 409 used a raw result dict; other 409s use structured `{status, message}`. Standardized.
+- Added 3 coverage-gap tests (malformed bbox, zero-state-intersection bbox, `invalid_parse` refresh status).
+
+**Worktree + feat/noaa-conus branch retired (2026-04-20 PM):** after two near-miss git incidents (Task 13 implementer contaminated `dev` with a misdirected commit; a later Task 26 implementer or dispatch ran `git reset --hard feat/noaa-conus` on dev, wiping six commits of nav-remediation + wake-lock work — all recovered via reflog and restored via merge commit `5545a4c`). Worktrees are now BANNED per `CLAUDE.md §Git workflow` + `docs/pitfalls/implementation-pitfalls.md §14` (landed on dev as `9daa05f`, cherry-picked to main as `7dc2e01`). Destructive git commands are also banned (`ea07e1e`), and agents now carry moniker trailers in every commit (`c28cb35`). The feat/noaa-conus branch's unique commits (`71fef86`, `772c745`) were cherry-picked to dev with Agent trailers (`7159080`, `8adb061`); the branch and worktree were removed.
+
+**Test counts:** 911 (end of Phase 2) → 941 on `services/search/tests/test_noaa_admin_endpoints.py` alone (+30 new Phase 3 tests after the Round-2-gap additions; the other suites remained unchanged). Two pre-existing `test_pipeline_status_m2m.py` failures persist.
+
+**Phases 4-6 remain.** Phase 4 (frontend UI, 6 tasks) is next; Phase 4 requires browser-side visual verification that the plan's §3 mockup flows are honored (tab structure, state dropdown, bbox-draw UX, peak-disk warning banner, retry-failed-states UI). Phase 5 (testing infrastructure, 5 tasks) includes the live-Azure integration test that's expected to discover the real tile-index URL pattern (the known-bad template from Task 10). Phase 6 (regression, 2 tasks) captures an Arizona baseline MBTiles from `dev` pre-refactor and verifies the setup-runner `STATE_BBOXES` extraction.
 
 
 ---
