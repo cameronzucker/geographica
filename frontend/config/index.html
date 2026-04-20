@@ -136,6 +136,53 @@
         .inv-disk-summary { padding: 8px; background: #181825; border-radius: 6px; margin-top: auto; }
         .inv-disk-bar { height: 6px; background: #313244; border-radius: 3px; margin-top: 6px; overflow: hidden; }
         .inv-disk-bar-fill { height: 100%; background: #89b4fa; border-radius: 3px; }
+
+        /* === NOAA NAIP TABS (Task 27) === */
+        .noaa-tabs {
+            display: flex;
+            border-bottom: 1px solid #2d3548;
+            margin-bottom: 12px;
+        }
+        .noaa-tab {
+            flex: 1;
+            padding: 8px 10px;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: #7a8299;
+            font-size: 12px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .noaa-tab.active {
+            color: #e8ecf4;
+            border-bottom-color: #4a7fbf;
+            font-weight: 500;
+        }
+        .noaa-explainer {
+            font-size: 12px;
+            color: #9aa4bf;
+            line-height: 1.5;
+            margin: 0 0 12px;
+        }
+        .noaa-placename-callout {
+            background: rgba(74, 127, 191, 0.10);
+            border: 1px solid rgba(74, 127, 191, 0.35);
+            border-radius: 5px;
+            padding: 8px 12px;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: #b0c4e8;
+        }
+        .noaa-missing-banner {
+            background: rgba(249,226,175,0.12);
+            border: 1px solid rgba(249,226,175,0.3);
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: #f9e2af;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
@@ -1175,86 +1222,199 @@
     // NOAA NAIP panel
     // -----------------------------------------------------------------------
     function renderNoaaBody(body, src) {
-        var catEntry = _catalogData[src.id];
-        var diskInfo = 'Not downloaded yet';
-        if (catEntry) {
-            var bytes = catEntry.size_bytes || 0;
-            diskInfo = (bytes > 1e9 ? (bytes / 1e9).toFixed(1) + ' GB' : (bytes / 1e6).toFixed(0) + ' MB') + ' on disk';
-        }
-
+        // ---------------------------------------------------------------
+        // Build tabbed card structure (Task 27)
+        // ---------------------------------------------------------------
         body.innerHTML =
-            '<p style="font-size:12px;color:#7a8299;margin:0 0 8px">GeoTIFF tiles from Azure Blob Storage. No auth, no throttling.</p>' +
-            '<div class="config-row">' +
-                '<div>' +
-                    '<label>State / Year</label>' +
+            '<p style="font-size:12px;color:#7a8299;margin:0 0 10px">GeoTIFF tiles from Azure Blob Storage. No auth, no throttling.</p>' +
+            // Tab strip
+            '<div class="noaa-tabs" role="tablist">' +
+                '<button class="noaa-tab active" data-tab="whole" role="tab">Whole state</button>' +
+                '<button class="noaa-tab" data-tab="custom" role="tab">Custom area</button>' +
+            '</div>' +
+            // ---- Whole state tab body ----
+            '<div class="noaa-tab-body noaa-tab-whole">' +
+                '<p class="noaa-explainer">Download every aerial photo for one US state.</p>' +
+                '<div id="card-' + src.id + '-whole-state-row" style="margin-bottom:10px">' +
+                    '<label>State</label>' +
                     '<select id="card-' + src.id + '-state">' +
-                        '<option value="AZ:2021" selected>Arizona 2021</option>' +
+                        '<option value="arizona">Arizona</option>' +
                     '</select>' +
                 '</div>' +
-                '<div>' +
-                    '<div style="font-size:11px;color:#7a8299;margin-top:24px">On Disk: ' + diskInfo + '</div>' +
+                '<div class="estimate-box" id="card-' + src.id + '-est-whole" style="display:none"></div>' +
+                '<div class="btn-row">' +
+                    '<button type="button" class="btn-secondary" id="card-' + src.id + '-est-btn-whole" style="flex:none">Estimate Download</button>' +
+                    '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start-whole">Download</button>' +
                 '</div>' +
             '</div>' +
-            '<div class="estimate-box" id="card-' + src.id + '-est" style="display:none"></div>' +
-            '<div class="btn-row">' +
-                '<button type="button" class="btn-secondary" id="card-' + src.id + '-est-btn" style="flex:none">Estimate Download</button>' +
-                '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start">Start Download</button>' +
+            // ---- Custom area tab body ----
+            '<div class="noaa-tab-body noaa-tab-custom" style="display:none">' +
+                '<p class="noaa-explainer">Download only the imagery inside the bbox drawn above (or entered in Coverage Area).</p>' +
+                '<div class="estimate-box" id="card-' + src.id + '-est-custom" style="display:none"></div>' +
+                '<div class="btn-row">' +
+                    '<button type="button" class="btn-secondary" id="card-' + src.id + '-est-btn-custom" style="flex:none">Estimate Download</button>' +
+                    '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start-custom">Download</button>' +
+                '</div>' +
+                '<p style="font-size:11px;color:#7a8299;margin-top:8px">Uses the bbox in the Coverage Area panel at the top of the page.</p>' +
             '</div>';
 
-        var estBtn = document.getElementById('card-' + src.id + '-est-btn');
-        var estBox = document.getElementById('card-' + src.id + '-est');
-        var stateSel = document.getElementById('card-' + src.id + '-state');
+        // ---------------------------------------------------------------
+        // Tab switching
+        // ---------------------------------------------------------------
+        var tabs = body.querySelectorAll('.noaa-tab');
+        var tabBodies = body.querySelectorAll('.noaa-tab-body');
+        tabs.forEach(function(t) {
+            t.addEventListener('click', function() {
+                var which = t.getAttribute('data-tab');
+                tabs.forEach(function(x) { x.classList.toggle('active', x === t); });
+                tabBodies.forEach(function(b) {
+                    var match = (which === 'whole' && b.classList.contains('noaa-tab-whole')) ||
+                                (which === 'custom' && b.classList.contains('noaa-tab-custom'));
+                    b.style.display = match ? '' : 'none';
+                });
+            });
+        });
 
-        estBtn.addEventListener('click', function() {
-            estBox.style.display = '';
-            estBox.textContent = 'Estimating...';
-            estBox.style.color = '#7a8299';
-            var parts = stateSel.value.split(':');
+        // ---------------------------------------------------------------
+        // Shared estimate renderer — populates an estBox with API response
+        // ---------------------------------------------------------------
+        function _renderEstimate(estBox, d) {
+            estBox.textContent = '';
+            estBox.style.color = '#a6e3a1';
+
+            // Placename callout
+            if (d.placename) {
+                var callout = document.createElement('div');
+                callout.className = 'noaa-placename-callout';
+                callout.textContent = 'Coverage area: ' + d.placename;
+                estBox.appendChild(callout);
+            }
+
+            // missing[] banner
+            if (d.missing && d.missing.length > 0) {
+                var banner = document.createElement('div');
+                banner.className = 'noaa-missing-banner';
+                var missingNames = d.missing.map(function(s) {
+                    return s.split('-').map(function(p) { return p.charAt(0).toUpperCase() + p.slice(1); }).join(' ');
+                });
+                var bannerText = '\u26a0 ' + d.missing.length + ' non-cataloged state(s) intersect this bbox: ' +
+                    missingNames.join(', ') + '. Start will require acknowledge_missing.';
+                banner.appendChild(document.createTextNode(bannerText));
+                var ackLabel = document.createElement('label');
+                ackLabel.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:6px;font-weight:normal;cursor:pointer';
+                var ackBox = document.createElement('input');
+                ackBox.type = 'checkbox';
+                ackBox.id = 'card-' + src.id + '-ack-missing';
+                ackBox.style.cssText = 'width:auto;margin:0';
+                ackLabel.appendChild(ackBox);
+                ackLabel.appendChild(document.createTextNode(' I understand \u2014 proceed with partial coverage'));
+                banner.appendChild(document.createElement('br'));
+                banner.appendChild(ackLabel);
+                estBox.appendChild(banner);
+            }
+
+            var linesWrap = document.createElement('span');
+            var lines = [
+                d.tile_count.toLocaleString() + ' tiles intersect your bbox',
+                'Download: ~' + d.raw_download_gb + ' GB raw',
+                'Final MBTiles: ~' + d.final_mbtiles_gb + ' GB',
+                'Estimated time: ~' + d.est_hours + ' hours',
+                'Disk free: ' + d.disk_free_gb + ' GB'
+            ];
+            if (d.disk_free_gb < d.final_mbtiles_gb * 1.2) {
+                lines.push('\u26a0 Disk space may be insufficient!');
+                estBox.style.color = '#f38ba8';
+            }
+            lines.forEach(function(line, i) {
+                if (i > 0) linesWrap.appendChild(document.createElement('br'));
+                linesWrap.appendChild(document.createTextNode(line));
+            });
+            estBox.appendChild(linesWrap);
+        }
+
+        // ---------------------------------------------------------------
+        // Whole-state estimate button
+        // ---------------------------------------------------------------
+        var stateSel = document.getElementById('card-' + src.id + '-state');
+        var estBtnWhole = document.getElementById('card-' + src.id + '-est-btn-whole');
+        var estBoxWhole = document.getElementById('card-' + src.id + '-est-whole');
+
+        estBtnWhole.addEventListener('click', function() {
+            estBoxWhole.style.display = '';
+            estBoxWhole.textContent = 'Estimating...';
+            estBoxWhole.style.color = '#7a8299';
             var bbox = document.getElementById('cfg-bbox').value;
-            cfgFetch('/admin/pipeline/noaa/estimate?bbox=' + encodeURIComponent(bbox) + '&state=' + parts[0])
+            var stateSlug = stateSel.value;
+            cfgFetch('/admin/pipeline/noaa/estimate?bbox=' + encodeURIComponent(bbox) + '&state=' + encodeURIComponent(stateSlug))
                 .then(function(r) { return r.json(); })
                 .then(function(d) {
                     if (d.error || d.detail) {
-                        estBox.textContent = 'Error: ' + (d.error || d.detail);
-                        estBox.style.color = '#f38ba8';
+                        estBoxWhole.textContent = 'Error: ' + (d.error || d.detail);
+                        estBoxWhole.style.color = '#f38ba8';
                         return;
                     }
-                    if (d.status === 'no_index') {
-                        estBox.textContent = d.message;
-                        estBox.style.color = '#f9e2af';
+                    if (d.status === 'no_catalog' || d.status === 'no_index') {
+                        estBoxWhole.textContent = d.message || 'Catalog not loaded \u2014 run refresh.';
+                        estBoxWhole.style.color = '#f9e2af';
                         return;
                     }
-                    estBox.textContent = '';
-                    estBox.style.color = '#a6e3a1';
-                    var lines = [
-                        d.tile_count.toLocaleString() + ' tiles intersect your bbox',
-                        'Download: ~' + d.raw_download_gb + ' GB raw',
-                        'Final MBTiles: ~' + d.final_mbtiles_gb + ' GB',
-                        'Estimated time: ~' + d.est_hours + ' hours',
-                        'Disk free: ' + d.disk_free_gb + ' GB'
-                    ];
-                    if (d.disk_free_gb < d.final_mbtiles_gb * 1.2) {
-                        lines.push('\u26a0 Disk space may be insufficient!');
-                        estBox.style.color = '#f38ba8';
-                    }
-                    lines.forEach(function(line, i) {
-                        if (i > 0) estBox.appendChild(document.createElement('br'));
-                        estBox.appendChild(document.createTextNode(line));
-                    });
+                    _renderEstimate(estBoxWhole, d);
                 })
                 .catch(function() {
-                    estBox.textContent = 'Estimate failed (API offline?)';
-                    estBox.style.color = '#f38ba8';
+                    estBoxWhole.textContent = 'Estimate failed (API offline?)';
+                    estBoxWhole.style.color = '#f38ba8';
                 });
         });
 
-        document.getElementById('card-' + src.id + '-start').addEventListener('click', function() {
-            var parts = stateSel.value.split(':');
-            startPipeline(src, { state: parts[0], year: parseInt(parts[1]) });
+        document.getElementById('card-' + src.id + '-start-whole').addEventListener('click', function() {
+            startPipeline(src, { state: stateSel.value });
+        });
+
+        // ---------------------------------------------------------------
+        // Custom-area estimate button
+        // ---------------------------------------------------------------
+        var estBtnCustom = document.getElementById('card-' + src.id + '-est-btn-custom');
+        var estBoxCustom = document.getElementById('card-' + src.id + '-est-custom');
+
+        estBtnCustom.addEventListener('click', function() {
+            estBoxCustom.style.display = '';
+            estBoxCustom.textContent = 'Estimating...';
+            estBoxCustom.style.color = '#7a8299';
+            var bbox = document.getElementById('cfg-bbox').value;
+            if (!bbox || bbox.trim() === '') {
+                estBoxCustom.textContent = 'No bbox set \u2014 draw a box on the Coverage Area map first.';
+                estBoxCustom.style.color = '#f9e2af';
+                return;
+            }
+            cfgFetch('/admin/pipeline/noaa/estimate?bbox=' + encodeURIComponent(bbox))
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (d.error || d.detail) {
+                        estBoxCustom.textContent = 'Error: ' + (d.error || d.detail);
+                        estBoxCustom.style.color = '#f38ba8';
+                        return;
+                    }
+                    if (d.status === 'no_catalog' || d.status === 'no_index') {
+                        estBoxCustom.textContent = d.message || 'Catalog not loaded \u2014 run refresh.';
+                        estBoxCustom.style.color = '#f9e2af';
+                        return;
+                    }
+                    _renderEstimate(estBoxCustom, d);
+                })
+                .catch(function() {
+                    estBoxCustom.textContent = 'Estimate failed (API offline?)';
+                    estBoxCustom.style.color = '#f38ba8';
+                });
+        });
+
+        document.getElementById('card-' + src.id + '-start-custom').addEventListener('click', function() {
+            var bbox = document.getElementById('cfg-bbox').value;
+            startPipeline(src, { bbox: bbox });
         });
 
         if (_anyPipelineRunning) {
-            document.getElementById('card-' + src.id + '-start').disabled = true;
+            document.getElementById('card-' + src.id + '-start-whole').disabled = true;
+            document.getElementById('card-' + src.id + '-start-custom').disabled = true;
         }
     }
 
