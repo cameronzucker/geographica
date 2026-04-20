@@ -8,6 +8,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 
 from build_public_lands import (
+    DEFAULT_PADUS_URL,
     validate_layer_name,
     validate_url_scheme,
     build_ogr2ogr_command,
@@ -15,6 +16,43 @@ from build_public_lands import (
     classify_sql,
     classify_feature,
 )
+
+
+class TestPadusUrl:
+    """Regression guard for the PAD-US download URL.
+
+    The `/manager/download/<cuid>` route on sciencebase.usgs.gov serves the
+    ScienceBase File Manager React SPA (HTML) rather than the file, so any
+    download attempt against that endpoint returns ~4 KB of HTML and fails the
+    ZIP magic check. The working public-catalog endpoint is
+    `/catalog/file/get/<item_id>?name=<filename>`. See commit history and
+    2026-04-19 handoff for full diagnosis.
+    """
+
+    def test_url_uses_public_catalog_endpoint(self):
+        assert DEFAULT_PADUS_URL.startswith(
+            "https://www.sciencebase.gov/catalog/file/get/"
+        ), (
+            "DEFAULT_PADUS_URL must use the /catalog/file/get/ endpoint. "
+            f"Current value serves HTML not ZIP: {DEFAULT_PADUS_URL}"
+        )
+
+    def test_url_specifies_filename(self):
+        # The ?name= query param is required when an item contains multiple
+        # files (PAD-US 4.1 has 3 attachments: the ZIP, metadata XML, version history).
+        assert "name=PADUS" in DEFAULT_PADUS_URL, (
+            f"DEFAULT_PADUS_URL must include ?name=PADUS... so the catalog "
+            f"endpoint picks the Geodatabase ZIP, not another file in the same item. "
+            f"Current: {DEFAULT_PADUS_URL}"
+        )
+
+    def test_url_is_not_the_manager_spa(self):
+        # Negative assertion — if someone "fixes" the URL by putting it back to
+        # the manager route, this test fails loudly.
+        assert "sciencebase.usgs.gov/manager/" not in DEFAULT_PADUS_URL, (
+            "sciencebase.usgs.gov/manager/* routes serve the admin React SPA, "
+            "not the file. Use www.sciencebase.gov/catalog/file/get/ instead."
+        )
 
 
 class TestLayerNameValidation:
