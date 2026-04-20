@@ -60,14 +60,72 @@
     return next;
   }
 
+  function candidateVoices(allowCloud) {
+    var list;
+    try { list = window.speechSynthesis.getVoices(); } catch (e) { return []; }
+    if (!list || !list.length) return [];
+    return list.filter(function (v) {
+      if (!v || typeof v.lang !== 'string' || !/^en[-_]?/i.test(v.lang)) return false;
+      if (!allowCloud && v.localService === false) return false;
+      return true;
+    }).sort(function (a, b) {
+      // default voice first (stable tie-break), then alphabetical by voiceURI
+      var aD = a.default ? 0 : 1, bD = b.default ? 0 : 1;
+      if (aD !== bD) return aD - bD;
+      return (a.voiceURI || '').localeCompare(b.voiceURI || '');
+    });
+  }
+
+  function resolveVoice(pref, candidates) {
+    if (pref.mode === 'default') return null;
+
+    if (pref.mode === 'specific' && pref.voice) {
+      var byURI = candidates.find(function (v) { return v.voiceURI === pref.voice.voiceURI; });
+      if (byURI) return byURI;
+      var byNameLang = candidates.find(function (v) {
+        return v.name === pref.voice.name && v.lang === pref.voice.lang;
+      });
+      if (byNameLang) return byNameLang;
+      if (pref.storedGenderHint) {
+        var byHint = candidates.find(function (v) { return inferGender(v.name) === pref.storedGenderHint; });
+        if (byHint) return byHint;
+      }
+      return null;
+    }
+
+    if (pref.mode === 'gender' && pref.gender) {
+      return candidates.find(function (v) { return inferGender(v.name) === pref.gender; }) || null;
+    }
+
+    if (pref.mode === 'unavailable' && pref.voice) {
+      var reappeared = candidates.find(function (v) { return v.voiceURI === pref.voice.voiceURI; });
+      if (reappeared) return reappeared;
+      return null;
+    }
+
+    return null;
+  }
+
+  function getUtteranceVoice() {
+    var pref = readPref();
+    var candidates = candidateVoices(pref.allowCloudVoices);
+    var v = resolveVoice(pref, candidates);
+    if (pref.mode === 'specific' && v === null && pref.voice) {
+      writePref({ mode: 'unavailable', voice: pref.voice, storedGenderHint: pref.storedGenderHint });
+    }
+    return v;
+  }
+
   window.VoicePicker = {
     init: function () {},
-    getUtteranceVoice: function () { return null; },
+    getUtteranceVoice: getUtteranceVoice,
     onVoiceListChanged: function (_callback) {},
     _inferGender: inferGender,
     _KNOWN_VOICES: KNOWN_VOICES,
     _readPref: readPref,
     _writePref: writePref,
     _LS_KEY: LS_KEY,
+    _candidateVoices: candidateVoices,
+    _resolveVoice: resolveVoice,
   };
 })();
