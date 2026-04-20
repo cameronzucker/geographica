@@ -1,6 +1,5 @@
 """Tests for NOAA NAIP download mode."""
 
-import argparse
 import sqlite3
 import sys
 from pathlib import Path
@@ -76,15 +75,6 @@ class TestNOAAPipelineExists:
     def test_run_noaa_is_callable(self):
         assert callable(run_noaa)
 
-    def test_argparse_accepts_noaa_mode(self):
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--mode", choices=["tnmaccess", "direct", "m2m", "nationalmap", "noaa"])
-        parser.add_argument("--state")
-        parser.add_argument("--year", type=int, default=2021)
-        args = parser.parse_args(["--mode", "noaa", "--state", "AZ"])
-        assert args.mode == "noaa"
-        assert args.state == "AZ"
-        assert args.year == 2021
 
 
 # ---------------------------------------------------------------------------

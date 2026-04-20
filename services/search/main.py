@@ -1313,11 +1313,16 @@ async def pipeline_start(body: PipelineStartBody):
                     command = [
                         "python3", "/scripts/acquire_imagery.py",
                         "--mode", "noaa",
-                        f"--bbox={body.bbox}",
-                        f"--state={body.state or 'AZ'}",
-                        f"--year={body.year or 2021}",
                         "--output", "/data/imagery_noaa.mbtiles",
                     ]
+                    if body.state:
+                        # State-mode: let the CLI's argparse type= normalizer handle
+                        # USPS → slug translation (existing frontend may send "AZ";
+                        # Task 17's _normalize_state_arg emits a deprecation warning
+                        # but accepts it).
+                        command.append(f"--state={body.state}")
+                    else:
+                        command.append(f"--bbox={body.bbox}")
                 else:
                     # Build command -- imagery and elevation scripts have different args
                     script = _script_for_type(body.type)

@@ -2817,11 +2817,13 @@ async def run_noaa(args):
     # Today the pipeline processes one state at a time, so per_state reflects
     # just args.state's outcome. Task 26 will populate this dict from the
     # multi-state loop around run_noaa.
-    if args.state:  # state-mode run (bbox-mode wiring comes in Task 26)
-        if tiles_done == 0 and not skip_to_postprocess:
-            per_state_result = f"failed: 0 of {total_tiles} tiles processed"
-        else:
-            per_state_result = "complete"
+    # Guard: on total-failure single-state runs, preserve the status=error
+    # signal from the block above — partial_failed is only meaningful when
+    # the run made per-tile progress. Task 26's multi-state loop will lift
+    # this guard since a multi-state run where one state failed but others
+    # succeeded IS partial_failed regardless of any single state's tiles_done.
+    if args.state and (tiles_done > 0 or skip_to_postprocess):
+        per_state_result = "complete"
         _finalize_noaa_status(
             output, per_state={args.state: per_state_result},
             skip_to_postprocess=skip_to_postprocess,
@@ -2895,7 +2897,24 @@ def main():
         if state_explicit and bbox_explicit:
             log.error("--state and --bbox are mutually exclusive for NOAA mode; pick one")
             sys.exit(1)
-        asyncio.run(run_noaa(args))
+        try:
+            asyncio.run(run_noaa(args))
+        except FileNotFoundError as exc:
+            log.error(
+                "NOAA catalog symlink missing or dangling: %s\n"
+                "Run `python scripts/refresh_noaa_catalog.py` to fetch the catalog, "
+                "then retry.",
+                exc,
+            )
+            sys.exit(1)
+        except SnapshotPrunedError as exc:
+            log.error(
+                "%s\n"
+                "Either restart from scratch (delete %s) or rollback the catalog "
+                "via POST /admin/pipeline/noaa/rollback.",
+                exc, args.output,
+            )
+            sys.exit(1)
     elif args.mode == "tnmaccess":
         asyncio.run(run_tnmaccess(args))
     elif args.mode == "m2m":
