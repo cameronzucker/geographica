@@ -497,6 +497,11 @@
     var utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1.0;
     utterance.lang = 'en-US';
+    var chosenVoice = window.VoicePicker && window.VoicePicker.getUtteranceVoice();
+    if (chosenVoice) {
+      utterance.voice = chosenVoice;
+      utterance.lang = chosenVoice.lang || utterance.lang;
+    }
     speechSynthesis.speak(utterance);
   }
 
