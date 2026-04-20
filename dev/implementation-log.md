@@ -74,9 +74,15 @@ Expanding NOAA NAIP imagery from Arizona-only to all 48 CONUS + DC. Adds a bbox-
 - `519790c` — Phase 0 Task 1 follow-up: stale error message fix (feat/noaa-conus)
 - `85e8dac` — Phase 0 Task 2: canonicalization table + `display_name` (feat/noaa-conus)
 
-### Outcome (in progress)
+### Outcome (in progress — updated 2026-04-20 afternoon)
 
-Phase 0 complete (2/39 tasks). 74 tests passing in worktree (up from 68 baseline + 6 new + 4 new). Phases 1-6 deferred to future sessions — the full 39-task plan is a multi-session execution; Phase 0 demonstrates the subagent-driven-development flow works against this plan and validates the extracted primitive survives contact with the setup-side test suite.
+**Phase 0 complete (Tasks 1-2).** 78 tests (68 setup baseline + 10 new state_bboxes_common).
+
+**Phase 1 complete (Tasks 3-10).** Full P7 mechanics shipped to `scripts/refresh_noaa_catalog.py`: catalog structure validator, Azure blob listing with `<NextMarker>` pagination, NOAA directory parser + tile-index HEAD check, atomic snapshot writer + symlink swap, flock-based lockfile with PID-liveness force-unlock, pipeline-running detector (for refresh/rollback gating), refresh log appender + pinning-aware snapshot pruner, and the `refresh_catalog()` orchestrator + CLI. 35 tests in `tests/test_refresh_noaa_catalog.py` (9 existing + 26 net new across Tasks 3-10). Phase 0 + Phase 1 combined: 113 tests passing in worktree.
+
+**Known follow-up (surfaced during Task 10's live-run attempt):** the tile-index URL template assembled by `refresh_catalog()` (`{AZURE_BASE}/{dir}/tileindex/tileindex_{dir}.zip`) does NOT match NOAA's actual Azure blob layout. All 103 directory prefixes parsed correctly, but every `validate_tile_index` HEAD returned 404. A stub baseline (just the AZ entry) was committed to unblock Phase 2-4; real baseline generation is deferred to Phase 5 where the CI-tier integration test + the pre-merge GitHub Action will force discovery of the correct URL pattern. Two likely fixes: (a) per-directory blob listing with `prefix=<dir>/tileindex/` to discover the actual ZIP name, or (b) URL-pattern correction once confirmed against live Azure. Logged in Task 10's commit message (`c45a0b7`).
+
+**Phases 2-6 deferred to future sessions.** Branch `feat/noaa-conus` at commit `c45a0b7` as of this pause. 12 commits on the branch. Subagent-driven-development flow (implementer → combined spec+quality review → TDD preamble → fix loop) proven reliable for these mechanical tasks at the Haiku tier; Phase 2's more complex refactor tasks (checkpoint PK migration, snapshot pinning, partial-failed terminal state) may warrant Sonnet-tier implementers.
 
 ---
 
