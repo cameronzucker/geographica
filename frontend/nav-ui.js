@@ -156,6 +156,7 @@
     nav.onArrival(onArrival);
     nav.onReroute(onReroute);
     nav.start(routeData);
+    nav.setMuted(muted);  // B14: sync UI mute preference into engine
 
     active = true;
     document.body.classList.add('nav-active');
