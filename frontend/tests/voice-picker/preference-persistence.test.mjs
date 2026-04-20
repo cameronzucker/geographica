@@ -15,7 +15,7 @@ function loadVoicePicker(opts) {
   opts = opts || {};
   const ls = opts.localStorage || makeLocalStorageMock();
   const win = { localStorage: ls };
-  const ctx = vm.createContext({ window: win, localStorage: ls, console: console });
+  const ctx = vm.createContext({ window: win, localStorage: ls, console: console, JSON: JSON });
   vm.runInContext(SOURCE, ctx);
   return { vp: ctx.window.VoicePicker, ls: ls };
 }
