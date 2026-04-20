@@ -1694,3 +1694,98 @@ body.nav-active #search-container.nav-search-open #search-icon {
     bottom: 100px;
   }
 }
+
+/* ==== Voice Picker / Preferences section ==== */
+
+.pref-group {
+  margin-bottom: 18px;
+}
+
+.pref-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted, #9aa0a6);
+  margin: 8px 0 6px;
+}
+
+.pref-voice-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.pref-voice-btn {
+  flex: 1;
+  padding: 8px 4px;
+  background: #2d3138;
+  border: 1px solid #3a3f48;
+  border-radius: 4px;
+  color: #e8e8e8;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pref-voice-btn:hover:not(:disabled) {
+  background: #363b44;
+}
+
+.pref-voice-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.pref-voice-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pref-voice-advanced-toggle {
+  width: 100%;
+  padding: 6px 0;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+.pref-voice-advanced {
+  margin-top: 8px;
+}
+
+.pref-voice-advanced select {
+  width: 100%;
+  padding: 6px;
+  background: #2d3138;
+  border: 1px solid #3a3f48;
+  border-radius: 4px;
+  color: #e8e8e8;
+  font-size: 12px;
+}
+
+.pref-voice-hint,
+.pref-voice-stub,
+.pref-voice-detecting {
+  display: block;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted, #9aa0a6);
+  margin-top: 8px;
+}
+
+/* Screen-reader-only utility (previously undefined in codebase; closes R4 F4.3). */
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
