@@ -70,6 +70,13 @@ EARTH_RADIUS_M = 6_371_000
 # Lock to prevent concurrent pipeline starts
 _pipeline_lock = asyncio.Lock()
 
+# NOAA refresh bg-task + cancel signalling (spec v2 changes #1, #3, #4).
+# Module-level refs prevent Python GC from collecting bg tasks held only
+# in the event loop's weak set. _cancel_event is created fresh per refresh
+# in the dispatch handler.
+_active_refresh_task: "asyncio.Task | None" = None
+_cancel_event: "asyncio.Event | None" = None
+
 
 # ---------------------------------------------------------------------------
 # Auth dependency
@@ -2280,29 +2287,198 @@ async def naip_county_lookup(bbox: str = Query(..., description="west,south,east
 # NOAA catalog management endpoints (Tasks 22–25)
 # ---------------------------------------------------------------------------
 
+def _read_lock_holder_pid(lock_path: Path) -> "int | None":
+    """Peek at the lockfile to extract the holder PID for 409 responses."""
+    try:
+        data = json.loads(lock_path.read_text())
+        return data.get("pid")
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _make_refresh_progress_cb(progress_path: Path, started_at: str, cancel_event: asyncio.Event):
+    """Return a sync progress callback that enriches the raw event dict
+    from refresh_catalog with derived fields (percent, rate_per_sec,
+    eta_seconds, cancel_requested) and atomically writes progress.json."""
+    from refresh_noaa_catalog import write_progress_state, read_progress_state
+
+    def _cb(event: dict) -> None:
+        from datetime import datetime, timezone as tz
+        state = read_progress_state(progress_path)
+        if state.get("status") != "running":
+            state = {"status": "running", "started_at": started_at}
+        state.update(event)
+        states_processed = state.get("states_processed", 0)
+        states_total = state.get("states_total", 0)
+        if states_total > 0:
+            state["percent"] = round(states_processed / states_total * 100, 1)
+        try:
+            elapsed = (
+                datetime.now(tz.utc)
+                - datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            ).total_seconds()
+        except ValueError:
+            elapsed = 0.0
+        if elapsed > 0 and states_processed > 0:
+            rate = states_processed / elapsed
+            state["rate_per_sec"] = round(rate, 3)
+            if states_total and states_processed < states_total and rate > 0:
+                state["eta_seconds"] = round((states_total - states_processed) / rate)
+        state["cancel_requested"] = cancel_event.is_set()
+        try:
+            write_progress_state(progress_path, state)
+        except Exception:
+            pass  # defensive — never raise from a progress callback
+
+    return _cb
+
+
+async def _refresh_bg_task(
+    data_dir: Path,
+    progress_path: Path,
+    started_at: str,
+    cancel_event: asyncio.Event,
+) -> None:
+    """Background task that runs refresh_catalog and writes terminal
+    progress.json + refresh-log entry on any exit path (success, error,
+    cancellation)."""
+    global _active_refresh_task, _cancel_event
+    from refresh_noaa_catalog import (
+        refresh_catalog, write_progress_state, read_progress_state, append_refresh_log,
+    )
+    log_path = data_dir / "noaa_catalog_refresh_log.jsonl"
+    try:
+        progress_cb = _make_refresh_progress_cb(progress_path, started_at, cancel_event)
+        result = await refresh_catalog(
+            data_dir=data_dir,
+            progress_cb=progress_cb,
+            cancel_event=cancel_event,
+        )
+        # Terminal progress: merge result into a done-shaped state.
+        state = read_progress_state(progress_path)
+        from datetime import datetime, timezone as tz
+        state.update({
+            "status": "done",
+            "ended_at": datetime.now(tz.utc).isoformat().replace("+00:00", "Z"),
+            "result": result,
+        })
+        write_progress_state(progress_path, state)
+    except asyncio.CancelledError:
+        # Reset-endpoint cancellation (not user-requested cancel, which flows
+        # via cancel_event + refresh_catalog returning status=cancelled).
+        from datetime import datetime, timezone as tz
+        state = read_progress_state(progress_path)
+        state.update({
+            "status": "done",
+            "ended_at": datetime.now(tz.utc).isoformat().replace("+00:00", "Z"),
+            "result": {"status": "cancelled", "reason": "reset_endpoint"},
+        })
+        write_progress_state(progress_path, state)
+        raise
+    except Exception as e:
+        import traceback as _tb
+        from datetime import datetime, timezone as tz
+        state = read_progress_state(progress_path)
+        state.update({
+            "status": "done",
+            "ended_at": datetime.now(tz.utc).isoformat().replace("+00:00", "Z"),
+            "result": {
+                "status": "error",
+                "error": str(e),
+                "traceback": _tb.format_exc()[-2000:],
+            },
+        })
+        write_progress_state(progress_path, state)
+        try:
+            append_refresh_log(log_path, {
+                "ts": started_at,
+                "validation_status": "error",
+                "error": str(e),
+            })
+        except Exception:
+            pass
+    finally:
+        # Clear module-level refs so the next refresh can dispatch.
+        # The lockfile is released by refresh_catalog's RefreshLock __exit__.
+        _active_refresh_task = None
+        _cancel_event = None
+
+
 @app.post("/admin/pipeline/noaa/refresh", dependencies=[Depends(require_config_source)])
 async def noaa_refresh():
-    """Trigger a NOAA catalog refresh. Wraps refresh_catalog()."""
+    """Dispatch a NOAA catalog refresh as a background task.
+
+    Returns 202 Accepted with a progress_url; poll GET /refresh/progress
+    for status. Refresh runs until completion or cancellation.
+    """
+    global _active_refresh_task, _cancel_event
     try:
-        from refresh_noaa_catalog import refresh_catalog
+        from refresh_noaa_catalog import (
+            refresh_catalog,
+            find_running_pipelines,
+            append_refresh_log,
+            write_progress_state,
+            read_progress_state,
+            PROGRESS_FILENAME,
+        )
     except ImportError:
         raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
-    result = await refresh_catalog(data_dir=DATA_DIR)
-    if result["status"] == "locked":
-        raise HTTPException(
-            status_code=409,
-            detail={"status": "locked", "lock_holder_pid": result.get("lock_holder_pid")},
-        )
-    if result["status"] == "blocked_by_pipeline":
+
+    from datetime import datetime, timezone as tz
+
+    progress_path = DATA_DIR / PROGRESS_FILENAME
+    lock_path = DATA_DIR / "noaa_catalog_refresh.lock"
+
+    # 409 blocked_by_pipeline — same invariant as the old synchronous endpoint.
+    running = find_running_pipelines(DATA_DIR)
+    if running:
         raise HTTPException(
             status_code=409,
             detail={
                 "status": "blocked_by_pipeline",
-                "blocked_by_pipeline": result.get("blocked_by_pipeline"),
+                "blocked_by_pipeline": str(running[0]),
             },
         )
-    # ok, truncated, invalid_parse — 200
-    return result
+
+    # 409 locked — lockfile or module-level task already present.
+    if lock_path.exists() or (
+        _active_refresh_task is not None and not _active_refresh_task.done()
+    ):
+        existing = read_progress_state(progress_path)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "locked",
+                "lock_holder_pid": _read_lock_holder_pid(lock_path),
+                "progress_url": "/admin/pipeline/noaa/refresh/progress",
+                "progress": existing,
+            },
+        )
+
+    # Initialize progress.json + fresh cancel event before scheduling.
+    started_at = datetime.now(tz.utc).isoformat().replace("+00:00", "Z")
+    write_progress_state(progress_path, {
+        "status": "running",
+        "started_at": started_at,
+        "phase": "starting",
+        "states_processed": 0,
+        "states_total": 0,
+        "cancel_requested": False,
+    })
+    _cancel_event = asyncio.Event()
+    _active_refresh_task = asyncio.create_task(
+        _refresh_bg_task(DATA_DIR, progress_path, started_at, _cancel_event)
+    )
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "started",
+            "progress_url": "/admin/pipeline/noaa/refresh/progress",
+            "started_at": started_at,
+            "estimated_minutes": [10, 30],
+        },
+    )
 
 
 class NoaaRollbackBody(BaseModel):

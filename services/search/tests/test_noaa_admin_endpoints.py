@@ -296,9 +296,10 @@ def test_estimate_placename_nominatim_mocked_success(fake_catalog_dir):
 # ---------------------------------------------------------------------------
 
 def test_refresh_happy_path(tmp_path):
+    """POST /refresh now returns 202 Accepted (async-dispatch, spec v2 Task 3)."""
     from services.search.main import app
     from fastapi.testclient import TestClient
-    client = TestClient(app)
+    client = TestClient(app, raise_server_exceptions=False)
     fake_result = {
         "status": "ok",
         "snapshot_path": str(tmp_path / "snap.json"),
@@ -309,25 +310,38 @@ def test_refresh_happy_path(tmp_path):
         return fake_result
 
     with patch("services.search.main.DATA_DIR", tmp_path), \
-         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh):
+         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh), \
+         patch("refresh_noaa_catalog.find_running_pipelines", return_value=[]), \
+         patch("refresh_noaa_catalog.write_progress_state", return_value=None), \
+         patch("refresh_noaa_catalog.read_progress_state", return_value={}), \
+         patch("refresh_noaa_catalog.append_refresh_log", return_value=None):
         resp = client.post(
             "/admin/pipeline/noaa/refresh",
             headers={"X-Config-Source": "internal", "X-Geographica": "1"},
         )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "ok"
+    # Updated: endpoint now returns 202 Accepted (async-dispatch)
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "started"
 
 
 def test_refresh_locked_returns_409(tmp_path):
+    """409 locked when lockfile present on disk (async-dispatch, spec v2 Task 3)."""
     from services.search.main import app
     from fastapi.testclient import TestClient
     client = TestClient(app)
 
+    # Seed lockfile so the new endpoint detects it before dispatching.
+    lock = tmp_path / "noaa_catalog_refresh.lock"
+    lock.write_text(json.dumps({"pid": 12345}))
+
     async def fake_refresh(*, data_dir, **kwargs):
-        return {"status": "locked", "lock_holder_pid": 12345}
+        return {"status": "ok", "snapshot_path": str(tmp_path / "snap.json"), "log_entry": {}}
 
     with patch("services.search.main.DATA_DIR", tmp_path), \
-         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh):
+         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh), \
+         patch("refresh_noaa_catalog.find_running_pipelines", return_value=[]), \
+         patch("refresh_noaa_catalog.write_progress_state", return_value=None), \
+         patch("refresh_noaa_catalog.read_progress_state", return_value={"status": "running"}):
         resp = client.post(
             "/admin/pipeline/noaa/refresh",
             headers={"X-Config-Source": "internal", "X-Geographica": "1"},
@@ -336,18 +350,18 @@ def test_refresh_locked_returns_409(tmp_path):
 
 
 def test_refresh_pipeline_running_returns_409(tmp_path):
+    """409 blocked_by_pipeline detected before dispatch (async-dispatch, spec v2 Task 3)."""
     from services.search.main import app
     from fastapi.testclient import TestClient
     client = TestClient(app)
 
     async def fake_refresh(*, data_dir, **kwargs):
-        return {
-            "status": "blocked_by_pipeline",
-            "blocked_by_pipeline": "/data/.pipeline-state.json",
-        }
+        return {"status": "ok", "snapshot_path": str(tmp_path / "snap.json"), "log_entry": {}}
 
     with patch("services.search.main.DATA_DIR", tmp_path), \
-         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh):
+         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh), \
+         patch("refresh_noaa_catalog.find_running_pipelines",
+               return_value=[Path("/data/.pipeline-state.json")]):
         resp = client.post(
             "/admin/pipeline/noaa/refresh",
             headers={"X-Config-Source": "internal", "X-Geographica": "1"},
@@ -355,23 +369,30 @@ def test_refresh_pipeline_running_returns_409(tmp_path):
     assert resp.status_code == 409
 
 
-def test_refresh_truncated_returns_200(tmp_path):
+def test_refresh_truncated_returns_202(tmp_path):
+    """Truncated refresh: endpoint still returns 202 (dispatch succeeds; terminal
+    state is captured in progress.json by _refresh_bg_task). Spec v2 Task 3."""
     from services.search.main import app
     from fastapi.testclient import TestClient
-    client = TestClient(app)
+    client = TestClient(app, raise_server_exceptions=False)
     entry = {"ts": "2026-04-20T12:00:00Z", "status": "truncated", "error": "Azure paginator malformed"}
 
     async def fake_refresh(*, data_dir, **kwargs):
         return {"status": "truncated", "log_entry": entry}
 
     with patch("services.search.main.DATA_DIR", tmp_path), \
-         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh):
+         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh), \
+         patch("refresh_noaa_catalog.find_running_pipelines", return_value=[]), \
+         patch("refresh_noaa_catalog.write_progress_state", return_value=None), \
+         patch("refresh_noaa_catalog.read_progress_state", return_value={}), \
+         patch("refresh_noaa_catalog.append_refresh_log", return_value=None):
         resp = client.post(
             "/admin/pipeline/noaa/refresh",
             headers={"X-Config-Source": "internal", "X-Geographica": "1"},
         )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "truncated"
+    # Updated: 202 Accepted; terminal status (truncated) surfaces via progress polling
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "started"
 
 
 # ---------------------------------------------------------------------------
@@ -713,12 +734,12 @@ def test_estimate_bbox_with_zero_state_intersections(fake_catalog_dir):
     assert "cataloged" in data.get("message", "").lower()
 
 
-def test_refresh_invalid_parse_returns_200_with_log_entry(tmp_path):
-    """Azure listing parsed successfully but catalog shape invalid → 200,
-    status=invalid_parse, with the log_entry structure intact."""
+def test_refresh_invalid_parse_returns_202(tmp_path):
+    """Azure listing parsed successfully but catalog shape invalid → 202 Accepted
+    (async-dispatch, spec v2 Task 3). Terminal status surfaces via progress polling."""
     from services.search.main import app
     from fastapi.testclient import TestClient
-    client = TestClient(app)
+    client = TestClient(app, raise_server_exceptions=False)
     entry = {
         "ts": "2026-04-20T12:00:00Z",
         "status": "invalid_parse",
@@ -729,15 +750,18 @@ def test_refresh_invalid_parse_returns_200_with_log_entry(tmp_path):
         return {"status": "invalid_parse", "log_entry": entry}
 
     with patch("services.search.main.DATA_DIR", tmp_path), \
-         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh):
+         patch("refresh_noaa_catalog.refresh_catalog", fake_refresh), \
+         patch("refresh_noaa_catalog.find_running_pipelines", return_value=[]), \
+         patch("refresh_noaa_catalog.write_progress_state", return_value=None), \
+         patch("refresh_noaa_catalog.read_progress_state", return_value={}), \
+         patch("refresh_noaa_catalog.append_refresh_log", return_value=None):
         resp = client.post(
             "/admin/pipeline/noaa/refresh",
             headers={"X-Config-Source": "internal", "X-Geographica": "1"},
         )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "invalid_parse"
-    assert data["log_entry"]["error"].startswith("snapshot_version")
+    # Updated: 202 Accepted; invalid_parse terminal state surfaces via progress polling
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "started"
 
 
 # ---------------------------------------------------------------------------
@@ -801,3 +825,131 @@ def test_start_noaa_with_no_catalog_returns_409(tmp_path):
     detail = resp.json().get("detail", {})
     assert detail.get("status") == "no_catalog"
     assert "refresh" in detail.get("message", "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — async-dispatch POST /admin/pipeline/noaa/refresh (spec v2)
+# ---------------------------------------------------------------------------
+
+def test_noaa_refresh_returns_202_fast(tmp_path):
+    """POST /refresh returns 202 Accepted in < 1 s; body has required fields."""
+    import asyncio
+    import time
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+
+    async def noop_refresh(*, data_dir, progress_cb=None, cancel_event=None):
+        return {
+            "status": "ok",
+            "snapshot_path": str(tmp_path / "snap.json"),
+            "log_entry": {"ts": "2026-04-20T12:00:00Z", "state_count": 0},
+        }
+
+    with patch("services.search.main.DATA_DIR", tmp_path), \
+         patch("refresh_noaa_catalog.refresh_catalog", noop_refresh), \
+         patch("refresh_noaa_catalog.find_running_pipelines", return_value=[]), \
+         patch("refresh_noaa_catalog.write_progress_state", return_value=None), \
+         patch("refresh_noaa_catalog.read_progress_state", return_value={}):
+        client = TestClient(app, raise_server_exceptions=False)
+        t0 = time.time()
+        resp = client.post(
+            "/admin/pipeline/noaa/refresh",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+        elapsed = time.time() - t0
+
+    assert resp.status_code == 202, f"expected 202 got {resp.status_code}: {resp.text}"
+    body = resp.json()
+    for field in ("status", "progress_url", "started_at", "estimated_minutes"):
+        assert field in body, f"missing field: {field}"
+    assert body["status"] == "started"
+    assert body["progress_url"] == "/admin/pipeline/noaa/refresh/progress"
+    assert elapsed < 1.0, f"response took {elapsed:.2f}s — not async-dispatch"
+
+
+def test_noaa_refresh_409_when_pipeline_running(tmp_path):
+    """409 blocked_by_pipeline when find_running_pipelines returns a match."""
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+
+    with patch("services.search.main.DATA_DIR", tmp_path), \
+         patch("refresh_noaa_catalog.find_running_pipelines",
+               return_value=[Path("/data/.pipeline-state.json")]):
+        client = TestClient(app)
+        resp = client.post(
+            "/admin/pipeline/noaa/refresh",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+
+    assert resp.status_code == 409
+    detail = resp.json().get("detail", {})
+    assert detail.get("status") == "blocked_by_pipeline"
+
+
+def test_noaa_refresh_409_when_locked(tmp_path):
+    """409 locked when lockfile already exists on disk."""
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+
+    # Seed lockfile
+    lock = tmp_path / "noaa_catalog_refresh.lock"
+    lock.write_text(json.dumps({"pid": 99999}))
+
+    async def noop_refresh(*, data_dir, **kwargs):
+        return {"status": "ok", "snapshot_path": str(tmp_path / "snap.json"), "log_entry": {}}
+
+    with patch("services.search.main.DATA_DIR", tmp_path), \
+         patch("refresh_noaa_catalog.refresh_catalog", noop_refresh), \
+         patch("refresh_noaa_catalog.find_running_pipelines", return_value=[]), \
+         patch("refresh_noaa_catalog.write_progress_state", return_value=None), \
+         patch("refresh_noaa_catalog.read_progress_state", return_value={"status": "running"}):
+        client = TestClient(app)
+        resp = client.post(
+            "/admin/pipeline/noaa/refresh",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+
+    assert resp.status_code == 409
+    detail = resp.json().get("detail", {})
+    assert detail.get("status") == "locked"
+
+
+def test_noaa_refresh_writes_progress_and_task_ref(tmp_path):
+    """202 dispatch: first write_progress_state call has status=running + started_at."""
+    import asyncio
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch, MagicMock
+
+    all_writes = []  # collect each call independently
+
+    def fake_write_progress(path, state):
+        import copy
+        all_writes.append(copy.deepcopy(state))
+
+    async def slow_refresh(*, data_dir, progress_cb=None, cancel_event=None):
+        await asyncio.sleep(0.05)
+        return {"status": "ok", "snapshot_path": str(tmp_path / "snap.json"), "log_entry": {}}
+
+    with patch("services.search.main.DATA_DIR", tmp_path), \
+         patch("refresh_noaa_catalog.refresh_catalog", slow_refresh), \
+         patch("refresh_noaa_catalog.find_running_pipelines", return_value=[]), \
+         patch("refresh_noaa_catalog.write_progress_state", side_effect=fake_write_progress), \
+         patch("refresh_noaa_catalog.read_progress_state", return_value={}), \
+         patch("refresh_noaa_catalog.append_refresh_log", return_value=None):
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.post(
+            "/admin/pipeline/noaa/refresh",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+
+    assert resp.status_code == 202, f"expected 202 got {resp.status_code}: {resp.text}"
+    # The first write is the initial progress.json seeded by the handler before
+    # asyncio.create_task — it must have status=running + started_at.
+    assert len(all_writes) >= 1, "write_progress_state was never called"
+    first = all_writes[0]
+    assert first.get("status") == "running", f"first write: {first}"
+    assert "started_at" in first, f"first write missing started_at: {first}"
