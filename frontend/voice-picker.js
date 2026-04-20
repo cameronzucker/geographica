@@ -404,6 +404,10 @@
       });
     } catch (e) {}
     try {
+      var mo = new window.MutationObserver(function () { renderButtons(); });
+      mo.observe(window.document.body, { attributes: true, attributeFilter: ['class'] });
+    } catch (e) {}
+    try {
       window.addEventListener('storage', function (e) {
         if (!e || e.key !== LS_KEY) return;
         if (typeof window.VoicePicker._onStorageEventForTest === 'function') {
