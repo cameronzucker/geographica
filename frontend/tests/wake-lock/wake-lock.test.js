@@ -182,3 +182,134 @@ test('release() called twice is a no-op the second time', async () => {
   await module.release(); // second call
   assert.strictEqual(silentVideoLock.disable.mock.callCount(), 1); // still only 1
 });
+
+// Helper: a navigator.wakeLock that returns a Promise resolvable on command
+function deferredNavigator() {
+  const resolvers = [];
+  const sentinels = [];
+  return {
+    navigator: {
+      wakeLock: {
+        request: (type) => {
+          return new Promise((resolve) => {
+            const s = {
+              type,
+              released: false,
+              release: () => { s.released = true; return Promise.resolve(); },
+              addEventListener: () => {},
+              removeEventListener: () => {},
+            };
+            sentinels.push(s);
+            resolvers.push(() => resolve(s));
+          });
+        },
+      },
+    },
+    // Call index-th resolver to deliver a sentinel
+    resolveAt: (i) => resolvers[i]?.(),
+    sentinels,
+  };
+}
+
+function loadModuleWithDeferred(deferred) {
+  const doc = makeDocumentMock();
+  const win = {
+    document: doc,
+    console: { warn: () => {} },
+    navigator: deferred.navigator,
+    SilentVideoLock: makeSilentVideoLockMock(),
+    matchMedia: () => ({ matches: false }),
+    WakeLock: undefined,
+  };
+  const ctx = vm.createContext({
+    window: win,
+    document: doc,
+    navigator: deferred.navigator,
+    console: win.console,
+  });
+  vm.runInContext(SOURCE, ctx);
+  return { module: win.WakeLock, win, doc };
+}
+
+test('release during pending acquire releases the eventually-resolved sentinel', async () => {
+  const deferred = deferredNavigator();
+  const { module } = loadModuleWithDeferred(deferred);
+  module.acquire(); // fire-and-forget (do not await)
+  await module.release(); // runs synchronously before request resolves
+  deferred.resolveAt(0); // now resolve the pending request
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(deferred.sentinels[0].released, true, 'pending-acquire sentinel must be released');
+  assert.strictEqual(module.status(), 'idle');
+});
+
+test('rapid Start -> Stop -> Start -> resolves first pending, no orphan', async () => {
+  const deferred = deferredNavigator();
+  const { module } = loadModuleWithDeferred(deferred);
+
+  module.acquire(); // P1 pending
+  await module.release(); // bumps generation
+  module.acquire(); // P2 pending
+
+  // Resolve P1 first: stale generation, must be released
+  deferred.resolveAt(0);
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(deferred.sentinels[0].released, true, 'P1 stale sentinel must be released');
+
+  // Now resolve P2: current generation, must be stored
+  deferred.resolveAt(1);
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(deferred.sentinels[1].released, false, 'P2 current sentinel must be held');
+  assert.strictEqual(module.status(), 'wakelock');
+
+  // Clean up
+  await module.release();
+  assert.strictEqual(deferred.sentinels[1].released, true);
+});
+
+test('stale release event does not null current sentinel', async () => {
+  // This test exercises the "if (wakeLockSentinel === sentinel)" guard in the release-listener
+  const listeners = [];
+  const sentinels = [];
+  const navigator = {
+    wakeLock: {
+      request: (type) => {
+        const s = {
+          type,
+          released: false,
+          release: () => { s.released = true; return Promise.resolve(); },
+          addEventListener: (name, cb) => {
+            if (name === 'release') listeners.push({ sentinel: s, cb });
+          },
+          removeEventListener: () => {},
+        };
+        sentinels.push(s);
+        return Promise.resolve(s);
+      },
+    },
+  };
+  const doc = makeDocumentMock();
+  const win = {
+    document: doc,
+    console: { warn: () => {} },
+    navigator,
+    SilentVideoLock: makeSilentVideoLockMock(),
+    matchMedia: () => ({ matches: false }),
+    WakeLock: undefined,
+  };
+  const ctx = vm.createContext({ window: win, document: doc, navigator, console: win.console });
+  vm.runInContext(SOURCE, ctx);
+  const module = win.WakeLock;
+
+  await module.acquire();
+  await new Promise((r) => setImmediate(r));
+  await module.release(); // sentinels[0] now released, wakeLockSentinel is null
+
+  await module.acquire();
+  await new Promise((r) => setImmediate(r));
+  // sentinels[1] is now the current wakeLockSentinel
+
+  // Fire a stale release event on sentinels[0] (from the first acquire)
+  listeners[0].cb(); // should NOT null the current sentinel
+
+  assert.strictEqual(module.status(), 'wakelock', 'current sentinel must remain held');
+});
