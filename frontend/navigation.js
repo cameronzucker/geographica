@@ -780,10 +780,22 @@
      * gpsData: { latitude, longitude, heading, speed, timestamp }
      */
     updateGPS: function (data) {
+      // Dedup on (lat, lng): the UI polls feedGPS every 500 ms but the
+      // GPS source is ~1 Hz, so half the ticks carry an unchanged
+      // position. The off-route hysteresis window (5-tick, 3-of-5) is
+      // designed for 1 Hz; duplicate ticks would fill it in half the
+      // intended time and cause false reroutes while stationary. (B7)
+      //
+      // We still refresh lastGPSTime so the stale-checker doesn't fire
+      // DR on a stationary-but-fresh-GPS vehicle.
+      var positionChanged = !lastGPS ||
+        lastGPS.latitude !== data.latitude ||
+        lastGPS.longitude !== data.longitude;
+
       lastGPS = data;
       lastGPSTime = Date.now();
 
-      if (state !== "idle") {
+      if (state !== "idle" && positionChanged) {
         tick(data);
       }
     },

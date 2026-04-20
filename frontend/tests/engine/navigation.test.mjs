@@ -47,11 +47,16 @@ test('applyReroute clears announcedSet and lastAnnouncementTime', async (t) => {
   // Simulate reroute: engine receives a new route via applyReroute.
   let capturedSeq = null;
   nav.onReroute((info) => { capturedSeq = info._seq; });
-  // Force an off-route trigger by feeding far-off GPS; engine's hysteresis
-  // requires 3 of 5 ticks off-route. Feed 5 in a row.
-  for (let i = 0; i < 5; i++) {
-    nav.updateGPS({ latitude: 35.25, longitude: -111.55, heading: 90, speed: 10 });
-  }
+  // Force an off-route trigger by feeding distinct off-route GPS positions;
+  // engine's hysteresis requires 3 of 5 ticks off-route. Engine now deduplicates
+  // by (lat, lng), so we must feed distinct positions.
+  const offRoutePositions = [
+    [35.25, -111.55], [35.26, -111.54], [35.27, -111.53],
+    [35.28, -111.52], [35.29, -111.51],
+  ];
+  offRoutePositions.forEach(([lat, lon]) => {
+    nav.updateGPS({ latitude: lat, longitude: lon, heading: 90, speed: 10 });
+  });
   assert.ok(capturedSeq != null, 'engine should have fired onReroute callback');
 
   // New route — same shape, just a stand-in.
@@ -87,9 +92,14 @@ test('triggerReroute preserves remainingWaypoints in the callback info', async (
 
   nav.start(multiStopRoute);
 
-  for (let i = 0; i < 5; i++) {
-    nav.updateGPS({ latitude: 35.25, longitude: -111.55, heading: 90, speed: 10 });
-  }
+  // Feed distinct off-route positions (engine now deduplicates by lat,lng).
+  const offRoutePositions = [
+    [35.25, -111.55], [35.26, -111.54], [35.27, -111.53],
+    [35.28, -111.52], [35.29, -111.51],
+  ];
+  offRoutePositions.forEach(([lat, lon]) => {
+    nav.updateGPS({ latitude: lat, longitude: lon, heading: 90, speed: 10 });
+  });
 
   assert.equal(rerouteCalls.length, 1);
   assert.deepEqual(
@@ -102,6 +112,35 @@ test('triggerReroute preserves remainingWaypoints in the callback info', async (
   );
 });
 
+test('duplicate GPS positions do not fill off-route hysteresis (B7)', async () => {
+  const { nav, window: win } = await loadEngine();
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
+
+  const rerouteCalls = [];
+  nav.onReroute((info) => rerouteCalls.push(info));
+
+  nav.start(fixtureRouteWithTwoTurns());
+
+  // Feed the SAME off-route position 10 times — simulates feedGPS()
+  // ticking every 500 ms on a stationary vehicle whose backend-pushed
+  // GPS data object hasn't changed. Engine must dedup by (lat,lng)
+  // and only tick once per unique position, so hysteresis cannot fill.
+  for (let i = 0; i < 10; i++) {
+    nav.updateGPS({ latitude: 35.25, longitude: -111.55, heading: 90, speed: 10 });
+  }
+  assert.equal(rerouteCalls.length, 0, 'duplicate positions must not fill hysteresis');
+
+  // Feed 5 distinct positions — each must count, hysteresis fills, reroute fires.
+  const offRoutePositions = [
+    [35.25, -111.55], [35.26, -111.54], [35.27, -111.53],
+    [35.28, -111.52], [35.29, -111.51],
+  ];
+  offRoutePositions.forEach(([lat, lon]) => {
+    nav.updateGPS({ latitude: lat, longitude: lon, heading: 90, speed: 10 });
+  });
+  assert.equal(rerouteCalls.length, 1, 'distinct positions fill hysteresis as designed');
+});
+
 test('reroute timeout clears lastRerouteTime for immediate re-reroute', { timeout: 15_000 }, async (t) => {
   const { nav, window: win } = await loadEngine();
   t.after(() => { try { nav.stop(); } catch (_) {} });
@@ -112,10 +151,15 @@ test('reroute timeout clears lastRerouteTime for immediate re-reroute', { timeou
 
   nav.start(fixtureRouteWithTwoTurns());
 
-  // Trigger reroute #1 by feeding 5 off-route positions (3-of-5 hysteresis).
-  for (let i = 0; i < 5; i++) {
-    nav.updateGPS({ latitude: 35.25, longitude: -111.55, heading: 90, speed: 10 });
-  }
+  // Trigger reroute #1 by feeding distinct off-route positions (3-of-5 hysteresis).
+  // Engine now deduplicates by (lat, lng), so we must feed distinct positions.
+  const offRoutePositions1 = [
+    [35.25, -111.55], [35.26, -111.54], [35.27, -111.53],
+    [35.28, -111.52], [35.29, -111.51],
+  ];
+  offRoutePositions1.forEach(([lat, lon]) => {
+    nav.updateGPS({ latitude: lat, longitude: lon, heading: 90, speed: 10 });
+  });
   assert.equal(rerouteCalls.length, 1, 'first reroute should fire');
 
   // Wait 10.5 seconds: this exceeds REROUTE_TIMEOUT (10_000ms) but is
