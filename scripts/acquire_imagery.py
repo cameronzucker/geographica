@@ -341,6 +341,20 @@ def write_pipeline_state(output_path: Path, state: dict):
         log.warning("Failed to write pipeline state: %s", exc)
 
 
+def pin_catalog_snapshot(data_dir: Path) -> Path:
+    """Resolve the noaa_naip_catalog.json symlink to an absolute snapshot path.
+
+    Called once at pipeline Start so the run-lifetime snapshot is pinned.
+    Refresh/rollback can freely change the current symlink without affecting
+    a running job.
+
+    Returns the absolute, canonical path of the target snapshot file.
+    Raises FileNotFoundError if the symlink is absent or dangling.
+    """
+    symlink = Path(data_dir) / "noaa_naip_catalog.json"
+    return symlink.resolve(strict=True)
+
+
 def _atomic_write_json(path: Path, data: dict) -> None:
     """Write JSON atomically via tmp + fsync + rename."""
     tmp = path.with_suffix(".json.tmp")
@@ -2057,6 +2071,15 @@ async def run_noaa(args):
     west, south, east, north = bbox
     output = Path(args.output)
     data_dir = output.parent
+
+    # Task 15: pin the catalog symlink to an absolute snapshot path at Start.
+    # Refresh/rollback can freely change the current symlink without affecting
+    # this run. Raises FileNotFoundError if the catalog is missing or dangling.
+    snapshot_path = pin_catalog_snapshot(data_dir)
+    write_pipeline_state(output, {"catalog_snapshot": str(snapshot_path)})
+    log.info("Catalog snapshot pinned: %s", snapshot_path)
+    # TODO(task-16): resume path must read catalog_snapshot from pipeline state
+    # and pass it directly to build_unified_queue instead of re-resolving.
 
     # B13 fix: detect (and where possible repair) checkpoint divergence
     # from a prior crash between tile commit and checkpoint commit.

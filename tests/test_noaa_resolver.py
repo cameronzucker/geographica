@@ -129,3 +129,34 @@ def test_build_unified_queue_produces_per_tile_tuples(tmp_path):
 
 def test_build_unified_queue_empty_candidates_returns_empty(tmp_path):
     assert build_unified_queue([], bbox_or_none=None, snapshot_path=tmp_path / "x.json") == []
+
+
+# ---------------------------------------------------------------------------
+# Task 15: pin_catalog_snapshot
+# ---------------------------------------------------------------------------
+
+def test_pin_catalog_snapshot_resolves_symlink(tmp_path):
+    real_snapshot = tmp_path / "noaa_catalog_snapshots" / "2026-01-01T00:00:00Z.json"
+    real_snapshot.parent.mkdir(parents=True)
+    real_snapshot.write_text('{"entries": {}}')
+    symlink = tmp_path / "noaa_naip_catalog.json"
+    symlink.symlink_to(real_snapshot)
+
+    from acquire_imagery import pin_catalog_snapshot
+    result = pin_catalog_snapshot(tmp_path)
+    assert result == real_snapshot.resolve()
+    assert result.is_absolute()
+
+
+def test_pin_catalog_snapshot_missing_symlink_raises(tmp_path):
+    from acquire_imagery import pin_catalog_snapshot
+    with pytest.raises(FileNotFoundError):
+        pin_catalog_snapshot(tmp_path)
+
+
+def test_pin_catalog_snapshot_dangling_symlink_raises(tmp_path):
+    symlink = tmp_path / "noaa_naip_catalog.json"
+    symlink.symlink_to(tmp_path / "does-not-exist.json")
+    from acquire_imagery import pin_catalog_snapshot
+    with pytest.raises(FileNotFoundError):
+        pin_catalog_snapshot(tmp_path)
