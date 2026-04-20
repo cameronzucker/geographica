@@ -2073,6 +2073,20 @@ async def noaa_estimate(
     }
 
 
+@app.get("/admin/pipeline/noaa/catalog", dependencies=[Depends(require_config_source)])
+async def noaa_catalog():
+    """Return the current NOAA catalog snapshot entries for UI rendering."""
+    catalog, snapshot_path = _load_noaa_catalog(DATA_DIR)
+    if catalog is None:
+        return {"status": "no_catalog", "entries": {}}
+    return {
+        "status": "ok",
+        "snapshot_version": catalog.get("snapshot_version"),
+        "catalog_snapshot": str(snapshot_path),
+        "entries": catalog.get("entries", {}),
+    }
+
+
 @app.post("/admin/pipeline/import", dependencies=[Depends(require_config_source)])
 async def pipeline_import(
     layer_name: Optional[str] = Query(None),

@@ -1276,6 +1276,33 @@
         });
 
         // ---------------------------------------------------------------
+        // Task 28 — Populate state dropdown from live catalog
+        // ---------------------------------------------------------------
+        var stateSel = document.getElementById('card-' + src.id + '-state');
+        // Fallback: keep Arizona selected if fetch fails or catalog not loaded
+        stateSel.innerHTML = '<option value="arizona">Arizona</option>';
+        cfgFetch('/admin/pipeline/noaa/catalog')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status !== 'ok' || !data.entries) return;
+                var opts = [];
+                Object.keys(data.entries).sort().forEach(function(slug) {
+                    var entry = data.entries[slug];
+                    var displayName = slug
+                        .replace(/-us$/, '')
+                        .split('-')
+                        .map(function(p) { return p.charAt(0).toUpperCase() + p.slice(1); })
+                        .join(' ');
+                    var year = entry.year || '';
+                    opts.push('<option value="' + slug + '">' + displayName + (year ? ' ' + year : '') + '</option>');
+                });
+                if (opts.length) {
+                    stateSel.innerHTML = opts.join('');
+                }
+            })
+            .catch(function() { /* fallback already in place */ });
+
+        // ---------------------------------------------------------------
         // Shared estimate renderer — populates an estBox with API response
         // ---------------------------------------------------------------
         function _renderEstimate(estBox, d) {
@@ -1335,7 +1362,6 @@
         // ---------------------------------------------------------------
         // Whole-state estimate button
         // ---------------------------------------------------------------
-        var stateSel = document.getElementById('card-' + src.id + '-state');
         var estBtnWhole = document.getElementById('card-' + src.id + '-est-btn-whole');
         var estBoxWhole = document.getElementById('card-' + src.id + '-est-whole');
 

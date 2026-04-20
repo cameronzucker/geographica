@@ -738,3 +738,41 @@ def test_refresh_invalid_parse_returns_200_with_log_entry(tmp_path):
     data = resp.json()
     assert data["status"] == "invalid_parse"
     assert data["log_entry"]["error"].startswith("snapshot_version")
+
+
+# ---------------------------------------------------------------------------
+# Task 28 — GET /admin/pipeline/noaa/catalog
+# ---------------------------------------------------------------------------
+
+def test_catalog_endpoint_returns_entries(fake_catalog_dir):
+    """Catalog endpoint returns ok status and the entries from the snapshot."""
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    with patch("services.search.main.DATA_DIR", fake_catalog_dir):
+        resp = client.get(
+            "/admin/pipeline/noaa/catalog",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert "arizona" in data["entries"]
+    assert "utah" in data["entries"]
+    assert data["entries"]["arizona"]["usps"] == "AZ"
+
+
+def test_catalog_endpoint_handles_missing_symlink(tmp_path):
+    """When no catalog symlink exists, endpoint returns no_catalog with empty entries."""
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        resp = client.get(
+            "/admin/pipeline/noaa/catalog",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "no_catalog"
+    assert data["entries"] == {}
