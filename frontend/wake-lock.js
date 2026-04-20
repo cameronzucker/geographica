@@ -7,14 +7,22 @@
   var wakeLockSentinel = null;
   var fallbackActive = false;
 
+  function isIosPwaBypass() {
+    if (typeof window.matchMedia !== 'function') return false;
+    try {
+      return window.matchMedia('(display-mode: standalone)').matches === true;
+    } catch (err) {
+      return false;
+    }
+  }
+
   async function acquire() {
     if (shouldBeActive && (wakeLockSentinel !== null || fallbackActive)) return;
     shouldBeActive = true;
     var myGen = ++acquireGeneration;
 
     // iOS PWA standalone mode pre-18.4 has a non-functional wakeLock — bypass to fallback.
-    var iosPwa = typeof window.matchMedia === 'function' &&
-                 window.matchMedia('(display-mode: standalone)').matches;
+    var iosPwa = isIosPwaBypass();
     if ('wakeLock' in navigator && !iosPwa) {
       try {
         var sentinel = await navigator.wakeLock.request('screen');
@@ -78,7 +86,9 @@
     if (!shouldBeActive) return;
     if (document.visibilityState !== 'visible') return;
 
-    if ('wakeLock' in navigator && wakeLockSentinel === null) {
+    var iosPwa = isIosPwaBypass();
+
+    if ('wakeLock' in navigator && !iosPwa && wakeLockSentinel === null) {
       var myGen = ++acquireGeneration;
       navigator.wakeLock.request('screen').then(function (s) {
         if (!shouldBeActive || myGen !== acquireGeneration) {
@@ -94,7 +104,8 @@
       });
     }
 
-    if (!('wakeLock' in navigator) && fallbackActive && window.SilentVideoLock) {
+    // Re-kick fallback when primary is unavailable OR iOS PWA has bypassed primary.
+    if ((!('wakeLock' in navigator) || iosPwa) && fallbackActive && window.SilentVideoLock) {
       if (!window.SilentVideoLock.isActive()) {
         window.SilentVideoLock.enable().catch(function () {});
       }

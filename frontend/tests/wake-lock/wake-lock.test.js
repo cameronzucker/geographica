@@ -445,3 +445,33 @@ test('class manipulation does not trigger acquire', async () => {
     'class add must NOT trigger acquire'
   );
 });
+
+test('iOS PWA — visibility handler does not call broken primary', async () => {
+  const silentVideoLock = makeSilentVideoLockMock();
+  const matchMedia = (q) => ({ matches: q === '(display-mode: standalone)' });
+  const { module, doc, win } = loadModule({ silentVideoLock, matchMedia });
+
+  await module.acquire();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(module.status(), 'fallback', 'precondition: fallback engaged');
+  assert.strictEqual(win.navigator.wakeLock.request.mock.callCount(), 0);
+
+  // Simulate tab hide/show cycle
+  doc.visibilityState = 'hidden';
+  doc._fire('visibilitychange');
+  doc.visibilityState = 'visible';
+  doc._fire('visibilitychange');
+  await new Promise((r) => setImmediate(r));
+
+  // Primary must still NOT be called
+  assert.strictEqual(
+    win.navigator.wakeLock.request.mock.callCount(),
+    0,
+    'iOS PWA: visibility handler must not call broken primary'
+  );
+  // Fallback should have been re-kicked on visibility return
+  assert.ok(
+    silentVideoLock.enable.mock.callCount() >= 1,
+    'fallback should be re-enabled on visibility return'
+  );
+});

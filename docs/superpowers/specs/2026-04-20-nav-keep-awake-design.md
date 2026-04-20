@@ -329,8 +329,11 @@ document.addEventListener('visibilitychange', function () {
   if (!shouldBeActive) return;                           // no nav; ignore
   if (document.visibilityState !== 'visible') return;    // going hidden; browser handles release
 
-  // Re-acquire primary if the browser released it on tab-hide.
-  if ('wakeLock' in navigator && wakeLockSentinel === null) {
+  var iosPwa = isIosPwaBypass();
+
+  // Re-acquire primary if the browser released it on tab-hide — but NOT on
+  // iOS PWA pre-18.4, where the API is silently broken (§5.21).
+  if ('wakeLock' in navigator && !iosPwa && wakeLockSentinel === null) {
     var myGen = ++acquireGeneration;
     navigator.wakeLock.request('screen').then(function (s) {
       if (!shouldBeActive || myGen !== acquireGeneration) {
@@ -346,10 +349,11 @@ document.addEventListener('visibilitychange', function () {
     });
   }
 
-  // Fallback: re-kick only if primary is UNAVAILABLE and fallback was active.
-  // Do NOT run both simultaneously — dual-activation wastes battery and can
-  // create internal state drift (§5.21).
-  if (!('wakeLock' in navigator) && fallbackActive && window.SilentVideoLock) {
+  // Re-kick fallback when primary is unavailable OR iOS PWA has bypassed
+  // primary. Gating on `(!('wakeLock' in navigator) || iosPwa)` — NOT on
+  // `fallbackActive` alone — keeps the two mechanisms mutually exclusive
+  // (§5.21): dual-activation wastes battery and can create state drift.
+  if ((!('wakeLock' in navigator) || iosPwa) && fallbackActive && window.SilentVideoLock) {
     if (!window.SilentVideoLock.isActive()) {
       window.SilentVideoLock.enable().catch(function () {});
     }
@@ -546,9 +550,9 @@ Test: covered by §5.2's test.
 
 ### 5.21 iOS Home Screen PWA on iOS < 18.4 (WebKit #254545)
 Scenario: user added Geographica to Home Screen; runs in standalone mode; `navigator.wakeLock` is exposed but silently non-functional. `request()` resolves with a sentinel that does not actually hold the screen awake.
-Detection: `window.matchMedia('(display-mode: standalone)').matches === true` AND iOS Safari UA. If both, bypass primary and go straight to fallback.
-Implementation: one-line check at the top of the primary-path `if ('wakeLock' in navigator)` block, treating standalone-mode iOS as if the API were absent.
-Test: §6.2 `test_ios_pwa_standalone_bypasses_primary`.
+Detection: `window.matchMedia('(display-mode: standalone)').matches === true`. We deliberately skip a user-agent check — desktop-Chrome/Edge PWA installations (where the API actually works) will be over-detected and fall through to `SilentVideoLock`, which also keeps the screen awake. Over-detection is graceful; UA sniffing is fragile. The bypass applies to BOTH `acquire()` and the visibility re-acquire handler (§4.5).
+Implementation: a shared `isIosPwaBypass()` helper (wrapped in `try/catch` for Safari's occasional throws on unsupported media queries) consulted by BOTH `acquire()` and the visibility handler. Both paths treat standalone-mode as if the primary API were absent, and the visibility handler's fallback re-enable branch fires when `iosPwa` is true OR `navigator.wakeLock` is missing.
+Test: §6.2 `test_ios_pwa_standalone_bypasses_primary` + the visibility-cycle regression test `iOS PWA — visibility handler does not call broken primary` (Task 10 fix).
 
 ### 5.22 Module loaded twice (duplicate `<script>` tag, HMR, test re-import)
 Behavior: IIFE top guard `if (window.WakeLock) return;` short-circuits subsequent loads. State owned by the first closure, never duplicated.
