@@ -5,3 +5,6 @@ shapely
 numpy
 rasterio
 scipy
+
+# test dependencies
+aioresponses

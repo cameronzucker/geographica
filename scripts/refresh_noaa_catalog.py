@@ -7,6 +7,8 @@ Consumed by:
 
 Catalog shape — see docs/superpowers/specs/2026-04-20-noaa-naip-conus-expansion-design.md §3.3.
 """
+import aiohttp
+import xml.etree.ElementTree as ET
 from scripts.common.state_bboxes import STATE_BBOXES, SLUG_BY_USPS
 
 
@@ -59,3 +61,57 @@ def validate_catalog_structure(catalog: dict) -> None:
             raise CatalogValidationError(
                 f"entry {slug!r} has unknown usps {entry['usps']!r}"
             )
+
+
+AZURE_LISTING_BASE = "https://coastalimagery.blob.core.windows.net/digitalcoast"
+
+
+class AzureTruncatedError(Exception):
+    """Raised when blob listing terminates before NextMarker is empty."""
+
+
+async def azure_list_blob_prefixes(
+    *,
+    timeout_s: float = 30.0,
+    max_pages: int = 20,
+) -> list[str]:
+    """List top-level blob prefixes (directory names with trailing /).
+
+    Uses delimiter-based listing so we only get directory entries, not
+    individual blob files. Walks all pages via <NextMarker>. Raises
+    AzureTruncatedError if pagination terminates due to network error or
+    non-200 response before the final page (distinct from shrinkage,
+    which is a successful walk with fewer results than before).
+    """
+    prefixes: list[str] = []
+    marker: str | None = None
+    page_num = 0
+
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout_s)) as sess:
+        while page_num < max_pages:
+            page_num += 1
+            params = {"restype": "container", "comp": "list", "delimiter": "/", "prefix": ""}
+            if marker:
+                params["marker"] = marker
+            try:
+                async with sess.get(AZURE_LISTING_BASE, params=params) as resp:
+                    if resp.status != 200:
+                        raise AzureTruncatedError(
+                            f"page {page_num} returned HTTP {resp.status}"
+                        )
+                    body = await resp.text()
+            except aiohttp.ClientError as e:
+                raise AzureTruncatedError(f"page {page_num} network error: {e}") from e
+
+            root = ET.fromstring(body)
+            for bp in root.iter("BlobPrefix"):
+                name = bp.findtext("Name")
+                if name:
+                    prefixes.append(name)
+
+            next_marker_elem = root.find("NextMarker")
+            marker = (next_marker_elem.text or "").strip() if next_marker_elem is not None else ""
+            if not marker:
+                return prefixes
+
+    raise AzureTruncatedError(f"listing did not terminate in {max_pages} pages")

@@ -55,3 +55,60 @@ def test_entry_slug_not_in_state_bboxes_fails():
     bad["entries"]["atlantis"] = bad["entries"].pop("arizona")
     with pytest.raises(CatalogValidationError, match="atlantis"):
         validate_catalog_structure(bad)
+
+
+import pytest
+from aioresponses import aioresponses
+from scripts.refresh_noaa_catalog import (
+    azure_list_blob_prefixes,
+    AzureTruncatedError,
+    AZURE_LISTING_BASE,
+)
+
+
+@pytest.mark.asyncio
+async def test_azure_listing_single_page_returns_prefixes():
+    with aioresponses() as m:
+        m.get(
+            f"{AZURE_LISTING_BASE}?restype=container&comp=list&delimiter=/&prefix=",
+            body=open("tests/fixtures/azure_blob_list/single_page_no_marker.xml").read(),
+            headers={"Content-Type": "application/xml"},
+        )
+        prefixes = await azure_list_blob_prefixes()
+        assert "AZ_NAIP_2021_9596/" in prefixes
+        assert "UT_NAIP_2021_9601/" in prefixes
+        assert "some_other_dir/" in prefixes
+
+
+@pytest.mark.asyncio
+async def test_azure_listing_paginates_via_next_marker():
+    with aioresponses() as m:
+        m.get(
+            f"{AZURE_LISTING_BASE}?restype=container&comp=list&delimiter=/&prefix=",
+            body=open("tests/fixtures/azure_blob_list/page1_with_marker.xml").read(),
+        )
+        m.get(
+            f"{AZURE_LISTING_BASE}?restype=container&comp=list&delimiter=/&prefix=&marker=abc123",
+            body=open("tests/fixtures/azure_blob_list/page2_final.xml").read(),
+        )
+        prefixes = await azure_list_blob_prefixes()
+        assert "AZ_NAIP_2021_9596/" in prefixes
+        assert "CA_NAIP_2022_8888/" in prefixes
+        assert "NY_NAIP_2023_7777/" in prefixes
+        assert "TX_NAIP_2022_6666/" in prefixes
+        assert len(prefixes) == 4
+
+
+@pytest.mark.asyncio
+async def test_azure_listing_network_error_mid_page_raises_truncated():
+    with aioresponses() as m:
+        m.get(
+            f"{AZURE_LISTING_BASE}?restype=container&comp=list&delimiter=/&prefix=",
+            body=open("tests/fixtures/azure_blob_list/page1_with_marker.xml").read(),
+        )
+        m.get(
+            f"{AZURE_LISTING_BASE}?restype=container&comp=list&delimiter=/&prefix=&marker=abc123",
+            status=503,
+        )
+        with pytest.raises(AzureTruncatedError, match="page 2"):
+            await azure_list_blob_prefixes()

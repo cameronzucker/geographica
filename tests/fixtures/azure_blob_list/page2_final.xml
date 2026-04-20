@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<EnumerationResults ServiceEndpoint="https://coastalimagery.blob.core.windows.net/" ContainerName="digitalcoast">
+  <Prefix></Prefix>
+  <Delimiter>/</Delimiter>
+  <Marker>abc123</Marker>
+  <Blobs>
+    <BlobPrefix><Name>NY_NAIP_2023_7777/</Name></BlobPrefix>
+    <BlobPrefix><Name>TX_NAIP_2022_6666/</Name></BlobPrefix>
+  </Blobs>
+  <NextMarker />
+</EnumerationResults>
