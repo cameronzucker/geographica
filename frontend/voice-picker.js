@@ -27,6 +27,14 @@
     return null;
   }
 
+  var voiceListFingerprint = '';
+  var voiceListCallbacks = [];
+  var bootstrapPrimedOnce = false;
+  var bootstrapPollInterval = null;
+  var bootstrapPollCount = 0;
+  var BOOTSTRAP_POLL_MAX = 10;
+  var BOOTSTRAP_POLL_MS = 500;
+
   var LS_KEY = 'nav-voice-pref';
 
   function readPref() {
@@ -116,10 +124,90 @@
     return v;
   }
 
+  function fingerprintVoices(list) {
+    if (!list || !list.length) return '';
+    return list.map(function (v) {
+      return (v.voiceURI || '') + '|' + (v.name || '') + '|' + (v.lang || '');
+    }).sort().join('\n');
+  }
+
+  function notifyVoiceListChanged() {
+    var list;
+    try { list = window.speechSynthesis.getVoices() || []; } catch (e) { list = []; }
+    var fp = fingerprintVoices(list);
+    if (fp === voiceListFingerprint) return;
+    voiceListFingerprint = fp;
+    voiceListCallbacks.forEach(function (cb) {
+      try { cb(); } catch (e) { console.warn('[voice-picker] callback threw', e); }
+    });
+  }
+
+  function isIOS() {
+    try { return /iPad|iPhone|iPod/.test(window.navigator.userAgent); }
+    catch (e) { return false; }
+  }
+
+  function bootstrapPrime() {
+    if (bootstrapPrimedOnce) return;
+    bootstrapPrimedOnce = true;
+    try {
+      var Utter = window.SpeechSynthesisUtterance || function (t) { this.text = t; };
+      var u = new Utter(' ');
+      u.volume = 0;
+      window.speechSynthesis.speak(u);
+    } catch (e) { /* autoplay policy may reject */ }
+  }
+
+  function bootstrapPollTick() {
+    bootstrapPollCount++;
+    notifyVoiceListChanged();
+    if (voiceListFingerprint) {
+      clearInterval(bootstrapPollInterval);
+      bootstrapPollInterval = null;
+      return;
+    }
+    if (bootstrapPollCount >= BOOTSTRAP_POLL_MAX) {
+      clearInterval(bootstrapPollInterval);
+      bootstrapPollInterval = null;
+      if (isIOS()) {
+        bootstrapPrime();
+        bootstrapPollCount = 0;
+        bootstrapPollInterval = setInterval(bootstrapPollTick, BOOTSTRAP_POLL_MS);
+      } else {
+        bootstrapTimeoutFired();
+      }
+    }
+  }
+
+  function bootstrapTimeoutFired() {
+    var detecting = window.document && window.document.getElementById('pref-voice-detecting');
+    var stub = window.document && window.document.getElementById('pref-voice-stub');
+    var buttons = window.document && window.document.getElementById('pref-voice-buttons');
+    if (detecting) detecting.classList.add('hidden');
+    if (stub) stub.classList.remove('hidden');
+    if (buttons) buttons.classList.add('hidden');
+  }
+
+  function initBootstrap() {
+    notifyVoiceListChanged();
+    try {
+      window.speechSynthesis.addEventListener('voiceschanged', notifyVoiceListChanged);
+    } catch (e) {}
+    notifyVoiceListChanged();
+    if (voiceListFingerprint) return;
+    var detecting = window.document && window.document.getElementById('pref-voice-detecting');
+    if (detecting) detecting.classList.remove('hidden');
+    bootstrapPollCount = 0;
+    bootstrapPollInterval = setInterval(bootstrapPollTick, BOOTSTRAP_POLL_MS);
+  }
+
   window.VoicePicker = {
-    init: function () {},
+    init: function () { initBootstrap(); },
     getUtteranceVoice: getUtteranceVoice,
-    onVoiceListChanged: function (_callback) {},
+    onVoiceListChanged: function (cb) {
+      voiceListCallbacks.push(cb);
+      if (voiceListFingerprint) { try { cb(); } catch (e) {} }
+    },
     _inferGender: inferGender,
     _KNOWN_VOICES: KNOWN_VOICES,
     _readPref: readPref,
@@ -127,5 +215,7 @@
     _LS_KEY: LS_KEY,
     _candidateVoices: candidateVoices,
     _resolveVoice: resolveVoice,
+    _bootstrapPrime: bootstrapPrime,
+    _bootstrapTimeoutFired: bootstrapTimeoutFired,
   };
 })();
