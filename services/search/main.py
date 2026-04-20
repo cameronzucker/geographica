@@ -2500,6 +2500,39 @@ async def noaa_refresh_progress():
     return read_progress_state(DATA_DIR / PROGRESS_FILENAME)
 
 
+@app.post(
+    "/admin/pipeline/noaa/refresh/cancel",
+    dependencies=[Depends(require_config_source)],
+)
+async def noaa_refresh_cancel():
+    """Request cancellation of the running NOAA catalog refresh.
+
+    Sets the module-level _cancel_event. The bg task observes the event
+    between state boundaries (typical latency <15s, capped at the current
+    state's remaining work). Returns 404 if no refresh is in progress.
+
+    Per spec v2 §change #3: cancellation flows via asyncio.Event, NOT via
+    a file-flag write. The bg task's progress callback writes
+    cancel_requested=true into progress.json AFTER observing the event,
+    avoiding a read-then-write race with ongoing progress updates.
+    """
+    global _cancel_event
+    try:
+        from refresh_noaa_catalog import read_progress_state, PROGRESS_FILENAME
+    except ImportError:
+        raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
+
+    state = read_progress_state(DATA_DIR / PROGRESS_FILENAME)
+    if state.get("status") != "running" or _cancel_event is None:
+        raise HTTPException(status_code=404, detail="No refresh in progress")
+
+    _cancel_event.set()
+    return {
+        "status": "cancellation_requested",
+        "message": "The refresh will stop at the next state boundary (within ~15s).",
+    }
+
+
 @app.post("/admin/pipeline/noaa/rollback", dependencies=[Depends(require_config_source)])
 async def noaa_rollback(body: NoaaRollbackBody):
     """Rollback NOAA catalog to a prior snapshot. Atomic symlink swap."""

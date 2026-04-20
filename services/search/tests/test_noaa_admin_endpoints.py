@@ -1048,3 +1048,89 @@ def test_noaa_refresh_progress_requires_internal_header(tmp_path):
         r = client.get("/admin/pipeline/noaa/refresh/progress")  # no X-Config-Source header
     # The exact status depends on how require_config_source rejects; match existing pattern.
     assert r.status_code in (401, 403)
+
+
+def test_noaa_refresh_cancel_when_running(tmp_path, monkeypatch):
+    """POST /cancel sets the module-level _cancel_event when a refresh is in flight."""
+    from services.search.main import app
+    from services.search import main as main_module
+    from refresh_noaa_catalog import write_progress_state, PROGRESS_FILENAME
+    import asyncio
+
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+    # Seed progress.json with a running refresh
+    write_progress_state(tmp_path / PROGRESS_FILENAME, {
+        "status": "running", "phase": "fetching_tile_indexes",
+    })
+    # Seed a module-level cancel event (simulates the bg task having been dispatched)
+    main_module._cancel_event = asyncio.Event()
+    main_module._active_refresh_task = None  # Not actually started, but enough for the endpoint
+
+    client = TestClient(app)
+    r = client.post(
+        "/admin/pipeline/noaa/refresh/cancel",
+        headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "cancellation_requested"
+    assert "message" in body
+    # The Event must be set so the bg task observes it on next iteration
+    assert main_module._cancel_event.is_set() is True
+
+    # Cleanup so other tests don't inherit state
+    main_module._cancel_event = None
+
+
+def test_noaa_refresh_cancel_when_idle_returns_404(tmp_path, monkeypatch):
+    """POST /cancel returns 404 when no refresh is running."""
+    from services.search.main import app
+    from services.search import main as main_module
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+    # Ensure no running state
+    main_module._cancel_event = None
+    client = TestClient(app)
+    r = client.post(
+        "/admin/pipeline/noaa/refresh/cancel",
+        headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+    )
+    assert r.status_code == 404
+
+
+def test_noaa_refresh_cancel_when_done_returns_404(tmp_path, monkeypatch):
+    """POST /cancel returns 404 when a refresh is in terminal state."""
+    from services.search.main import app
+    from services.search import main as main_module
+    from refresh_noaa_catalog import write_progress_state, PROGRESS_FILENAME
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+    write_progress_state(tmp_path / PROGRESS_FILENAME, {
+        "status": "done", "result": {"status": "ok"},
+    })
+    main_module._cancel_event = None  # bg task cleared it on finally
+    client = TestClient(app)
+    r = client.post(
+        "/admin/pipeline/noaa/refresh/cancel",
+        headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+    )
+    assert r.status_code == 404
+
+
+def test_noaa_refresh_cancel_idempotent(tmp_path, monkeypatch):
+    """Second POST /cancel while cancel is already requested returns 200 (not 409)."""
+    from services.search.main import app
+    from services.search import main as main_module
+    from refresh_noaa_catalog import write_progress_state, PROGRESS_FILENAME
+    import asyncio
+    monkeypatch.setattr(main_module, "DATA_DIR", tmp_path)
+    write_progress_state(tmp_path / PROGRESS_FILENAME, {
+        "status": "running", "phase": "fetching_tile_indexes",
+    })
+    main_module._cancel_event = asyncio.Event()
+    main_module._cancel_event.set()  # already cancelled
+    client = TestClient(app)
+    r = client.post(
+        "/admin/pipeline/noaa/refresh/cancel",
+        headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+    )
+    assert r.status_code == 200
+    main_module._cancel_event = None
