@@ -1593,7 +1593,18 @@
       scheduleRouteRegen();
     });
 
-    getRouteBtn.addEventListener('click', requestRoute);
+    // Dual-state primary button: "Get Route" → requestRoute, "Clear Route" → clearRoute.
+    // Text is the source of truth for which action fires; requestRoute sets it to
+    // "Clear Route" on success, clearRoute resets it to "Get Route" on exit.
+    getRouteBtn.addEventListener('click', function () {
+      if (getRouteBtn.textContent === 'Clear Route') {
+        clearRoute();
+      } else {
+        requestRoute();
+      }
+    });
+    // clearBtn is hidden in index.html but we keep the listener attached so any
+    // programmatic click (tests, legacy callers) still works.
     clearBtn.addEventListener('click', clearRoute);
 
     // Export / print directions
@@ -2085,7 +2096,6 @@
       .then(function (res) { return res.json(); })
       .then(function (data) {
         btn.disabled = false;
-        btn.textContent = 'Get Route';
 
         if (data.trip) {
           setActiveRoute(data.trip, {
@@ -2094,9 +2104,13 @@
             costingOptions: body.costing_options || null,
           });
           document.getElementById('export-route-btn').classList.remove('hidden');
+          // Dual-state button: now in Clear mode (see initRouting dispatcher).
+          btn.textContent = 'Clear Route';
         } else if (data.error) {
+          btn.textContent = 'Get Route';
           alert('Routing error: ' + (data.error || 'Unknown error'));
         } else {
+          btn.textContent = 'Get Route';
           alert('No route found.');
         }
       })
@@ -2234,6 +2248,12 @@
     routeEndCoords   = null;
     lastRouteTrip    = null;
     lastRouteCoords  = null;
+    // Closes the "stale _geographicaLastTrip" landmine flagged by the
+    // 2026-04-20 integration review (Important #2): without this, a
+    // future code path that reads window._geographicaLastTrip without
+    // first checking Start-Nav-btn visibility would try to start nav
+    // against the cleared route's trip object.
+    window._geographicaLastTrip = null;
 
     document.getElementById('route-start').value = '';
     document.getElementById('route-end').value   = '';
@@ -2246,6 +2266,9 @@
     var dirList = document.getElementById('route-directions');
     while (dirList.firstChild) dirList.removeChild(dirList.firstChild);
     document.getElementById('export-route-btn').classList.add('hidden');
+    // Dual-state button: back to "Get Route" mode so the next click
+    // triggers a fresh fetch instead of calling clearRoute() again.
+    document.getElementById('get-route-btn').textContent = 'Get Route';
   }
 
   // ── Export / print directions ────────────────────────────────────────

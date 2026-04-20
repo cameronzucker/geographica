@@ -175,9 +175,16 @@
         <label class="checkbox-label"><input type="checkbox" id="avoid-ferries"> Avoid ferries</label>
       </div>
 
+      <!--
+        #get-route-btn is dual-state: "Get Route" when idle / no active
+        route, "Clear Route" when a route is displayed. Click handler in
+        app.js dispatches to requestRoute vs clearRoute based on text.
+        #clear-route-btn is retained (hidden) as a DOM-only safety net so
+        any future code paths that query it by id don't throw.
+      -->
       <button id="get-route-btn">Get Route</button>
       <div class="route-btn-row">
-        <button id="clear-route-btn" class="secondary-btn">Clear</button>
+        <button id="clear-route-btn" class="secondary-btn hidden">Clear</button>
         <button id="export-route-btn" class="secondary-btn hidden">Print / Export</button>
       </div>
       <button id="start-nav-btn" class="hidden">Start Navigation</button>
