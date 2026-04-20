@@ -484,3 +484,67 @@ def test_force_unlock_live_holder_returns_409(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+
+# Task 25 — GET /admin/pipeline/noaa/refresh-log
+# ---------------------------------------------------------------------------
+
+def test_refresh_log_empty_when_no_file(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        resp = client.get(
+            "/admin/pipeline/noaa/refresh-log",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["entries"] == []
+
+
+def test_refresh_log_entries_in_reverse_chronological(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    log_path = tmp_path / "noaa_catalog_refresh_log.jsonl"
+    log_path.write_text(
+        json.dumps({"ts": "2026-04-19T00:00:00Z", "status": "ok"}) + "\n"
+        + json.dumps({"ts": "2026-04-20T00:00:00Z", "status": "ok"}) + "\n"
+    )
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        resp = client.get(
+            "/admin/pipeline/noaa/refresh-log",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    entries = resp.json()["entries"]
+    assert entries[0]["ts"] == "2026-04-20T00:00:00Z"  # newest first
+    assert entries[1]["ts"] == "2026-04-19T00:00:00Z"
+
+
+def test_refresh_log_rollback_available_flag(tmp_path):
+    from services.search.main import app
+    from fastapi.testclient import TestClient
+    client = TestClient(app)
+    snaps = tmp_path / "noaa_catalog_snapshots"
+    snaps.mkdir()
+    (snaps / "2026-04-20T00:00:00Z.json").write_text("{}")
+
+    log_path = tmp_path / "noaa_catalog_refresh_log.jsonl"
+    # Write oldest entry first, newest last (natural append order)
+    log_path.write_text(
+        json.dumps({
+            "ts": "2026-04-19T00:00:00Z", "status": "ok",
+            "snapshot_path": str(snaps / "pruned.json"),
+        }) + "\n"
+        + json.dumps({
+            "ts": "2026-04-20T00:00:00Z", "status": "ok",
+            "snapshot_path": str(snaps / "2026-04-20T00:00:00Z.json"),
+        }) + "\n"
+    )
+    with patch("services.search.main.DATA_DIR", tmp_path):
+        resp = client.get(
+            "/admin/pipeline/noaa/refresh-log",
+            headers={"X-Config-Source": "internal", "X-Geographica": "1"},
+        )
+    entries = resp.json()["entries"]
+    assert entries[0]["rollback_available"] is True   # newest, file exists
+    assert entries[1]["rollback_available"] is False  # file pruned

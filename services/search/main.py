@@ -2183,3 +2183,34 @@ async def noaa_force_unlock():
         raise HTTPException(status_code=409, detail=result)
     return result
 
+
+@app.get("/admin/pipeline/noaa/refresh-log", dependencies=[Depends(require_config_source)])
+async def noaa_refresh_log():
+    """Return refresh history with rollback_available flag per entry."""
+    log_path = DATA_DIR / "noaa_catalog_refresh_log.jsonl"
+    snapshots_dir = DATA_DIR / "noaa_catalog_snapshots"
+    entries = []
+    if log_path.exists():
+        for line in log_path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # A snapshot file is rollback-able iff it's still on disk.
+            # Entry may reference snapshot_path (absolute) or to_snapshot (filename).
+            snap_ref = entry.get("snapshot_path") or entry.get("to_snapshot")
+            if snap_ref:
+                candidate = (
+                    Path(snap_ref)
+                    if Path(snap_ref).is_absolute()
+                    else (snapshots_dir / snap_ref)
+                )
+                entry["rollback_available"] = candidate.exists()
+            else:
+                entry["rollback_available"] = False
+            entries.append(entry)
+    entries.reverse()  # Reverse chronological
+    return {"entries": entries}
