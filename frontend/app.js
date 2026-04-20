@@ -2088,10 +2088,11 @@
         btn.textContent = 'Get Route';
 
         if (data.trip) {
-          lastRouteTrip = data.trip;
-          window._geographicaLastTrip = data.trip;
-          window._geographicaLastTrip._costing = costing;
-          renderRoute(data.trip);
+          setActiveRoute(data.trip, {
+            refitBounds: true,
+            costing: costing,
+            costingOptions: body.costing_options || null,
+          });
           document.getElementById('export-route-btn').classList.remove('hidden');
         } else if (data.error) {
           alert('Routing error: ' + (data.error || 'Unknown error'));
@@ -2108,10 +2109,31 @@
   }
 
   /**
-   * Render a Valhalla trip response on the map and display directions.
-   * @param {Object} trip - Valhalla trip object
+   * Single source of truth for "the active route has changed."
+   * Owns: _geographicaLastTrip, lastRouteCoords, map source 'route',
+   * sidebar #route-directions. Optionally fits bounds (default: true).
+   *
+   * Does NOT drive the engine — that's the caller's responsibility
+   * because different call sites want different engine transitions
+   * (nav-ui.js startNavigation → nav.start; reroute → nav.applyReroute).
+   *
+   * @param {Object} trip Valhalla trip object
+   * @param {Object} [options]
+   * @param {boolean} [options.refitBounds=true] if false, map camera is
+   *   untouched (use during active navigation so the user isn't yanked
+   *   to an overview view).
+   * @param {string} [options.costing] optional costing to stamp on the
+   *   trip (for reroute paths where the engine has this but the trip
+   *   response doesn't).
+   * @param {Object} [options.costingOptions] optional costing_options
+   *   to stamp on the trip.
+   * @returns {{ coords: Array<[number, number]>, maneuvers: Array }}
+   *   Decoded route data for the caller to pass to the engine.
    */
-  function renderRoute(trip) {
+  function setActiveRoute(trip, options) {
+    options = options || {};
+    var refitBounds = options.refitBounds !== false;
+
     // Decode polyline from each leg and merge
     var allCoords = [];
     var allManeuvers = [];
@@ -2124,62 +2146,64 @@
       }
     });
 
-    // Store decoded coords for spatial search context
-    lastRouteCoords = allCoords.slice();
+    // Stamp costing / costingOptions on the trip so downstream readers
+    // (reroute, export) have them.
+    if (options.costing) trip._costing = options.costing;
+    if (options.costingOptions !== undefined) trip._costingOptions = options.costingOptions;
 
-    // Update route source
+    // Update module-level truths
+    lastRouteTrip = trip;
+    lastRouteCoords = allCoords.slice();
+    window._geographicaLastTrip = trip;
+
+    // Update map 'route' source
     var geojson = {
       type: 'Feature',
       geometry: {
         type: 'LineString',
-        coordinates: allCoords
-      }
+        coordinates: allCoords,
+      },
     };
-
     var source = map.getSource('route');
     if (source) {
       source.setData(geojson);
     }
 
-    // Fit map to route bounds
-    var bounds = allCoords.reduce(function (b, coord) {
-      return b.extend(coord);
-    }, new maplibregl.LngLatBounds(allCoords[0], allCoords[0]));
+    // Optionally fit bounds
+    if (refitBounds && allCoords.length > 0) {
+      var bounds = allCoords.reduce(function (b, coord) {
+        return b.extend(coord);
+      }, new maplibregl.LngLatBounds(allCoords[0], allCoords[0]));
 
-    var isMobileRoute = window.innerWidth < 768;
-    var sidebarWRoute = parseInt(getComputedStyle(document.documentElement)
-      .getPropertyValue('--sidebar-width')) || 320;
-    map.fitBounds(bounds, {
-      padding: isMobileRoute
-        ? { top: 40, bottom: 100, left: 20, right: 20 }
-        : { top: 60, bottom: 60, left: sidebarWRoute + 20, right: 60 }
-    });
+      var isMobileRoute = window.innerWidth < 768;
+      var sidebarWRoute = parseInt(getComputedStyle(document.documentElement)
+        .getPropertyValue('--sidebar-width')) || 320;
+      map.fitBounds(bounds, {
+        padding: isMobileRoute
+          ? { top: 40, bottom: 100, left: 20, right: 20 }
+          : { top: 60, bottom: 60, left: sidebarWRoute + 20, right: 60 },
+      });
+    }
 
-    // Show route summary
+    // Rebuild summary + directions sidebar
     var summary = trip.summary || {};
-    var dist    = (summary.length || 0);
+    var dist = summary.length || 0;
     var distStr = useImperial ? dist.toFixed(1) + ' mi' : dist.toFixed(1) + ' km';
     var timeSec = summary.time || 0;
-    var hours   = Math.floor(timeSec / 3600);
+    var hours = Math.floor(timeSec / 3600);
     var minutes = Math.round((timeSec % 3600) / 60);
     var timeStr = hours > 0 ? hours + 'h ' + minutes + 'min' : minutes + ' min';
 
     var summaryEl = document.getElementById('route-summary');
-    // Build summary using safe DOM methods
-    while (summaryEl.firstChild) {
-      summaryEl.removeChild(summaryEl.firstChild);
-    }
+    while (summaryEl.firstChild) summaryEl.removeChild(summaryEl.firstChild);
     var strong = document.createElement('strong');
     strong.textContent = distStr;
     summaryEl.appendChild(strong);
     summaryEl.appendChild(document.createTextNode(' \u00B7 ' + timeStr));
     summaryEl.classList.remove('hidden');
 
-    // Show turn-by-turn directions (safe DOM construction)
     var dirList = document.getElementById('route-directions');
-    while (dirList.firstChild) {
-      dirList.removeChild(dirList.firstChild);
-    }
+    while (dirList.firstChild) dirList.removeChild(dirList.firstChild);
     allManeuvers.forEach(function (m) {
       var li = document.createElement('li');
       var instruction = m.instruction || m.verbal_pre_transition_instruction || '';
@@ -2190,7 +2214,12 @@
       li.textContent = instruction;
       dirList.appendChild(li);
     });
+
+    return { coords: allCoords, maneuvers: allManeuvers };
   }
+
+  // Expose for nav-ui.js reroute path.
+  window._geographicaSetActiveRoute = setActiveRoute;
 
   function clearRoute() {
     clearTimeout(routeRegenTimer);  // cancel any pending debounced regen

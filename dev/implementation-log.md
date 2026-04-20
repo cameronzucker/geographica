@@ -37,6 +37,67 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-21 — Nav UX beta-bug remediation (13 bugs closed, B1 deferred)
+
+**Released as:** not yet released (pending main merge + runtime validation)
+**Plan / spec:** [docs/superpowers/plans/2026-04-21-nav-uxb-remediation.md](../docs/superpowers/plans/2026-04-21-nav-uxb-remediation.md)
+**Bug hunts:** [dev/bug-hunts/2026-04-21-nav-uxb-consolidated.md](bug-hunts/2026-04-21-nav-uxb-consolidated.md)
+**Adversarial reviews:** none (exploratory/holistic/multipass hunters cross-validated in parallel)
+
+### Summary
+
+Four beta-tester reports triggered a full bug-hunt cycle on turn-by-turn navigation. Exploratory, Holistic, and Multipass hunters conducted independent analysis and triangulated findings across [frontend/navigation.js](../frontend/navigation.js), [frontend/nav-ui.js](../frontend/nav-ui.js), and [frontend/app.js](../frontend/app.js). Cycle surfaced 14 confirmed bugs (13 closed in this cycle, 1 deferred) + 6 low-priority signals + 2 pre-existing out-of-scope issues.
+
+**Closed bugs:**
+- **B2 (highest severity):** Reroute leaves map polyline, sidebar directions, and trip globals stale. Fixed via new `setActiveRoute(trip, options)` unifier in app.js that owns engine state + map source + sidebar + globals. Reroute path now calls this before engine apply.
+- **B3:** GPS marker renders at ~60% instead of 78% from viewport top. Fixed proportional padding formula `top = mapH * 0.56 + overlayH` in getNavPadding; also explicit clear-padding on nav exit (merged with B8).
+- **B4:** Recenter/compass overlap on mobile; wrong stack order on desktop. CSS-only stack reorder: compass at bottom:120, recenter at bottom:170 (desktop); at mobile:100/150 resp.
+- **B5:** Multi-stop reroutes drop intermediate waypoints. Fixed `buildRouteData` to extract `remainingWaypoints` from trip.locations; reroute callback filters already-passed waypoints.
+- **B6:** `costing_options` (avoid_highways, etc.) dropped on reroute. Added `costingOptions` field to route payload; engine passes through to reroute callback.
+- **B7:** GPS hysteresis fills in ~2.5s instead of 5s because feedGPS calls updateGPS twice per unique position. Moved `nav.updateGPS()` inside signature-change guard.
+- **B8:** Padding leaks across sessions via MapLibre persistence. Merged into B3 fix; explicit `padding: {top:0, bottom:0, left:0, right:0}` in restoreMapState easeTo.
+- **B9:** `applyReroute` does not reset `lastAnnouncementTime`; `announcedSet` filter is backward. Fixed: `announcedSet = {}; lastAnnouncementTime = 0;`.
+- **B10:** `lastRerouteTime` not cleared when engine timeout fires (10s reroute timeout but 15s cooldown overhang). Cleared on timeout callback.
+- **B11:** Valhalla 200-with-error silent no-op (banner stuck). Explicit branch on `!data.trip || data.error` routes to retry/failure path.
+- **B12:** In-flight fetches + retry setTimeouts survive stopNavigation. Tracked setTimeout IDs in array; stopNavigation clears all + resets counter.
+- **B13:** First maneuver of subsequent leg at `begin_shape_index=0` indexes into previous leg. Clamped to `Math.max(0, ...)`.
+- **B14 (upgraded from false-positive):** UI mute state not propagated to engine on nav start. Added `nav.setMuted(muted)` call after `nav.start()`.
+
+**Deferred:**
+- **B1 (voice tiering redesign):** Current distance-threshold logic announces 3× per turn; thresholds + tier boundaries are design-dependent. Cameron's plan-review decision: no band-aid this cycle — ship nothing until the full TTM (time-to-maneuver) redesign lands with its own brainstorm + spec + adversarial review. `VOICE_THRESHOLDS` in [frontend/navigation.js:42-46](../frontend/navigation.js#L42-L46) remains unchanged at `[800, 200, 50]`. Beta testers continue to hear 3 announcements per turn until the follow-up plan ships. TTM-redesign seed topics documented in the plan's Appendix.
+
+### Key decisions
+
+- **B1 fully deferred, no threshold band-aid:** Cameron's explicit call ("no reason to fix now when we're going to rebuild it"). The consolidated report's D1 option (b) chosen; options (a) and (c) rejected.
+- **setActiveRoute refactor for B2, not band-aid:** Cameron's explicit call ("no more bandaids approaching 2.0.0"). Introduced `setActiveRoute(trip, options)` in [frontend/app.js](../frontend/app.js) that owns the 4-way state update (engine route, `_geographicaLastTrip`, `lastRouteCoords`, map `'route'` source, sidebar `#route-directions`). Exposed as `window._geographicaSetActiveRoute` for nav-ui.js reroute consumer. The old `renderRoute` function was deleted (~80 LOC). Three commits implement this: `2c03471` (extract, behavior unchanged), `a8cd7ba` (convert initial-route site + delete renderRoute), `cb3f27b` (convert reroute site — closes B2).
+- **All 13 non-B1 bugs fixed inline:** Reroute path is under heavy surgery this cycle; deferring B5, B6, B12 would require revisiting same code in a follow-up. Fixing now is cheap + reduces regression risk.
+
+### Notable bugs caught
+
+- B2: State split across 4 places (engine route, globals, map source, sidebar) — caught by all three hunters as "most severe reported bug."
+- B3: Padding math inverted (inset vs. offset) — caught by all hunters; Multipass also found sub-bug (B8 padding leak).
+- B14: Upgraded from false-positive FP6 after re-read of logic — mute state guard is UI-side only; engine's announcedSet still fires, suppressing unmute-time announcements.
+
+### Commits
+
+Notable commits (20+ total on this branch):
+- `54af3f0` test(nav): bootstrap Node vm-based engine test harness
+- `830e4c7` fix(nav): reset announcedSet and lastAnnouncementTime on applyReroute (B9)
+- `2c03471` refactor(nav): extract setActiveRoute as single source of truth (B2 prep)
+- `03624b5` fix(nav): preserve intermediate waypoints across reroutes (B5)
+- `ce12c02` fix(nav): preserve costing_options across reroutes (B6)
+- `633f176` fix(nav): engine dedups duplicate GPS positions for hysteresis (B7)
+- `cf56e6a` fix(nav): proportional nav padding + clear padding on nav exit (B3, B8)
+- `ddc9578` fix(nav): stack recenter button above compass, resolve mobile overlap (B4)
+
+### Outcome
+
+- **Tests:** 12 unit tests passing (6 engine nav + 6 nav-ui route-data builders). Engine tests include dedicated B7 dedup test + B10 timeout test. Playwright harness modes (B2 polyline update, B11 error banner, B12 fetch abort, B3/B8 padding assertions, B4 button stack at viewports) documented as pending runtime validation against live dev frontend.
+- **Code coverage:** Frontend path touched: navigation.js (9 + 10 = 19 modified lines), nav-ui.js (50+ across 5 separate sites), app.js (setActiveRoute export), style.css (B4 stack reorder). Zero backend/pipeline/setup changes.
+- **Surprises:** None. Hunters' consensus across three independent passes validates the scope. B1 threshold tuning deferred cleanly. B14 upgrade from FP justified on re-read.
+
+---
+
 ## 2026-04-20 — Nav keep-awake (feature-complete, field-untested)
 
 **Released as:** not yet released (agent-complete on dev, awaiting §6.3 manual field acceptance before merge to main)
@@ -117,6 +178,7 @@ Supporting:
 - Per-task subagent-driven-development with two-stage review (spec then quality) caught 1 Critical bug (Task 10 visibility-handler iOS PWA hole) and several Important findings that would have shipped otherwise. The per-task review step earned its cost.
 - Codex cross-validation round (R6) found the single most valuable meta-level finding — spec-meta coherence — that 5 Claude-family agents collectively missed because each attacked one angle. Worth making "meta-coherence after per-angle review" a routine step for future build-robust-features cycles.
 - Two implementer-flagged plan bugs found during execution: (a) `loadModule` JS-destructuring semantics silently ignoring `undefined` (Task 6), (b) `strip_js_noise` helper wiping string-literal tokens (Task 13). Both caught via DONE_WITH_CONCERNS signalling rather than silent papering-over — the right posture.
+
 
 ---
 
