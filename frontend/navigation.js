@@ -638,10 +638,14 @@
     state = "rerouting";
     rerouteSeq++;
     rerouteTimeoutId = setTimeout(function () {
+      rerouteTimeoutId = null;
       if (state === "rerouting") {
         state = "navigating";
         offRouteHistory = [];
         inOffRouteState = false;
+        // Clear the cooldown too — the failure already burned 10 s;
+        // don't penalize the user with another 5 s of blocked reroutes.
+        lastRerouteTime = 0;
       }
     }, REROUTE_TIMEOUT);
 

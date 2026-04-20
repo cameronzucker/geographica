@@ -65,3 +65,41 @@ test('applyReroute clears announcedSet and lastAnnouncementTime', async () => {
     'announcement should re-fire on new route; was suppressed — announcedSet/lastAnnouncementTime not cleared'
   );
 });
+
+test('reroute timeout clears lastRerouteTime for immediate re-reroute', { timeout: 15_000 }, async () => {
+  const { nav, window: win } = await loadEngine();
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
+
+  const rerouteCalls = [];
+  nav.onReroute((info) => rerouteCalls.push(info));
+
+  nav.start(fixtureRouteWithTwoTurns());
+
+  // Trigger reroute #1 by feeding 5 off-route positions (3-of-5 hysteresis).
+  for (let i = 0; i < 5; i++) {
+    nav.updateGPS({ latitude: 35.25, longitude: -111.55, heading: 90, speed: 10 });
+  }
+  assert.equal(rerouteCalls.length, 1, 'first reroute should fire');
+
+  // Wait 10.5 seconds: this exceeds REROUTE_TIMEOUT (10_000ms) but is
+  // BELOW REROUTE_COOLDOWN (15_000ms) from the first trigger. If the
+  // fix is applied (lastRerouteTime cleared on timeout), a second off-
+  // route trigger fires a new reroute. If the fix is NOT applied, the
+  // cooldown blocks until 15 s from the first trigger (an additional
+  // 4.5 s beyond our wait).
+  await new Promise((r) => setTimeout(r, 10_500));
+
+  // Feed 5 more off-route positions at DIFFERENT coords (engine dedups
+  // by position internally on the tick path — make them distinct).
+  for (let i = 0; i < 5; i++) {
+    nav.updateGPS({
+      latitude: 35.30 + i * 0.001,
+      longitude: -111.50 - i * 0.001,
+      heading: 90, speed: 10,
+    });
+  }
+  assert.equal(
+    rerouteCalls.length, 2,
+    'second reroute should fire after engine timeout (lastRerouteTime cleared)'
+  );
+});
