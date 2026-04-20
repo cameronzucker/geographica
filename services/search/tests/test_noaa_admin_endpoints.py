@@ -88,8 +88,9 @@ def test_estimate_returns_new_fields_in_state_mode(fake_catalog_dir):
     assert data["states"] == ["arizona"]
     assert data["missing"] == []           # state IS in catalog
     assert data["placename"] is None       # Task 21 stub
-    assert data["intermediate_gb"] == 0.0  # Task 20 stub
-    assert data["peak_required_gb"] == 0.0 # Task 20 stub
+    # Task 20: intermediate_gb = raw × 0.3; peak = raw + intermediate + final
+    assert data["intermediate_gb"] > 0
+    assert data["peak_required_gb"] > data["raw_download_gb"]
 
     # catalog_snapshot must be an absolute path
     assert data["catalog_snapshot"].startswith("/")
