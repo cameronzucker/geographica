@@ -655,6 +655,7 @@
         currentLng: lng,
         remainingWaypoints: route.remainingWaypoints || [],
         costing: route.costing,
+        costingOptions: route.costingOptions || null,
         _seq: rerouteSeq // caller passes back to confirmReroute
       });
     }

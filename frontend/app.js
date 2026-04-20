@@ -2091,6 +2091,7 @@
           lastRouteTrip = data.trip;
           window._geographicaLastTrip = data.trip;
           window._geographicaLastTrip._costing = costing;
+          window._geographicaLastTrip._costingOptions = body.costing_options || null;
           renderRoute(data.trip);
           document.getElementById('export-route-btn').classList.remove('hidden');
         } else if (data.error) {

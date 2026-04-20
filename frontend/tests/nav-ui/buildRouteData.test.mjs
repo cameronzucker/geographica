@@ -129,6 +129,38 @@ test('buildRouteData returns empty remainingWaypoints for 2-location trip', () =
   assert.equal(result.remainingWaypoints.length, 0);
 });
 
+test('buildRouteData propagates costing_options to route payload', () => {
+  const internals = loadNavUIInternals();
+  const trip = {
+    legs: [{ shape: 'gxz_}Anbf}E', maneuvers: [{ type: 1, instruction: 'go', begin_shape_index: 0, end_shape_index: 0 }] }],
+    summary: { length: 1, time: 60 },
+    locations: [
+      { lat: 35.20, lon: -111.65, type: 'break' },
+      { lat: 35.21, lon: -111.64, type: 'break' },
+    ],
+    _costing: 'bicycle',
+    _costingOptions: { bicycle: { bicycle_type: 'road' } },
+  };
+  const result = internals.buildRouteData(trip);
+  assert.deepEqual(
+    result.costingOptions,
+    { bicycle: { bicycle_type: 'road' } },
+    'costingOptions must be preserved on the engine route payload'
+  );
+});
+
+test('buildRouteData defaults costingOptions to null when absent', () => {
+  const internals = loadNavUIInternals();
+  const trip = {
+    legs: [{ shape: 'gxz_}Anbf}E', maneuvers: [{ type: 1, instruction: 'go', begin_shape_index: 0, end_shape_index: 0 }] }],
+    summary: { length: 1, time: 60 },
+    locations: [{ lat: 35.20, lon: -111.65 }, { lat: 35.21, lon: -111.64 }],
+    _costing: 'auto',
+  };
+  const result = internals.buildRouteData(trip);
+  assert.equal(result.costingOptions, null);
+});
+
 test('buildRouteData handles missing trip.locations gracefully', () => {
   const internals = loadNavUIInternals();
   const trip = {

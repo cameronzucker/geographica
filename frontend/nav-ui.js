@@ -286,6 +286,7 @@
       totalDistance: distMeters,
       totalTime: summary.time || 0,
       costing: trip._costing || 'auto',
+      costingOptions: trip._costingOptions || null,
       remainingWaypoints: remainingWaypoints,
     };
   }
@@ -504,6 +505,9 @@
       costing: info.costing || 'auto',
       directions_options: { units: window._geographicaUseImperial ? 'miles' : 'kilometers' }
     };
+    if (info.costingOptions) {
+      body.costing_options = info.costingOptions;
+    }
 
     var seq = info._seq;
 
