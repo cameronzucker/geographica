@@ -105,27 +105,64 @@
         </div>
       </div>
 
-      <h3>Units</h3>
-      <label class="radio-label">
-        <input type="radio" name="units" value="imperial" checked> Imperial (ft, mi)
-      </label>
-      <label class="radio-label">
-        <input type="radio" name="units" value="metric"> Metric (m, km)
-      </label>
+      <h3>Preferences</h3>
 
-      <h3>Coordinates</h3>
-      <label class="radio-label">
-        <input type="radio" name="coordfmt" value="dd" checked> Decimal Degrees
-      </label>
-      <label class="radio-label">
-        <input type="radio" name="coordfmt" value="dms"> Degrees/Minutes/Seconds
-      </label>
-      <label class="radio-label">
-        <input type="radio" name="coordfmt" value="maidenhead"> Maidenhead Grid
-      </label>
-      <label class="radio-label">
-        <input type="radio" name="coordfmt" value="mgrs"> MGRS
-      </label>
+      <div class="pref-group" id="pref-voice">
+        <div class="pref-label">Nav voice</div>
+
+        <div class="pref-voice-buttons" id="pref-voice-buttons">
+          <button type="button" class="pref-voice-btn active" data-gender="default">Default</button>
+          <button type="button" class="pref-voice-btn"        data-gender="male">Male</button>
+          <button type="button" class="pref-voice-btn"        data-gender="female">Female</button>
+        </div>
+
+        <button type="button" class="pref-voice-advanced-toggle" id="pref-voice-advanced-toggle"
+                aria-expanded="false" aria-controls="pref-voice-advanced">▾ Pick a specific voice…</button>
+
+        <div class="pref-voice-advanced hidden" id="pref-voice-advanced">
+          <label for="pref-voice-select" class="sr-only">Specific voice</label>
+          <select id="pref-voice-select"></select>
+          <label class="checkbox-label">
+            <input type="checkbox" id="pref-voice-allow-cloud">
+            Include cloud voices (requires internet — may fail on mesh)
+          </label>
+        </div>
+
+        <p class="pref-voice-hint hidden" id="pref-voice-hint"></p>
+
+        <div class="pref-voice-stub hidden" id="pref-voice-stub">
+          Voice selection is not supported on this browser.
+        </div>
+        <div class="pref-voice-detecting hidden" id="pref-voice-detecting">
+          Detecting available voices…
+        </div>
+      </div>
+
+      <div class="pref-group">
+        <div class="pref-label">Units</div>
+        <label class="radio-label">
+          <input type="radio" name="units" value="imperial" checked> Imperial (ft, mi)
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="units" value="metric"> Metric (m, km)
+        </label>
+      </div>
+
+      <div class="pref-group">
+        <div class="pref-label">Coordinates</div>
+        <label class="radio-label">
+          <input type="radio" name="coordfmt" value="dd" checked> Decimal Degrees
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="coordfmt" value="dms"> Degrees/Minutes/Seconds
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="coordfmt" value="maidenhead"> Maidenhead Grid
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="coordfmt" value="mgrs"> MGRS
+        </label>
+      </div>
 
       <h3>GPS Source</h3>
       <label class="radio-label">
