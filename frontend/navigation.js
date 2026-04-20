@@ -38,11 +38,27 @@
   var SNAP_HEADING_RADIUS = 10;       // meters — heading disambiguation zone
   var SPEED_HISTORY_WINDOW = 60;      // seconds for rolling speed ratio
 
-  // Voice thresholds per costing [far, medium, near]
+  // Voice thresholds per costing. Each entry is [far, near] in meters.
+  //
+  // BAND-AID (2026-04-20, Cameron decision post field test, juniper):
+  // Previous tiering was [far, medium, near] = 3 announcements per
+  // maneuver. In urban/surface-street driving with several close-together
+  // turns (field-tested: Villa Rita → North Phoenix Costco with a
+  // westerly detour), that produced up to 9 prompts in ~200 ft of
+  // driving — dangerous, not helpful. Dropping the medium tier and
+  // pulling the far tier inward (800m → 400m for auto; urban driving
+  // rarely has 800m of advance notice anyway) caps the rate at 2
+  // announcements per maneuver. Explicitly a stopgap: the full
+  // time-to-maneuver (TTM) redesign is the real fix, queued in the
+  // next-session START.md resume block.
+  //
+  // When the TTM redesign lands, remove this band-aid entirely
+  // (VOICE_THRESHOLDS, VOICE_COOLDOWN, VOICE_SPEED_GATE, and
+  // VOICE_NEAR_ANNOUNCE_DISTANCE all likely go away together).
   var VOICE_THRESHOLDS = {
-    auto:       [800, 200, 50],
-    bicycle:    [400, 100, 30],
-    pedestrian: [200,  50, 20]
+    auto:       [400, 50],
+    bicycle:    [200, 30],
+    pedestrian: [75,  20]
   };
 
   var NEXT_AFTER_NEXT_DISTANCE = 500; // meters
@@ -365,14 +381,18 @@
 
       if (distToNext <= thresholds[ti]) {
         var text;
-        if (ti < 2) {
-          // Far or medium: use alert instruction
+        var isNearTier = ti === thresholds.length - 1;
+        if (!isNearTier) {
+          // Pre-final tier(s): use alert instruction ("in X meters, turn left").
+          // Threshold-count-agnostic: works with [far, near] OR [far, medium, near].
           text = m.verbal_transition_alert_instruction || m.instruction;
         } else {
-          // Near: use pre-transition instruction
+          // Near (final) tier: use pre-transition instruction ("turn left onto Oak").
           text = m.verbal_pre_transition_instruction || m.instruction;
 
-          // Next-after-next: if maneuver[current+2] is close, append it
+          // Next-after-next: if maneuver[current+2] is close, append it.
+          // Preserves the "turn left, then right" chain readout on the
+          // near-tier only so it doesn't duplicate across tiers.
           var afterIdx = nextIdx + 1;
           if (afterIdx < route.maneuvers.length) {
             var distBetween = distanceToManeuver(
@@ -862,6 +882,16 @@
 
     /** Register callback for voice announcement text. */
     onVoice: function (cb) { onVoiceCb = cb; }
+  };
+
+  // Test hook: expose tuning constants so tests can assert on the
+  // band-aid threshold shape without re-parsing the source. No-op in
+  // production (only read by unit tests). Remove when the TTM redesign
+  // lands and replaces the threshold-distance model entirely.
+  window._geographicaNavEngineInternals = {
+    VOICE_THRESHOLDS: VOICE_THRESHOLDS,
+    VOICE_COOLDOWN: VOICE_COOLDOWN,
+    VOICE_SPEED_GATE: VOICE_SPEED_GATE
   };
 
 })();
