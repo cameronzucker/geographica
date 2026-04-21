@@ -645,3 +645,90 @@ test('TTM pedestrian: outside 15m floor at walking pace does not fire near', asy
   assert.equal(voiceFires.length, 0,
     'pedestrian at 18m from maneuver, outside 15m floor and 15s TTM, should not fire');
 });
+
+test('TTM Villa Rita synthetic: 3-maneuver close cluster fires exactly 3 prompts (§6.4)', async (t) => {
+  const { fixtureVillaRitaCluster } = await import('./test_runner.mjs');
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+
+  // 40m west of maneuver 1 (the first spoken turn, index 1).
+  // maneuver 1 is at -111.64967; route start (depart) is at -111.65000 (33m before).
+  // Start AT route start; 33m to maneuver 1.
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65000, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureVillaRitaCluster());
+
+  // Tick through the cluster at 10 m/s: each segment is 30m, so ~3 ticks per segment.
+  // Full cluster (3 turns) ~90m = ~9 ticks.
+  const tickPositions = [
+    -111.64990, -111.64980, -111.64970,  // approaching maneuver 1 (Mulberry)
+    -111.64960, -111.64950, -111.64940,  // after maneuver 1, approaching maneuver 2 (Oak)
+    -111.64930, -111.64920, -111.64910,  // after maneuver 2, approaching maneuver 3 (Villa Rita)
+    -111.64900, -111.64890, -111.64880,  // after maneuver 3, approaching end
+  ];
+  for (const lng of tickPositions) {
+    nav.updateGPS({ latitude: 35.20, longitude: lng, heading: 90, speed: 10 });
+  }
+
+  // Expect exactly 3 prompts (one near-tier per spoken maneuver; D1 suppresses far for all 3).
+  assert.equal(voiceFires.length, 3,
+    `Villa Rita: expected exactly 3 prompts (D1 suppression), got ${voiceFires.length}: ${JSON.stringify(voiceFires)}`);
+  // Each must be a pre-transition ("Turn left onto Mulberry" style), not an alert.
+  const alerts = voiceFires.filter(t => /In 100 feet/.test(t));
+  assert.equal(alerts.length, 0,
+    'Villa Rita prompts must be near-tier (pre-transition), not alert-tier');
+});
+
+test('TTM outlier integration: correlated 2-outliers-in-3-window are rejected (I5)', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.645, heading: 90, speed: 10 };
+  const i = win._geographicaNavEngineInternals;
+
+  nav.onVoice(() => {});
+  nav.start(fixtureRouteWithTwoTurns());
+
+  // Seed window with 2 legitimate 10 m/s samples.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.644, heading: 90, speed: 10 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.6435, heading: 90, speed: 10 });
+  // After 2 ticks, samples should contain at least one [10] entry.
+
+  // Inject TWO 50 m/s outliers in a row. Median-of-3 alone would be fooled
+  // (window would become [10, 50, 50] → median 50). The pre-filter rejects
+  // each outlier because delta from prior median stays > 15 m/s.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.643, heading: 90, speed: 50 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.6425, heading: 90, speed: 50 });
+
+  const samples = i._getSpeedSamples();
+  assert.ok(!samples.includes(50),
+    'I5: correlated 2-outliers-in-3 must be rejected by pre-filter');
+});
+
+test('TTM outlier integration: GPS 50 m/s spike does not flip thresholds', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.645, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureRouteWithTwoTurns());
+
+  // Baseline: steady 10 m/s approach to maneuver 1.
+  const baseLngs = [-111.644, -111.6435, -111.643];
+  for (const lng of baseLngs) {
+    nav.updateGPS({ latitude: 35.20, longitude: lng, heading: 90, speed: 10 });
+  }
+  const baselineCount = voiceFires.length;
+
+  // Inject a 50 m/s outlier — must be rejected by pushSpeedSample's clamp.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.6425, heading: 90, speed: 50 });
+  // Speed window should still NOT contain 50.
+  const samples = win._geographicaNavEngineInternals._getSpeedSamples();
+  assert.ok(!samples.includes(50),
+    'outlier must be rejected from speed window');
+  // Baseline count should be preserved (no premature near).
+  assert.equal(voiceFires.length, baselineCount,
+    'outlier injection must not cause new prompts to fire');
+});
