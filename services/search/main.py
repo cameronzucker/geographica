@@ -14,6 +14,7 @@ import re
 import shutil
 import sqlite3
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -1249,11 +1250,18 @@ def _noaa_peak_and_snapshot(
     # Start doesn't disagree with the number the user saw in the estimate.
     total_tile_count = _count_noaa_tiles(states_list, body.bbox, entries, DATA_DIR)
 
-    # Same disk-cost formula as noaa_estimate.
-    raw_download_gb = total_tile_count * NOAA_TILE_SIZE_MB / 1024
+    # Peak disk = transient staging + cumulative MBTiles growth + buffer.
+    # The pipeline streams: at any moment only ~(download_concurrency +
+    # reproject_workers) GeoTIFFs exist on disk; raw + reprojected files are
+    # unlinked after each batch is merged into the MBTiles. The MBTiles itself
+    # grows monotonically until the run completes. See scripts/acquire_imagery.py
+    # ~L2402-L2582 for the cleanup call sites. Must match noaa_estimate.
+    download_concurrency = 4
+    reproject_workers = 4
+    staging_peak_gb = (download_concurrency + reproject_workers) * NOAA_TILE_SIZE_MB / 1024
     final_mbtiles_gb = total_tile_count * 29 / 1024
-    intermediate_gb = raw_download_gb * 0.3
-    peak_required_gb = round(raw_download_gb + intermediate_gb + final_mbtiles_gb, 1)
+    safety_buffer_gb = 5.0  # overviews, sqlite WAL, misc headroom
+    peak_required_gb = round(staging_peak_gb + final_mbtiles_gb + safety_buffer_gb, 1)
 
     return (missing_list, peak_required_gb, str(snapshot_path))
 
@@ -1893,10 +1901,14 @@ def _count_noaa_tiles(
             total += catalog_total
             continue
 
-        # Cached shapefile path mirrors the legacy `noaa_cache/{USPS}_{year}` layout.
-        usps = entry.get("usps", slug.upper()[:2])
+        # Cache path MUST match acquire_imagery.noaa_cache_dir + refresh_noaa_catalog:
+        # both use f"{slug}_{year}" (slug = lowercase state name). Earlier versions
+        # of this function used "{usps}_{year}" (e.g. CA_2022), which never matched
+        # anything on disk — _count_noaa_tiles silently fell back to catalog_total
+        # for every slug, so every bbox request returned the whole-state tile count
+        # (2026-04-21 bug: "peak working set exceeds free disk" even on tiny bboxes).
         entry_year = entry.get("year", 2021)
-        cache = data_dir / "noaa_cache" / f"{usps}_{entry_year}"
+        cache = data_dir / "noaa_cache" / f"{slug}_{entry_year}"
         shp_files = list(cache.glob("*.shp")) if cache.exists() else []
 
         if not shp_files:
@@ -2075,7 +2087,6 @@ async def noaa_estimate(
     raw_download_gb = tile_count * NOAA_TILE_SIZE_MB / 1024
     final_mbtiles_gb = tile_count * 29 / 1024  # empirical: ~29 MB/tile in MBTiles
     intermediate_gb = round(raw_download_gb * 0.3, 1)  # reprojected, compressed
-    peak_required_gb = round(raw_download_gb + intermediate_gb + final_mbtiles_gb, 1)
 
     # 3-stage parallel pipeline economics:
     # - Download stage: 4 concurrent fetches at ~3 MB/s each → ~160 s/tile raw but parallelized
@@ -2084,6 +2095,19 @@ async def noaa_estimate(
     # Steady-state per-tile cost = max(download/concurrency, reproject/workers, merge_serial)
     download_concurrency = 4
     reproject_workers = 4
+
+    # Peak disk: the pipeline streams — raw + reprojected GeoTIFFs are unlinked
+    # after each batch merges into MBTiles (see scripts/acquire_imagery.py ~L2402-
+    # L2582 for cleanup call sites), so intermediate_gb and raw_download_gb do NOT
+    # accumulate on disk. At steady state only ~(download_concurrency +
+    # reproject_workers) tiles exist in raw form; the MBTiles grows monotonically.
+    #
+    # intermediate_gb and raw_download_gb are kept in the response for display
+    # (users still want to know the total bandwidth they'll consume), but peak
+    # working set is dominated by MBTiles growth, not cumulative-disk.
+    staging_peak_gb = (download_concurrency + reproject_workers) * NOAA_TILE_SIZE_MB / 1024
+    safety_buffer_gb = 5.0  # overviews, sqlite WAL, misc headroom
+    peak_required_gb = round(staging_peak_gb + final_mbtiles_gb + safety_buffer_gb, 1)
     download_per_tile_s = (NOAA_TILE_SIZE_MB / 3.0) / download_concurrency  # ~40 s
     reproject_per_tile_s = 45 / reproject_workers                            # ~11 s
     merge_per_tile_s = 20                                                     # serial bottleneck
@@ -2103,7 +2127,7 @@ async def noaa_estimate(
         "tile_count": tile_count,
         "raw_download_gb": round(raw_download_gb, 1),
         "final_mbtiles_gb": round(final_mbtiles_gb, 1),
-        "staging_peak_gb": round(NOAA_TILE_SIZE_MB * (download_concurrency + 1) / 1024, 1),
+        "staging_peak_gb": round(staging_peak_gb, 1),
         "est_hours": round(est_hours, 2),
         "est_days": round(est_hours / 24, 2),
         "per_tile_seconds": round(effective_per_tile_s, 1),

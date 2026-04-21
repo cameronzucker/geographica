@@ -94,9 +94,11 @@ def test_estimate_returns_new_fields_in_state_mode(fake_catalog_dir):
     assert data["states"] == ["arizona"]
     assert data["missing"] == []           # state IS in catalog
     assert data["placename"] is None       # Task 21 stub
-    # Task 20: intermediate_gb = raw × 0.3; peak = raw + intermediate + final
+    # intermediate_gb reflects the (transient) total reprojected size for display.
+    # peak_required_gb is dominated by MBTiles final size (the pipeline unlinks
+    # raw + reprojected tiles after each batch merges — see 2026-04-21 bug fix).
     assert data["intermediate_gb"] > 0
-    assert data["peak_required_gb"] > data["raw_download_gb"]
+    assert data["peak_required_gb"] > data["final_mbtiles_gb"]
 
     # catalog_snapshot must be an absolute path
     assert data["catalog_snapshot"].startswith("/")
@@ -159,7 +161,7 @@ def test_estimate_bbox_mode_returns_cataloged_states(fake_catalog_dir):
 
 
 def test_estimate_intermediate_and_peak_fields_compute_correctly(fake_catalog_dir):
-    """intermediate_gb ≈ raw × 0.3; peak_required_gb = raw + intermediate + final."""
+    """intermediate_gb ≈ raw × 0.3 (display-only); peak = staging + MBTiles + buffer."""
     from services.search.main import app
     client = TestClient(app)
     with patch("services.search.main._get_disk_free_gb", return_value=500.0), \
@@ -174,17 +176,29 @@ def test_estimate_intermediate_and_peak_fields_compute_correctly(fake_catalog_di
     intermediate = data["intermediate_gb"]
     final = data["final_mbtiles_gb"]
     peak = data["peak_required_gb"]
+    staging = data["staging_peak_gb"]
 
-    # intermediate ≈ 0.3 × raw
+    # intermediate ≈ 0.3 × raw (display-only; transient on disk, cleaned per-batch)
     assert abs(intermediate - raw * 0.3) < 0.1, \
         f"intermediate {intermediate} should be ~0.3 × raw {raw}"
 
-    # peak = raw + intermediate + final (within rounding)
-    assert abs(peak - (raw + intermediate + final)) < 0.1, \
-        f"peak {peak} should equal raw {raw} + intermediate {intermediate} + final {final}"
+    # peak = staging_peak + final_mbtiles + 5 GB safety buffer
+    # (the pipeline unlinks raw + reprojected GeoTIFFs after each merge
+    # batch, so only the steady-state download/reproject ring + growing
+    # MBTiles consume disk — see scripts/acquire_imagery.py cleanup sites)
+    expected_peak = staging + final + 5.0
+    assert abs(peak - expected_peak) < 0.2, \
+        f"peak {peak} should equal staging {staging} + final {final} + 5.0 buffer"
 
-    # peak > raw (peak must be biggest)
-    assert peak > raw, "peak_required should exceed raw"
+    # peak must exceed final_mbtiles (staging + buffer adds headroom)
+    assert peak > final, "peak_required should exceed final_mbtiles"
+
+    # peak must be WAY smaller than raw_download_gb for any non-trivial run
+    # (this was the 2026-04-21 bug: old formula summed raw + intermediate +
+    # final, treating every downloaded GeoTIFF as if it stayed on disk forever)
+    if raw > 100:  # guard against tiny fixtures where the relation inverts
+        assert peak < raw, \
+            f"peak {peak} should be << raw {raw} — pipeline streams, doesn't hoard"
 
 
 def test_estimate_placename_multi_state_format(fake_catalog_dir):
