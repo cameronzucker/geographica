@@ -397,6 +397,25 @@
 
     if (nearWouldFire) {
       var text = m.verbal_pre_transition_instruction || m.instruction || "";
+
+      // Valhalla bakes its own continuation into verbal_pre_transition in two
+      // shapes when the maneuver is part of a quick-succession sequence:
+      //   (a) trailing ". Then X." — current maneuver's vpt already ends with
+      //       ", Then turn right onto Oak Road." pre-announcing the next turn.
+      //       Our chain-append below would then re-announce X — doubled speech.
+      //   (b) leading "Then turn left onto Union Hills Drive." — current
+      //       maneuver's vpt is phrased as a continuation of a prior prompt.
+      //       When I11 already chain-pre-announced this maneuver, the leading
+      //       "Then" sounds like a new instruction to the driver who just
+      //       heard it 3-8s ago in the prior near-tier's chain.
+      // Strip both, in order. (a) first so (b) can't accidentally match the
+      // sentence-boundary "Then"; (b) after to normalize the leading token.
+      text = text.replace(/\.\s*Then\s+[^.]*\.?\s*$/i, '.');
+      text = text.replace(/^Then\s+/i, '');
+      if (text.length > 0) {
+        text = text.charAt(0).toUpperCase() + text.slice(1);
+      }
+
       // Next-after-next chain — preserved from prior behavior.
       // Chain extension (I11): when the chain actually appends, mark
       // announcedSet[(afterIdx)-far] so the next-after-next maneuver's
@@ -412,7 +431,9 @@
         if (distBetween <= NEXT_AFTER_NEXT_DISTANCE) {
           var afterText = route.maneuvers[afterIdx].instruction || "";
           if (afterText) {
-            text += ", then " + afterText;
+            // Strip trailing period from base text so the comma-chain reads
+            // naturally as one sentence ("X, then Y" not "X., then Y").
+            text = text.replace(/\.\s*$/, '') + ", then " + afterText;
             announcedSet[afterIdx + "-far"] = true;  // I11 chain extension
           }
         }

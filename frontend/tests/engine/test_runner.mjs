@@ -200,6 +200,68 @@ export function fixtureMixedSpacingCluster() {
   };
 }
 
+// Fixture: mimics Valhalla's actual verbal_pre_transition shape when a
+// maneuver is part of a quick-succession cluster. Valhalla sometimes bakes
+// its own chain into the current maneuver's vpt as a trailing ". Then X."
+// sentence, and/or prefixes the next maneuver's vpt with "Then " to signal
+// continuation. Observed in Cameron's 2026-04-21 field drive (Wagoner → 24th
+// → Union Hills Dr segment). Used to verify the engine strips these to avoid
+// double-announcing the same next turn. 80m spacing between turns.
+export function fixtureValhallaThenChainedCluster() {
+  return {
+    coords: [
+      [-111.65000, 35.20],  // depart start (index 0)
+      [-111.64912, 35.20],  // M1 boundary (80m east)
+      [-111.64824, 35.20],  // M2 boundary
+      [-111.64736, 35.20],  // M3 boundary
+      [-111.64648, 35.20],  // route end
+    ],
+    maneuvers: [
+      {
+        type: 1,
+        instruction: 'Head east',
+        verbal_transition_alert_instruction: 'In 300 feet, turn left onto 24th Drive',
+        verbal_pre_transition_instruction: 'Head east',
+        begin_shape_index: 0,
+        end_shape_index: 1,
+      },
+      {
+        type: 10,
+        instruction: 'Turn right onto 24th Drive',
+        verbal_transition_alert_instruction: 'In 300 feet, turn right onto 24th Drive',
+        // Valhalla-style: vpt ends with ". Then X." chain baked in.
+        verbal_pre_transition_instruction: 'Turn right onto 24th Drive. Then Turn left onto West Union Hills Drive.',
+        begin_shape_index: 1,
+        end_shape_index: 2,
+      },
+      {
+        type: 15,
+        instruction: 'Turn left onto West Union Hills Drive',
+        verbal_transition_alert_instruction: 'In 300 feet, turn left onto West Union Hills Drive',
+        // Valhalla-style: vpt has "Then " prefix because this is a quick-
+        // succession continuation. After I11 chain-extension, the prefix is
+        // redundant and should be stripped by the engine.
+        verbal_pre_transition_instruction: 'Then turn left onto West Union Hills Drive.',
+        begin_shape_index: 2,
+        end_shape_index: 3,
+      },
+      {
+        type: 6,
+        instruction: 'Your destination is on the left',
+        verbal_transition_alert_instruction: 'Your destination is on the left',
+        verbal_pre_transition_instruction: 'Your destination is on the left.',
+        begin_shape_index: 3,
+        end_shape_index: 4,
+      },
+    ],
+    summary: { length: 0.32, time: 32 },
+    totalDistance: 320,
+    totalTime: 32,
+    costing: 'auto',
+    remainingWaypoints: [],
+  };
+}
+
 // Backward-compat alias: earlier plan tasks reference the old name.
 // Remove when all plan tasks have been converted.
 export const fixtureTwoManeuverRoute = fixtureRouteWithTwoTurns;

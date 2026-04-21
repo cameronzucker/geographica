@@ -963,3 +963,42 @@ test('TTM I11: chain-extension suppresses far-tier for chain-pre-announced maneu
   assert.ok(!/, then /.test(m3Own),
     'M3 standalone near-tier must not have chain (last maneuver)');
 });
+
+test('TTM Valhalla-Then strip: vpt trailing ". Then X." and leading "Then " are stripped', async (t) => {
+  // Observed on Cameron's 2026-04-21 field drive: Valhalla's verbal_pre_transition
+  // bakes continuation chains in both shapes, producing doubled and prefix-duplicated
+  // speech when our chain logic runs on top. Engine must strip both patterns.
+  const { fixtureValhallaThenChainedCluster } = await import('./test_runner.mjs');
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65000, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureValhallaThenChainedCluster());
+
+  // Drive through at 10 m/s.
+  for (let k = 0; k < 35; k++) {
+    const lng = -111.65000 + k * 0.00011;
+    nav.updateGPS({ latitude: 35.20, longitude: lng, heading: 90, speed: 10 });
+  }
+
+  // Find M2's (Turn right onto 24th Drive) near-tier prompt. It should contain
+  // the Union Hills chain ONCE (from our append), not twice (Valhalla's baked-in
+  // suffix + ours).
+  const m24 = voiceFires.find(t => t.startsWith('Turn right onto 24th Drive'));
+  assert.ok(m24, 'M2 (24th Drive) near-tier must have fired');
+  const unionMentions = (m24.match(/Union Hills/g) || []).length;
+  assert.equal(unionMentions, 1,
+    `Valhalla-Then strip: M2 prompt must mention Union Hills EXACTLY ONCE; got ${unionMentions} in ${JSON.stringify(m24)}`);
+
+  // Find M3's (Union Hills) standalone near-tier prompt. Valhalla's vpt is
+  // "Then turn left onto West Union Hills Drive." — leading "Then" must be
+  // stripped so the prompt reads "Turn left onto West Union Hills Drive."
+  const m3 = voiceFires.find(t => /Union Hills/i.test(t) && !t.startsWith('Turn right onto 24th'));
+  assert.ok(m3, 'M3 (Union Hills) standalone near-tier must have fired');
+  assert.ok(!/^Then\b/i.test(m3),
+    `Valhalla-Then strip: M3 standalone must not start with "Then"; got ${JSON.stringify(m3)}`);
+  assert.ok(m3.startsWith('Turn left onto'),
+    `Valhalla-Then strip: M3 standalone must start with "Turn left onto" after strip; got ${JSON.stringify(m3)}`);
+});
