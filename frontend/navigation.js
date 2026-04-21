@@ -398,6 +398,12 @@
     if (nearWouldFire) {
       var text = m.verbal_pre_transition_instruction || m.instruction || "";
       // Next-after-next chain — preserved from prior behavior.
+      // Chain extension (I11): when the chain actually appends, mark
+      // announcedSet[(afterIdx)-far] so the next-after-next maneuver's
+      // far-tier is suppressed on subsequent ticks. The chain prompt
+      // already informally announced the upcoming turn; firing its
+      // own "In 80m, turn …" 3-8 seconds later duplicates information
+      // the driver just heard (the 40-90m mixed-spacing cluster case).
       var afterIdx = nextIdx + 1;
       if (afterIdx < route.maneuvers.length) {
         var distBetween = distanceToManeuver(
@@ -405,7 +411,10 @@
         );
         if (distBetween <= NEXT_AFTER_NEXT_DISTANCE) {
           var afterText = route.maneuvers[afterIdx].instruction || "";
-          if (afterText) text += ", then " + afterText;
+          if (afterText) {
+            text += ", then " + afterText;
+            announcedSet[afterIdx + "-far"] = true;  // I11 chain extension
+          }
         }
       }
       announcedSet[nearKey] = true;

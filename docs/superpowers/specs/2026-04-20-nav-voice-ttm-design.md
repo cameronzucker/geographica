@@ -7,6 +7,13 @@
 
 ## Revision history
 
+- **v3 (2026-04-21)** — Post-field-drive fix. 2026-04-21 field test (Villa Rita → Costco detour at Cameron's actual drive) surfaced that mixed-spacing clusters (40-90 m between turns) produce too many callbacks under v2 because D1 suppression's same-tick gate misses this regime: at 80 m spacing and 10 m/s, far-tier fires at `T`, near-tier fires at `T+3s`, both for the same maneuver. Over a 3-4 maneuver cluster this accumulates to 8-10 callbacks instead of the intended ~4-6. Worse, each near-tier's chain ("…, then turn right onto Oak") pre-announces the next maneuver, whose own far-tier then fires 3-8 seconds later with the same instruction — redundant speech.
+  - **Fix (I11 chain extension):** when the chain appends within `NEXT_AFTER_NEXT_DISTANCE`, mark `announcedSet[(N+1) + "-far"] = true`. The chain's informal announcement is the de-facto far-tier for the next maneuver; the actual far-tier is suppressed. Only the near-tier for `N+1` remains. No information loss: every maneuver is still announced (once via chain, once via its own near-tier).
+  - **Result:** 4-maneuver 80m-spacing cluster drops from 6 callbacks (v2) to 4 callbacks (v3). 10-callback Villa Rita-style field-test scenarios drop to ~6.
+  - **Invariant update:** I1 qualified ("except when I11 chain-extension applies"). New I11 added.
+  - **Test added:** `TTM I11: chain-extension suppresses far-tier for chain-pre-announced maneuvers` in `frontend/tests/engine/navigation.test.mjs` uses new `fixtureMixedSpacingCluster` (4 maneuvers, 80 m spacing).
+  - **Rejected alternative:** more aggressive compound-prompt aggregation ("Turn left, then right, then left, then right") — the original brainstorm option C, rejected for information-overload risk. I11 preserves the "one concrete near-tier per maneuver" principle while removing the redundant far-tier. Different failure mode than C; accepted.
+
 - **v2 (2026-04-20)** — Post-adversarial rewrite. Six-round review (5× Claude subagents at distinct lenses; 1× Codex v0.118.0 cross-validation) surfaced **22 MUST-FIX + 32 SHOULD-FIX + 6 NICE-TO-HAVE** findings, committed as `928a7d1`. Major structural changes:
   - **Distance-semantics hardening** (R1 F1.1) — `distToNext` is now `Math.max(0, distanceToManeuver(...))` with an explicit past-maneuver early-return. Negative distances from U-turns, GPS jitter at maneuver boundaries, and dead-reckoning overshoot can no longer make every TTM threshold trivially true.
   - **Outlier-clamp in speed smoothing** (R3 F3.1) — `pushSpeedSample` now rejects samples whose delta from the prior median exceeds `MAX_SPEED_DELTA_PER_TICK = 15 m/s` (physically implausible). Catches correlated multi-tick GPS multipath errors that a median-of-3 cannot reject.
@@ -256,7 +263,15 @@ function checkVoice(snap) {
         var afterText = route.maneuvers[afterIdx].instruction || "";
         // R1 F1.6: only append the chain if the next-after-next has a
         // non-empty instruction. Never produce "..., then " with no content.
-        if (afterText) text += ", then " + afterText;
+        if (afterText) {
+          text += ", then " + afterText;
+          // I11 chain-extension: the chain just informally announced
+          // maneuver afterIdx. Mark its far-tier as announced so a later
+          // tick's "In 80m, turn …" doesn't duplicate what the driver
+          // just heard. Only the near-tier (at floor / 3s-TTM) remains
+          // for afterIdx, which is correct: it's the "execute now" prompt.
+          announcedSet[afterIdx + "-far"] = true;
+        }
       }
     }
 
@@ -389,7 +404,7 @@ window._geographicaNavEngineInternals = {
 
 Updated from v1 per scope-narrowing decisions. These hold by construction and are asserted by §6:
 
-- **I1.** Exactly 2 announcements per maneuver when the driver's entry-point is outside the far-tier threshold, the driver proceeds through at speed ≥ MIN_SPEED_FLOOR, *and* at least one post-start movement tick has occurred.
+- **I1.** Exactly 2 announcements per maneuver when the driver's entry-point is outside the far-tier threshold, the driver proceeds through at speed ≥ MIN_SPEED_FLOOR, and at least one post-start movement tick has occurred — **except when I11 chain-extension applies**, in which case only the near-tier fires (1 announcement).
 - **I2.** Exactly 1 announcement per maneuver when the driver's entry-point is already inside the near-tier condition (TTM ≤ near_s OR distToNext ≤ floor), *measured after the first post-start or post-reroute movement tick*.
 - **I3.** Zero announcements when the driver is stationary beyond the distance floor.
 - **I4.** Near-tier fires when the driver is stationary ≤ the distance floor from the maneuver, *measured after the first post-start movement tick*.
@@ -399,6 +414,7 @@ Updated from v1 per scope-narrowing decisions. These hold by construction and ar
 - **I8.** `muted = true` prevents `onVoiceCb` invocation but does NOT prevent `announcedSet` population. Un-muting does not replay crossed thresholds.
 - **I9.** Dead-reckoning does not call `checkVoice`. DR emits position-only updates.
 - **I10.** Past-maneuver early-return: when `distanceToManeuver(snap, nextIdx) ≤ 0`, `checkVoice` returns without firing or mutating `announcedSet`.
+- **I11.** Chain-extension suppression (added 2026-04-21 post-field-drive). When the near-tier fires for maneuver `N` with a chain appended to maneuver `N+1` (i.e., `N+1` is within `NEXT_AFTER_NEXT_DISTANCE = 500 m` of `N.begin_shape_index`), `announcedSet[(N+1) + "-far"]` is marked true. The next-after-next maneuver's far-tier is therefore suppressed on subsequent ticks, because the chain prompt ("Turn left onto Mulberry, **then turn right onto Oak**") already informally announced it. The near-tier for `N+1` still fires normally at the floor or 3s TTM. Net effect: in mixed-spacing clusters (40–90 m between turns, the regime that falls between D1's same-tick gate and fully-separated maneuvers), callback count drops ~40% with no information loss. Design motivation: the 2026-04-21 field-drive surfaced that a 4-maneuver cluster at 40–90 m spacing produced 10 callbacks in ~94 s at 10 m/s — 3 of which duplicated information the driver had just heard in a prior near-tier's chain.
 
 ## 6. Test strategy
 

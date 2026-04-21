@@ -902,3 +902,64 @@ test('TTM field-gate debug hook: captures callback context when enabled', async 
   assert.ok(typeof entry.ttm === 'number');
   assert.equal(typeof entry.onRerouteRetick, 'boolean');
 });
+
+test('TTM I11: chain-extension suppresses far-tier for chain-pre-announced maneuvers', async (t) => {
+  // Mixed-spacing cluster (80m between each turn) — the field-test regime
+  // where D1's same-tick gate misses. Under current TTM WITHOUT chain
+  // extension, 3 consecutive spoken maneuvers at 80m spacing produce
+  // far+near for M1 + far+near for M2 + far+near for M3 = 6 callbacks.
+  // Under I11 chain-extension, each near-tier's chain marks the next's
+  // far as announced: M1 far + M1 near(chain) + M2 near(chain) + M3 near
+  // = 4 callbacks.
+  const { fixtureMixedSpacingCluster } = await import('./test_runner.mjs');
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65000, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureMixedSpacingCluster());
+
+  // Drive through the cluster at 10 m/s. Each segment is 80m ~= 8 ticks at
+  // 10m/tick. Whole route ~320m = 32 ticks. Use 10m steps.
+  for (let k = 0; k < 35; k++) {
+    const lng = -111.65000 + k * 0.00011; // ~10m east per tick at lat 35.20
+    nav.updateGPS({ latitude: 35.20, longitude: lng, heading: 90, speed: 10 });
+  }
+
+  // Expected: exactly 4 callbacks with chain-extension.
+  //   CB 1: M1 far "In 300 feet, turn left" (fires at 30s TTM ≈ 300m — actually
+  //         depart is only 80m, so far fires immediately since TTM = 8s < 30s)
+  //   CB 2: M1 near+chain "Turn left onto First, then right onto Second"
+  //         (chain marks M2-far as announced → I11 suppression)
+  //   CB 3: M2 near+chain "Turn right onto Second, then left onto Third"
+  //         (M2 far suppressed by I11; chain marks M3-far → I11)
+  //   CB 4: M3 near "Turn left onto Third Avenue"
+  //         (M3 far suppressed by I11; no chain because afterIdx out of bounds)
+  assert.equal(voiceFires.length, 4,
+    `I11: expected 4 callbacks under chain-extension, got ${voiceFires.length}: ${JSON.stringify(voiceFires)}`);
+
+  // Only ONE "In N feet" far-tier prompt (for M1 — no prior chain suppresses it).
+  const fars = voiceFires.filter(t => /^In \d+/.test(t));
+  assert.equal(fars.length, 1,
+    `I11: exactly 1 far-tier prompt expected (M1); got ${fars.length}: ${JSON.stringify(fars)}`);
+
+  // Three near-tier prompts, all "Turn X onto Y" style.
+  const nears = voiceFires.filter(t => /^Turn /.test(t));
+  assert.equal(nears.length, 3,
+    `I11: exactly 3 near-tier prompts expected; got ${nears.length}`);
+
+  // M1 and M2 near-tier prompts must contain the ", then" chain (since
+  // both have a following maneuver within NEXT_AFTER_NEXT_DISTANCE).
+  const chained = voiceFires.filter(t => /, then /.test(t));
+  assert.equal(chained.length, 2,
+    `I11: exactly 2 near-tier prompts must contain the chain; got ${chained.length}`);
+
+  // M3's near-tier must NOT have a chain (no maneuver after it). Match M3's
+  // own standalone prompt, not the M2 chain that mentions Third Avenue via
+  // ", then Turn left onto Third Avenue".
+  const m3Own = voiceFires.find(t => t.startsWith('Turn left onto Third Avenue'));
+  assert.ok(m3Own, 'M3 standalone near-tier prompt must have fired');
+  assert.ok(!/, then /.test(m3Own),
+    'M3 standalone near-tier must not have chain (last maneuver)');
+});

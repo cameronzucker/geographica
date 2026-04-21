@@ -143,6 +143,63 @@ export function fixtureVillaRitaCluster() {
   };
 }
 
+// Fixture: 4-maneuver route with turns spaced 80m apart — the "mixed cluster"
+// regime the field-test found under-served by D1 suppression alone (40-90m
+// spacing puts far-tier and near-tier on DIFFERENT ticks, so D1's same-tick
+// gate misses). Exercises I11 chain-extension suppression: each near-tier
+// with a chain should pre-mark the next-after-next's far-tier as announced.
+// 80m at lat 35.20 ≈ 0.00088°.
+export function fixtureMixedSpacingCluster() {
+  return {
+    coords: [
+      [-111.65000, 35.20],  // depart start (index 0)
+      [-111.64912, 35.20],  // M1 boundary (80m east)
+      [-111.64824, 35.20],  // M2 boundary (80m east)
+      [-111.64736, 35.20],  // M3 boundary (80m east)
+      [-111.64648, 35.20],  // route end
+    ],
+    maneuvers: [
+      {
+        type: 1,
+        instruction: 'Head east',
+        verbal_transition_alert_instruction: 'In 300 feet, turn left',
+        verbal_pre_transition_instruction: 'Head east',
+        begin_shape_index: 0,
+        end_shape_index: 1,
+      },
+      {
+        type: 15,
+        instruction: 'Turn left onto First Street',
+        verbal_transition_alert_instruction: 'In 300 feet, turn left onto First Street',
+        verbal_pre_transition_instruction: 'Turn left onto First Street',
+        begin_shape_index: 1,
+        end_shape_index: 2,
+      },
+      {
+        type: 10,
+        instruction: 'Turn right onto Second Road',
+        verbal_transition_alert_instruction: 'In 300 feet, turn right onto Second Road',
+        verbal_pre_transition_instruction: 'Turn right onto Second Road',
+        begin_shape_index: 2,
+        end_shape_index: 3,
+      },
+      {
+        type: 4,
+        instruction: 'Turn left onto Third Avenue',
+        verbal_transition_alert_instruction: 'In 300 feet, turn left onto Third Avenue',
+        verbal_pre_transition_instruction: 'Turn left onto Third Avenue',
+        begin_shape_index: 3,
+        end_shape_index: 4,
+      },
+    ],
+    summary: { length: 0.32, time: 32 },
+    totalDistance: 320,
+    totalTime: 32,
+    costing: 'auto',
+    remainingWaypoints: [],
+  };
+}
+
 // Backward-compat alias: earlier plan tasks reference the old name.
 // Remove when all plan tasks have been converted.
 export const fixtureTwoManeuverRoute = fixtureRouteWithTwoTurns;
