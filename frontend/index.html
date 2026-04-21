@@ -110,18 +110,11 @@
       <div class="pref-group" id="pref-voice">
         <div class="pref-label">Nav voice</div>
 
-        <div class="pref-voice-buttons" id="pref-voice-buttons">
-          <button type="button" class="pref-voice-btn active" data-gender="default">Default</button>
-          <button type="button" class="pref-voice-btn"        data-gender="male">Male</button>
-          <button type="button" class="pref-voice-btn"        data-gender="female">Female</button>
-        </div>
+        <select id="pref-voice-select" class="pref-voice-select">
+          <!-- populated by voice-picker.js -->
+        </select>
 
-        <button type="button" class="pref-voice-advanced-toggle" id="pref-voice-advanced-toggle"
-                aria-expanded="false" aria-controls="pref-voice-advanced">▾ Pick a specific voice…</button>
-
-        <div class="pref-voice-advanced hidden" id="pref-voice-advanced">
-          <label for="pref-voice-select" class="sr-only">Specific voice</label>
-          <select id="pref-voice-select"></select>
+        <div id="pref-voice-options">
           <label class="checkbox-label">
             <input type="checkbox" id="pref-voice-allow-cloud">
             Include cloud voices (requires internet — may fail on mesh)

@@ -233,12 +233,14 @@
   }
 
   function bootstrapTimeoutFired() {
-    var detecting = window.document && window.document.getElementById('pref-voice-detecting');
-    var stub = window.document && window.document.getElementById('pref-voice-stub');
-    var buttons = window.document && window.document.getElementById('pref-voice-buttons');
+    var detecting = $('pref-voice-detecting');
+    var stub = $('pref-voice-stub');
+    var sel = $('pref-voice-select');
+    var opts = $('pref-voice-options');
     if (detecting) detecting.classList.add('hidden');
     if (stub) stub.classList.remove('hidden');
-    if (buttons) buttons.classList.add('hidden');
+    if (sel) sel.classList.add('hidden');
+    if (opts) opts.classList.add('hidden');
   }
 
   function formatPreviewPhrase() {
@@ -333,61 +335,77 @@
     hintEl.classList.add('hidden');
   }
 
-  function renderButtons() {
-    var pref = readPref();
-    var navActive = false;
-    try { navActive = window.document.body.classList.contains('nav-active'); } catch (e) {}
-    ['default', 'male', 'female'].forEach(function (g) {
-      var btn = window.document && window.document.querySelector('.pref-voice-btn[data-gender="' + g + '"]');
-      if (!btn) return;
-      btn.disabled = navActive;
-      if (navActive) btn.setAttribute('title', 'Voice can only be changed before or after navigation.');
-      else btn.removeAttribute('title');
-      var active = (pref.mode === 'default' && g === 'default') ||
-                   (pref.mode === 'gender' && pref.gender === g);
-      btn.classList.toggle('active', active);
-    });
-  }
-
   function renderDropdown() {
     var sel = $('pref-voice-select');
     if (!sel) return;
     var pref = readPref();
+    var navActive = false;
+    try { navActive = window.document.body.classList.contains('nav-active'); } catch (e) {}
     var candidates = candidateVoices(pref.allowCloudVoices);
-    while (sel.firstChild) sel.removeChild(sel.firstChild);
-    candidates.forEach(function (v) {
-      var opt = window.document.createElement('option');
-      opt.value = v.voiceURI;
-      opt.textContent = v.name + ' — ' + v.lang;
-      if (pref.mode === 'specific' && pref.voice && pref.voice.voiceURI === v.voiceURI) {
-        opt.selected = true;
-      }
-      sel.appendChild(opt);
-    });
-    var cb = $('pref-voice-allow-cloud');
-    if (cb) cb.checked = !!pref.allowCloudVoices;
-  }
 
-  function onVoiceButtonClick(e) {
-    var btn = e.currentTarget;
-    var gender = btn.getAttribute('data-gender');
-    if (btn.disabled) return;
-    if (gender === 'default') writePref({ mode: 'default' });
-    else writePref({ mode: 'gender', gender: gender });
-    armPreview();
-    rerenderPreferences();
-    speakPreviewDebounced();
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+
+    var autoGroup = window.document.createElement('optgroup');
+    autoGroup.label = 'Automatic';
+    [
+      { value: '__default',       text: 'Default (system voice)' },
+      { value: '__gender_male',   text: 'Any male voice' },
+      { value: '__gender_female', text: 'Any female voice' },
+    ].forEach(function (entry) {
+      var opt = window.document.createElement('option');
+      opt.value = entry.value;
+      opt.textContent = entry.text;
+      autoGroup.appendChild(opt);
+    });
+    sel.appendChild(autoGroup);
+
+    if (candidates.length > 0) {
+      var specGroup = window.document.createElement('optgroup');
+      specGroup.label = 'Specific voices';
+      candidates.forEach(function (v) {
+        var opt = window.document.createElement('option');
+        opt.value = v.voiceURI;
+        opt.textContent = v.name + ' — ' + v.lang;
+        specGroup.appendChild(opt);
+      });
+      sel.appendChild(specGroup);
+    }
+
+    var selectedValue = '__default';
+    if (pref.mode === 'gender' && pref.gender === 'male') selectedValue = '__gender_male';
+    else if (pref.mode === 'gender' && pref.gender === 'female') selectedValue = '__gender_female';
+    else if ((pref.mode === 'specific' || pref.mode === 'unavailable') && pref.voice) selectedValue = pref.voice.voiceURI;
+    sel.value = selectedValue;
+
+    sel.disabled = navActive;
+    if (navActive) sel.setAttribute('title', 'Voice can only be changed before or after navigation.');
+    else sel.removeAttribute('title');
+
+    var cb = $('pref-voice-allow-cloud');
+    if (cb) {
+      cb.checked = !!pref.allowCloudVoices;
+      cb.disabled = navActive;
+    }
   }
 
   function onDropdownChange(e) {
     var sel = e.currentTarget;
-    var candidates = candidateVoices(readPref().allowCloudVoices);
-    var picked = candidates.find(function (v) { return v.voiceURI === sel.value; });
-    if (!picked) return;
-    writePref({
-      mode: 'specific',
-      voice: { voiceURI: picked.voiceURI, name: picked.name, lang: picked.lang },
-    });
+    var val = sel.value;
+    if (val === '__default') {
+      writePref({ mode: 'default' });
+    } else if (val === '__gender_male') {
+      writePref({ mode: 'gender', gender: 'male' });
+    } else if (val === '__gender_female') {
+      writePref({ mode: 'gender', gender: 'female' });
+    } else {
+      var candidates = candidateVoices(readPref().allowCloudVoices);
+      var picked = candidates.find(function (v) { return v.voiceURI === val; });
+      if (!picked) return;
+      writePref({
+        mode: 'specific',
+        voice: { voiceURI: picked.voiceURI, name: picked.name, lang: picked.lang },
+      });
+    }
     armPreview();
     rerenderPreferences();
     speakPreviewDebounced();
@@ -398,30 +416,16 @@
     rerenderPreferences();
   }
 
-  function onAdvancedToggleClick(e) {
-    var toggle = e.currentTarget;
-    var panel = $('pref-voice-advanced');
-    if (!panel) return;
-    var expanded = toggle.getAttribute('aria-expanded') === 'true';
-    toggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
-    panel.classList.toggle('hidden', expanded);
-  }
-
   function wireDOMHandlers() {
     try {
-      var buttons = window.document.querySelectorAll('.pref-voice-btn');
-      buttons.forEach(function (btn) { btn.addEventListener('click', onVoiceButtonClick); });
       var sel = $('pref-voice-select');
       if (sel) sel.addEventListener('change', onDropdownChange);
       var cb = $('pref-voice-allow-cloud');
       if (cb) cb.addEventListener('change', onCloudCheckboxChange);
-      var toggle = $('pref-voice-advanced-toggle');
-      if (toggle) toggle.addEventListener('click', onAdvancedToggleClick);
     } catch (e) {}
   }
 
   function rerenderPreferences() {
-    renderButtons();
     renderDropdown();
     renderHint();
   }
@@ -450,7 +454,7 @@
       });
     } catch (e) {}
     try {
-      var mo = new window.MutationObserver(function () { renderButtons(); });
+      var mo = new window.MutationObserver(function () { renderDropdown(); });
       mo.observe(window.document.body, { attributes: true, attributeFilter: ['class'] });
     } catch (e) {}
     try {

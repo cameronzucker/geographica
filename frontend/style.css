@@ -1709,62 +1709,23 @@ body.nav-active #search-container.nav-search-open #search-icon {
   margin: 8px 0 6px;
 }
 
-.pref-voice-buttons {
-  display: flex;
-  gap: 6px;
-}
-
-.pref-voice-btn {
-  flex: 1;
-  padding: 8px 4px;
+.pref-voice-select {
+  width: 100%;
+  padding: 8px;
   background: #2d3138;
   border: 1px solid #3a3f48;
   border-radius: 4px;
   color: #e8e8e8;
-  font-size: 12px;
-  cursor: pointer;
+  font-size: 13px;
 }
 
-.pref-voice-btn:hover:not(:disabled) {
-  background: #363b44;
-}
-
-.pref-voice-btn.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  font-weight: 600;
-}
-
-.pref-voice-btn:disabled {
+.pref-voice-select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.pref-voice-advanced-toggle {
-  width: 100%;
-  padding: 6px 0;
-  background: transparent;
-  border: none;
-  color: var(--accent);
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-  margin-top: 6px;
-}
-
-.pref-voice-advanced {
+#pref-voice-options {
   margin-top: 8px;
-}
-
-.pref-voice-advanced select {
-  width: 100%;
-  padding: 6px;
-  background: #2d3138;
-  border: 1px solid #3a3f48;
-  border-radius: 4px;
-  color: #e8e8e8;
-  font-size: 12px;
 }
 
 .pref-voice-hint,
@@ -1777,7 +1738,7 @@ body.nav-active #search-container.nav-search-open #search-icon {
   margin-top: 8px;
 }
 
-/* Screen-reader-only utility (previously undefined in codebase; closes R4 F4.3). */
+/* Screen-reader-only utility. */
 .sr-only {
   position: absolute !important;
   width: 1px;

@@ -66,18 +66,16 @@ def test_voice_picker_script_in_index_html() -> None:
 def test_preferences_section_markup_present() -> None:
     src = read("frontend/index.html")
     assert 'id="pref-voice"' in src
-    for gender in ("default", "male", "female"):
-        assert re.search(rf'class="pref-voice-btn[^"]*"\s+data-gender="{gender}"', src)
-    for _id in (
-        "pref-voice-advanced-toggle",
-        "pref-voice-advanced",
-        "pref-voice-select",
-        "pref-voice-allow-cloud",
-        "pref-voice-hint",
-        "pref-voice-stub",
-        "pref-voice-detecting",
-    ):
-        assert f'id="{_id}"' in src, f'element id="{_id}" missing'
+    assert 'id="pref-voice-select"' in src
+    assert 'id="pref-voice-options"' in src
+    assert 'id="pref-voice-allow-cloud"' in src
+    assert 'id="pref-voice-hint"' in src
+    assert 'id="pref-voice-stub"' in src
+    assert 'id="pref-voice-detecting"' in src
+    # Ensure the legacy button widgets are GONE — this refactor collapses them
+    # into the single select above.
+    assert 'pref-voice-btn' not in src, 'legacy gender buttons should be removed'
+    assert 'pref-voice-advanced-toggle' not in src, 'legacy advanced disclosure should be removed'
 
 
 def test_units_radios_exact_count() -> None:
