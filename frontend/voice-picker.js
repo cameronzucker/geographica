@@ -27,6 +27,51 @@
     return null;
   }
 
+  function isDevOrigin() {
+    try {
+      var h = window.location.hostname;
+      return h === 'localhost' || h === '127.0.0.1' || /\.ts\.net$/.test(h);
+    } catch (e) { return false; }
+  }
+
+  function maybeApplyDebugFixture() {
+    if (!isDevOrigin()) return null;
+    try {
+      var p = new URLSearchParams(window.location.search);
+      var fx = p.get('voice-picker-mock');
+      if (!fx) return null;
+      var FIXTURES = {
+        empty: [],
+        'low-ios': [
+          { voiceURI: 'sam', name: 'Samantha', lang: 'en-US', localService: true },
+          { voiceURI: 'dan', name: 'Daniel', lang: 'en-GB', localService: true },
+        ],
+        'no-male': [
+          { voiceURI: 'sam', name: 'Samantha', lang: 'en-US', localService: true },
+          { voiceURI: 'karen', name: 'Karen', lang: 'en-AU', localService: true },
+        ],
+        'no-female': [
+          { voiceURI: 'alex', name: 'Alex', lang: 'en-US', localService: true },
+          { voiceURI: 'fred', name: 'Fred', lang: 'en-US', localService: true },
+        ],
+        'unavailable-specific': 'UNAVAILABLE_STATE',
+      };
+      var data = FIXTURES[fx];
+      if (data === undefined) return null;
+      if (data === 'UNAVAILABLE_STATE') {
+        writePref({
+          mode: 'specific',
+          voice: { voiceURI: 'synthetic-gone', name: 'Synthetic Gone Voice', lang: 'en-US' },
+          storedGenderHint: 'female',
+        });
+        return null;
+      }
+      window.speechSynthesis.getVoices = function () { return data; };
+      console.warn('[voice-picker] DEV MODE: getVoices() overridden with fixture "' + fx + '"');
+      return data;
+    } catch (e) { return null; }
+  }
+
   var voiceListFingerprint = '';
   var voiceListCallbacks = [];
   var bootstrapPrimedOnce = false;
@@ -382,6 +427,7 @@
   }
 
   function initBootstrap() {
+    maybeApplyDebugFixture();
     notifyVoiceListChanged();
     try {
       window.speechSynthesis.addEventListener('voiceschanged', notifyVoiceListChanged);
