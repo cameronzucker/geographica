@@ -1214,7 +1214,9 @@
             body.id = 'card-' + src.id + '-body';
             card.appendChild(body);
 
-            // Progress elements (hidden)
+            // Progress elements (hidden) — pre-existing imagery-download pipeline scaffold.
+            // Its id "card-<id>-progress" must NOT be renamed: other JS paths query it.
+            // The NOAA refresh progress card uses "card-<id>-noaa-refresh-card" instead.
             var progressDiv = document.createElement('div');
             progressDiv.id = 'card-' + src.id + '-progress';
             progressDiv.style.display = 'none';
@@ -1562,7 +1564,7 @@
                     // still going — skip the confirm dialog; jump straight to
                     // the in-progress UI + polling.
                     _showProgressCard(body, src);
-                    _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), state, body, src);
+                    _updateProgressCard(document.getElementById('card-' + src.id + '-noaa-refresh-card'), state, body, src);
                     _startPolling(body, src);
                 } else if (state.status === 'done') {
                     // Fix 7: only render the completion banner if the refresh finished
@@ -1616,7 +1618,7 @@
                     // Fix 3: if a progress card or completion banner already owns the top
                     // of the NOAA card, don't let the catalog fetch's banner-visibility
                     // logic overwrite it with the empty-state banner.
-                    var progressCard = document.getElementById('card-' + targetSrc.id + '-progress');
+                    var progressCard = document.getElementById('card-' + targetSrc.id + '-noaa-refresh-card');
                     var completionBanner = document.getElementById('card-' + targetSrc.id + '-completion');
                     if (!progressCard && !completionBanner) {
                         _updateRefreshBannerVisibility(slugs.length);
@@ -1624,7 +1626,7 @@
                     return slugs.length;
                 })
                 .catch(function() {
-                    var progressCard = document.getElementById('card-' + targetSrc.id + '-progress');
+                    var progressCard = document.getElementById('card-' + targetSrc.id + '-noaa-refresh-card');
                     var completionBanner = document.getElementById('card-' + targetSrc.id + '-completion');
                     if (!progressCard && !completionBanner) {
                         _updateRefreshBannerVisibility(0);
@@ -1985,12 +1987,12 @@
             if (inlineRefresh) inlineRefresh.style.display = 'none';
 
             // Remove any existing progress card before inserting a fresh one
-            var existing = document.getElementById('card-' + targetSrc.id + '-progress');
+            var existing = document.getElementById('card-' + targetSrc.id + '-noaa-refresh-card');
             if (existing) existing.parentNode.removeChild(existing);
 
             var card = document.createElement('div');
             card.className = 'noaa-progress-card';
-            card.id = 'card-' + targetSrc.id + '-progress';
+            card.id = 'card-' + targetSrc.id + '-noaa-refresh-card';
             card.innerHTML =
                 '<div class="noaa-progress-header">Refreshing NOAA catalog</div>' +
                 '<div class="noaa-progress-bar-wrap">' +
@@ -2006,7 +2008,7 @@
                     '<div><span class="label">Phase:</span> <span class="noaa-progress-phase">starting</span></div>' +
                 '</div>' +
                 '<div class="noaa-progress-btn-row">' +
-                    '<button type="button" class="btn-secondary" id="card-' + targetSrc.id + '-progress-cancel">Cancel</button>' +
+                    '<button type="button" class="btn-secondary" id="card-' + targetSrc.id + '-noaa-refresh-cancel">Cancel</button>' +
                 '</div>';
 
             // Insert the card at the top of the body, before the tabs section or as the first child
@@ -2014,7 +2016,7 @@
             targetBody.insertBefore(card, firstChild);
 
             // Wire cancel button
-            var cancelBtn = document.getElementById('card-' + targetSrc.id + '-progress-cancel');
+            var cancelBtn = document.getElementById('card-' + targetSrc.id + '-noaa-refresh-cancel');
             if (cancelBtn) {
                 cancelBtn.addEventListener('click', function() {
                     cancelBtn.disabled = true;
@@ -2111,7 +2113,7 @@
                     .then(function() {
                         // Transition back to idle UI
                         _stopPolling(body);
-                        var progressCard = document.getElementById('card-' + src.id + '-progress');
+                        var progressCard = document.getElementById('card-' + src.id + '-noaa-refresh-card');
                         if (progressCard) progressCard.remove();
                         var completionBanner = document.getElementById('card-' + src.id + '-completion');
                         if (completionBanner) completionBanner.remove();
@@ -2158,7 +2160,7 @@
 
         // Full completion summary — replaces the in-progress card with a status-matched banner.
         function _renderCompletionSummary(targetBody, targetSrc, state) {
-            var existing = document.getElementById('card-' + targetSrc.id + '-progress');
+            var existing = document.getElementById('card-' + targetSrc.id + '-noaa-refresh-card');
             if (existing) existing.remove();
 
             var result      = state.result || {};
@@ -2272,7 +2274,7 @@
                             _stopPolling(targetBody);
                             return;
                         }
-                        var card = document.getElementById('card-' + targetSrc.id + '-progress');
+                        var card = document.getElementById('card-' + targetSrc.id + '-noaa-refresh-card');
                         if (state.status === 'running') {
                             if (!card) {
                                 // Card was removed (e.g. panel collapse/expand); re-show it
@@ -2330,7 +2332,7 @@
                         _showProgressCard(body, src);
                         // Seed the card with whatever the 202 body provides
                         if (r.data && r.data.progress) {
-                            _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), r.data.progress, body, src);
+                            _updateProgressCard(document.getElementById('card-' + src.id + '-noaa-refresh-card'), r.data.progress, body, src);
                         }
                         _startPolling(body, src);
                     } else if (r.status === 409) {
@@ -2339,7 +2341,7 @@
                         } else if (r.data && r.data.progress) {
                             // locked — show progress card from existing state
                             _showProgressCard(body, src);
-                            _updateProgressCard(document.getElementById('card-' + src.id + '-progress'), r.data.progress, body, src);
+                            _updateProgressCard(document.getElementById('card-' + src.id + '-noaa-refresh-card'), r.data.progress, body, src);
                             _startPolling(body, src);
                         } else {
                             alert('Refresh already in progress (409). Check the progress bar.');
