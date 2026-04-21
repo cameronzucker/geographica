@@ -66,13 +66,13 @@ test('applyReroute clears announcedSet and speedSamples', async (t) => {
   assert.deepEqual(i._getSpeedSamples(), [],
     'applyReroute must clear speedSamples alongside announcedSet');
 
-  // After applyReroute, announcedSet and lastAnnouncementTime must be fully reset:
+  // After applyReroute, announcedSet and speedSamples must be fully reset:
   // driving the same approach as before must fire the announcement again.
   const beforeNewFires = voiceFires.length;
   nav.updateGPS({ latitude: 35.20, longitude: -111.6405, heading: 90, speed: 10 });
   assert.ok(
     voiceFires.length > beforeNewFires,
-    'announcement should re-fire on new route; was suppressed — announcedSet/lastAnnouncementTime not cleared'
+    'announcement should re-fire on new route; was suppressed — announcedSet/speedSamples not cleared'
   );
 });
 

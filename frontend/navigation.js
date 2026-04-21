@@ -397,7 +397,7 @@
 
     if (nearWouldFire) {
       var text = m.verbal_pre_transition_instruction || m.instruction || "";
-      // Next-after-next chain — preserved from band-aid behavior.
+      // Next-after-next chain — preserved from prior behavior.
       var afterIdx = nextIdx + 1;
       if (afterIdx < route.maneuvers.length) {
         var distBetween = distanceToManeuver(
@@ -418,6 +418,9 @@
             tier: 'near',
             distToNext: distToNext,
             ttm: ttm,
+            // Always false: re-tick suppression early-returns at the top of
+            // checkVoice before reaching this branch. If true ever appears in
+            // a field-test log, suppressVoiceOnNextTick semantics broke.
             onRerouteRetick: false
           });
         }
@@ -437,6 +440,9 @@
             tier: 'far',
             distToNext: distToNext,
             ttm: ttm,
+            // Always false: re-tick suppression early-returns at the top of
+            // checkVoice before reaching this branch. If true ever appears in
+            // a field-test log, suppressVoiceOnNextTick semantics broke.
             onRerouteRetick: false
           });
         }
