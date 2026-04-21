@@ -190,34 +190,6 @@ test('reroute timeout clears lastRerouteTime for immediate re-reroute', { timeou
   );
 });
 
-test('B1 band-aid: voice tiers capped at 2 per costing (remove when TTM ships)', async () => {
-  const { window: win } = await loadEngine();
-  const internals = win._geographicaNavEngineInternals;
-  assert.ok(internals, 'engine must expose _geographicaNavEngineInternals test hook');
-
-  // The band-aid's entire point: drop from 3 tiers to 2. If the TTM
-  // redesign lands and replaces the distance-threshold model entirely,
-  // this test goes away with it. If someone instead re-adds a medium
-  // tier without the redesign, this test fails and forces a conversation.
-  const t = internals.VOICE_THRESHOLDS;
-  assert.equal(t.auto.length, 2, 'auto costing: expected [far, near] 2-tier shape');
-  assert.equal(t.bicycle.length, 2, 'bicycle costing: expected [far, near] 2-tier shape');
-  assert.equal(t.pedestrian.length, 2, 'pedestrian costing: expected [far, near] 2-tier shape');
-
-  // Floor guards: the band-aid's "far" tier exists so the driver has
-  // meaningful advance notice. Tuning below ~300m for auto would leave
-  // <15s of notice at highway speed, making the tier useless.
-  assert.ok(t.auto[0] >= 300, 'auto far tier: must retain >=300m for advance notice');
-  // "Near" is the execution tier — must stay >= 20m so the driver has
-  // physical time to complete the turn after hearing it.
-  assert.ok(t.auto[1] >= 20, 'auto near tier: must retain >=20m for execution');
-
-  // Tier ordering must be descending (far > near).
-  assert.ok(t.auto[0] > t.auto[1]);
-  assert.ok(t.bicycle[0] > t.bicycle[1]);
-  assert.ok(t.pedestrian[0] > t.pedestrian[1]);
-});
-
 test('TTM constants have expected shape and per-costing keys', async () => {
   const { window: win } = await loadEngine();
   const i = win._geographicaNavEngineInternals;
