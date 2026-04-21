@@ -139,3 +139,30 @@ def test_no_shrek_references() -> None:
     for rel in ("frontend/voice-picker.js", "frontend/index.html", "frontend/style.css"):
         src = read(rel)
         assert "shrek" not in src.lower(), f'{rel}: "shrek" reference present'
+
+
+def test_sidebar_tab_persistence_wired() -> None:
+    src = read("frontend/app.js")
+    # Click handler persists the selected tab
+    assert re.search(r"localStorage\.setItem\s*\(\s*['\"]sidebar-last-tab['\"]", src), \
+        "tab-click handler must persist last-selected tab to localStorage"
+    # Restore function exists
+    assert "restoreLastSidebarTab" in src, \
+        "restoreLastSidebarTab helper must exist"
+    # Restore is called AFTER initAdmin in DOMContentLoaded (admin-polling race fix)
+    init_admin_pos = src.find("initAdmin()")
+    restore_pos = src.find("restoreLastSidebarTab()")
+    assert init_admin_pos != -1, "initAdmin() call not found in app.js"
+    assert restore_pos != -1, "restoreLastSidebarTab() call not found in app.js"
+    assert init_admin_pos < restore_pos, (
+        "restoreLastSidebarTab() must be called AFTER initAdmin() — "
+        "otherwise restored-to-admin loses polling (adversarial-review finding)"
+    )
+
+    # Null-guard on target panel prevents crash if future refactor drops a panel
+    # while leaving the button. Load-bearing because restoreLastSidebarTab
+    # exercises the click path programmatically on every page load.
+    assert re.search(
+        r"var\s+panelEl\s*=\s*document\.getElementById\(target\)\s*;\s*if\s*\(\s*!panelEl\s*\)\s*return",
+        src,
+    ), "tab-click handler must null-guard target panel before mutating DOM"

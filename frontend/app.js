@@ -1152,10 +1152,13 @@
     tabs.forEach(function (tab) {
       tab.addEventListener('click', function () {
         var target = this.dataset.panel;
+        var panelEl = document.getElementById(target);
+        if (!panelEl) return;  // Target panel missing — skip switch (defensive)
         tabs.forEach(function (t) { t.classList.remove('active'); });
         panels.forEach(function (p) { p.classList.remove('active'); });
         this.classList.add('active');
-        document.getElementById(target).classList.add('active');
+        panelEl.classList.add('active');
+        try { localStorage.setItem('sidebar-last-tab', target); } catch (e) {}
       });
     });
 
@@ -4097,6 +4100,23 @@
   //  BOOTSTRAP
   // =====================================================================
 
+  var VALID_SIDEBAR_PANELS = ['layers-panel', 'route-panel', 'import-panel', 'admin-panel'];
+
+  function restoreLastSidebarTab() {
+    var saved;
+    try { saved = localStorage.getItem('sidebar-last-tab'); } catch (e) { return; }
+    if (!saved || VALID_SIDEBAR_PANELS.indexOf(saved) === -1) return;
+    // Whitelist prevents selector injection if an attacker writes to
+    // localStorage via devtools — though that's a same-origin trust assumption.
+    var targetTab = Array.from(document.querySelectorAll('.tab-btn'))
+      .find(function (t) { return t.dataset.panel === saved; });
+    if (targetTab && !targetTab.classList.contains('active')) {
+      // Use the real click path — preserves admin-polling start/stop semantics
+      // wired in initAdmin(). Must be called AFTER initAdmin() in DOMContentLoaded.
+      targetTab.click();
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     initMap();
     initSidebarTabs();
@@ -4106,6 +4126,7 @@
     initImport();
     initGPS();
     initAdmin();
+    restoreLastSidebarTab();
     if (window.VoicePicker && typeof window.VoicePicker.init === 'function') {
       window.VoicePicker.init();
     }
