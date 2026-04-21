@@ -891,3 +891,17 @@ test('TTM reroute timeout: stale timeout does not clobber a just-applied reroute
   assert.equal(seqs.length, 2,
     'engine must still fire a new reroute after a stale timeout');
 });
+
+test('TTM internals hook: band-aid keys are removed', async () => {
+  const { window: win } = await loadEngine();
+  const i = win._geographicaNavEngineInternals;
+  assert.equal(i.VOICE_THRESHOLDS, undefined,
+    'VOICE_THRESHOLDS must be removed from internals hook');
+  assert.equal(i.VOICE_COOLDOWN, undefined,
+    'VOICE_COOLDOWN must be removed from internals hook');
+  assert.equal(i.VOICE_SPEED_GATE, undefined,
+    'VOICE_SPEED_GATE must be removed from internals hook');
+  // TTM keys remain.
+  assert.ok(i.VOICE_TTM, 'VOICE_TTM must remain');
+  assert.ok(i.VOICE_DISTANCE_FLOOR, 'VOICE_DISTANCE_FLOOR must remain');
+});

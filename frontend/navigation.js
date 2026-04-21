@@ -38,33 +38,7 @@
   var SNAP_HEADING_RADIUS = 10;       // meters — heading disambiguation zone
   var SPEED_HISTORY_WINDOW = 60;      // seconds for rolling speed ratio
 
-  // Voice thresholds per costing. Each entry is [far, near] in meters.
-  //
-  // BAND-AID (2026-04-20, Cameron decision post field test, juniper):
-  // Previous tiering was [far, medium, near] = 3 announcements per
-  // maneuver. In urban/surface-street driving with several close-together
-  // turns (field-tested: Villa Rita → North Phoenix Costco with a
-  // westerly detour), that produced up to 9 prompts in ~200 ft of
-  // driving — dangerous, not helpful. Dropping the medium tier and
-  // pulling the far tier inward (800m → 400m for auto; urban driving
-  // rarely has 800m of advance notice anyway) caps the rate at 2
-  // announcements per maneuver. Explicitly a stopgap: the full
-  // time-to-maneuver (TTM) redesign is the real fix, queued in the
-  // next-session START.md resume block.
-  //
-  // When the TTM redesign lands, remove this band-aid entirely
-  // (VOICE_THRESHOLDS, VOICE_COOLDOWN, VOICE_SPEED_GATE, and
-  // VOICE_NEAR_ANNOUNCE_DISTANCE all likely go away together).
-  var VOICE_THRESHOLDS = {
-    auto:       [400, 50],
-    bicycle:    [200, 30],
-    pedestrian: [75,  20]
-  };
-
   var NEXT_AFTER_NEXT_DISTANCE = 500; // meters
-  var VOICE_COOLDOWN = 5000;       // ms minimum between announcements
-  var VOICE_SPEED_GATE = 2;        // m/s -- suppress below this
-  var VOICE_NEAR_ANNOUNCE_DISTANCE = 50; // meters -- always announce within this distance
 
   // ─── TTM (time-to-maneuver) voice model — spec v2 ──────────────────────
   // Each VOICE_TTM entry is [far_seconds, near_seconds]. Announcement timing
@@ -943,15 +917,10 @@
     onVoice: function (cb) { onVoiceCb = cb; }
   };
 
-  // Test hook: expose tuning constants so tests can assert on the
-  // band-aid threshold shape without re-parsing the source. No-op in
-  // production (only read by unit tests). Remove when the TTM redesign
-  // lands and replaces the threshold-distance model entirely.
+  // Test hook: expose tuning constants + minimal state inspectors so tests
+  // can assert on behavior without re-parsing the source. No-op in production
+  // (only read by unit tests).
   window._geographicaNavEngineInternals = {
-    VOICE_THRESHOLDS: VOICE_THRESHOLDS,
-    VOICE_COOLDOWN: VOICE_COOLDOWN,
-    VOICE_SPEED_GATE: VOICE_SPEED_GATE,
-    // TTM constants (spec v2) — old constants above are removed in T10:
     VOICE_TTM: VOICE_TTM,
     VOICE_DISTANCE_FLOOR: VOICE_DISTANCE_FLOOR,
     MIN_SPEED_FLOOR: MIN_SPEED_FLOOR,
