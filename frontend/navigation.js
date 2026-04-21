@@ -187,6 +187,7 @@
 
   // Voice
   var muted = false;
+  var suppressVoiceOnNextTick = false;
   var announcedSet = {};      // key: "maneuverIdx-threshold" -> true
   var lastAnnouncementTime = 0;
 
@@ -402,6 +403,10 @@
    * D1 suppression: when near fires, far is also marked to skip duplicates.
    */
   function checkVoice(snap) {
+    if (suppressVoiceOnNextTick) {
+      suppressVoiceOnNextTick = false;
+      return;
+    }
     if (!route || !route.maneuvers) return;
 
     var nextIdx = currentManeuverIdx + 1;
@@ -704,8 +709,12 @@
     lastRerouteTime = now;
     state = "rerouting";
     rerouteSeq++;
+    var scheduledSeq = rerouteSeq; // R2 F2.1: capture at scheduling time.
     rerouteTimeoutId = setTimeout(function () {
       rerouteTimeoutId = null;
+      // Only reset if the seq we captured still matches — prevents a late
+      // timeout from clobbering a just-applied reroute's state.
+      if (scheduledSeq !== rerouteSeq) return;
       if (state === "rerouting") {
         state = "navigating";
         offRouteHistory = [];
@@ -792,6 +801,7 @@
     drActive = false;
     announcedSet = {};
     lastAnnouncementTime = 0;
+    suppressVoiceOnNextTick = false;
     speedSamples = [];
     speedHistory = [];
     segmentDistances = null;
@@ -881,6 +891,13 @@
       if (seq !== rerouteSeq) return;
       if (rerouteTimeoutId) { clearTimeout(rerouteTimeoutId); rerouteTimeoutId = null; }
 
+      // Advance rerouteSeq: any in-flight timeout that captured the old seq
+      // will now see scheduledSeq !== rerouteSeq and bail out harmlessly.
+      // Also clear lastRerouteTime so the next legitimate off-route event
+      // is not blocked by the cooldown that was set when the reroute fired.
+      rerouteSeq++;
+      lastRerouteTime = 0;
+
       route = routeData;
       lastIndex = 0;
       currentManeuverIdx = 0;
@@ -896,9 +913,17 @@
 
       state = "navigating";
 
-      if (lastGPS) {
-        tick(lastGPS);
-      }
+      // suppressVoiceOnNextTick: the re-tick below fires checkVoice which
+      // would announce from a 1-sample warmup window at the worst moment.
+      // Skip voice on this synthetic tick; the next real GPS update fires
+      // normally. (R1 F1.3)
+      suppressVoiceOnNextTick = true;
+      if (lastGPS) tick(lastGPS);
+
+      // Clear speedSamples AFTER the re-tick so the single warmup sample
+      // pushed by tick() does not persist into the new route's smoothing
+      // window. On the first real GPS update the window starts fresh.
+      speedSamples = [];
     },
 
     /** Toggle voice announcements. */

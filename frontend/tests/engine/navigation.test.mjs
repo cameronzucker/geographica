@@ -770,3 +770,124 @@ test('TTM I9: dead-reckoning does not fire voice announcements', { timeout: 10_0
   assert.equal(voiceFires.length, baselineCount,
     'I9: DR must not fire voice announcements');
 });
+
+test('TTM reroute success: speedSamples cleared', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
+  const i = win._geographicaNavEngineInternals;
+
+  nav.start(fixtureRouteWithTwoTurns());
+  // Populate speed window.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.649, heading: 90, speed: 10 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.648, heading: 90, speed: 11 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.647, heading: 90, speed: 12 });
+  assert.equal(i._getSpeedSamples().length, 3);
+
+  // Force reroute.
+  let seq = null;
+  nav.onReroute((info) => { seq = info._seq; });
+  [[35.25, -111.55], [35.26, -111.54], [35.27, -111.53],
+   [35.28, -111.52], [35.29, -111.51]].forEach(([lat, lon]) => {
+    nav.updateGPS({ latitude: lat, longitude: lon, heading: 90, speed: 10 });
+  });
+  nav.applyReroute(fixtureRouteWithTwoTurns(), seq);
+
+  assert.deepEqual(i._getSpeedSamples(), [],
+    'applyReroute success path must clear speedSamples');
+});
+
+test('TTM reroute stale-drop: speedSamples and announcedSet preserved', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64030, heading: 90, speed: 10 };
+  const i = win._geographicaNavEngineInternals;
+
+  nav.onVoice(() => {}); // no-op sink
+  nav.start(fixtureRouteWithTwoTurns());
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64025, heading: 90, speed: 10 });
+
+  const keysBefore = i._getAnnouncedKeys();
+  const samplesBefore = i._getSpeedSamples();
+  assert.ok(keysBefore.length > 0, 'announcedSet must be populated before stale-drop');
+  assert.ok(samplesBefore.length > 0, 'speedSamples must be populated before stale-drop');
+
+  // Apply reroute with a mismatched seq (999 is not the current rerouteSeq).
+  nav.applyReroute(fixtureRouteWithTwoTurns(), 999);
+
+  assert.deepEqual(i._getAnnouncedKeys(), keysBefore,
+    'stale-drop: announcedSet must be preserved');
+  assert.deepEqual(i._getSpeedSamples(), samplesBefore,
+    'stale-drop: speedSamples must be preserved');
+});
+
+test('TTM reroute re-tick: no voice fires on the immediate re-tick inside applyReroute', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  // Start 20m west of maneuver 1, inside the 50m floor.
+  // Seed GPS so applyReroute's re-tick has a cached lastGPS.
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64020, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureRouteWithTwoTurns());
+
+  // Move to maneuver 1 area to build up announced state.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64018, heading: 90, speed: 10 });
+
+  // Trigger reroute.
+  let seq = null;
+  nav.onReroute((info) => { seq = info._seq; });
+  [[35.25, -111.55], [35.26, -111.54], [35.27, -111.53],
+   [35.28, -111.52], [35.29, -111.51]].forEach(([lat, lon]) => {
+    nav.updateGPS({ latitude: lat, longitude: lon, heading: 90, speed: 10 });
+  });
+  const beforeApply = voiceFires.length;
+
+  // Apply reroute — its internal re-tick(lastGPS) MUST NOT fire voice
+  // even though the driver may be within near-tier of maneuver 1 in the new route.
+  nav.applyReroute(fixtureRouteWithTwoTurns(), seq);
+  assert.equal(voiceFires.length, beforeApply,
+    're-tick inside applyReroute must not fire voice');
+
+  // On the NEXT real GPS tick, voice fires normally if conditions met.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64017, heading: 90, speed: 10 });
+  assert.ok(voiceFires.length > beforeApply,
+    'voice must fire on the first post-reroute real GPS tick');
+});
+
+test('TTM reroute timeout: stale timeout does not clobber a just-applied reroute', { timeout: 20_000 }, async (t) => {
+  // R2 F2.1: the timeout closure must capture scheduledSeq and only reset if
+  // rerouteSeq still matches — so a late timeout from a prior reroute cannot
+  // clobber state set by a subsequent applyReroute.
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
+
+  const seqs = [];
+  nav.onReroute((info) => { seqs.push(info._seq); });
+  nav.start(fixtureRouteWithTwoTurns());
+
+  // Fire a first reroute (this schedules a 10s timeout with some seq=1).
+  [[35.25, -111.55], [35.26, -111.54], [35.27, -111.53],
+   [35.28, -111.52], [35.29, -111.51]].forEach(([lat, lon]) => {
+    nav.updateGPS({ latitude: lat, longitude: lon, heading: 90, speed: 10 });
+  });
+
+  // Apply it immediately — state returns to "navigating", rerouteSeq advances.
+  nav.applyReroute(fixtureRouteWithTwoTurns(), seqs[0]);
+
+  // Wait past the initial 10s timeout. If the closure doesn't capture
+  // scheduledSeq, the timeout callback would reset state (clear lastRerouteTime,
+  // wipe offRouteHistory) even though the reroute already succeeded.
+  await new Promise(r => setTimeout(r, 11_000));
+
+  // Assertion: a subsequent off-route still triggers a fresh reroute (engine
+  // didn't latch into a broken state from the stale timeout).
+  [[35.25, -111.55], [35.26, -111.54], [35.27, -111.53],
+   [35.28, -111.52], [35.29, -111.51]].forEach(([lat, lon]) => {
+    nav.updateGPS({ latitude: lat, longitude: lon, heading: 90, speed: 10 });
+  });
+  assert.equal(seqs.length, 2,
+    'engine must still fire a new reroute after a stale timeout');
+});
