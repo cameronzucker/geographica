@@ -190,6 +190,31 @@ systemctl enable geographica-keyring
 systemctl start geographica-keyring
 echo "  Keyring agent installed and started"
 
+echo "[N/M] Pre-building pipeline image..."
+# The 'pipeline' service in docker-compose.yml is profile-gated (runs on
+# demand, not part of 'docker compose up -d'). Without a pre-build here,
+# the first /admin/pipeline/start request from the admin panel hits a 422
+# telling the user to build the image manually. The setup wizard at
+# setup/main.py:954 also auto-builds, but users who skip the wizard
+# (common: SSH-only workflows) never hit that path. Do it here so the
+# image exists regardless of which path the user takes.
+#
+# Targeted on the 'pipeline' service explicitly: this is NOT a blanket
+# '--profile pipeline build' (which would also rebuild search/gps/stt
+# because they have build: sections too).
+#
+# Runs as root from within bootstrap.sh; the Docker daemon is up from
+# [4/6] so this works even though the user isn't in the docker group yet.
+# Idempotent: no-op when the image already exists and the Dockerfile +
+# context haven't changed.
+if (cd "$REPO_DIR" && docker compose build pipeline); then
+    echo "  Pipeline image ready"
+else
+    echo "  WARNING: Pipeline pre-build failed. The stack will still start,"
+    echo "  but the first admin-panel download will fail with a 422 until you run:"
+    echo "    cd \"$REPO_DIR\" && docker compose build pipeline"
+fi
+
 echo ""
 echo "============================================"
 echo "Bootstrap complete."

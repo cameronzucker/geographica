@@ -1406,13 +1406,26 @@ async def pipeline_start(body: PipelineStartBody):
                 except json.JSONDecodeError:
                     pass
 
-            # Check pipeline image exists
+            # Check pipeline image exists. Returns a structured 422 so the frontend
+            # can render an actionable affordance instead of parsing a hint string.
+            # The image is built either by the setup wizard (setup/main.py:954) on
+            # first install or by bootstrap.sh for manual installs. It can go
+            # missing later if Docker prunes unused images; the recovery is to
+            # re-run the build command, documented in `hint`.
             try:
                 client.images.get("geographica-pipeline")
             except Exception:
                 raise HTTPException(
                     status_code=422,
-                    detail="Pipeline image not built. Run 'docker compose build pipeline' first.",
+                    detail={
+                        "status": "pipeline_image_missing",
+                        "image": "geographica-pipeline",
+                        "message": "Pipeline image not built.",
+                        "hint": (
+                            "Run 'docker compose --profile pipeline build' on the "
+                            "host once, or re-run the setup wizard."
+                        ),
+                    },
                 )
 
             # Build command based on pipeline type
