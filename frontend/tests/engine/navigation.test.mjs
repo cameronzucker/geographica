@@ -880,3 +880,25 @@ test('TTM internals hook: band-aid keys are removed', async () => {
   assert.ok(i.VOICE_TTM, 'VOICE_TTM must remain');
   assert.ok(i.VOICE_DISTANCE_FLOOR, 'VOICE_DISTANCE_FLOOR must remain');
 });
+
+test('TTM field-gate debug hook: captures callback context when enabled', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaTTMDebug = true;
+  win._geographicaTTMDebugLog = [];
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64030, heading: 90, speed: 10 };
+
+  nav.onVoice(() => {});
+  nav.start(fixtureRouteWithTwoTurns());
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64025, heading: 90, speed: 10 });
+
+  const log = win._geographicaTTMDebugLog;
+  assert.ok(log.length >= 1, 'debug log must capture at least one entry on near-tier fire');
+  const entry = log[0];
+  assert.ok(typeof entry.timestamp === 'number');
+  assert.ok(typeof entry.maneuverIdx === 'number');
+  assert.ok(entry.tier === 'near' || entry.tier === 'far');
+  assert.ok(typeof entry.distToNext === 'number');
+  assert.ok(typeof entry.ttm === 'number');
+  assert.equal(typeof entry.onRerouteRetick, 'boolean');
+});

@@ -410,14 +410,38 @@
       }
       announcedSet[nearKey] = true;
       announcedSet[farKey] = true;  // D1 suppression
-      if (!muted && text && onVoiceCb) onVoiceCb(text);
+      if (!muted && text && onVoiceCb) {
+        if (typeof window !== 'undefined' && window._geographicaTTMDebug) {
+          (window._geographicaTTMDebugLog = window._geographicaTTMDebugLog || []).push({
+            timestamp: Date.now(),
+            maneuverIdx: nextIdx,
+            tier: 'near',
+            distToNext: distToNext,
+            ttm: ttm,
+            onRerouteRetick: false
+          });
+        }
+        onVoiceCb(text);
+      }
       return;
     }
 
     if (farWouldFire) {
       var farText = m.verbal_transition_alert_instruction || m.instruction || "";
       announcedSet[farKey] = true;
-      if (!muted && farText && onVoiceCb) onVoiceCb(farText);
+      if (!muted && farText && onVoiceCb) {
+        if (typeof window !== 'undefined' && window._geographicaTTMDebug) {
+          (window._geographicaTTMDebugLog = window._geographicaTTMDebugLog || []).push({
+            timestamp: Date.now(),
+            maneuverIdx: nextIdx,
+            tier: 'far',
+            distToNext: distToNext,
+            ttm: ttm,
+            onRerouteRetick: false
+          });
+        }
+        onVoiceCb(farText);
+      }
     }
   }
 
