@@ -2174,10 +2174,26 @@
 
             if (resultStatus === 'ok') {
                 var count = (result.log_entry && result.log_entry.state_count) || 0;
-                banner.innerHTML =
-                    '<div class="noaa-completion-msg">Catalog refreshed \u2014 ' + count + ' state' +
-                    (count === 1 ? '' : 's') + ' now available.</div>' +
-                    '<button type="button" class="btn-primary" data-action="reload-dropdown">Reload dropdown</button>';
+                var issueCount = (result.log_entry && result.log_entry.validation_issues && result.log_entry.validation_issues.length) || 0;
+                if (count === 0 && issueCount > 0) {
+                    // "ok" structurally (listing + parse succeeded) but every candidate
+                    // state failed validation — render as a warning, not a success.
+                    // Re-classify for CSS too so the banner shows yellow/amber.
+                    banner.className = 'noaa-completion-banner truncated';
+                    banner.innerHTML =
+                        '<div class="noaa-completion-msg">Refresh completed with no states cataloged \u2014 all ' +
+                        issueCount + ' candidate state' + (issueCount === 1 ? '' : 's') +
+                        ' failed validation. Check the refresh log for details.</div>' +
+                        '<div class="btn-row">' +
+                        '<button type="button" class="btn-secondary" data-action="retry">Retry</button>' +
+                        '<button type="button" class="btn-secondary" data-action="view-log">View log</button>' +
+                        '</div>';
+                } else {
+                    banner.innerHTML =
+                        '<div class="noaa-completion-msg">Catalog refreshed \u2014 ' + count + ' state' +
+                        (count === 1 ? '' : 's') + ' now available.</div>' +
+                        '<button type="button" class="btn-primary" data-action="reload-dropdown">Reload dropdown</button>';
+                }
             } else if (resultStatus === 'cancelled') {
                 var entry      = result.log_entry || {};
                 var stateCount = entry.state_count != null ? entry.state_count : '?';

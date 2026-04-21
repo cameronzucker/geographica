@@ -188,16 +188,21 @@ async def fetch_tile_count(
     cancel_event: "asyncio.Event | None" = None,
 ) -> int:
     """Download the tile-index ZIP to cache_dir, unpack, and count features
-    via ogr2ogr -ro -so. Returns the feature count. Raises on failure.
+    via ogrinfo -so -al. Returns the feature count. Raises on failure.
 
     cancel_event: When set, raises RefreshCancelled at the next checkpoint
-    (before download, after download, after extract, after ogr2ogr).
-    Worst-case latency ≈ one ogr2ogr call (~60s) after the event is set.
+    (before download, after download, after extract, after ogrinfo).
+    Worst-case latency ≈ one ogrinfo call (~60s) after the event is set.
 
-    All blocking operations (file write, ZIP extract, ogr2ogr) are
+    All blocking operations (file write, ZIP extract, ogrinfo) are
     dispatched via run_in_executor to keep the event loop responsive
     during the 10-30 min refresh — critical for /refresh/progress
     polling to stay under 2s latency.
+
+    NOTE: previously used ogr2ogr -ro -so -f CSV /dev/stdout, but
+    GDAL 3.10 (2025-04) removed both -ro and -so from ogr2ogr (they
+    were never conversion flags). ogrinfo -so -al produces the same
+    "Feature Count: N" line we parse below.
     """
     # Cancel checkpoint 1: before any I/O
     if cancel_event is not None and cancel_event.is_set():
@@ -234,11 +239,11 @@ async def fetch_tile_count(
     if cancel_event is not None and cancel_event.is_set():
         raise RefreshCancelled("cancelled after extract")
 
-    # ogr2ogr off the event loop (unchanged)
+    # ogrinfo off the event loop (GDAL 3.10 removed -ro/-so from ogr2ogr)
     result = await loop.run_in_executor(
         None,
         lambda: subprocess.run(
-            ["ogr2ogr", "-ro", "-so", "-f", "CSV", "/dev/stdout", str(shp_path)],
+            ["ogrinfo", "-so", "-al", str(shp_path)],
             capture_output=True, text=True, timeout=60,
         ),
     )
