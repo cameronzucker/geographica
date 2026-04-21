@@ -27,7 +27,7 @@ test('start enters navigating when GPS is on-route', async (t) => {
   assert.equal(updates[0].state, 'navigating');
 });
 
-test('applyReroute clears announcedSet and lastAnnouncementTime', async (t) => {
+test('applyReroute clears announcedSet and speedSamples', async (t) => {
   const { nav, window: win } = await loadEngine();
   t.after(() => { try { nav.stop(); } catch (_) {} });
   win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
@@ -62,6 +62,9 @@ test('applyReroute clears announcedSet and lastAnnouncementTime', async (t) => {
   // New route — same shape, just a stand-in.
   const newRoute = fixtureRouteWithTwoTurns();
   nav.applyReroute(newRoute, capturedSeq);
+  const i = win._geographicaNavEngineInternals;
+  assert.deepEqual(i._getSpeedSamples(), [],
+    'applyReroute must clear speedSamples alongside announcedSet');
 
   // After applyReroute, announcedSet and lastAnnouncementTime must be fully reset:
   // driving the same approach as before must fire the announcement again.
