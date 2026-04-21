@@ -2158,11 +2158,6 @@ async def run_noaa(args):
 
     pipeline_start = time.monotonic()
 
-    state = args.state
-    # Transitional: --year was removed by Task 17 per Decision #8. The legacy
-    # NOAA_NAIP_CATALOG lookup below still expects (state, year); hardcode 2021
-    # until the catalog-driven path (Phase 3 Task 26) fully replaces this check.
-    year = 2021
     bbox = parse_bbox(args.bbox)
     west, south, east, north = bbox
     output = Path(args.output)
@@ -2193,20 +2188,84 @@ async def run_noaa(args):
     # unregister/re-register here (and doing so was dangerous: crashes left
     # the source permanently unregistered).
 
-    # Validate catalog entry
-    if (state, year) not in NOAA_NAIP_CATALOG:
-        log.error("No NOAA catalog entry for state=%s year=%d", state, year)
+    # Resolve which catalog entry to process.
+    #
+    # Historical context (2026-04-21 bug fix): this block previously consulted
+    # the legacy NOAA_NAIP_CATALOG hardcoded dict (which only contained
+    # ("AZ", 2021)), making every custom-bbox dispatch fail with
+    # "No NOAA catalog entry for None 2021". Task 17 of the CONUS expansion
+    # removed --year and switched the CLI to slug-mode, but the transitional
+    # comment flagged that Task 26 was supposed to retire this legacy lookup
+    # in favor of the dynamic catalog. Task 26 did the HTTP-endpoint side
+    # only; the pipeline-container side was left broken for custom-bbox AND
+    # any slug-based state dispatch.
+    #
+    # Now: load the pinned snapshot and resolve via resolve_noaa_candidates()
+    # — the same resolver the HTTP estimate + /start endpoints use, so UI
+    # and pipeline agree on which states are in scope.
+    with open(snapshot_path) as f:
+        catalog = json.load(f)
+
+    try:
+        candidates, missing = resolve_noaa_candidates(
+            catalog, state=args.state, bbox=args.bbox,
+        )
+    except ValueError as _exc:
+        log.error("Catalog resolution failed: %s", _exc)
         update_progress(output, "noaa", args.bbox, "n/a",
                         0, 0, status="error", phase="error",
-                        error=f"No NOAA catalog entry for {state} {year}")
+                        error=f"Catalog resolution failed: {_exc}")
         sys.exit(1)
 
-    blob_base = noaa_blob_base_url(state, year)
+    if not candidates:
+        miss_txt = f" (uncataloged: {', '.join(missing)})" if missing else ""
+        msg = (
+            f"bbox {args.bbox} intersects no cataloged states{miss_txt}"
+            if args.bbox else f"state {args.state} not in catalog"
+        )
+        log.error(msg)
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        0, 0, status="error", phase="error", error=msg)
+        sys.exit(1)
+
+    if len(candidates) > 1:
+        # Multi-state bbox dispatch isn't wired through run_noaa yet — the
+        # downstream loop owns a single blob_base/cache_dir/shp_path triple.
+        # build_unified_queue() in this module is the intended multi-state
+        # primitive; hooking it up is a follow-up. For now, surface the
+        # situation so the user can dispatch a single state instead.
+        multi_states = ", ".join(e["usps"] for e in candidates)
+        msg = (
+            f"bbox intersects {len(candidates)} states ({multi_states}); "
+            "multi-state dispatch is not yet implemented. Pick a single "
+            "state from the 'Whole state' tab, or narrow the bbox."
+        )
+        log.error(msg)
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        0, 0, status="error", phase="error", error=msg)
+        sys.exit(1)
+
+    if missing:
+        log.warning("Ignoring uncataloged states that intersect the bbox: %s",
+                    ", ".join(missing))
+
+    entry = candidates[0]
+    # Downstream code uses `state` in logging and `noaa_cache_dir`. Pass the
+    # slug (not USPS) so cache_dir matches refresh_noaa_catalog.py's
+    # convention of f"{slug}_{year}" — the shapefile the refresh already
+    # cached there satisfies _noaa_fetch_tile_index's local-cache check.
+    usps = entry["usps"]
+    state = SLUG_BY_USPS[usps]  # e.g. "CA" -> "california"
+    year = entry["year"]
+    # Build blob_base directly from the entry (bypassing the legacy
+    # NOAA_NAIP_CATALOG lookup in noaa_blob_base_url).
+    blob_base = f"{NOAA_BLOB_BASE}/{entry['dir']}"
     cache_dir = noaa_cache_dir(data_dir, state, year)
     staging = cache_dir / "staging"
     staging.mkdir(parents=True, exist_ok=True)
 
-    log.info("NOAA NAIP pipeline: state=%s year=%d blob=%s", state, year, blob_base)
+    log.info("NOAA NAIP pipeline: state=%s (USPS=%s) year=%d blob=%s",
+             state, usps, year, blob_base)
 
     # Phase 1: Validate blob URL with HEAD request
     update_progress(output, "noaa", args.bbox, "n/a",
