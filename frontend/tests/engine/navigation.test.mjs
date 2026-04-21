@@ -732,3 +732,41 @@ test('TTM outlier integration: GPS 50 m/s spike does not flip thresholds', async
   assert.equal(voiceFires.length, baselineCount,
     'outlier injection must not cause new prompts to fire');
 });
+
+test('TTM I9: dead-reckoning does not fire voice announcements', { timeout: 10_000 }, async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+
+  // Start GPS at the route origin so nav.start() seeds lastSnap there.
+  // Then updateGPS moves the driver to ~330m west of maneuver 1 (at lon
+  // -111.640). The position change is required: updateGPS deduplicates on
+  // (lat, lng) and won't call tick() — or push a speed sample — if the
+  // position equals the one from _geographicaGPSData / nav.start().
+  //
+  // Geometry: maneuver 1 at -111.640. 330m ≈ 0.003626° → -111.6436.
+  // After 3s GPS_STALE_TIMEOUT + 1 stale-checker interval (1s), DR
+  // extrapolates 10 m/s × 3s = 30m → driver at ~298m ≈ 28.3s TTM.
+  // Auto far threshold is 30s (300m); 298m < 300m → far-tier would fire
+  // if checkVoice(drSnap) were still called (I9 violation).
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, heading: 90, speed: 10 };
+
+  const voiceFires = [];
+  nav.onVoice((text) => voiceFires.push(text));
+  nav.start(fixtureRouteWithTwoTurns());
+
+  // Real tick: position differs from _geographicaGPSData so tick() runs,
+  // seeds lastSnap and pushes speed sample 10 m/s into speedSamples.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.6436, heading: 90, speed: 10 });
+  const baselineCount = voiceFires.length;
+
+  // Simulate stale-GPS: wait past GPS_STALE_TIMEOUT (3000ms) + stale-checker
+  // interval (1000ms). The stale-checker fires deadReckonTick which extrapolates
+  // position. With T7's fix, DR is position-only (no checkVoice), so voice count
+  // must not increase.
+  await new Promise(r => setTimeout(r, 4500));
+
+  // Before the fix, checkVoice(drSnap) would have fired the far-tier prompt
+  // (driver extrapolated to inside the 300m / 30s threshold).
+  assert.equal(voiceFires.length, baselineCount,
+    'I9: DR must not fire voice announcements');
+});

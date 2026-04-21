@@ -742,7 +742,10 @@
 
     drActive = true;
     currentManeuverIdx = findManeuverForSegment(drSnap.segmentIndex);
-    checkVoice(drSnap);
+    // G11 (spec v2): dead-reckoning is position-only. No voice — DR cannot
+    // reliably distinguish a legitimate TTM threshold crossing from an
+    // extrapolation artifact, and pre-locking announcedSet keys would
+    // silently skip prompts on GPS recovery.
     emitUpdate(buildState(drSnap, true));
   }
 
