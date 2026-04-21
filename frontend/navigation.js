@@ -189,7 +189,6 @@
   var muted = false;
   var suppressVoiceOnNextTick = false;
   var announcedSet = {};      // key: "maneuverIdx-threshold" -> true
-  var lastAnnouncementTime = 0;
 
   // Speed smoothing (spec v2 §4.2) — median-of-3 with outlier clamp.
   // MAX_SPEED_DELTA_PER_TICK rejects samples that differ from the prior median
@@ -382,19 +381,6 @@
   }
 
   // ─── Voice announcements ────────────────────────────────────────────
-
-  // Orphaned as of T3 (TTM rewrite) — no call sites. Deleted in T9 alongside
-  // lastAnnouncementTime + VOICE_COOLDOWN. Retained here only to keep the
-  // plan's §8 step-7 deletion atomic. Do NOT reintroduce calls to this.
-  function announce(text, key) {
-    if (muted || !text || !onVoiceCb) return false;
-    var now = Date.now();
-    if (now - lastAnnouncementTime < VOICE_COOLDOWN) return false;
-    lastAnnouncementTime = now;
-    if (key) announcedSet[key] = true;
-    onVoiceCb(text);
-    return true;
-  }
 
   /**
    * Check if we should fire a voice announcement for the upcoming maneuver.
@@ -800,7 +786,6 @@
     lastSnap = null;
     drActive = false;
     announcedSet = {};
-    lastAnnouncementTime = 0;
     suppressVoiceOnNextTick = false;
     speedSamples = [];
     speedHistory = [];
@@ -904,10 +889,8 @@
       offRouteHistory = [];
       inOffRouteState = false;
       // Full reset: old keys refer to a route that no longer exists.
-      // Voice cooldown also resets so the new route's first announcement
-      // isn't suppressed by the 5 s cooldown from the pre-reroute one.
+      // announcedSet clears so TTM tiers re-arm on the new route.
       announcedSet = {};
-      lastAnnouncementTime = 0;
       speedHistory = [];
       precomputeDistances();
 
