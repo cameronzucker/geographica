@@ -163,7 +163,7 @@ def test_mutate_base_tile_upsert_writes_tile_and_enqueues(mbtiles_path):
     conn.close()
 
     assert tile == (b"fake_jpeg",)
-    assert queue_count == 17  # z16 through z0
+    assert queue_count == 17  # 17 ancestors: z16 down to z0
 
 
 def test_mutate_base_tile_delete_removes_tile_and_enqueues(mbtiles_path):
@@ -189,14 +189,18 @@ def test_mutate_base_tile_delete_removes_tile_and_enqueues(mbtiles_path):
     conn.close()
 
     assert tile is None, "base tile should have been deleted"
-    assert queue_count == 17  # same ancestor cascade
+    assert queue_count == 17  # 17 ancestors: z16 down to z0 (same cascade on delete)
 
 
 def test_mutate_base_tile_atomic_on_rollback(mbtiles_path, monkeypatch):
     """If the commit never happens (rollback), NEITHER the tile nor the
-    queue entries persist. Validates same-transaction semantics."""
-    conn = sqlite3.connect(str(mbtiles_path))
-    _init_journal(conn)
+    queue entries persist. Validates same-transaction semantics.
+
+    Uses isolation_level=None so BEGIN/ROLLBACK are explicit and the
+    default-isolation auto-BEGIN doesn't collide with our explicit one.
+    """
+    conn = sqlite3.connect(str(mbtiles_path), isolation_level=None)
+    _init_journal(conn)  # DDL auto-commits in manual mode too
 
     conn.execute("BEGIN")
     _mutate_base_tile(conn, "upsert", 17, 100, 200, tile_data=b"not_yet")

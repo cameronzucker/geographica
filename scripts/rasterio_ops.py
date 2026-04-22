@@ -748,7 +748,8 @@ def _mutate_base_tile(
     action='upsert' uses INSERT OR REPLACE with tile_data.
     action='delete' removes the tile; tile_data is ignored.
     """
-    assert action in ("upsert", "delete"), f"unknown action: {action!r}"
+    if action not in ("upsert", "delete"):
+        raise ValueError(f"unknown action: {action!r}")
     if action == "upsert":
         if tile_data is None:
             raise ValueError("tile_data is required for upsert")
