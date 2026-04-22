@@ -36,16 +36,21 @@ Field testing on 2026-04-20 (Cameron) surfaced that the deferred B1 voice-over-a
 - **Process discipline:** full brainstorm + 5+ round adversarial review (include Codex cross-validation round) + spec v2 + plan + subagent-driven execution + integration review, same as the 2026-04-20 nav UX remediation. Unit-tests-alone are insufficient — the 2026-04-20 cycle's tests all passed while the field scenario produced 9 prompts. **TTM merge candidates must re-drive the Villa Rita → Costco detour** as a regression gate before merge.
 - **Explicit non-goals:** no more distance-threshold tuning (that's pure band-aid), no amending the band-aid commit (it's the safety net), no skipping adversarial review.
 
-**🚧 IN-FLIGHT WORK — Nav voice picker (3/23 tasks done, dev HEAD `84580f9`):**
+**🚗 READY FOR SHIP — Nav voice picker (23/23 tasks + UX refactor + sidebar tab persistence, field-verified 2026-04-21):**
 
-Fresh session should pick up at Task 1.1 using the subagent-driven-development protocol. Phase 0 (foundation — skeleton + fixtures + async-mock meta-test) shipped clean on 2026-04-20. Phases 1-7 remain: pure logic (gender/persistence/resolution), voiceschanged bootstrap, preview lifecycle with generation counter, DOM + CSS, integration wiring, Python structural tests + CI, debug fixture + CHANGELOG. Full plan is subagent-proof — each task has TDD preamble, verbatim code, explicit commit template with `Agent: <moniker>` trailer.
+All 23 tasks of the voice-picker plan shipped via `superpowers:subagent-driven-development`. Phase 1/3/5 review loops ran clean (3 rounds each). After initial ship, field testing surfaced two issues, both fixed and re-verified:
 
-- **Spec (v2, post 5-round adversarial review):** [docs/superpowers/specs/2026-04-21-nav-voice-picker-design.md](docs/superpowers/specs/2026-04-21-nav-voice-picker-design.md) (574 lines, commit `e6c8098`)
-- **Plan:** [docs/superpowers/plans/2026-04-21-nav-voice-picker-plan.md](docs/superpowers/plans/2026-04-21-nav-voice-picker-plan.md) (2901 lines, 23 tasks / 7 phases, commit `dceca6e`)
-- **5 adversarial review files:** [dev/adversarial/2026-04-21-nav-voice-picker-r{1..5}-*.md](dev/adversarial/) (1632 lines, 47 findings, commit `fbcfd7e`)
-- **Full handoff:** [handoff_20260420_voice_picker_phase0_complete](../memory/handoff_20260420_voice_picker_phase0_complete.md) — **READ THIS FIRST** when resuming. Contains moniker-inheritance protocol (prior session's moniker was `ocotillo`), execution pattern template with hard-constraints + pre/post verification, Cameron's 3 explicit UX decisions baked into v2, known gotchas (Write-tool hook patterns, parallel sessions committing to dev, 2026-04-20 reset incident), and spec-level NG9/NG10 to NOT re-implement.
-- **Quick resume:** `git log --oneline origin/dev..HEAD | head -10` — Phase 0 commits are `4941912` (skeleton), `ad0497d` (fixtures), `84580f9` (meta-test, 2/2 green). Start Task 1.1 by invoking `superpowers:subagent-driven-development` and dispatching the first implementer subagent with the moniker-inheritance + hard-constraint pattern documented in the handoff.
-- **Ship gate:** spec §10.3 manual acceptance checklist (14 items across desktop Chrome + iOS Safari + Android Chrome). Cameron runs the checklist; feature does NOT ship to main without his explicit go-ahead.
+1. **UX refactor** (`97922b8`): gender-buttons + advanced-disclosure-dropdown design was UX-incoherent — picking a specific voice then tapping Male/Female appeared to "reset" the dropdown because no `<option>` had `selected=true` in non-specific modes. Collapsed both widgets into a single `<select>` with two `<optgroup>`s ("Automatic" with Default / Any male / Any female, then "Specific voices"). One source of truth, one selected value at all times. **Supersedes spec §6.1** — read `voice-picker.js` as source of truth for the rendered picker going forward, not the spec.
+2. **Sidebar tab persistence** (`f1687df`): sidebar tab (Layers / Route / Import / Admin) was resetting to Layers on close/open — couldn't repro in headless Chrome, likely iOS memory-kill reload or similar device-specific page reset. Shipped defensive localStorage-based persistence + restored-on-DOMContentLoaded-after-initAdmin (adversarial review caught a null-deref and polling-race footgun before merge).
+
+Cameron confirmed **"Working now"** on the live dev stack.
+
+- **Spec (v2, post 5-round adversarial review):** [docs/superpowers/specs/2026-04-21-nav-voice-picker-design.md](docs/superpowers/specs/2026-04-21-nav-voice-picker-design.md) (574 lines, commit `e6c8098`) — §6.1 superseded by the refactor.
+- **Plan (historical):** [docs/superpowers/plans/2026-04-21-nav-voice-picker-plan.md](docs/superpowers/plans/2026-04-21-nav-voice-picker-plan.md) (2901 lines, 23 tasks / 7 phases, commit `dceca6e`).
+- **Full handoff:** [handoff_20260421_voice_picker_complete](../memory/handoff_20260421_voice_picker_complete.md) — commit-by-commit trail, 4 plan-vs-reality deviations (all Cameron-approved), process wins, test-harness notes.
+- **Tests:** 53/53 JS + 12/12 Python (run JS with `node --test --test-force-exit`, the flag that cleanly exits past the `setInterval` in `initBootstrap` — pre-existing "lingering test exit" pain point closable across voice-picker AND nav keep-awake suites now).
+- **Ship gate:** §10.3 manual acceptance checklist (14 items across desktop Chrome + iOS Safari + Android Chrome). Cameron runs it when ready; feature does NOT ship to main without explicit go-ahead.
+- **Pre-existing wake-lock regression** (parallel nav-session fault): `tests/test_wake_lock_static.py::test_wake_lock_js_exists_and_exports_api` fails because `6bc0ba3` (nav keep-awake session) tightened the guard-clause string but didn't update the static test. Voice-picker work didn't touch wake-lock. Tiny follow-up commit or nav-session fix needed before the next merge to main.
 
 ---
 
