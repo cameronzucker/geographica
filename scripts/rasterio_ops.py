@@ -702,9 +702,11 @@ def _enqueue_ancestors(
 ) -> None:
     """Enqueue the full ancestor lineage for each base tile into the journal.
 
-    For each (z, tc, tr), inserts (z-1, tc>>1, tr>>1), (z-2, tc>>2, tr>>2), ...,
-    (0, 0, 0) into _overview_work_queue with INSERT OR IGNORE (the PK on
-    (zoom, tc, tr) collapses duplicates so repeated calls are idempotent).
+    For each (z, tc, tr) with z >= 1, inserts (z-1, tc>>1, tr>>1),
+    (z-2, tc>>2, tr>>2), ..., (0, 0, 0) into _overview_work_queue with
+    INSERT OR IGNORE (the PK on (zoom, tc, tr) collapses duplicates so
+    repeated calls are idempotent). Base tiles already at z=0 produce
+    no rows — they have no ancestors.
 
     Caller is responsible for:
     - Having called _init_journal(conn) first.
