@@ -27,6 +27,7 @@ import numpy as np
 import rasterio
 from rasterio.crs import CRS
 from rasterio.enums import Resampling
+from rasterio.io import MemoryFile
 from rasterio.merge import merge as rasterio_merge
 from rasterio.transform import from_bounds
 from rasterio.warp import calculate_default_transform, reproject
@@ -838,8 +839,19 @@ def _composite_2x2_children(
 
     Implementation matches the existing 2x2 averaging at rasterio_ops.py:753-778
     (pre-refactor build_overviews). Returns JPEG bytes.
+
+    Precondition: at least one child must have non-None tile_data. Callers
+    apply the unified re-eval rule BEFORE calling — if all 4 children are
+    missing, they should DELETE the ancestor instead of compositing.
     """
-    from rasterio.io import MemoryFile
+    # Precondition: caller (drain_journal / drain_nuclear) guards this by
+    # checking all(c[2] is not None ...) before calling. The guard here
+    # catches direct misuse or future callers that forget the precondition.
+    if not any(tile_data is not None for _, _, tile_data in children):
+        raise ValueError(
+            "_composite_2x2_children called with all-None children — "
+            "caller should have short-circuited via the unified re-eval rule"
+        )
 
     TILE_SIZE = 256
     composite = np.zeros((3, TILE_SIZE, TILE_SIZE), dtype=np.uint8)
