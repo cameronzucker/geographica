@@ -696,6 +696,35 @@ def _init_journal(conn: sqlite3.Connection) -> None:
     )
 
 
+def _enqueue_ancestors(
+    conn: sqlite3.Connection,
+    base_tiles: list[tuple[int, int, int]],
+) -> None:
+    """Enqueue the full ancestor lineage for each base tile into the journal.
+
+    For each (z, tc, tr), inserts (z-1, tc>>1, tr>>1), (z-2, tc>>2, tr>>2), ...,
+    (0, 0, 0) into _overview_work_queue with INSERT OR IGNORE (the PK on
+    (zoom, tc, tr) collapses duplicates so repeated calls are idempotent).
+
+    Caller is responsible for:
+    - Having called _init_journal(conn) first.
+    - Calling conn.commit() afterward (this function does not commit so that
+      callers can wrap mutation+enqueue in one atomic transaction — see spec
+      §Cross-statement atomicity).
+    """
+    if not base_tiles:
+        return
+    rows = []
+    for z, tc, tr in base_tiles:
+        for dz in range(1, z + 1):
+            rows.append((z - dz, tc >> dz, tr >> dz))
+    conn.executemany(
+        "INSERT OR IGNORE INTO _overview_work_queue "
+        "(zoom_level, tile_column, tile_row) VALUES (?, ?, ?)",
+        rows,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 6. Build overview pyramids (replaces gdaladdo)
 # ---------------------------------------------------------------------------
