@@ -27,17 +27,30 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## What to work on next
 
-**🎯 TOP PRIORITY — Execute the overview-incremental-rebuild plan (spec+plan shipped 2026-04-22, awaiting execution):**
+**🎯 READY FOR SHIP — Overview-incremental rebuild (13/13 tasks shipped, dev HEAD `5705062`, awaiting A/B harness field-run):**
 
-Runtime validation on 2026-04-21 of the just-shipped NOAA refresh async feature surfaced a structural inefficiency: `scripts/rasterio_ops.py:build_overviews` **rebuilds the entire pyramid from scratch every run**, regardless of what actually changed. For a 0.6 GB incremental bbox added to a 40 GB MBTiles, we pay 60× the work we need — 6+ hours of post-processing. Cameron flagged this as worth addressing with full `superpowers:build-robust-features` rigor.
+All 13 tasks of the overview-incremental plan shipped via `superpowers:subagent-driven-development` on 2026-04-22. Agent moniker for the cycle: `tamarack`. **21 commits on `dev`**, pushed to `origin/dev`. The NOAA pipeline's post-processing now drains a persistent SQLite journal (`_overview_work_queue`) instead of nuking+rebuilding the whole pyramid — eliminating the 6+ hour overview phase the 2026-04-21 runtime surfaced.
 
-**State**: spec v3 + implementation plan committed on `dev` but NOT YET PUSHED. 5-round adversarial review complete (Sonnet arch / scale / test + Codex + Sonnet-v2-attack). Design converged on a persistent SQLite journal (`_overview_work_queue`) + unified drain rule + mode selector (`auto|journal|nuclear`) for 1:1 A/B validation + rollback.
+- **Spec + plan:** [docs/superpowers/specs/2026-04-22-overview-incremental-design.md](docs/superpowers/specs/2026-04-22-overview-incremental-design.md) · [docs/superpowers/plans/2026-04-22-overview-incremental-plan.md](docs/superpowers/plans/2026-04-22-overview-incremental-plan.md) (plan updated 2026-04-22 pre-dispatch by controller-side review — commit `5483971` fixed 6 ambiguity/drift items including a mathematically-wrong test assertion).
+- **Implementation log:** [dev/implementation-log.md](dev/implementation-log.md) (2026-04-22 entry at top — 18 commits across 7 phases, per-task review findings, deferred items).
+- **Full handoff:** [handoff_20260422_overview_incremental_SHIPPED](../memory/handoff_20260422_overview_incremental_SHIPPED.md) — **READ THIS FIRST** when resuming. Contains: commit-by-commit trail, A/B harness OOM finding + remediation recipe, pre-existing test failure to expect, deferred follow-ups, and "what NOT to do" guardrails.
+- **Tests:** 944 green on `dev` (26 new overview/enforcement + 918 broader) with 1 pre-existing unrelated failure (`test_bootstrap_messaging.py::test_next_step_appears_at_most_once_per_branch`). Semantic equivalence of nuclear vs journal modes proven by `test_nuclear_and_journal_produce_equivalent_mbtiles` (4×4 z17 gradient fixture, pixel mean-abs-diff < 2).
 
-- **Spec:** [docs/superpowers/specs/2026-04-22-overview-incremental-design.md](docs/superpowers/specs/2026-04-22-overview-incremental-design.md) (506 lines, commit `40346eb`, v3 post-5-round adversarial review).
-- **Plan:** [docs/superpowers/plans/2026-04-22-overview-incremental-plan.md](docs/superpowers/plans/2026-04-22-overview-incremental-plan.md) (2573 lines, 13 tasks / 7 phases, commit `b907e39`). Each task has failing test verbatim, confirmed-fails command, verbatim implementation, passing verification, and commit template with `Agent: <moniker>` trailer.
-- **Full handoff:** [handoff_20260422_noaa_refresh_shipped_overview_incremental_planned](../memory/handoff_20260422_noaa_refresh_shipped_overview_incremental_planned.md) — **READ THIS FIRST.** Contains: execution protocol (subagent-driven-development), per-phase model recommendations (Haiku vs Sonnet), what's in-flight (a 7-hour live LA NAIP pipeline still in overviews phase — ironic validation of today's fixes), 3 unpushed commits to push first, and "what NOT to do" guardrails.
-- **Quick resume**: pick a moniker (not `sycamore`/`ocotillo`/`cairn`), decide on the live pipeline (cancel via admin panel or let it finish), `git push origin dev` (3 unpushed commits), then `superpowers:subagent-driven-development` starting with Phase 1 Task 1.
-- **Validation gate**: after all 13 tasks, run `python3 dev/tools/compare_overview_modes.py /srv/geographica/data/imagery_noaa.mbtiles` — the A/B harness proves empirical speedup + coord-set equality + pixel-level semantic equivalence. Paste output into the final implementation-log commit.
+**Ship gate before `dev → main` merge**: Cameron runs the A/B harness against a **small-bbox extract** (NOT the full 38 GB `/srv/geographica/data/imagery_noaa.mbtiles` — doing so while the Docker stack is up OOM'd the harness within 30 minutes on 2026-04-22).
+
+```bash
+# Cancel or complete any active pipelines, then:
+docker compose down
+python3 dev/tools/compare_overview_modes.py <small-bbox-extract.mbtiles> --seed-journal --keep
+docker compose up -d
+```
+
+Expected outcome: `only_in_a == 0 AND only_in_b == 0 AND max_pixel_diff < 2.0`, exit code 0. Then `git switch main && git merge --ff-only dev && git push origin main` → release-please auto-bumps to `v1.3.0` (feature is additive — `CREATE TABLE IF NOT EXISTS` + keyword-only `mode=` parameter — no breaking change).
+
+**Deferred follow-ups** (all documented, none blocking):
+- N+1 query batching in `_drain_journal` (4-SELECT-per-ancestor → 1 via `(tc, tr) IN (...)` tuple-IN). Flagged "Important" by Task 4 reviewer; ms-scale savings vs hour-scale win already delivered.
+- `--sequential` mode for the A/B harness so cloning doesn't peak at 2× disk space. Makes live-stack-friendly runs possible.
+- Port the journal pattern to M2M / Sentinel / NAIP pipelines (one follow-up PR per pipeline per spec §Portability).
 
 ---
 
