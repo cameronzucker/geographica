@@ -9,7 +9,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from rasterio_ops import _init_journal, _enqueue_ancestors, _mutate_base_tile  # noqa: E402
+from rasterio_ops import _init_journal, _enqueue_ancestors, _mutate_base_tile, _drain_journal  # noqa: E402
 
 
 @pytest.fixture
@@ -216,3 +216,170 @@ def test_mutate_base_tile_atomic_on_rollback(mbtiles_path, monkeypatch):
 
     assert tile is None, "rollback should have discarded the tile insert"
     assert queue_count == 0, "rollback should have discarded the queue inserts"
+
+
+def _make_jpeg_tile(r: int, g: int, b: int, size: int = 256) -> bytes:
+    """Return JPEG bytes for a solid RGB tile. Tests that need gradient
+    tiles build them inline — solid colors are for fixture setup only."""
+    import io
+    import numpy as np
+    import rasterio
+    from rasterio.io import MemoryFile
+    arr = np.zeros((3, size, size), dtype=np.uint8)
+    arr[0] = r
+    arr[1] = g
+    arr[2] = b
+    with MemoryFile() as mf:
+        with mf.open(
+            driver="JPEG", width=size, height=size, count=3, dtype="uint8"
+        ) as ds:
+            ds.write(arr)
+        return mf.read()
+
+
+def test_drain_journal_writes_ancestor_when_4_children_exist(mbtiles_path):
+    """Spec test 4: all 4 children present → ancestor is created/updated."""
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+    # Four children of z16 ancestor (16, 50, 100):
+    #   (17, 100, 200), (17, 101, 200), (17, 100, 201), (17, 101, 201)
+    for tc in (100, 101):
+        for tr in (200, 201):
+            _mutate_base_tile(conn, "upsert", 17, tc, tr, _make_jpeg_tile(128, 128, 128))
+    conn.commit()
+
+    _drain_journal(conn)
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=16 AND tile_column=50 AND tile_row=100"
+    ).fetchone()
+    queue_count = conn.execute(
+        "SELECT COUNT(*) FROM _overview_work_queue"
+    ).fetchone()[0]
+    conn.close()
+
+    assert row is not None and row[0] is not None, "z16 ancestor should exist"
+    assert queue_count == 0, "queue should be empty after successful drain"
+
+
+def test_drain_journal_deletes_ancestor_when_child_missing(mbtiles_path):
+    """Spec test 5: only 3 children exist → ancestor is deleted."""
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+
+    # Seed a pre-existing ancestor (as if from a prior nuclear run)
+    conn.execute(
+        "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
+        "VALUES (16, 50, 100, ?)",
+        (_make_jpeg_tile(200, 200, 200),),
+    )
+    # Only 3 z17 children
+    for tc, tr in [(100, 200), (101, 200), (100, 201)]:
+        conn.execute(
+            "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
+            "VALUES (17, ?, ?, ?)",
+            (tc, tr, _make_jpeg_tile(50, 50, 50)),
+        )
+    # Enqueue the ancestor as dirty (simulating a previous mutation)
+    conn.execute(
+        "INSERT INTO _overview_work_queue (zoom_level, tile_column, tile_row) "
+        "VALUES (16, 50, 100)"
+    )
+    conn.commit()
+
+    _drain_journal(conn)
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=16 AND tile_column=50 AND tile_row=100"
+    ).fetchone()
+    conn.close()
+
+    assert row is None, (
+        "ancestor with only 3 children should be DELETED, not preserved"
+    )
+
+
+def test_drain_journal_handles_same_ancestor_modify_and_delete(mbtiles_path):
+    """Codex C2 regression (Round 4): ancestor enqueued by BOTH a modify
+    and a delete in the same run should be re-evaluated once and produce
+    the correct final state (not a partial composite)."""
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+
+    # Start state: 4 children of (16, 50, 100) exist
+    for tc in (100, 101):
+        for tr in (200, 201):
+            conn.execute(
+                "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
+                "VALUES (17, ?, ?, ?)",
+                (tc, tr, _make_jpeg_tile(100, 100, 100)),
+            )
+    conn.commit()
+
+    # One update, one delete, both on children of the same ancestor:
+    _mutate_base_tile(conn, "upsert", 17, 100, 200, _make_jpeg_tile(200, 0, 0))
+    _mutate_base_tile(conn, "delete", 17, 101, 201)
+    conn.commit()
+
+    _drain_journal(conn)
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=16 AND tile_column=50 AND tile_row=100"
+    ).fetchone()
+    conn.close()
+
+    assert row is None, (
+        "ancestor should be DELETED because one child is gone (re-eval rule: "
+        "if any child missing, delete ancestor). Old composite must not survive."
+    )
+
+
+def test_drain_journal_multi_level_cascade(mbtiles_path):
+    """Spec test 7: dirty at z17 cascades ancestor rebuilds to z0."""
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+
+    # Build a complete 16-tile block at z17 spanning a full 4-level lineage.
+    # Coordinates chosen so ancestors at z16..z14 all have complete 2x2 blocks.
+    # 4 tiles at each (tc, tr) in {0,1,2,3} x {0,1,2,3} = 16 tiles at z17.
+    for tc in range(4):
+        for tr in range(4):
+            _mutate_base_tile(conn, "upsert", 17, tc, tr, _make_jpeg_tile(128, 128, 128))
+    conn.commit()
+
+    _drain_journal(conn)
+    conn.commit()
+
+    # Expected by the unified re-eval rule ("delete if any child missing"):
+    #   z16: 4 tiles — each has all 4 z17 children → WRITE.
+    #   z15: 1 tile  — (0,0) has all 4 z16 children {(0,0),(0,1),(1,0),(1,1)} → WRITE.
+    #   z14: 0 tiles — (0,0) has z15 children {(0,0),(0,1),(1,0),(1,1)}, only (0,0)
+    #                  exists → DELETE no-op. The queue walks the lineage, but
+    #                  incomplete-parent never materializes.
+    #   z13..z0: 0   — cascades same way down to z0.
+    z16_count = conn.execute(
+        "SELECT COUNT(*) FROM tiles WHERE zoom_level=16"
+    ).fetchone()[0]
+    z15_count = conn.execute(
+        "SELECT COUNT(*) FROM tiles WHERE zoom_level=15"
+    ).fetchone()[0]
+    z14_count = conn.execute(
+        "SELECT COUNT(*) FROM tiles WHERE zoom_level=14"
+    ).fetchone()[0]
+    z13_count = conn.execute(
+        "SELECT COUNT(*) FROM tiles WHERE zoom_level=13"
+    ).fetchone()[0]
+    conn.close()
+
+    assert z16_count == 4, f"expected 4 z16 tiles; got {z16_count}"
+    assert z15_count == 1, f"expected 1 z15 tile; got {z15_count}"
+    assert z14_count == 0, (
+        f"expected 0 z14 tiles (z15 has only 1 of 4 children; unified rule "
+        f"treats incomplete parent as delete); got {z14_count}. If this fails "
+        f"with z14_count > 0, _drain_journal is preserving partial-child "
+        f"ancestors — breaking Round 4 C2 invariant."
+    )
+    assert z13_count == 0, f"z13 should not be built (z14 incomplete); got {z13_count}"

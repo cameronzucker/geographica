@@ -766,6 +766,112 @@ def _mutate_base_tile(
     _enqueue_ancestors(conn, [(z, tc, tr)])
 
 
+def _drain_journal(
+    conn: sqlite3.Connection,
+    cancel_check=None,
+) -> int:
+    """Drain _overview_work_queue by re-evaluating each enqueued ancestor.
+
+    For each ancestor (z, tc, tr), fetches the 4 children at (z+1,
+    2tc+dx, 2tr+dy). Writes the composited 2x2 average if all 4 exist;
+    deletes any existing ancestor row if any child is missing.
+
+    Processes bottom-up (max_zoom-1 down to 0), so parents see their
+    children's fresh state. Commits once per zoom level. Cancel check
+    between zoom levels; partial progress is durable (remaining queue
+    rows survive for the next run).
+
+    Returns the number of ancestor ops performed (writes + deletes).
+    """
+    max_zoom_row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
+    if not max_zoom_row or max_zoom_row[0] is None:
+        # No tiles at all; nothing to do. Clear any stale queue entries.
+        conn.execute("DELETE FROM _overview_work_queue")
+        return 0
+    max_zoom = max_zoom_row[0]
+
+    ops = 0
+    for z in range(max_zoom - 1, -1, -1):
+        if cancel_check and cancel_check():
+            return ops
+        rows = conn.execute(
+            "SELECT tile_column, tile_row FROM _overview_work_queue WHERE zoom_level=?",
+            (z,),
+        ).fetchall()
+        if not rows:
+            continue
+        for (tc, tr) in rows:
+            children = []
+            for dx in range(2):
+                for dy in range(2):
+                    row = conn.execute(
+                        "SELECT tile_data FROM tiles "
+                        "WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                        (z + 1, tc * 2 + dx, tr * 2 + dy),
+                    ).fetchone()
+                    children.append((dx, dy, row[0] if row else None))
+            if all(c[2] is not None for c in children):
+                # All 4 children exist — composite and INSERT OR REPLACE
+                tile_bytes = _composite_2x2_children(children)
+                conn.execute(
+                    "INSERT OR REPLACE INTO tiles "
+                    "(zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
+                    (z, tc, tr, tile_bytes),
+                )
+            else:
+                # Incomplete block — delete any existing ancestor
+                conn.execute(
+                    "DELETE FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                    (z, tc, tr),
+                )
+            ops += 1
+        # Clear this zoom's queue entries and commit
+        conn.execute("DELETE FROM _overview_work_queue WHERE zoom_level=?", (z,))
+        conn.commit()
+    return ops
+
+
+def _composite_2x2_children(
+    children: list[tuple[int, int, bytes | None]],
+) -> bytes:
+    """Composite a 2x2 block of child tiles into a single downsampled tile.
+
+    Implementation matches the existing 2x2 averaging at rasterio_ops.py:753-778
+    (pre-refactor build_overviews). Returns JPEG bytes.
+    """
+    from rasterio.io import MemoryFile
+
+    TILE_SIZE = 256
+    composite = np.zeros((3, TILE_SIZE, TILE_SIZE), dtype=np.uint8)
+    half = TILE_SIZE // 2
+
+    for dx, dy, tile_data in children:
+        if tile_data is None:
+            continue
+        with MemoryFile(tile_data) as memfile:
+            with memfile.open() as ds:
+                bands = min(ds.count, 3)
+                tile_arr = ds.read(list(range(1, bands + 1)))
+                h_src, w_src = tile_arr.shape[1], tile_arr.shape[2]
+                if h_src >= 2 and w_src >= 2:
+                    h2 = (h_src // 2) * 2
+                    w2 = (w_src // 2) * 2
+                    cropped = tile_arr[:, :h2, :w2].astype(np.uint16)
+                    small = cropped.reshape(
+                        bands, h2 // 2, 2, w2 // 2, 2
+                    ).mean(axis=(2, 4)).astype(np.uint8)
+                    small = small[:, :half, :half]
+                else:
+                    small = tile_arr[:, :half, :half]
+                x_off = dx * half
+                y_off = (1 - dy) * half  # TMS y-flip
+                h = min(small.shape[1], half)
+                w = min(small.shape[2], half)
+                composite[:bands, y_off:y_off + h, x_off:x_off + w] = small[:, :h, :w]
+
+    return _encode_jpeg(composite)
+
+
 # ---------------------------------------------------------------------------
 # 6. Build overview pyramids (replaces gdaladdo)
 # ---------------------------------------------------------------------------
