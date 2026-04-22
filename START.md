@@ -27,7 +27,21 @@ Geographica is an offline-first GIS platform for AREDN amateur radio mesh networ
 
 ## What to work on next
 
-**🎯 TOP PRIORITY — Voice announcement TTM redesign (B1 full fix, band-aid currently masking):**
+**🎯 TOP PRIORITY — Execute the overview-incremental-rebuild plan (spec+plan shipped 2026-04-22, awaiting execution):**
+
+Runtime validation on 2026-04-21 of the just-shipped NOAA refresh async feature surfaced a structural inefficiency: `scripts/rasterio_ops.py:build_overviews` **rebuilds the entire pyramid from scratch every run**, regardless of what actually changed. For a 0.6 GB incremental bbox added to a 40 GB MBTiles, we pay 60× the work we need — 6+ hours of post-processing. Cameron flagged this as worth addressing with full `superpowers:build-robust-features` rigor.
+
+**State**: spec v3 + implementation plan committed on `dev` but NOT YET PUSHED. 5-round adversarial review complete (Sonnet arch / scale / test + Codex + Sonnet-v2-attack). Design converged on a persistent SQLite journal (`_overview_work_queue`) + unified drain rule + mode selector (`auto|journal|nuclear`) for 1:1 A/B validation + rollback.
+
+- **Spec:** [docs/superpowers/specs/2026-04-22-overview-incremental-design.md](docs/superpowers/specs/2026-04-22-overview-incremental-design.md) (506 lines, commit `40346eb`, v3 post-5-round adversarial review).
+- **Plan:** [docs/superpowers/plans/2026-04-22-overview-incremental-plan.md](docs/superpowers/plans/2026-04-22-overview-incremental-plan.md) (2573 lines, 13 tasks / 7 phases, commit `b907e39`). Each task has failing test verbatim, confirmed-fails command, verbatim implementation, passing verification, and commit template with `Agent: <moniker>` trailer.
+- **Full handoff:** [handoff_20260422_noaa_refresh_shipped_overview_incremental_planned](../memory/handoff_20260422_noaa_refresh_shipped_overview_incremental_planned.md) — **READ THIS FIRST.** Contains: execution protocol (subagent-driven-development), per-phase model recommendations (Haiku vs Sonnet), what's in-flight (a 7-hour live LA NAIP pipeline still in overviews phase — ironic validation of today's fixes), 3 unpushed commits to push first, and "what NOT to do" guardrails.
+- **Quick resume**: pick a moniker (not `sycamore`/`ocotillo`/`cairn`), decide on the live pipeline (cancel via admin panel or let it finish), `git push origin dev` (3 unpushed commits), then `superpowers:subagent-driven-development` starting with Phase 1 Task 1.
+- **Validation gate**: after all 13 tasks, run `python3 dev/tools/compare_overview_modes.py /srv/geographica/data/imagery_noaa.mbtiles` — the A/B harness proves empirical speedup + coord-set equality + pixel-level semantic equivalence. Paste output into the final implementation-log commit.
+
+---
+
+**🚗 OPEN — Voice announcement TTM redesign (B1 full fix, band-aid currently masking):**
 
 Field testing on 2026-04-20 (Cameron) surfaced that the deferred B1 voice-over-announcement bug is dramatically worse in urban/surface-street driving than pre-remediation observation suggested. A rerouted detour through a dense turn cluster (2235 W Villa Rita Dr → North Phoenix Costco, with a westerly detour) fired **up to 9 voice prompts in ~200 ft of driving** — past helpful, into actively dangerous. Distance-threshold model was the wrong architecture for a range of driving speeds; it needs replacement with a time-to-maneuver (TTM) model.
 
