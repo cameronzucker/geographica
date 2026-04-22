@@ -1131,7 +1131,7 @@ def erode_nodata_edges(
     min_edge_fill: float = 0.90,
     nodata_threshold: int = 20,
     cancel_check=None,
-) -> int:
+) -> list[tuple[int, int, int]]:
     """Remove boundary tiles with significant nodata (black) at edges.
 
     Iteratively strips the outer ring of tiles until all remaining boundary
@@ -1140,11 +1140,12 @@ def erode_nodata_edges(
     render as black rectangles over the basemap. This function erodes those
     away so the basemap shows through cleanly.
 
-    Returns the total number of tiles removed.
+    Returns the list of (z, tc, tr) coords deleted during erosion.
     """
     conn = sqlite3.connect(str(mbtiles_path))
     try:
-        total_removed = 0
+        _init_journal(conn)
+        deleted: list[tuple[int, int, int]] = []
 
         # Only erode at the base (max) zoom level. Overviews are rebuilt
         # from post-erosion tiles, so eroding at overview zooms independently
@@ -1152,15 +1153,15 @@ def erode_nodata_edges(
         # children survive → basemap at low zoom, imagery at high zoom).
         max_z_row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
         if not max_z_row or max_z_row[0] is None:
-            return 0
+            return []
         zoom_levels = [max_z_row[0]]
 
         for z in zoom_levels:
             removed_this_round = 1  # seed the loop
             while removed_this_round > 0:
                 if cancel_check and cancel_check():
-                    log.info("erode_nodata_edges: cancellation requested, stopping after %d tiles", total_removed)
-                    return total_removed
+                    log.info("erode_nodata_edges: cancellation requested, stopping after %d tiles", len(deleted))
+                    return deleted
                 removed_this_round = 0
                 # Get current boundary tile positions
                 bounds = conn.execute(
@@ -1179,6 +1180,7 @@ def erode_nodata_edges(
                     (z, min_col, max_col, min_row, max_row),
                 ).fetchall()
 
+                conn.execute("BEGIN")
                 for col, row, data in boundary:
                     try:
                         with rasterio.MemoryFile(data) as mf:
@@ -1191,19 +1193,15 @@ def erode_nodata_edges(
                         right = has_data[:, -edge_pixels:].mean()
 
                         if min(top, bot, left, right) < min_edge_fill:
-                            conn.execute(
-                                "DELETE FROM tiles WHERE zoom_level=? "
-                                "AND tile_column=? AND tile_row=?",
-                                (z, col, row),
-                            )
+                            _mutate_base_tile(conn, "delete", z, col, row)
+                            deleted.append((z, col, row))
                             removed_this_round += 1
                     except Exception:
                         pass
 
                 conn.commit()
-                total_removed += removed_this_round
 
-        if total_removed:
+        if deleted:
             min_z = conn.execute("SELECT MIN(zoom_level) FROM tiles").fetchone()[0]
             max_z = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()[0]
             if min_z is not None:
@@ -1216,8 +1214,8 @@ def erode_nodata_edges(
                     (str(max_z),),
                 )
             conn.commit()
-            log.info("Eroded %d nodata-edge tiles from %s", total_removed, mbtiles_path)
+            log.info("Eroded %d nodata-edge tiles from %s", len(deleted), mbtiles_path)
 
-        return total_removed
+        return deleted
     finally:
         conn.close()

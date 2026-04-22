@@ -743,3 +743,51 @@ def test_merge_mbtiles_populates_journal(tmp_path):
         f"expected 17 unique ancestors (one per zoom z16..z0) for a single "
         f"2x2 block; got {queue_total}"
     )
+
+
+def test_erode_nodata_edges_returns_deleted_coords_and_enqueues(tmp_path):
+    """erode_nodata_edges returns list of (z, tc, tr) tuples for tiles it
+    deleted, and enqueues their ancestors."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from rasterio_ops import erode_nodata_edges
+
+    # Create a fixture with boundary tiles that have >90% black pixels
+    path = tmp_path / "erode.mbtiles"
+    conn = sqlite3.connect(str(path))
+    conn.executescript(
+        """
+        CREATE TABLE tiles (
+            zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER,
+            tile_data BLOB,
+            PRIMARY KEY (zoom_level, tile_column, tile_row)
+        );
+        CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT);
+        """
+    )
+    _init_journal(conn)
+    # Place a single tile in all-black state (should be eroded)
+    conn.execute(
+        "INSERT INTO tiles VALUES (17, 100, 200, ?)",
+        (_make_jpeg_tile(0, 0, 0),),  # all black
+    )
+    conn.commit()
+    conn.close()
+
+    deleted = erode_nodata_edges(path)
+
+    assert isinstance(deleted, list), f"expected list of deleted coords; got {type(deleted)}"
+    assert (17, 100, 200) in deleted, f"expected (17, 100, 200) in deleted; got {deleted}"
+
+    conn = sqlite3.connect(str(path))
+    # Tile should be gone
+    remaining = conn.execute(
+        "SELECT COUNT(*) FROM tiles WHERE zoom_level=17 AND tile_column=100 AND tile_row=200"
+    ).fetchone()[0]
+    # Ancestor chain should be in the queue (17 entries)
+    queue_count = conn.execute(
+        "SELECT COUNT(*) FROM _overview_work_queue"
+    ).fetchone()[0]
+    conn.close()
+
+    assert remaining == 0
+    assert queue_count == 17

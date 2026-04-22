@@ -2800,7 +2800,7 @@ async def run_noaa(args):
                     output, cancel_check=lambda: _cancel_requested
                 )
                 if eroded:
-                    log.info("Eroded %d nodata-edge tiles for clean basemap transition", eroded)
+                    log.info("Eroded %d nodata-edge tiles for clean basemap transition", len(eroded))
             else:
                 log.info("Skipping erosion on resume run (D1 gate: not idempotent across bbox expansion)")
 
