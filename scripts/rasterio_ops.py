@@ -10,7 +10,8 @@ Operations provided:
   - reproject_to_mercator: gdalwarp -t_srs EPSG:3857 → rasterio.warp
   - merge_to_mbtiles: gdalbuildvrt + gdal_translate → rasterio.merge + SQLite
   - translate_to_mbtiles: gdal_translate -of MBTiles → rasterio + SQLite
-  - build_overviews: gdaladdo -r average → rasterio.build_overviews
+  - build_overviews: gdaladdo -r average → SQL-driven journal/nuclear drain
+                     (see _drain_journal, _drain_nuclear; mode="auto" selects)
   - translate_format: gdal_translate -of GTiff → rasterio copy
 """
 
@@ -29,7 +30,6 @@ from rasterio.crs import CRS
 from rasterio.enums import Resampling
 from rasterio.io import MemoryFile
 from rasterio.merge import merge as rasterio_merge
-from rasterio.transform import from_bounds
 from rasterio.warp import calculate_default_transform, reproject
 
 log = logging.getLogger(__name__)
@@ -837,8 +837,8 @@ def _composite_2x2_children(
 ) -> bytes:
     """Composite a 2x2 block of child tiles into a single downsampled tile.
 
-    Implementation matches the existing 2x2 averaging at rasterio_ops.py:753-778
-    (pre-refactor build_overviews). Returns JPEG bytes.
+    2x2-averaging downsample of up to 4 RGB child tiles, with TMS y-flip.
+    Shared by _drain_journal and _drain_nuclear. Returns JPEG bytes.
 
     Precondition: at least one child must have non-None tile_data. Callers
     apply the unified re-eval rule BEFORE calling — if all 4 children are
@@ -898,6 +898,16 @@ def _drain_nuclear(
     Identical behavior to the pre-fix build_overviews function — this
     exists so mode='nuclear' remains available as rollback + for runs
     that fall back from journal drain on large dirty sets.
+
+    Crash-recovery note: if the process dies between the initial DELETE
+    of overview tiles (committed early, line ~912) and the final queue
+    clear at exit, the journal may retain stale entries. A subsequent
+    mode='auto' call would see queue_size > 0 and potentially route to
+    journal drain. The unified re-eval rule (write-if-all-4-children,
+    delete-otherwise) means this produces a correct sparse pyramid
+    rather than corrupt output — just potentially sparser than the
+    completed-nuclear ideal. Acceptable given crash-recovery is the
+    rare path; mode='nuclear' explicitly re-invoked will always repair.
 
     Returns the total number of ancestor rows written.
     """
