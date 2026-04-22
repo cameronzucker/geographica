@@ -37,6 +37,87 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-22 — Overview pyramid incremental rebuild (journal-based, 13 tasks)
+
+**Released as:** not yet released (shipped on `dev` at `b8a76a1`, pushed to `origin/dev`)
+**Plan / spec:** [docs/superpowers/plans/2026-04-22-overview-incremental-plan.md](../docs/superpowers/plans/2026-04-22-overview-incremental-plan.md) · [docs/superpowers/specs/2026-04-22-overview-incremental-design.md](../docs/superpowers/specs/2026-04-22-overview-incremental-design.md)
+**Adversarial reviews:** 5 rounds (Sonnet arch/scale/test + Codex + Sonnet v2-attack) — summarized inline in spec §Open questions; transcripts are in the spec's commit history (preserved via `40346eb`).
+**Execution protocol:** `superpowers:subagent-driven-development` with two-stage review per task (spec + code-quality). Plan went through a controller-side review pass before dispatch (commit `5483971`) that pinned ambiguity and fixed a mathematically wrong test assertion — see "Key decisions" below.
+**Agent moniker for execution:** `tamarack` (Phase 1-7 across ~40 subagent dispatches + controller-inline edits).
+
+### Summary
+
+Replaced `scripts/rasterio_ops.py:build_overviews`'s nuclear pyramid-rebuild with a targeted incremental path keyed on a persistent SQLite journal (`_overview_work_queue`). Surfaced by 2026-04-21 runtime: 82 new tiles merged into a 40 GB MBTiles triggered a **6+ hour overview phase** because the code rebuilt the whole pyramid regardless of what changed. New design rebuilds only ancestor lineages of newly-merged/eroded/inpainted tiles, with a `mode="auto"|"journal"|"nuclear"` selector for 1:1 A/B validation + operational rollback. Pipeline reordered `merge → erode → inpaint → overviews` so overview build sees post-cleanup base tiles. 26 new regression tests, one end-to-end semantic-equivalence test, one grep-based write-discipline enforcement test, and one stand-alone A/B comparison harness.
+
+### Key decisions
+
+- **Journal table, not in-memory dirty set** (spec v2→v3, Round 5 C1+C2). The 5-round adversarial review killed a v1 in-memory design on three convergent Criticals (wrong function instrumented, broken re-evaluation semantics, no crash recovery). Persistent SQLite table (`_overview_work_queue`) survives process death; enqueues happen in the same transaction as the base-tile mutation via `_mutate_base_tile`.
+- **Unified re-evaluation rule** (spec §Architecture, Codex-driven fix). One rule, one function: "write ancestor if all 4 children exist; delete if any missing." No `kind=UPDATE`/`kind=DELETE` column. This is what makes sparse-bbox mutations correct — if the bbox expansion adds one tile whose 3 siblings never existed, the z-1 ancestor is DELETED (not composited over the 3 basemap-fallback gaps). Documented in the admin-panel user-facing estimate so users aren't surprised by overview coverage shrinking when they expand a sparse bbox.
+- **Hybrid bulk-SQL + per-tile helper** (Round 5 C1 resolution). `merge_mbtiles`'s bulk path keeps its `INSERT OR IGNORE INTO tiles SELECT ... FROM src.tiles` + adds one SQL per zoom-level shift for the cascade. `erode`/`inpaint`/slow-path composite routes through `_mutate_base_tile` which combines the tile write + ancestor enqueue in one transaction.
+- **Controller plan-review before dispatch** saved probably an hour of tangled subagent debugging. The review fixed six items including one load-bearing math error: the `test_drain_journal_multi_level_cascade` originally asserted `z14_count == 1`, but per the unified rule with a 4×4 z17 fixture, z14 has only 1 of 4 z15 children → DELETE → z14 = 0. A correct implementation would have spuriously failed; a "helpful" subagent would likely have inverted the invariant to make the test pass. See commit `5483971` for all six fixes.
+- **Deferred 4-SELECT-per-ancestor optimization** in `_drain_journal` (flagged "Important" by Task 4 code reviewer). Batched `(tc, tr) IN (...)` query would cut 4N queries to N. The plan explicitly specified the 4-SELECT pattern for correctness auditability; batching adds SQL-composition complexity, and the absolute savings are ~ms vs the 6-hour rebuild the whole design eliminates. Queued for post-A/B-validation perf pass.
+
+### Notable bugs caught (by the dual spec+quality review loop, per-task)
+
+- **Tautological test** (Task 2) — `expected` list built via same iterative bit-shift as implementation; consistent off-by-one would have passed. Fix: concrete spot-check assertions against hand-verified tuples (`426b386`).
+- **`assert` disabled by `python -O`** (Task 3) — `_mutate_base_tile`'s action-string guard was `assert`, but every other validator in the file raises `ValueError`. Replaced + added `python -O` smoke test (`903a6f9`).
+- **Silent black-tile output on all-None input** (Task 4) — `_composite_2x2_children` would emit a solid-black JPEG if the caller violated the precondition guard. Added explicit `ValueError` + docstring (`b28d100`).
+- **Misleading docstring** (Task 6) — `build_overviews` said "returns False if cancelled" but the function never returns False; cancel flows through `_drain_*` early exit which commits partial state and returns True. Corrected (`abfba8a`).
+- **Metadata-fixup swallowed by overview-build failure** (Task 11) — the inlined `UPDATE metadata SET value = (SELECT MIN/MAX(zoom_level) FROM tiles)` lived inside the same `try` as `rio_build_overviews`. If overview build raised, minzoom/maxzoom stayed stale — a regression from the old `_run_gdaladdo_with_metadata_fixup` wrapper that ran the UPDATE in a `finally` block. Split into two `try/except` blocks so metadata fixup survives overview failure (`407338c`).
+
+### Operational finding: A/B harness OOM on prod MBTiles
+
+Running `dev/tools/compare_overview_modes.py /srv/geographica/data/imagery_noaa.mbtiles --seed-journal` against the 38 GB prod MBTiles while the full Docker stack (7 healthy services + pipeline) was up **OOM-killed the harness** within ~30 minutes. Root cause: cloning a 38 GB MBTiles twice (~76 GB I/O), then running nuclear+journal drains against each clone sequentially, against a Pi with 16 GB RAM where ~6 GB is pinned by Docker services. The Pi's OOM-killer correctly protected the container stack (lower `oom_score_adj`) so GIS services stayed up while the harness died.
+
+**Guidance for future field validation runs:**
+1. `docker compose down` before invoking the harness, OR
+2. Run against a bbox-extracted subset (carve out a ~5 GB region, not the full CONUS MBTiles), OR
+3. Add a `--sequential` mode to the harness that finishes clone-a entirely before cloning clone-b (cuts peak disk + memory). Not done in this cycle.
+
+The semantic-equivalence validation for this task was instead carried by `test_nuclear_and_journal_produce_equivalent_mbtiles` (Task 11) — a 4×4 z17 gradient fixture that asserts coord-set equality + pixel mean-abs-diff < 2 across both modes. Runs in <1s. The A/B harness is READY for field validation at merge-to-main time, but `v1.3.0` ship should happen only after Cameron runs the harness against a small-bbox extract, not the full prod file.
+
+### Commits (18 total, 13-task body + plan review + follow-up fixes)
+
+Plan review (controller-inline, pre-dispatch):
+- `5483971` docs(overview): plan review — pin ambiguous steps + fix test assertion
+
+Phase 1 (foundation helpers):
+- `8532ef7` + `1cf9b66` — `_init_journal`
+- `b5d99ac` + `426b386` — `_enqueue_ancestors`
+- `6fbc909` + `903a6f9` — `_mutate_base_tile`
+
+Phase 2 (drain logic):
+- `2cba28b` + `b28d100` — `_drain_journal` + `_composite_2x2_children`
+- `2690dff` — `_drain_nuclear`
+
+Phase 3 (public API):
+- `b705107` + `abfba8a` — `build_overviews` mode selector
+- `1366345` — cancel-mid-drain persistence test
+
+Phase 4 (migrate writers):
+- `1b17fc4` — `merge_mbtiles` atomic bulk insert + ancestor cascade
+- `6434549` — `erode_nodata_edges` returns list + enqueues
+- `aa22ae2` — `inpaint_nodata_pixels` max-zoom-only + enqueues
+
+Phase 5 (integration):
+- `22f026a` + `407338c` — `run_noaa` post-processing reorder + metadata-fixup isolation
+
+Phase 6 (validation tooling):
+- `29d34e1` — A/B comparison harness
+
+Phase 7 (enforcement):
+- `b8a76a1` — grep-based invariant test (whitelists `_bulk_import_tiles`, `convert_batch_to_mbtiles` as pre-journal-boundary bulk paths)
+
+### Outcome
+
+- 26 new regression tests on `tests/test_overview_journal.py` + `tests/test_overview_write_enforcement.py`. All green.
+- Broader suite: 918/919 pass (`test_bootstrap_messaging.py::test_next_step_appears_at_most_once_per_branch` pre-existing, unrelated).
+- Semantic-equivalence proven at unit scale via `test_nuclear_and_journal_produce_equivalent_mbtiles`.
+- Journal pattern documented for future pipelines to adopt (M2M, Sentinel, NAIP) — out of scope for this cycle per spec §Non-goals.
+- Field-test gate before `v1.3.0`: small-bbox A/B harness run with `docker compose down`. Noted in Task 12 docstring + this log.
+
+---
+
 ## 2026-04-20 — NOAA catalog refresh async+progress (13 tasks complete, awaiting push)
 
 **Released as:** not yet released (shipped on `dev`, not yet pushed to origin)
