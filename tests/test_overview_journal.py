@@ -629,3 +629,54 @@ def test_build_overviews_legacy_no_journal_table_creates_and_falls_back(tmp_path
 
     assert journal is not None, "journal table should have been created"
     assert z16 is not None, "pyramid should have been built via nuclear fallback"
+
+
+def test_cancel_mid_drain_preserves_remaining_queue_and_committed_tiles(mbtiles_path):
+    """Cancel fires after 1 zoom level. Processed entries are gone from
+    queue AND the written ancestors are in the tiles table (proving the
+    commit took effect). Remaining entries at lower zoom levels survive
+    for resume."""
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+    # Build a 16-tile z17 block that will cascade z16 + z15 + z14 etc.
+    for tc in range(4):
+        for tr in range(4):
+            conn.execute(
+                "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
+                "VALUES (17, ?, ?, ?)",
+                (tc, tr, _make_jpeg_tile(50, 50, 50)),
+            )
+    # Manually enqueue all ancestors (simulating a fresh merge that just
+    # happened but we want to test cancel behavior directly)
+    _enqueue_ancestors(conn, [(17, tc, tr) for tc in range(4) for tr in range(4)])
+    conn.commit()
+    conn.close()
+
+    # Cancel after the z16 drain commits but before z15 begins.
+    call_count = [0]
+    def cancel_check():
+        call_count[0] += 1
+        # cancel_check is called at the top of each zoom-level iteration;
+        # return True on the 2nd call (z15 about to start → cancel)
+        return call_count[0] >= 2
+
+    build_overviews(mbtiles_path, mode="journal", cancel_check=cancel_check)
+
+    conn = sqlite3.connect(str(mbtiles_path))
+    # z16 entries should be GONE from queue (processed before cancel)
+    z16_queue = conn.execute(
+        "SELECT COUNT(*) FROM _overview_work_queue WHERE zoom_level=16"
+    ).fetchone()[0]
+    # z16 tiles should exist in tiles table (commit happened before cancel)
+    z16_tiles = conn.execute(
+        "SELECT COUNT(*) FROM tiles WHERE zoom_level=16"
+    ).fetchone()[0]
+    # z15 and below entries should STILL be in queue (not reached)
+    z15_queue = conn.execute(
+        "SELECT COUNT(*) FROM _overview_work_queue WHERE zoom_level=15"
+    ).fetchone()[0]
+    conn.close()
+
+    assert z16_queue == 0, f"z16 queue entries should be processed; got {z16_queue}"
+    assert z16_tiles == 4, f"z16 tiles should be committed; got {z16_tiles}"
+    assert z15_queue > 0, f"z15 queue entries should survive for resume; got {z15_queue}"
