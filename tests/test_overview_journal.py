@@ -791,3 +791,64 @@ def test_erode_nodata_edges_returns_deleted_coords_and_enqueues(tmp_path):
 
     assert remaining == 0
     assert queue_count == 17
+
+
+def test_inpaint_nodata_pixels_only_touches_max_zoom(tmp_path):
+    """Spec §3 / R4: inpaint in reordered flow must only mutate max_zoom tiles."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from rasterio_ops import inpaint_nodata_pixels
+
+    path = tmp_path / "inpaint.mbtiles"
+    conn = sqlite3.connect(str(path))
+    conn.executescript(
+        """
+        CREATE TABLE tiles (
+            zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER,
+            tile_data BLOB,
+            PRIMARY KEY (zoom_level, tile_column, tile_row)
+        );
+        CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT);
+        """
+    )
+    _init_journal(conn)
+
+    # Build a max-zoom tile with ~1.4% black pixels (inpaint should fix it).
+    import numpy as np
+    import rasterio
+    from rasterio.io import MemoryFile
+    arr = np.full((3, 256, 256), 200, dtype=np.uint8)
+    arr[:, :30, :30] = 0  # ~1.4% black → in the inpaint range
+    with MemoryFile() as mf:
+        with mf.open(driver="JPEG", width=256, height=256, count=3, dtype="uint8") as ds:
+            ds.write(arr)
+        max_zoom_jpeg = mf.read()
+
+    # Place tiles at z17 (max) AND z16 (should be untouched post-reorder)
+    conn.execute("INSERT INTO tiles VALUES (17, 100, 200, ?)", (max_zoom_jpeg,))
+    # Put an identical-content tile at z16 — it should NOT be modified
+    conn.execute("INSERT INTO tiles VALUES (16, 50, 100, ?)", (max_zoom_jpeg,))
+    conn.commit()
+    conn.close()
+
+    modified = inpaint_nodata_pixels(path)
+
+    assert isinstance(modified, list)
+    # All returned coords must be at max_zoom=17
+    for (z, _, _) in modified:
+        assert z == 17, f"inpaint must only touch max_zoom; got modification at z={z}"
+
+    conn = sqlite3.connect(str(path))
+    # The z16 tile must be byte-identical to what we inserted
+    z16 = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=16 AND tile_column=50 AND tile_row=100"
+    ).fetchone()[0]
+    queue_count = conn.execute(
+        "SELECT COUNT(*) FROM _overview_work_queue"
+    ).fetchone()[0]
+    conn.close()
+
+    assert z16 == max_zoom_jpeg, "z16 tile must not have been modified by inpaint"
+    # If the z17 tile was inpainted, (17, 100, 200) should be in modified list
+    assert (17, 100, 200) in modified
+    # Ancestors of the one modified z17 tile should be enqueued (17 entries)
+    assert queue_count == 17

@@ -1053,7 +1053,7 @@ def inpaint_nodata_pixels(
     nodata_threshold: int = 20,
     max_nodata_ratio: float = 0.5,
     cancel_check=None,
-) -> int:
+) -> list[tuple[int, int, int]]:
     """Replace near-black (nodata) pixels with nearest valid imagery.
 
     JPEG tiles have no alpha channel, so nodata renders as opaque black —
@@ -1062,30 +1062,46 @@ def inpaint_nodata_pixels(
     nearest non-black neighbor using a distance transform, eliminating
     visible seams without losing any real imagery.
 
+    Only operates on max-zoom tiles (spec §3 / R5 I4). In the reordered
+    pipeline (merge → erode → inpaint → overviews), touching lower zoom
+    levels would mutate stale overview tiles out-of-band on resume runs.
+
     Skips tiles that are fully valid (no work needed) or mostly empty
     (>max_nodata_ratio black — these are boundary tiles better handled
     by erode_nodata_edges).
 
-    Returns the number of tiles modified.
+    Returns the list of (zoom_level, tile_column, tile_row) coords modified.
     """
     from scipy.ndimage import distance_transform_edt
 
     conn = sqlite3.connect(str(mbtiles_path))
     try:
         conn.execute("PRAGMA journal_mode=WAL")
+        _init_journal(conn)
+
+        max_zoom_row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
+        if not max_zoom_row or max_zoom_row[0] is None:
+            return []
+        max_zoom = max_zoom_row[0]
 
         # Stream tiles via cursor iteration instead of fetchall() to avoid
         # loading all tile BLOBs into memory at once (OOM at scale).
         cursor = conn.execute(
-            "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles"
+            "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles "
+            "WHERE zoom_level = ?",
+            (max_zoom,),
         )
 
-        fixed = 0
+        modified: list[tuple[int, int, int]] = []
         batch = cursor.fetchmany(500)
         while batch:
             if cancel_check and cancel_check():
-                log.info("inpaint_nodata_pixels: cancellation requested, stopping after %d tiles", fixed)
+                log.info(
+                    "inpaint_nodata_pixels: cancellation requested, stopping after %d tiles",
+                    len(modified),
+                )
                 break
+            conn.execute("BEGIN")
             for z, x, y, data in batch:
                 with rasterio.MemoryFile(data) as mf:
                     with mf.open() as ds:
@@ -1104,23 +1120,18 @@ def inpaint_nodata_pixels(
                 for band in range(arr.shape[0]):
                     arr[band][black] = arr[band][nearest[0][black], nearest[1][black]]
 
-                conn.execute(
-                    "UPDATE tiles SET tile_data=? "
-                    "WHERE zoom_level=? AND tile_column=? AND tile_row=?",
-                    (_encode_jpeg(arr), z, x, y),
-                )
-                fixed += 1
+                _mutate_base_tile(conn, "upsert", z, x, y, tile_data=_encode_jpeg(arr))
+                modified.append((z, x, y))
 
-                if fixed % 1000 == 0:
-                    conn.commit()
-                    log.info("Inpainted %d tiles so far", fixed)
+                if len(modified) % 1000 == 0:
+                    log.info("Inpainted %d tiles so far", len(modified))
 
+            conn.commit()
             batch = cursor.fetchmany(500)
 
-        conn.commit()
-        if fixed:
-            log.info("Inpainted %d tiles in %s", fixed, mbtiles_path)
-        return fixed
+        if modified:
+            log.info("Inpainted %d tiles in %s", len(modified), mbtiles_path)
+        return modified
     finally:
         conn.close()
 

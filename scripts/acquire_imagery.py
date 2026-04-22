@@ -2824,7 +2824,7 @@ async def run_noaa(args):
                 output, cancel_check=lambda: _cancel_requested
             )
             if inpainted:
-                log.info("Inpainted %d tiles to remove black seams", inpainted)
+                log.info("Inpainted %d tiles to remove black seams", len(inpainted))
         except Exception as exc:
             log.warning("Nodata cleanup failed: %s — output is still usable", exc)
 
