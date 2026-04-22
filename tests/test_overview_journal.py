@@ -852,3 +852,98 @@ def test_inpaint_nodata_pixels_only_touches_max_zoom(tmp_path):
     assert (17, 100, 200) in modified
     # Ancestors of the one modified z17 tile should be enqueued (17 entries)
     assert queue_count == 17
+
+
+def test_nuclear_and_journal_produce_equivalent_mbtiles(tmp_path):
+    """Spec test 12: run both modes against identical input; assert
+    coord-set equality and pixel mean-abs-diff < 2."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    import shutil
+    import numpy as np
+    from rasterio.io import MemoryFile
+
+    def _make_gradient_tile(base_r, base_g, base_b) -> bytes:
+        """Gradient tile so 2x2 averaging actually does work the test can observe."""
+        arr = np.zeros((3, 256, 256), dtype=np.uint8)
+        for i in range(256):
+            arr[0, i, :] = (base_r + i) % 256
+            arr[1, i, :] = (base_g + i) % 256
+            arr[2, i, :] = (base_b + i) % 256
+        with MemoryFile() as mf:
+            with mf.open(driver="JPEG", width=256, height=256, count=3, dtype="uint8") as ds:
+                ds.write(arr)
+            return mf.read()
+
+    # Build a fixture MBTiles with a 4x4 = 16-tile z17 block (gradients).
+    # Cascade from z17 gives z16 (4 tiles), z15 (1 tile), z14 (1 tile).
+    base_path = tmp_path / "base.mbtiles"
+    conn = sqlite3.connect(str(base_path))
+    conn.executescript(
+        """
+        CREATE TABLE tiles (
+            zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER,
+            tile_data BLOB,
+            PRIMARY KEY (zoom_level, tile_column, tile_row)
+        );
+        CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT);
+        """
+    )
+    _init_journal(conn)
+    tiles_coords = []
+    for tc in range(4):
+        for tr in range(4):
+            tile = _make_gradient_tile(tc * 40, tr * 40, 128)
+            conn.execute(
+                "INSERT INTO tiles VALUES (17, ?, ?, ?)", (tc, tr, tile)
+            )
+            tiles_coords.append((17, tc, tr))
+    _enqueue_ancestors(conn, tiles_coords)
+    conn.commit()
+    conn.close()
+
+    # Clone for nuclear + journal
+    nuclear_path = tmp_path / "nuclear.mbtiles"
+    journal_path = tmp_path / "journal.mbtiles"
+    shutil.copy(base_path, nuclear_path)
+    shutil.copy(base_path, journal_path)
+
+    build_overviews(nuclear_path, mode="nuclear")
+    build_overviews(journal_path, mode="journal")
+
+    # Compare outputs
+    conn_n = sqlite3.connect(str(nuclear_path))
+    conn_j = sqlite3.connect(str(journal_path))
+    coords_n = set(conn_n.execute(
+        "SELECT zoom_level, tile_column, tile_row FROM tiles"
+    ).fetchall())
+    coords_j = set(conn_j.execute(
+        "SELECT zoom_level, tile_column, tile_row FROM tiles"
+    ).fetchall())
+    assert coords_n == coords_j, (
+        f"coord sets differ: only-nuclear={coords_n - coords_j}, "
+        f"only-journal={coords_j - coords_n}"
+    )
+
+    # Per-tile pixel mean-abs-diff check
+    for (z, tc, tr) in coords_n:
+        data_n = conn_n.execute(
+            "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+            (z, tc, tr),
+        ).fetchone()[0]
+        data_j = conn_j.execute(
+            "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+            (z, tc, tr),
+        ).fetchone()[0]
+        with MemoryFile(data_n) as mf:
+            with mf.open() as ds:
+                arr_n = ds.read()
+        with MemoryFile(data_j) as mf:
+            with mf.open() as ds:
+                arr_j = ds.read()
+        diff = np.abs(arr_n.astype(np.int16) - arr_j.astype(np.int16)).mean()
+        assert diff < 2.0, (
+            f"tile ({z},{tc},{tr}) mean-abs-diff={diff:.2f} exceeds threshold"
+        )
+
+    conn_n.close()
+    conn_j.close()

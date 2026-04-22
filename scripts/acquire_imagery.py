@@ -1057,40 +1057,6 @@ def run_gdal_subprocess(cmd: list[str], timeout: int = 7200,
     )
 
 
-def _run_gdaladdo_with_metadata_fixup(output: Path) -> None:
-    """Build overview pyramids on MBTiles output, then fix metadata.
-
-    Delegates to rasterio_ops.build_overviews which already updates
-    minzoom/maxzoom metadata. The post-fixup SQL ensures consistency
-    even if build_overviews is interrupted.
-    """
-    from rasterio_ops import build_overviews as rio_build_overviews
-
-    if _cancel_requested:
-        return
-
-    rio_build_overviews(output, cancel_check=lambda: _cancel_requested)
-
-    # Cancel guard: don't fixup metadata on partial overviews
-    if _cancel_requested:
-        return
-
-    # Fix metadata to reflect actual tile zoom range
-    conn = sqlite3.connect(str(output))
-    try:
-        conn.execute(
-            "UPDATE metadata SET value = (SELECT MIN(zoom_level) FROM tiles) "
-            "WHERE name = 'minzoom'"
-        )
-        conn.execute(
-            "UPDATE metadata SET value = (SELECT MAX(zoom_level) FROM tiles) "
-            "WHERE name = 'maxzoom'"
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def convert_batch_to_mbtiles(tif_paths: list[Path], output: Path,
                              batch_label: str = "batch") -> bool:
     """Convert a batch of GeoTIFFs to a temp MBTiles, then merge into output.
@@ -2751,33 +2717,6 @@ async def run_noaa(args):
         import sqlite3 as stdlib_sqlite3
         with stdlib_sqlite3.connect(str(output)) as conn:
             conn.execute("INSERT OR REPLACE INTO metadata (name, value) VALUES ('name', 'imagery_noaa')")
-        log.info("Building overview pyramids for %s", output)
-        update_progress(output, "noaa", args.bbox, "n/a",
-                        tiles_done, total_tiles, phase="overviews",
-                        geotiffs_downloaded=tiles_done,
-                        geotiffs_total=total_tiles)
-        try:
-            _run_gdaladdo_with_metadata_fixup(output)
-        except Exception as exc:
-            log.warning("Overview generation failed: %s — output is still usable", exc)
-
-        # B1 fix: cancel guard AFTER overview generation, before erode/inpaint
-        if _cancel_requested:
-            update_progress(output, "noaa", args.bbox, "n/a",
-                            tiles_done, total_tiles, status="cancelled",
-                            phase="cancelled",
-                            geotiffs_downloaded=tiles_done,
-                            geotiffs_total=total_tiles)
-            log.info("NOAA pipeline cancelled after overview build")
-            return
-
-        # Checkpoint WAL after overviews before erosion/inpaint
-        import sqlite3 as _pp_sql
-        try:
-            with _pp_sql.connect(str(output)) as _pc:
-                _pc.execute("PRAGMA wal_checkpoint(PASSIVE)")
-        except Exception:
-            pass
 
         # Post-process: clean up JPEG nodata artifacts
         # 1. Erode boundary tiles with heavy nodata (black rectangles over basemap)
@@ -2791,6 +2730,7 @@ async def run_noaa(args):
         # Users who want to re-erode after an expansion can delete the
         # checkpoint and re-run. This matches the "resume = incremental add"
         # mental model.
+        import sqlite3 as _pp_sql
         try:
             from rasterio_ops import erode_nodata_edges as rio_erode_nodata_edges
             from rasterio_ops import inpaint_nodata_pixels as rio_inpaint_nodata_pixels
@@ -2828,7 +2768,37 @@ async def run_noaa(args):
         except Exception as exc:
             log.warning("Nodata cleanup failed: %s — output is still usable", exc)
 
-        # B1 fix: cancel guard AFTER inpaint, before final status write
+        # Overviews run LAST (reordered 2026-04-22 per spec 2026-04-22-overview-incremental-design.md §3):
+        # sees post-erosion + post-inpaint base tiles; drains _overview_work_queue
+        # populated by merge_mbtiles, erode, inpaint. mode="auto" picks journal or
+        # nuclear based on queue size / base count ratio.
+        log.info("Building overview pyramids for %s", output)
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        tiles_done, total_tiles, phase="overviews",
+                        geotiffs_downloaded=tiles_done,
+                        geotiffs_total=total_tiles)
+        try:
+            from rasterio_ops import build_overviews as rio_build_overviews
+            rio_build_overviews(
+                output, mode="auto", cancel_check=lambda: _cancel_requested
+            )
+            # Fix metadata to reflect actual tile zoom range (moved inline from
+            # _run_gdaladdo_with_metadata_fixup, which is being deleted).
+            import sqlite3 as _ov_sql
+            with _ov_sql.connect(str(output)) as _oc:
+                _oc.execute(
+                    "UPDATE metadata SET value = (SELECT MIN(zoom_level) FROM tiles) "
+                    "WHERE name = 'minzoom'"
+                )
+                _oc.execute(
+                    "UPDATE metadata SET value = (SELECT MAX(zoom_level) FROM tiles) "
+                    "WHERE name = 'maxzoom'"
+                )
+                _oc.commit()
+        except Exception as exc:
+            log.warning("Overview generation failed: %s — output is still usable", exc)
+
+        # B1 fix: cancel guard AFTER inpaint + overviews, before final status write
         if _cancel_requested:
             update_progress(output, "noaa", args.bbox, "n/a",
                             tiles_done, total_tiles, status="cancelled",
