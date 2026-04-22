@@ -2782,8 +2782,15 @@ async def run_noaa(args):
             rio_build_overviews(
                 output, mode="auto", cancel_check=lambda: _cancel_requested
             )
-            # Fix metadata to reflect actual tile zoom range (moved inline from
-            # _run_gdaladdo_with_metadata_fixup, which is being deleted).
+        except Exception as exc:
+            log.warning("Overview generation failed: %s — output is still usable", exc)
+
+        # Fix metadata to reflect actual tile zoom range. Inlined from the
+        # removed _run_gdaladdo_with_metadata_fixup wrapper. Runs regardless
+        # of overview-build outcome (matches the wrapper's original
+        # try/finally pattern) so minzoom/maxzoom reflect whatever tiles
+        # actually exist, even on partial/cancelled overview runs.
+        try:
             import sqlite3 as _ov_sql
             with _ov_sql.connect(str(output)) as _oc:
                 _oc.execute(
@@ -2796,7 +2803,7 @@ async def run_noaa(args):
                 )
                 _oc.commit()
         except Exception as exc:
-            log.warning("Overview generation failed: %s — output is still usable", exc)
+            log.warning("minzoom/maxzoom metadata fixup failed: %s", exc)
 
         # B1 fix: cancel guard AFTER inpaint + overviews, before final status write
         if _cancel_requested:
