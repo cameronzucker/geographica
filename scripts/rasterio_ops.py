@@ -671,6 +671,26 @@ def _is_empty_tile(data: np.ndarray) -> bool:
     return not np.any(data)
 
 
+def _init_journal(conn: sqlite3.Connection) -> None:
+    """Create the _overview_work_queue dirty-ancestor journal table if missing.
+
+    Idempotent. Safe to call on any MBTiles connection, including legacy
+    files that pre-date the journal design. Part of the 2026-04-22
+    incremental-pyramid fix — see
+    docs/superpowers/specs/2026-04-22-overview-incremental-design.md §Migration.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS _overview_work_queue (
+            zoom_level   INTEGER NOT NULL,
+            tile_column  INTEGER NOT NULL,
+            tile_row     INTEGER NOT NULL,
+            PRIMARY KEY (zoom_level, tile_column, tile_row)
+        )
+        """
+    )
+
+
 # ---------------------------------------------------------------------------
 # 6. Build overview pyramids (replaces gdaladdo)
 # ---------------------------------------------------------------------------
