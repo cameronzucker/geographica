@@ -640,8 +640,13 @@ def test_drain_journal_multi_level_cascade(mbtiles_path):
     _drain_journal(conn)
     conn.commit()
 
-    # Expected: z16 has 4 tiles (2x2 grid), z15 has 1 tile, z14 has 1 tile.
-    # z13..z0 should NOT be built (incomplete 2x2 at z14's parent).
+    # Expected by the unified re-eval rule ("delete if any child missing"):
+    #   z16: 4 tiles — each has all 4 z17 children → WRITE.
+    #   z15: 1 tile  — (0,0) has all 4 z16 children {(0,0),(0,1),(1,0),(1,1)} → WRITE.
+    #   z14: 0 tiles — (0,0) has z15 children {(0,0),(0,1),(1,0),(1,1)}, only (0,0)
+    #                  exists → DELETE no-op. The queue walks the lineage, but
+    #                  incomplete-parent never materializes.
+    #   z13..z0: 0   — cascades same way down to z0.
     z16_count = conn.execute(
         "SELECT COUNT(*) FROM tiles WHERE zoom_level=16"
     ).fetchone()[0]
@@ -658,8 +663,13 @@ def test_drain_journal_multi_level_cascade(mbtiles_path):
 
     assert z16_count == 4, f"expected 4 z16 tiles; got {z16_count}"
     assert z15_count == 1, f"expected 1 z15 tile; got {z15_count}"
-    assert z14_count == 1, f"expected 1 z14 tile; got {z14_count}"
-    assert z13_count == 0, f"z13 should not be built (incomplete parent); got {z13_count}"
+    assert z14_count == 0, (
+        f"expected 0 z14 tiles (z15 has only 1 of 4 children; unified rule "
+        f"treats incomplete parent as delete); got {z14_count}. If this fails "
+        f"with z14_count > 0, _drain_journal is preserving partial-child "
+        f"ancestors — breaking Round 4 C2 invariant."
+    )
+    assert z13_count == 0, f"z13 should not be built (z14 incomplete); got {z13_count}"
 ```
 
 - [ ] **Step 2: Run tests to verify fail**
@@ -1556,75 +1566,69 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
         # ... (detach, close)
 ```
 
-Modify to wrap in BEGIN/COMMIT, and ADD the ancestor-cascade SQL right after the bulk insert. Pseudocode of the change:
+**Exact edit recipe against current code at [scripts/acquire_imagery.py:872-950](../../../scripts/acquire_imagery.py#L872-L950):**
 
-```python
-def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
-    # ... existing variable setup ...
-    dst = sqlite3.connect(str(dst_path))
-    src_attached = False
-    try:
-        # Ensure the journal table exists (idempotent)
-        from rasterio_ops import _init_journal
-        _init_journal(dst)
+The current function has this structure (keep these line anchors in mind):
+- L884-885: open `dst = sqlite3.connect(...)`; `try:`
+- L886: `dst.execute("ATTACH DATABASE ? AS src", (str(src_path),))` — **uses `?` parameterization; preserve this, do NOT change to an f-string**.
+- L887-893: `CREATE TABLE IF NOT EXISTS tiles` + `metadata`.
+- L895-898: bulk `INSERT OR IGNORE INTO tiles SELECT ... FROM src.tiles`.
+- L900-910: `cursor = dst.execute(...)` overlap-detection JOIN.
+- L912-938: `for z, x, y, src_data, dst_data in cursor:` slow-path composite loop.
+- **L924-927: the raw `dst.execute("UPDATE tiles SET tile_data = ? WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?", (merged, z, x, y))` — THIS is the write to re-route through `_mutate_base_tile`.**
+- L944-946: copy metadata.
+- L947-949: `dst.commit()` / `dst.execute("DETACH DATABASE src")` / `finally: dst.close()`.
 
-        dst.execute(f"ATTACH DATABASE '{src_path}' AS src")
-        src_attached = True
+Make exactly these 4 changes:
 
-        # Determine max_zoom BEFORE the merge (src's max zoom is what we care
-        # about; dst may already have the same or a subset)
-        src_max_zoom_row = dst.execute("SELECT MAX(zoom_level) FROM src.tiles").fetchone()
-        if not src_max_zoom_row or src_max_zoom_row[0] is None:
-            # Empty source; nothing to merge
-            dst.execute("DETACH DATABASE src")
-            return
-        src_max_zoom = src_max_zoom_row[0]
+1. **Add imports** near the top of `merge_mbtiles` (inside the function body, alongside the existing `import rasterio` / `from rasterio.io import MemoryFile` / `import numpy as np`): `from rasterio_ops import _init_journal, _mutate_base_tile`.
 
-        # Atomic block: bulk insert + ancestor-enqueue cascade
-        dst.execute("BEGIN")
-        try:
-            dst.execute(
-                """INSERT OR IGNORE INTO tiles
-                   SELECT zoom_level, tile_column, tile_row, tile_data FROM src.tiles"""
-            )
+2. **After the two `CREATE TABLE IF NOT EXISTS` statements at L887-893, and before the bulk INSERT at L895**, insert:
+   ```python
+           _init_journal(dst)
 
-            # Enqueue ancestors for every src tile at src_max_zoom (one bulk SQL
-            # per zoom-level shift from src_max_zoom-1 down to 0). INSERT OR
-            # IGNORE collapses duplicates via the queue's PK.
-            for dz in range(1, src_max_zoom + 1):
-                dst.execute(
-                    """INSERT OR IGNORE INTO _overview_work_queue
-                       (zoom_level, tile_column, tile_row)
-                       SELECT zoom_level - ?, tile_column >> ?, tile_row >> ?
-                       FROM src.tiles WHERE zoom_level = ?""",
-                    (dz, dz, dz, src_max_zoom),
-                )
+           # Determine src's max_zoom BEFORE the merge — dictates the ancestor
+           # cascade depth. Empty source: skip everything below, no journal ops.
+           src_max_zoom_row = dst.execute("SELECT MAX(zoom_level) FROM src.tiles").fetchone()
+           if not src_max_zoom_row or src_max_zoom_row[0] is None:
+               dst.execute("DETACH DATABASE src")
+               return
+           src_max_zoom = src_max_zoom_row[0]
 
-            # Existing overlap-compositing loop — MODIFY: replace raw
-            # UPDATE tiles with _mutate_base_tile call for EACH composite.
-            # The existing loop structure is preserved; only the write is
-            # routed through the helper.
-            # ... (see existing L900-935 for the loop body; replace the
-            # UPDATE tiles SET tile_data = ? WHERE ... with a call to
-            # _mutate_base_tile(dst, "upsert", z, tc, tr, tile_data=composited_data).
-            # The helper enqueues ancestors automatically.)
+           dst.execute("BEGIN")
+   ```
 
-            dst.execute("COMMIT")
-        except Exception:
-            dst.execute("ROLLBACK")
-            raise
-    finally:
-        if src_attached:
-            dst.execute("DETACH DATABASE src")
-        dst.close()
-```
+3. **After the bulk `INSERT OR IGNORE INTO tiles ...` at L895-898, before the cursor at L900**, insert the ancestor-cascade SQL (one bulk statement per zoom-level shift):
+   ```python
+           # R5 C1: bulk enqueue — one INSERT per zoom-level shift. Each is a
+           # SELECT over src.tiles; INSERT OR IGNORE collapses duplicates via
+           # the queue's PK.
+           for dz in range(1, src_max_zoom + 1):
+               dst.execute(
+                   """INSERT OR IGNORE INTO _overview_work_queue
+                      (zoom_level, tile_column, tile_row)
+                      SELECT zoom_level - ?, tile_column >> ?, tile_row >> ?
+                      FROM src.tiles WHERE zoom_level = ?""",
+                   (dz, dz, dz, src_max_zoom),
+               )
+   ```
 
-**Note to implementer:** the exact lines to change in `merge_mbtiles` depend on the current structure. The key requirements:
+4. **Replace L924-927** (the raw `UPDATE tiles` call) with a `_mutate_base_tile` call so the slow-path composite enqueues ancestors atomically:
+   ```python
+                   _mutate_base_tile(dst, "upsert", z, x, y, tile_data=merged)
+   ```
+   (Note: `_mutate_base_tile` uses `INSERT OR REPLACE`, which is equivalent semantics to `UPDATE` for a row whose PK already exists via the earlier `INSERT OR IGNORE`. The bulk insert skipped this row because of a PK conflict with the existing dst row; `INSERT OR REPLACE` overwrites it with `merged`.)
 
-1. Call `_init_journal(dst)` before any writes.
-2. Wrap the bulk-INSERT + cascade SQL in `BEGIN` / `COMMIT` / `ROLLBACK on except`.
-3. For the overlap-compositing slow path, route each per-tile UPDATE through `_mutate_base_tile(dst, "upsert", z, tc, tr, tile_data=composited_bytes)` so the ancestor enqueueing happens atomically per composite.
-4. Import `_mutate_base_tile` alongside `_init_journal`.
+5. **Replace the existing `dst.commit()` at L947** with explicit `COMMIT`/`ROLLBACK` wrapping the whole transaction opened in change 2:
+   - Change the single `dst.commit()` at L947 into `dst.execute("COMMIT")`.
+   - Wrap the bulk-insert + cascade + cursor/loop (L895-947 range) in a `try: ... except: dst.execute("ROLLBACK"); raise` so a crash mid-loop leaves dst in a consistent state (no half-merged tiles + stale journal).
+
+**Structural sanity check before moving on:**
+- [ ] `_init_journal(dst)` runs before any writes to either `tiles` or `_overview_work_queue`.
+- [ ] Empty-source early-return DETACHes src before returning (prevents resource leak).
+- [ ] `BEGIN` pairs with exactly one `COMMIT` (or one `ROLLBACK` via except); no stray `dst.commit()` inside the try.
+- [ ] The slow-path UPDATE is the ONLY raw `INSERT/UPDATE/DELETE` on tiles in this function; the other write is the bulk `INSERT OR IGNORE INTO tiles ... SELECT FROM src.tiles` which the enforcement test in Task 13 will whitelist.
+- [ ] ATTACH still uses `?` parameterization at L886; not changed to an f-string.
 
 - [ ] **Step 4: Run test to verify pass**
 
@@ -1737,9 +1741,31 @@ Current signature returns `int`. Change to return `list[tuple[int, int, int]]`. 
 - Return the `deleted` list instead of `total_removed` int.
 - Wrap each erosion round in `conn.execute("BEGIN")` / `conn.commit()` for atomicity.
 
-Note: existing callers (e.g. `run_noaa`) use the return value as a count for logging. Update callers to `len(deleted)` in the next tasks.
-
 Reference the existing code at L888-995. Preserve the `zoom_levels = [max_z_row[0]]` scope restriction (erosion is base-zoom only).
+
+- [ ] **Step 3b: Update the single in-tree caller atomically (prevents broader-suite breakage between tasks)**
+
+The only caller is [scripts/acquire_imagery.py:2766-2771](../../../scripts/acquire_imagery.py#L2766-L2771). Find:
+
+```python
+eroded = rio_erode_nodata_edges(
+    output, cancel_check=lambda: _cancel_requested
+)
+if eroded:
+    log.info("Eroded %d nodata-edge tiles for clean basemap transition", eroded)
+```
+
+Change the `log.info` line to use `len(eroded)` so the `%d` format specifier receives an int:
+
+```python
+eroded = rio_erode_nodata_edges(
+    output, cancel_check=lambda: _cancel_requested
+)
+if eroded:
+    log.info("Eroded %d nodata-edge tiles for clean basemap transition", len(eroded))
+```
+
+**Rationale:** without this, any broader pytest or smoke run between Task 9 and Task 11 hits `TypeError: %d format: a number is required, not list` in run_noaa's post-processing. The `if eroded:` truthy-check still works on a list (empty list is falsy). Stage both files together in Step 5.
 
 - [ ] **Step 4: Run test to verify pass**
 
@@ -1752,14 +1778,15 @@ Expected: pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add scripts/rasterio_ops.py tests/test_overview_journal.py
+git add scripts/rasterio_ops.py scripts/acquire_imagery.py tests/test_overview_journal.py
 git commit -m "$(cat <<'EOF'
 feat(overview): erode_nodata_edges returns deleted coords + enqueues ancestors
 
 Routes DELETEs through _mutate_base_tile so each erosion atomically
 enqueues the ancestor chain of the deleted base tile. Return type
-changes from int to list[tuple[int, int, int]] — callers that used
-the count can use len() of the return value.
+changes from int to list[tuple[int, int, int]]; the in-tree caller
+(run_noaa) migrates to len(eroded) in the same commit to prevent
+broader-suite TypeError between this task and Task 11.
 
 Agent: <moniker>
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
@@ -1881,6 +1908,30 @@ cursor = conn.execute(
 
 Also: change the function's return type from `int` to `list[tuple[int, int, int]]`, accumulate modified coords, and route the per-tile UPDATE through `_mutate_base_tile(conn, "upsert", z, x, y, tile_data=new_bytes)`.
 
+- [ ] **Step 3b: Update the single in-tree caller atomically (same motivation as Task 9 Step 3b)**
+
+The only caller is [scripts/acquire_imagery.py:2791-2795](../../../scripts/acquire_imagery.py#L2791-L2795). Find:
+
+```python
+inpainted = rio_inpaint_nodata_pixels(
+    output, cancel_check=lambda: _cancel_requested
+)
+if inpainted:
+    log.info("Inpainted %d tiles to remove black seams", inpainted)
+```
+
+Change to `len(inpainted)`:
+
+```python
+inpainted = rio_inpaint_nodata_pixels(
+    output, cancel_check=lambda: _cancel_requested
+)
+if inpainted:
+    log.info("Inpainted %d tiles to remove black seams", len(inpainted))
+```
+
+Stage both `scripts/rasterio_ops.py` AND `scripts/acquire_imagery.py` in Step 5.
+
 - [ ] **Step 4: Run test to verify pass**
 
 ```bash
@@ -1892,7 +1943,7 @@ Expected: pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add scripts/rasterio_ops.py tests/test_overview_journal.py
+git add scripts/rasterio_ops.py scripts/acquire_imagery.py tests/test_overview_journal.py
 git commit -m "$(cat <<'EOF'
 feat(overview): inpaint_nodata_pixels restricts to max_zoom + returns list
 
@@ -1903,7 +1954,8 @@ max_zoom confines inpaint to the authoritative base layer.
 
 Return type changes from int to list[tuple[int, int, int]] (modified
 coords). Writes route through _mutate_base_tile for atomic ancestor
-enqueueing.
+enqueueing. The in-tree caller (run_noaa) migrates to len(inpainted)
+in the same commit.
 
 Agent: <moniker>
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
@@ -2035,56 +2087,107 @@ If the test fails on diff > 2: investigate whether the JPEG re-encoding happens 
 
 - [ ] **Step 3: Reorder the NOAA post-processing in `scripts/acquire_imagery.py`**
 
-Find the block at ~L2708-2790. Current order (simplified):
+**Context — read this before editing.** The current Phase 5 block lives at [scripts/acquire_imagery.py:2708-2807](../../../scripts/acquire_imagery.py#L2708-L2807). It does MORE than just the 3 phase calls; it also:
+- calls `_update_mbtiles_bounds(output)` (:2715) to recalculate bbox from actual tile extent
+- sets the MBTiles metadata `('name', 'imagery_noaa')` (:2720-2721) so TileServer picks it up
+- runs a `PRAGMA wal_checkpoint(PASSIVE)` after overviews and another between erode/inpaint (:2744-2748, :2785-2790) — these keep WAL bounded during the heavy post-processing
+- emits `update_progress(...)` with `phase="overviews"` (:2723-2726)
+- has THREE cancel guards (after overviews, after erode, after inpaint) each emitting a final `status="cancelled"` progress write (:2733-2740, :2776-2783, :2799-2807)
+- has the `if not skip_to_postprocess:` gate on erode (:2766-2773) — D1/B9 fix — erosion isn't idempotent across resumes
 
+**These are load-bearing. The reorder MUST preserve all of them.** Do NOT do a block-replace; do a structural re-order.
+
+**Exact edit recipe:**
+
+**(a) Delete** the current overview-first subsection at lines 2722-2748:
 ```python
-# Phase 5: merge happened before this block
-# Then: build_overviews (legacy nuclear)
-# Then: erode
-# Then: inpaint
+        log.info("Building overview pyramids for %s", output)
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        tiles_done, total_tiles, phase="overviews",
+                        geotiffs_downloaded=tiles_done,
+                        geotiffs_total=total_tiles)
+        try:
+            _run_gdaladdo_with_metadata_fixup(output)
+        except Exception as exc:
+            log.warning("Overview generation failed: %s — output is still usable", exc)
+
+        # B1 fix: cancel guard AFTER overview generation, before erode/inpaint
+        if _cancel_requested:
+            update_progress(output, "noaa", args.bbox, "n/a",
+                            tiles_done, total_tiles, status="cancelled",
+                            phase="cancelled",
+                            geotiffs_downloaded=tiles_done,
+                            geotiffs_total=total_tiles)
+            log.info("NOAA pipeline cancelled after overview build")
+            return
+
+        # Checkpoint WAL after overviews before erosion/inpaint
+        import sqlite3 as _pp_sql
+        try:
+            with _pp_sql.connect(str(output)) as _pc:
+                _pc.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except Exception:
+            pass
 ```
 
-Replace with:
+**(b) Keep** the `_update_mbtiles_bounds` call (:2714-2717) and the metadata name-set (:2718-2721). Those stay at the top of the block.
+
+**(c) After (b)'s metadata name-set (currently :2721), before the `# Post-process:` comment at :2750**, **insert** a new import at the top of the module-level import block (near the other `from rasterio_ops import ...` lines) — OR inline inside the post-process try: block — so `import sqlite3 as _pp_sql` is still declared before first use. The existing `import sqlite3 as _pp_sql` at :2743 moves down below with its block; you will rewrite that shortly.
+
+**(d) Retain** the erode/inpaint try-block exactly as-is at :2762-2797, with two already-planned changes (from Task 9 Step 3b and Task 10 Step 3b, which updated the `%d` → `len(...)` logs in the caller). Do NOT restructure this try-block.
+
+**(e) After the inpaint `except Exception` at :2796-2797, before the post-inpaint cancel guard at :2799**, insert the NEW overview call:
 
 ```python
-# Phase 5 (reordered 2026-04-22 per spec):
-# 1) erode base tiles
-# 2) inpaint max-zoom base tiles
-# 3) build_overviews(mode="auto") — drains the journal
-try:
-    from rasterio_ops import erode_nodata_edges as rio_erode
-    from rasterio_ops import inpaint_nodata_pixels as rio_inpaint
-    from rasterio_ops import build_overviews as rio_build_overviews
-
-    if not skip_to_postprocess:
-        deleted = rio_erode(output, cancel_check=lambda: _cancel_requested)
-        if deleted:
-            log.info("Eroded %d nodata-edge tiles", len(deleted))
-    else:
-        log.info("Skipping erosion on resume run")
-
-    if _cancel_requested:
+        # Overviews run LAST (reordered 2026-04-22 per spec 2026-04-22-overview-incremental-design.md §3):
+        # sees post-erosion + post-inpaint base tiles; drains _overview_work_queue
+        # populated by merge_mbtiles, erode, inpaint. mode="auto" picks journal or
+        # nuclear based on queue size / base count ratio.
+        log.info("Building overview pyramids for %s", output)
         update_progress(output, "noaa", args.bbox, "n/a",
-                        tiles_done, total_tiles, status="cancelled", phase="cancelled")
-        return
-
-    modified = rio_inpaint(output, cancel_check=lambda: _cancel_requested)
-    if modified:
-        log.info("Inpainted %d nodata-pixel tiles", len(modified))
-
-    if _cancel_requested:
-        update_progress(output, "noaa", args.bbox, "n/a",
-                        tiles_done, total_tiles, status="cancelled", phase="cancelled")
-        return
-
-    update_progress(output, "noaa", args.bbox, "n/a",
-                    tiles_done, total_tiles, phase="overviews")
-    rio_build_overviews(output, mode="auto", cancel_check=lambda: _cancel_requested)
-except Exception as exc:
-    log.warning("Post-processing failed: %s — output still usable at base zoom", exc)
+                        tiles_done, total_tiles, phase="overviews",
+                        geotiffs_downloaded=tiles_done,
+                        geotiffs_total=total_tiles)
+        try:
+            from rasterio_ops import build_overviews as rio_build_overviews
+            rio_build_overviews(
+                output, mode="auto", cancel_check=lambda: _cancel_requested
+            )
+            # Fix metadata to reflect actual tile zoom range (moved inline from
+            # _run_gdaladdo_with_metadata_fixup, which is being deleted).
+            import sqlite3 as _ov_sql
+            with _ov_sql.connect(str(output)) as _oc:
+                _oc.execute(
+                    "UPDATE metadata SET value = (SELECT MIN(zoom_level) FROM tiles) "
+                    "WHERE name = 'minzoom'"
+                )
+                _oc.execute(
+                    "UPDATE metadata SET value = (SELECT MAX(zoom_level) FROM tiles) "
+                    "WHERE name = 'maxzoom'"
+                )
+                _oc.commit()
+        except Exception as exc:
+            log.warning("Overview generation failed: %s — output is still usable", exc)
 ```
 
-The exact integration depends on the existing variable names + cancel flow. Preserve all existing cancel checks + progress updates. Remove the `_run_gdaladdo_with_metadata_fixup` call (or refactor it to be a thin wrapper over the new `build_overviews`).
+**(f) Retain** the existing post-inpaint cancel guard at :2799-2807 (it now doubles as post-overview cancel guard since overviews ran just above it — semantically fine, the status-update + return is the same).
+
+**(g) Retain** the WAL-checkpoint block inside the erode/inpaint try at :2785-2790 (it still sits between erode and inpaint — correct in the new order too).
+
+**(h) Delete** the `_run_gdaladdo_with_metadata_fixup` function definition at [scripts/acquire_imagery.py:1028-1059](../../../scripts/acquire_imagery.py#L1028-L1059) — its sole caller is the line you just removed in (a), and its metadata-fixup logic was moved inline in (e).
+
+**(i) Verify your edit against this post-edit structure checklist:**
+- [ ] `_update_mbtiles_bounds(output)` still present at start of Phase 5 block
+- [ ] metadata `('name', 'imagery_noaa')` write still present
+- [ ] `if not skip_to_postprocess:` gate on erode preserved
+- [ ] Cancel guard after erode preserved
+- [ ] `PRAGMA wal_checkpoint(PASSIVE)` between erode and inpaint preserved
+- [ ] Cancel guard after inpaint preserved (now also acts as post-overview guard)
+- [ ] Final `PRAGMA wal_checkpoint(TRUNCATE)` at end of run_noaa preserved
+- [ ] New overview block uses `rio_build_overviews(output, mode="auto", ...)`
+- [ ] Metadata minzoom/maxzoom UPDATE still happens after overview build
+- [ ] `_run_gdaladdo_with_metadata_fixup` function is GONE from the file
+- [ ] `grep -n '_run_gdaladdo_with_metadata_fixup' scripts/acquire_imagery.py` returns zero hits
 
 - [ ] **Step 4: Run tests**
 
@@ -2245,6 +2348,38 @@ def compare_outputs(path_a: Path, path_b: Path) -> dict:
         conn_b.close()
 
 
+def seed_journal_from_base_tiles(path: Path) -> int:
+    """Populate _overview_work_queue with the full ancestor lineage of every
+    base tile at max_zoom. Used when the input MBTiles has an empty queue
+    (e.g., built by legacy nuclear code) so the journal path has meaningful
+    work to do for the A/B comparison.
+
+    Returns the count of (z, tc, tr) rows inserted. Idempotent — repeated
+    calls are collapsed by the queue's PK.
+    """
+    from rasterio_ops import _init_journal  # noqa: E402
+    conn = sqlite3.connect(str(path))
+    try:
+        _init_journal(conn)
+        max_zoom_row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
+        if not max_zoom_row or max_zoom_row[0] is None:
+            return 0
+        max_zoom = max_zoom_row[0]
+        conn.execute("BEGIN")
+        for dz in range(1, max_zoom + 1):
+            conn.execute(
+                """INSERT OR IGNORE INTO _overview_work_queue
+                   (zoom_level, tile_column, tile_row)
+                   SELECT zoom_level - ?, tile_column >> ?, tile_row >> ?
+                   FROM tiles WHERE zoom_level = ?""",
+                (dz, dz, dz, max_zoom),
+            )
+        conn.execute("COMMIT")
+        return conn.execute("SELECT COUNT(*) FROM _overview_work_queue").fetchone()[0]
+    finally:
+        conn.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compare overview modes on an MBTiles.")
     parser.add_argument("source", type=Path, help="Input MBTiles file")
@@ -2252,6 +2387,15 @@ def main():
                         help="Directory for clones (default: /tmp)")
     parser.add_argument("--keep", action="store_true",
                         help="Keep clone files after comparison")
+    parser.add_argument(
+        "--seed-journal", action="store_true",
+        help="Before running journal drain on clone B, enqueue the full "
+             "ancestor lineage of every base tile at max_zoom. Use this "
+             "when the source has an empty _overview_work_queue (e.g. a "
+             "legacy MBTiles or one built before Task 8 shipped). Without "
+             "this flag, journal mode on an empty queue is a no-op and "
+             "the comparison is meaningless.",
+    )
     args = parser.parse_args()
 
     if not args.source.exists():
@@ -2265,6 +2409,24 @@ def main():
     clone_mbtiles(args.source, clone_a)
     print(f"Cloning {args.source} → {clone_b}")
     clone_mbtiles(args.source, clone_b)
+
+    # Diagnostic: what does the queue look like on each clone?
+    for label, path in [("A (nuclear)", clone_a), ("B (journal)", clone_b)]:
+        _dc = sqlite3.connect(str(path))
+        try:
+            _dc.execute(
+                "CREATE TABLE IF NOT EXISTS _overview_work_queue ("
+                "zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, "
+                "PRIMARY KEY (zoom_level, tile_column, tile_row))"
+            )
+            _qc = _dc.execute("SELECT COUNT(*) FROM _overview_work_queue").fetchone()[0]
+            print(f"Clone {label} journal rows: {_qc}")
+        finally:
+            _dc.close()
+
+    if args.seed_journal:
+        seeded = seed_journal_from_base_tiles(clone_b)
+        print(f"Seeded clone B journal with {seeded} ancestor rows at max_zoom lineage")
 
     print("Running nuclear drain on clone A...")
     t0 = time.monotonic()
@@ -2323,13 +2485,22 @@ chmod +x dev/tools/compare_overview_modes.py
 
 - [ ] **Step 2: Manual smoke test**
 
-If a small test MBTiles exists at `/srv/geographica/data/imagery_noaa.mbtiles` with a journal populated by a prior run:
+If `/srv/geographica/data/imagery_noaa.mbtiles` exists but has an empty `_overview_work_queue` (expected for MBTiles built before Task 8 shipped), pass `--seed-journal`:
 
 ```bash
-python3 dev/tools/compare_overview_modes.py /srv/geographica/data/imagery_noaa.mbtiles --keep
+python3 dev/tools/compare_overview_modes.py /srv/geographica/data/imagery_noaa.mbtiles --seed-journal --keep
 ```
 
-Expected: speedup > 5× for any non-trivial MBTiles; exit code 0; max pixel diff < 2.
+Expected behavior by queue state:
+- **Queue empty, no `--seed-journal`**: journal mode is a silent no-op. Clone B's pyramid stays at whatever was built by legacy code. Nuclear on clone A rebuilds with new code. Coord sets may still match by coincidence, but pixel diffs reflect legacy-vs-new encoder differences, not a real A/B comparison. **Do not trust this outcome as validation.**
+- **Queue empty, with `--seed-journal`**: clone B's queue gets the full base-tile ancestor lineage; journal drain rebuilds every ancestor. Clone A does the same via nuclear. This is the meaningful comparison — expect matching coord sets + near-zero pixel diff + speedup driven by journal's avoid-re-delete path.
+- **Queue already populated** (MBTiles produced by the new pipeline): no flag needed; journal drains the real incremental work. Pixel diffs should be < 2.0 if the harness coordinates match between paths.
+
+Expected numeric targets (with `--seed-journal` OR populated queue):
+- Exit code 0.
+- `only-in-nuclear == 0` AND `only-in-journal == 0` (coord sets equal).
+- `max pixel diff < 2.0` (JPEG re-encode noise floor).
+- Speedup: any non-zero value is acceptable — this particular mode exercises the full pyramid, so journal has no incremental advantage. The real speedup story comes from small-incremental-bbox workloads (tested in Task 11's semantic-equivalence unit test).
 
 If you don't have a real file to test against, skip this and rely on the end-to-end unit test from Task 11.
 
@@ -2498,14 +2669,17 @@ Expected: all new tests pass. No new failures in the broader suite (pre-existing
 - [ ] **Run the A/B harness against real production data**
 
 ```bash
-python3 dev/tools/compare_overview_modes.py /srv/geographica/data/imagery_noaa.mbtiles
+# Pass --seed-journal unless a recent run has populated _overview_work_queue
+# via the new pipeline (Task 8). If in doubt, use --seed-journal — it's a
+# no-op on already-populated queues (INSERT OR IGNORE).
+python3 dev/tools/compare_overview_modes.py /srv/geographica/data/imagery_noaa.mbtiles --seed-journal
 ```
 
 Expected:
-- Speedup > 10× for any non-trivial run.
-- `only-in-nuclear == 0` and `only-in-journal == 0`.
-- `max pixel diff < 2.0`.
+- `only-in-nuclear == 0` AND `only-in-journal == 0` (coord-set equality — this is the semantic equivalence gate).
+- `max pixel diff < 2.0` (JPEG re-encode noise floor).
 - Exit code 0.
+- Speedup: any value is informative but not a pass/fail criterion here. Because `--seed-journal` enqueues the FULL base-tile lineage, journal drain has no incremental advantage — both modes regenerate the whole pyramid. The real speedup story is tested by Task 11's end-to-end semantic-equivalence unit test on a small fixture + the 2026-04-22 runtime observation that motivated the whole cycle (a 0.6 GB incremental merge against a 40 GB MBTiles).
 
 Capture the output in the commit message of the final log-entry commit.
 
