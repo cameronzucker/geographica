@@ -678,6 +678,11 @@ def _init_journal(conn: sqlite3.Connection) -> None:
     files that pre-date the journal design. Part of the 2026-04-22
     incremental-pyramid fix — see
     docs/superpowers/specs/2026-04-22-overview-incremental-design.md §Migration.
+
+    Transaction contract: this helper issues DDL only, which auto-commits
+    in SQLite's default isolation mode. Callers own their transactions —
+    do NOT call this INSIDE a BEGIN block; call it before opening the
+    transaction. See Task 8's merge_mbtiles for the pattern.
     """
     conn.execute(
         """

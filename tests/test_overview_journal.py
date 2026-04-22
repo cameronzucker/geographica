@@ -9,6 +9,8 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+from rasterio_ops import _init_journal  # noqa: E402
+
 
 @pytest.fixture
 def mbtiles_path(tmp_path):
@@ -32,8 +34,6 @@ def mbtiles_path(tmp_path):
 
 def test_init_journal_creates_table_on_legacy_mbtiles(mbtiles_path):
     """Spec §Migration + test 15: CREATE TABLE IF NOT EXISTS on first access."""
-    from rasterio_ops import _init_journal
-
     conn = sqlite3.connect(str(mbtiles_path))
     _init_journal(conn)
     row = conn.execute(
@@ -46,8 +46,6 @@ def test_init_journal_creates_table_on_legacy_mbtiles(mbtiles_path):
 
 def test_init_journal_is_idempotent(mbtiles_path):
     """Second call on same file must not raise or modify the schema."""
-    from rasterio_ops import _init_journal
-
     conn = sqlite3.connect(str(mbtiles_path))
     _init_journal(conn)
     _init_journal(conn)  # must not raise
