@@ -970,7 +970,12 @@ def build_overviews(
     mode='nuclear' : always nuclear rebuild. Ignores queue, clears queue
                      at exit. Backward-compat + rollback path.
 
-    Returns True on successful drain (or no-op), False if cancelled.
+    Returns True on success, partial progress (cancel mid-drain), or no-op.
+    Raises on unrecoverable error (after rollback). Cancel is NOT signaled
+    via return value — the cancel_check callback drives early exit inside
+    _drain_*, which then commits partial state and returns True. Callers
+    that need cancel-awareness should check their own cancel flag after
+    build_overviews returns.
     """
     if mode not in ("auto", "journal", "nuclear"):
         raise ValueError(f"unknown mode: {mode!r}")
@@ -1013,7 +1018,12 @@ def build_overviews(
                 base_count = conn.execute(
                     "SELECT COUNT(*) FROM tiles WHERE zoom_level=?", (max_zoom,)
                 ).fetchone()[0]
-                # Threshold: queue/base > 0.5 → nuclear is faster
+                # Threshold: queue/base > 0.5 → nuclear is faster.
+                # base_count > 0 guard is defensive — an empty base zoom
+                # alongside a non-empty queue is unreachable in a
+                # well-formed MBTiles (queue entries are ancestors OF
+                # base tiles), but the guard prevents ZeroDivisionError
+                # if schema-level corruption ever violates that invariant.
                 if base_count > 0 and queue_size / base_count > 0.5:
                     log.info(
                         "Journal queue (%d) exceeds 50%% of base tiles (%d); "
