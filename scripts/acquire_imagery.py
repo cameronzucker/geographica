@@ -880,6 +880,7 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
     import rasterio
     from rasterio.io import MemoryFile
     import numpy as np
+    from rasterio_ops import _init_journal, _mutate_base_tile
 
     dst = sqlite3.connect(str(dst_path))
     try:
@@ -892,10 +893,34 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
         dst.execute("""CREATE TABLE IF NOT EXISTS metadata (
             name TEXT PRIMARY KEY, value TEXT)""")
 
+        _init_journal(dst)
+
+        # Determine src's max_zoom BEFORE the merge — dictates the ancestor
+        # cascade depth. Empty source: skip everything below, no journal ops.
+        src_max_zoom_row = dst.execute("SELECT MAX(zoom_level) FROM src.tiles").fetchone()
+        if not src_max_zoom_row or src_max_zoom_row[0] is None:
+            dst.execute("DETACH DATABASE src")
+            return
+        src_max_zoom = src_max_zoom_row[0]
+
+        dst.execute("BEGIN")
+
         # Insert non-overlapping tiles directly (fast path)
         dst.execute("""INSERT OR IGNORE INTO tiles
             SELECT zoom_level, tile_column, tile_row, tile_data
             FROM src.tiles""")
+
+        # R5 C1: bulk enqueue — one INSERT per zoom-level shift. Each is a
+        # SELECT over src.tiles; INSERT OR IGNORE collapses duplicates via
+        # the queue's PK.
+        for dz in range(1, src_max_zoom + 1):
+            dst.execute(
+                """INSERT OR IGNORE INTO _overview_work_queue
+                   (zoom_level, tile_column, tile_row)
+                   SELECT zoom_level - ?, tile_column >> ?, tile_row >> ?
+                   FROM src.tiles WHERE zoom_level = ?""",
+                (dz, dz, dz, src_max_zoom),
+            )
 
         # Composite overlapping tiles (slow path — only for edge tiles).
         # Use cursor iteration instead of fetchall() to avoid loading all
@@ -921,10 +946,7 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
                 black_mask = np.all(dst_arr[:3] <= 20, axis=0)
                 dst_arr[:, black_mask] = src_arr[:, black_mask]
                 merged = _encode_jpeg(dst_arr)
-                dst.execute(
-                    "UPDATE tiles SET tile_data = ? WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?",
-                    (merged, z, x, y),
-                )
+                _mutate_base_tile(dst, "upsert", z, x, y, tile_data=merged)
                 composited += 1
             except Exception as exc:
                 # B7 fix: count and log composite failures instead of silently
@@ -944,8 +966,18 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
         # Copy metadata from first batch only
         dst.execute("""INSERT OR IGNORE INTO metadata
             SELECT name, value FROM src.metadata""")
-        dst.commit()
+        dst.execute("COMMIT")
         dst.execute("DETACH DATABASE src")
+    except Exception:
+        try:
+            dst.execute("ROLLBACK")
+        except Exception:
+            pass
+        try:
+            dst.execute("DETACH DATABASE src")
+        except Exception:
+            pass
+        raise
     finally:
         dst.close()
 

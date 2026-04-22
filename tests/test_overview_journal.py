@@ -680,3 +680,66 @@ def test_cancel_mid_drain_preserves_remaining_queue_and_committed_tiles(mbtiles_
     assert z16_queue == 0, f"z16 queue entries should be processed; got {z16_queue}"
     assert z16_tiles == 4, f"z16 tiles should be committed; got {z16_tiles}"
     assert z15_queue > 0, f"z15 queue entries should survive for resume; got {z15_queue}"
+
+
+def test_merge_mbtiles_populates_journal(tmp_path):
+    """merge_mbtiles's bulk INSERT OR IGNORE path must enqueue ancestors
+    for every inserted z17 tile."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from acquire_imagery import merge_mbtiles
+
+    # Source MBTiles with 4 z17 tiles forming one z16 block
+    src_path = tmp_path / "src.mbtiles"
+    conn = sqlite3.connect(str(src_path))
+    conn.executescript(
+        """
+        CREATE TABLE tiles (
+            zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER,
+            tile_data BLOB,
+            PRIMARY KEY (zoom_level, tile_column, tile_row)
+        );
+        CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT);
+        """
+    )
+    for tc in (100, 101):
+        for tr in (200, 201):
+            conn.execute(
+                "INSERT INTO tiles VALUES (17, ?, ?, ?)",
+                (tc, tr, _make_jpeg_tile(50, 60, 70)),
+            )
+    conn.commit()
+    conn.close()
+
+    # Destination MBTiles (empty, with schema)
+    dst_path = tmp_path / "dst.mbtiles"
+    conn = sqlite3.connect(str(dst_path))
+    conn.executescript(
+        """
+        CREATE TABLE tiles (
+            zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER,
+            tile_data BLOB,
+            PRIMARY KEY (zoom_level, tile_column, tile_row)
+        );
+        CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT);
+        """
+    )
+    _init_journal(conn)
+    conn.commit()
+    conn.close()
+
+    merge_mbtiles(src_path, dst_path)
+
+    conn = sqlite3.connect(str(dst_path))
+    # 4 tiles at z17 copied
+    z17 = conn.execute("SELECT COUNT(*) FROM tiles WHERE zoom_level=17").fetchone()[0]
+    # 4 tiles × 17 ancestors each, deduplicated via PK.
+    # For a 2×2 sibling block: z16 has 1 unique ancestor (all 4 siblings share),
+    # z15 has 1 (shared), ..., z0 has 1. So 17 unique ancestors total (one per zoom).
+    queue_total = conn.execute("SELECT COUNT(*) FROM _overview_work_queue").fetchone()[0]
+    conn.close()
+
+    assert z17 == 4
+    assert queue_total == 17, (
+        f"expected 17 unique ancestors (one per zoom z16..z0) for a single "
+        f"2x2 block; got {queue_total}"
+    )
