@@ -884,6 +884,70 @@ def _composite_2x2_children(
     return _encode_jpeg(composite)
 
 
+def _drain_nuclear(
+    conn: sqlite3.Connection,
+    cancel_check=None,
+) -> int:
+    """Legacy nuclear-rebuild path.
+
+    DELETE FROM tiles WHERE zoom_level < max_zoom, then walk
+    SELECT DISTINCT tc/2, tr/2 FROM tiles WHERE zoom_level = parent_z
+    per zoom level, compositing + inserting. Clears the journal queue
+    at exit (even though it was not consulted).
+
+    Identical behavior to the pre-fix build_overviews function — this
+    exists so mode='nuclear' remains available as rollback + for runs
+    that fall back from journal drain on large dirty sets.
+
+    Returns the total number of ancestor rows written.
+    """
+    max_zoom_row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
+    if not max_zoom_row or max_zoom_row[0] is None:
+        conn.execute("DELETE FROM _overview_work_queue")
+        return 0
+    max_zoom = max_zoom_row[0]
+
+    # Clear all overview tiles (below max_zoom)
+    conn.execute("DELETE FROM tiles WHERE zoom_level < ?", (max_zoom,))
+    conn.commit()
+
+    ops = 0
+    for z in range(max_zoom - 1, -1, -1):
+        if cancel_check and cancel_check():
+            break
+        parent_z = z + 1
+        rows = conn.execute(
+            "SELECT DISTINCT tile_column/2, tile_row/2 FROM tiles WHERE zoom_level=?",
+            (parent_z,),
+        ).fetchall()
+        if not rows:
+            break
+        for (tc, tr) in rows:
+            children = []
+            for dx in range(2):
+                for dy in range(2):
+                    row = conn.execute(
+                        "SELECT tile_data FROM tiles "
+                        "WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                        (parent_z, tc * 2 + dx, tr * 2 + dy),
+                    ).fetchone()
+                    children.append((dx, dy, row[0] if row else None))
+            if not all(c[2] is not None for c in children):
+                continue  # legacy behavior: skip incomplete 2x2
+            tile_bytes = _composite_2x2_children(children)
+            conn.execute(
+                "INSERT OR REPLACE INTO tiles "
+                "(zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
+                (z, tc, tr, tile_bytes),
+            )
+            ops += 1
+        conn.commit()
+
+    # Clear queue even though we ignored it — matches mode='nuclear' contract
+    conn.execute("DELETE FROM _overview_work_queue")
+    return ops
+
+
 # ---------------------------------------------------------------------------
 # 6. Build overview pyramids (replaces gdaladdo)
 # ---------------------------------------------------------------------------

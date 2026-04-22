@@ -9,7 +9,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from rasterio_ops import _init_journal, _enqueue_ancestors, _mutate_base_tile, _drain_journal  # noqa: E402
+from rasterio_ops import _init_journal, _enqueue_ancestors, _mutate_base_tile, _drain_journal, _drain_nuclear  # noqa: E402
 
 
 @pytest.fixture
@@ -383,3 +383,45 @@ def test_drain_journal_multi_level_cascade(mbtiles_path):
         f"ancestors — breaking Round 4 C2 invariant."
     )
     assert z13_count == 0, f"z13 should not be built (z14 incomplete); got {z13_count}"
+
+
+def test_drain_nuclear_rebuilds_full_pyramid_ignoring_queue(mbtiles_path):
+    """Nuclear drain rebuilds all ancestor zooms from scratch, ignores queue."""
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+    # Seed 4 children (complete z16 block); NO queue entries
+    for tc in (100, 101):
+        for tr in (200, 201):
+            conn.execute(
+                "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
+                "VALUES (17, ?, ?, ?)",
+                (tc, tr, _make_jpeg_tile(50, 60, 70)),
+            )
+    # Seed some stale overview that should be nuked
+    conn.execute(
+        "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
+        "VALUES (16, 99, 99, ?)",
+        (_make_jpeg_tile(255, 0, 0),),
+    )
+    conn.commit()
+
+    _drain_nuclear(conn)
+    conn.commit()
+
+    # Stale z16 tile should be gone (entire z<max_zoom was cleared + rebuilt)
+    stale = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=16 AND tile_column=99 AND tile_row=99"
+    ).fetchone()
+    # Real ancestor should exist
+    ancestor = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=16 AND tile_column=50 AND tile_row=100"
+    ).fetchone()
+    # Queue should be empty
+    queue_count = conn.execute(
+        "SELECT COUNT(*) FROM _overview_work_queue"
+    ).fetchone()[0]
+    conn.close()
+
+    assert stale is None, "nuclear should have wiped the stale z16 tile"
+    assert ancestor is not None, "nuclear should have built the real ancestor"
+    assert queue_count == 0
