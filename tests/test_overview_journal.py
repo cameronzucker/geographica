@@ -9,7 +9,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from rasterio_ops import _init_journal, _enqueue_ancestors, _mutate_base_tile, _drain_journal, _drain_nuclear  # noqa: E402
+from rasterio_ops import _init_journal, _enqueue_ancestors, _mutate_base_tile, _drain_journal, _drain_nuclear, build_overviews  # noqa: E402
 
 
 @pytest.fixture
@@ -425,3 +425,207 @@ def test_drain_nuclear_rebuilds_full_pyramid_ignoring_queue(mbtiles_path):
     assert stale is None, "nuclear should have wiped the stale z16 tile"
     assert ancestor is not None, "nuclear should have built the real ancestor"
     assert queue_count == 0
+
+
+def test_build_overviews_mode_nuclear_ignores_queue(mbtiles_path):
+    """mode='nuclear' calls _drain_nuclear regardless of queue state."""
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+    # Populate queue + some z17 tiles
+    for tc in (100, 101):
+        for tr in (200, 201):
+            conn.execute(
+                "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
+                "VALUES (17, ?, ?, ?)",
+                (tc, tr, _make_jpeg_tile(50, 50, 50)),
+            )
+    conn.execute("INSERT INTO _overview_work_queue VALUES (16, 50, 100)")
+    conn.commit()
+    conn.close()
+
+    build_overviews(mbtiles_path, mode="nuclear")
+
+    conn = sqlite3.connect(str(mbtiles_path))
+    queue_count = conn.execute(
+        "SELECT COUNT(*) FROM _overview_work_queue"
+    ).fetchone()[0]
+    z16 = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=16 AND tile_column=50 AND tile_row=100"
+    ).fetchone()
+    conn.close()
+
+    assert queue_count == 0, "nuclear mode must clear the queue at exit"
+    assert z16 is not None, "nuclear mode must have built the ancestor"
+
+
+def test_build_overviews_mode_journal_empty_queue_is_noop(mbtiles_path, caplog):
+    """Round 5 I5: empty queue + mode='journal' is a silent no-op with info log."""
+    import logging
+
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+    conn.execute(
+        "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
+        "VALUES (17, 100, 200, ?)",
+        (_make_jpeg_tile(0, 0, 0),),
+    )
+    # Queue left intentionally empty
+    conn.commit()
+    conn.close()
+
+    with caplog.at_level(logging.INFO, logger="rasterio_ops"):
+        build_overviews(mbtiles_path, mode="journal")  # must NOT raise
+
+    conn = sqlite3.connect(str(mbtiles_path))
+    z16 = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=16"
+    ).fetchone()
+    conn.close()
+
+    assert z16 is None, "no drain happened, so no ancestor should be built"
+    # An info log should have been emitted
+    assert any(
+        "empty queue" in rec.message.lower() or "nothing to drain" in rec.message.lower()
+        for rec in caplog.records
+    ), f"expected empty-queue info log; got: {[r.message for r in caplog.records]}"
+
+
+def test_build_overviews_mode_auto_empty_mbtiles_is_noop(tmp_path):
+    """Round 5 I1: empty MBTiles (no tiles at all) — no divide-by-zero."""
+    path = tmp_path / "empty.mbtiles"
+    conn = sqlite3.connect(str(path))
+    conn.executescript(
+        """
+        CREATE TABLE tiles (
+            zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER,
+            tile_data BLOB,
+            PRIMARY KEY (zoom_level, tile_column, tile_row)
+        );
+        CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT);
+        """
+    )
+    _init_journal(conn)
+    conn.commit()
+    conn.close()
+
+    # Must not raise (ZeroDivisionError was the pre-fix failure mode)
+    build_overviews(path, mode="auto")
+
+
+def test_build_overviews_mode_auto_falls_back_to_nuclear_above_threshold(mbtiles_path):
+    """Round 4 I: when queue size / base count > 0.5, auto picks nuclear."""
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+    # Seed 4 z17 tiles (base count = 4).
+    for tc in (100, 101):
+        for tr in (200, 201):
+            conn.execute(
+                "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
+                "VALUES (17, ?, ?, ?)",
+                (tc, tr, _make_jpeg_tile(100, 100, 100)),
+            )
+    # Enqueue 3 entries (ratio = 3/4 = 0.75 > 0.5 threshold)
+    for i in range(3):
+        conn.execute(
+            "INSERT OR IGNORE INTO _overview_work_queue VALUES (?, ?, ?)",
+            (16, i, i),
+        )
+    conn.commit()
+    conn.close()
+
+    # If auto fell back to nuclear, the z16 ancestor of (16, 50, 100)
+    # will be present (nuclear rebuilds everything); the stale enqueued
+    # (16, 0, 0), (16, 1, 1), (16, 2, 2) won't persist because nuclear
+    # only walks DISTINCT parents of real tiles.
+    build_overviews(mbtiles_path, mode="auto")
+
+    conn = sqlite3.connect(str(mbtiles_path))
+    z16_50_100 = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=16 AND tile_column=50 AND tile_row=100"
+    ).fetchone()
+    z16_others = conn.execute(
+        "SELECT COUNT(*) FROM tiles WHERE zoom_level=16 AND NOT (tile_column=50 AND tile_row=100)"
+    ).fetchone()[0]
+    queue_count = conn.execute(
+        "SELECT COUNT(*) FROM _overview_work_queue"
+    ).fetchone()[0]
+    conn.close()
+
+    assert z16_50_100 is not None, "auto should have nuclear-rebuilt the real ancestor"
+    assert z16_others == 0, "the stale enqueued entries shouldn't have produced tiles"
+    assert queue_count == 0
+
+
+def test_build_overviews_mode_auto_uses_journal_below_threshold(mbtiles_path):
+    """mode='auto' with small queue uses journal drain (not nuclear)."""
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+    # Seed 400 base tiles (e.g., simulating a larger run)
+    for i in range(20):
+        for j in range(20):
+            conn.execute(
+                "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
+                "VALUES (17, ?, ?, ?)",
+                (i, j, _make_jpeg_tile(50, 50, 50)),
+            )
+    # Queue one ancestor — ratio 1/400 = 0.25% << 0.5 threshold
+    conn.execute("INSERT INTO _overview_work_queue VALUES (16, 0, 0)")
+    conn.commit()
+    conn.close()
+
+    build_overviews(mbtiles_path, mode="auto")
+
+    # If journal drain ran, only z16 (0, 0) would be rebuilt.
+    # Nuclear would rebuild many more ancestors (everything at z16..z0).
+    conn = sqlite3.connect(str(mbtiles_path))
+    z16_count = conn.execute(
+        "SELECT COUNT(*) FROM tiles WHERE zoom_level=16"
+    ).fetchone()[0]
+    conn.close()
+
+    assert z16_count == 1, (
+        f"journal drain should have rebuilt only 1 z16 ancestor; got {z16_count}. "
+        "This likely means auto fell back to nuclear when it shouldn't have."
+    )
+
+
+def test_build_overviews_legacy_no_journal_table_creates_and_falls_back(tmp_path):
+    """Spec test 15: MBTiles WITHOUT _overview_work_queue table."""
+    path = tmp_path / "legacy.mbtiles"
+    conn = sqlite3.connect(str(path))
+    conn.executescript(
+        """
+        CREATE TABLE tiles (
+            zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER,
+            tile_data BLOB,
+            PRIMARY KEY (zoom_level, tile_column, tile_row)
+        );
+        CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT);
+        """
+    )
+    # Seed 4 z17 tiles, NO journal table
+    for tc in (100, 101):
+        for tr in (200, 201):
+            conn.execute(
+                "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
+                "VALUES (17, ?, ?, ?)",
+                (tc, tr, _make_jpeg_tile(50, 50, 50)),
+            )
+    conn.commit()
+    conn.close()
+
+    # Must not raise — should CREATE TABLE IF NOT EXISTS, see empty queue,
+    # fall back to nuclear (since queue is empty), build the pyramid.
+    build_overviews(path, mode="auto")
+
+    conn = sqlite3.connect(str(path))
+    z16 = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=16"
+    ).fetchone()
+    journal = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='_overview_work_queue'"
+    ).fetchone()
+    conn.close()
+
+    assert journal is not None, "journal table should have been created"
+    assert z16 is not None, "pyramid should have been built via nuclear fallback"

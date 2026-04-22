@@ -954,134 +954,87 @@ def _drain_nuclear(
 
 def build_overviews(
     mbtiles_path: Path,
-    levels: list[int] | None = None,
-    resampling: str = "average",
+    *,
+    mode: str = "auto",  # "auto" | "journal" | "nuclear"
+    levels: list[int] | None = None,  # legacy-compat, ignored
+    resampling: str = "average",      # legacy-compat, ignored
     cancel_check=None,
 ) -> bool:
-    """Build overview pyramid for an MBTiles file by downsampling existing tiles.
+    """Build overview pyramids for an MBTiles file.
 
-    Replaces: gdaladdo -r average <mbtiles> 2 4 8 16
+    mode='auto'    : journal drain if queue is populated AND queue size /
+                     base tile count < 0.5; else nuclear. Silent no-op on
+                     empty MBTiles.
+    mode='journal' : always journal-drain. Empty queue = silent no-op with
+                     info log.
+    mode='nuclear' : always nuclear rebuild. Ignores queue, clears queue
+                     at exit. Backward-compat + rollback path.
 
-    Works directly on the MBTiles SQLite database: reads tiles at the highest
-    zoom, composites 2x2 groups into the next lower zoom, repeating until
-    the minimum zoom is reached.
+    Returns True on successful drain (or no-op), False if cancelled.
     """
-    if levels is None:
-        levels = [2, 4, 8, 16]
+    if mode not in ("auto", "journal", "nuclear"):
+        raise ValueError(f"unknown mode: {mode!r}")
 
     conn = None
     try:
         conn = sqlite3.connect(str(mbtiles_path))
         conn.execute("PRAGMA journal_mode=WAL")
+        _init_journal(conn)
 
-        # Find current max zoom (base tiles)
-        row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
-        if not row or row[0] is None:
-            log.warning("No tiles in %s — skipping overviews", mbtiles_path)
+        # Empty-MBTiles guard (R5 I1)
+        max_zoom_row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
+        if not max_zoom_row or max_zoom_row[0] is None:
+            log.info("No tiles in %s — skipping overviews", mbtiles_path)
+            conn.execute("DELETE FROM _overview_work_queue")
+            conn.commit()
             return True
+        max_zoom = max_zoom_row[0]
 
-        max_zoom = row[0]
+        queue_size = conn.execute(
+            "SELECT COUNT(*) FROM _overview_work_queue"
+        ).fetchone()[0]
 
-        # Delete existing overview tiles so stale overviews don't persist
-        # after new quads are merged. Only delete below max_zoom (base tiles
-        # are never touched).
-        deleted = conn.execute(
-            "DELETE FROM tiles WHERE zoom_level < ?", (max_zoom,)
-        ).rowcount
-        if deleted:
-            conn.commit()
-            log.info("Cleared %d stale overview tiles before rebuild", deleted)
-
-        # Build: for each zoom from max_zoom-1 down, composite 2x2 blocks
-        for z in range(max_zoom - 1, -1, -1):
-            if cancel_check and cancel_check():
-                return False
-
-            parent_z = z + 1
-            rows = conn.execute(
-                "SELECT DISTINCT tile_column/2, tile_row/2 FROM tiles WHERE zoom_level = ?",
-                (parent_z,),
-            ).fetchall()
-
-            if not rows:
-                break
-
-            tile_count = 0
-            for (tx, ty) in rows:
-                # Gather 2x2 child tiles
-                children = []
-                for dx in range(2):
-                    for dy in range(2):
-                        child = conn.execute(
-                            "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
-                            (parent_z, tx * 2 + dx, ty * 2 + dy),
-                        ).fetchone()
-                        children.append((dx, dy, child[0] if child else None))
-
-                # Only create overview when ALL 4 children exist.
-                # Partial 2x2 blocks produce black quadrants in JPEG.
-                if not all(c[2] for c in children):
-                    continue
-
-                # Decode children, downsample with true 2x2 averaging, composite
-                composite = np.zeros((3, TILE_SIZE, TILE_SIZE), dtype=np.uint8)
-                half = TILE_SIZE // 2
-
-                for dx, dy, tile_data in children:
-                    if tile_data is None:
-                        continue
-                    try:
-                        with rasterio.MemoryFile(tile_data) as memfile:
-                            with memfile.open() as ds:
-                                bands = min(ds.count, 3)
-                                tile_arr = ds.read(list(range(1, bands + 1)))
-                                # True 2x2 box averaging (not stride-2 subsampling)
-                                h_src, w_src = tile_arr.shape[1], tile_arr.shape[2]
-                                if h_src >= 2 and w_src >= 2:
-                                    # Reshape to (bands, h/2, 2, w/2, 2) then mean over axes 2,4
-                                    h2 = (h_src // 2) * 2
-                                    w2 = (w_src // 2) * 2
-                                    cropped = tile_arr[:, :h2, :w2].astype(np.uint16)
-                                    small = cropped.reshape(bands, h2 // 2, 2, w2 // 2, 2).mean(axis=(2, 4)).astype(np.uint8)
-                                    small = small[:, :half, :half]
-                                else:
-                                    small = tile_arr[:, :half, :half]
-                                x_off = dx * half
-                                # TMS: dy=0 is south, dy=1 is north
-                                # Image: y=0 is top (north)
-                                y_off = (1 - dy) * half
-                                h = min(small.shape[1], half)
-                                w = min(small.shape[2], half)
-                                composite[:bands, y_off:y_off + h, x_off:x_off + w] = small[:, :h, :w]
-                    except Exception:
-                        continue
-
-                tile_bytes = _encode_jpeg(composite)
-                conn.execute(
-                    "INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
-                    (z, tx, ty, tile_bytes),
+        if mode == "nuclear":
+            _drain_nuclear(conn, cancel_check=cancel_check)
+        elif mode == "journal":
+            if queue_size == 0:
+                log.info(
+                    "build_overviews mode=journal called with empty queue — "
+                    "nothing to drain (no-op)"
                 )
-                tile_count += 1
-
-            conn.commit()
-            if tile_count > 0:
-                log.info("Built %d overview tiles at zoom %d", tile_count, z)
-
-        # Update metadata
-        min_zoom = conn.execute("SELECT MIN(zoom_level) FROM tiles").fetchone()[0]
-        max_zoom_actual = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()[0]
-        conn.execute("INSERT OR REPLACE INTO metadata (name, value) VALUES ('minzoom', ?)", (str(min_zoom),))
-        conn.execute("INSERT OR REPLACE INTO metadata (name, value) VALUES ('maxzoom', ?)", (str(max_zoom_actual),))
+                return True
+            _drain_journal(conn, cancel_check=cancel_check)
+        else:  # auto
+            if queue_size == 0:
+                # Nothing dirty; fall back to nuclear for a full rebuild.
+                # This matches legacy callers + fresh runs with empty journal.
+                _drain_nuclear(conn, cancel_check=cancel_check)
+            else:
+                base_count = conn.execute(
+                    "SELECT COUNT(*) FROM tiles WHERE zoom_level=?", (max_zoom,)
+                ).fetchone()[0]
+                # Threshold: queue/base > 0.5 → nuclear is faster
+                if base_count > 0 and queue_size / base_count > 0.5:
+                    log.info(
+                        "Journal queue (%d) exceeds 50%% of base tiles (%d); "
+                        "falling back to nuclear drain",
+                        queue_size, base_count,
+                    )
+                    _drain_nuclear(conn, cancel_check=cancel_check)
+                else:
+                    _drain_journal(conn, cancel_check=cancel_check)
         conn.commit()
-
-        log.info("Overviews complete for %s (zoom %d-%d)", mbtiles_path, min_zoom, max_zoom_actual)
         return True
-
     except Exception as exc:
         log.error("build_overviews failed for %s: %s", mbtiles_path, exc)
-        return False
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise
     finally:
-        if conn:
+        if conn is not None:
             conn.close()
 
 
