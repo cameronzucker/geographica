@@ -727,6 +727,44 @@ def _enqueue_ancestors(
     )
 
 
+def _mutate_base_tile(
+    conn: sqlite3.Connection,
+    action: str,  # "upsert" | "delete"
+    z: int,
+    tc: int,
+    tr: int,
+    tile_data: bytes | None = None,
+) -> None:
+    """Atomic single-tile mutation + ancestor enqueue.
+
+    Combines the tile write and the journal enqueue into the same logical
+    transaction. If the caller has an open transaction, this function does
+    NOT open a new one (so the caller's commit/rollback covers both
+    operations). If no transaction is open, the default sqlite3 auto-commit
+    still serializes the two statements within one connection — but callers
+    should prefer wrapping multiple _mutate_base_tile calls in an explicit
+    BEGIN/COMMIT for efficiency.
+
+    action='upsert' uses INSERT OR REPLACE with tile_data.
+    action='delete' removes the tile; tile_data is ignored.
+    """
+    assert action in ("upsert", "delete"), f"unknown action: {action!r}"
+    if action == "upsert":
+        if tile_data is None:
+            raise ValueError("tile_data is required for upsert")
+        conn.execute(
+            "INSERT OR REPLACE INTO tiles "
+            "(zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
+            (z, tc, tr, tile_data),
+        )
+    else:  # delete
+        conn.execute(
+            "DELETE FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+            (z, tc, tr),
+        )
+    _enqueue_ancestors(conn, [(z, tc, tr)])
+
+
 # ---------------------------------------------------------------------------
 # 6. Build overview pyramids (replaces gdaladdo)
 # ---------------------------------------------------------------------------

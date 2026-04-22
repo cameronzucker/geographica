@@ -9,7 +9,7 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from rasterio_ops import _init_journal, _enqueue_ancestors  # noqa: E402
+from rasterio_ops import _init_journal, _enqueue_ancestors, _mutate_base_tile  # noqa: E402
 
 
 @pytest.fixture
@@ -145,3 +145,70 @@ def test_enqueue_ancestors_z0_base_tile_produces_no_rows(mbtiles_path):
         f"z=0 base tile should produce 0 ancestor rows (range(1, 0+1) is empty); "
         f"got {count}"
     )
+
+
+def test_mutate_base_tile_upsert_writes_tile_and_enqueues(mbtiles_path):
+    """upsert inserts the tile and enqueues its ancestors in one transaction."""
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+    _mutate_base_tile(conn, "upsert", 17, 100, 200, tile_data=b"fake_jpeg")
+    conn.commit()
+
+    tile = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=17 AND tile_column=100 AND tile_row=200"
+    ).fetchone()
+    queue_count = conn.execute(
+        "SELECT COUNT(*) FROM _overview_work_queue"
+    ).fetchone()[0]
+    conn.close()
+
+    assert tile == (b"fake_jpeg",)
+    assert queue_count == 17  # z16 through z0
+
+
+def test_mutate_base_tile_delete_removes_tile_and_enqueues(mbtiles_path):
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+    # Seed a tile to delete
+    conn.execute(
+        "INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) "
+        "VALUES (17, 50, 60, ?)",
+        (b"seed",),
+    )
+    conn.commit()
+
+    _mutate_base_tile(conn, "delete", 17, 50, 60)
+    conn.commit()
+
+    tile = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=17 AND tile_column=50 AND tile_row=60"
+    ).fetchone()
+    queue_count = conn.execute(
+        "SELECT COUNT(*) FROM _overview_work_queue"
+    ).fetchone()[0]
+    conn.close()
+
+    assert tile is None, "base tile should have been deleted"
+    assert queue_count == 17  # same ancestor cascade
+
+
+def test_mutate_base_tile_atomic_on_rollback(mbtiles_path, monkeypatch):
+    """If the commit never happens (rollback), NEITHER the tile nor the
+    queue entries persist. Validates same-transaction semantics."""
+    conn = sqlite3.connect(str(mbtiles_path))
+    _init_journal(conn)
+
+    conn.execute("BEGIN")
+    _mutate_base_tile(conn, "upsert", 17, 100, 200, tile_data=b"not_yet")
+    conn.execute("ROLLBACK")  # never commits
+
+    tile = conn.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=17"
+    ).fetchone()
+    queue_count = conn.execute(
+        "SELECT COUNT(*) FROM _overview_work_queue"
+    ).fetchone()[0]
+    conn.close()
+
+    assert tile is None, "rollback should have discarded the tile insert"
+    assert queue_count == 0, "rollback should have discarded the queue inserts"
