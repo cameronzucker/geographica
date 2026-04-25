@@ -191,6 +191,14 @@
   // Speed history for ETA adjustment: [{time, actual, expected}]
   var speedHistory = [];
 
+  // Returns true when the UI should display imperial units (miles / feet).
+  // Reads window._geographicaUseImperial at call time so live changes are
+  // reflected without a page reload. Defaults to true (imperial) when unset,
+  // matching the app.js:123 initialisation default.
+  function _geographicaUseImperial() {
+    return typeof window !== 'undefined' && window._geographicaUseImperial !== false;
+  }
+
   // Callbacks
   var onUpdateCb = null;
   var onRerouteCb = null;
@@ -988,7 +996,8 @@
     MAX_SPEED_DELTA_PER_TICK: MAX_SPEED_DELTA_PER_TICK,
     _getSpeedSamples: function () { return Array.from(speedSamples); },
     _speedMedian: function () { return speedMedian(); },
-    _getAnnouncedKeys: function () { return Object.keys(announcedSet).sort(); }
+    _getAnnouncedKeys: function () { return Object.keys(announcedSet).sort(); },
+    _useImperial: _geographicaUseImperial
   };
 
 })();

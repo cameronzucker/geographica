@@ -1002,3 +1002,27 @@ test('TTM Valhalla-Then strip: vpt trailing ". Then X." and leading "Then " are 
   assert.ok(m3.startsWith('Turn left onto'),
     `Valhalla-Then strip: M3 standalone must start with "Turn left onto" after strip; got ${JSON.stringify(m3)}`);
 });
+
+test('_geographicaUseImperial helper returns true by default', async () => {
+  const { window: win } = await loadEngine();
+  // Default: window._geographicaUseImperial is set to true at app.js:123
+  // but our test environment doesn't load app.js — undefined globally.
+  // Helper should return TRUE when unset (matches app.js default).
+  win._geographicaUseImperial = undefined;
+  const internals = win._geographicaNavEngineInternals;
+  assert.equal(internals._useImperial(), true);
+});
+
+test('_geographicaUseImperial helper returns false when explicitly set false', async () => {
+  const { window: win } = await loadEngine();
+  win._geographicaUseImperial = false;
+  const internals = win._geographicaNavEngineInternals;
+  assert.equal(internals._useImperial(), false);
+});
+
+test('_geographicaUseImperial helper returns true when explicitly set true', async () => {
+  const { window: win } = await loadEngine();
+  win._geographicaUseImperial = true;
+  const internals = win._geographicaNavEngineInternals;
+  assert.equal(internals._useImperial(), true);
+});
