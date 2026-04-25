@@ -187,6 +187,38 @@
     }
   }
 
+  // ─── Sparkline path generation ─────────────────────────────────────
+  // Returns an SVG `points` attribute string (space-separated x,y pairs)
+  // mapping samples to a width×height viewBox. Skips null-elevation
+  // samples (gap rendering is a separate concern handled by the panel
+  // renderer using multiple polylines).
+  function sparklinePath(samples, width, height) {
+    if (!samples || samples.length === 0) return '';
+    var valid = samples.filter(function (s) { return s.elevation_m != null; });
+    if (valid.length === 0) return '';
+
+    var minE = Infinity, maxE = -Infinity;
+    var minD = Infinity, maxD = -Infinity;
+    for (var i = 0; i < valid.length; i++) {
+      if (valid[i].elevation_m < minE) minE = valid[i].elevation_m;
+      if (valid[i].elevation_m > maxE) maxE = valid[i].elevation_m;
+      if (valid[i].distance_m  < minD) minD = valid[i].distance_m;
+      if (valid[i].distance_m  > maxD) maxD = valid[i].distance_m;
+    }
+    var dRange = (maxD - minD) || 1;
+    var eRange = (maxE - minE) || 1;
+    var marginY = 4;
+    var usableY = height - 2 * marginY;
+
+    var points = [];
+    for (var j = 0; j < valid.length; j++) {
+      var x = ((valid[j].distance_m - minD) / dRange) * width;
+      var y = marginY + (1 - (valid[j].elevation_m - minE) / eRange) * usableY;
+      points.push(x.toFixed(1) + ',' + y.toFixed(1));
+    }
+    return points.join(' ');
+  }
+
   // ─── Expose ────────────────────────────────────────────────────────
   window._ruler = {
     init: init,
@@ -203,5 +235,6 @@
     samplePath: samplePath,
     projectPointToSegment: projectPointToSegment,
     formatRulerDistance: formatRulerDistance,
+    sparklinePath: sparklinePath,
   };
 })();
