@@ -208,9 +208,9 @@ test('TTM constants have expected shape and per-costing keys', async () => {
   assert.equal(i.VOICE_TTM.pedestrian[0], 15);
   assert.equal(i.VOICE_TTM.pedestrian[1], 2);
 
-  // Check VOICE_DISTANCE_FLOOR values
-  assert.equal(i.VOICE_DISTANCE_FLOOR.auto, 50);
-  assert.equal(i.VOICE_DISTANCE_FLOOR.bicycle, 30);
+  // Check VOICE_DISTANCE_FLOOR values (TTM I12: lifted for surface-street buffer)
+  assert.equal(i.VOICE_DISTANCE_FLOOR.auto, 75);
+  assert.equal(i.VOICE_DISTANCE_FLOOR.bicycle, 45);
   assert.equal(i.VOICE_DISTANCE_FLOOR.pedestrian, 15);
 
   // Check speed model constants
@@ -354,16 +354,17 @@ test('TTM I2: 1 prompt per maneuver when entering already inside near (D1 suppre
 test('TTM I3: zero prompts when stationary beyond distance floor', async (t) => {
   const { nav, window: win } = await loadEngine();
   t.after(() => { try { nav.stop(); } catch (_) {} });
-  // Start 80m west of maneuver 1 (outside the 50m auto floor), stationary.
-  win._geographicaGPSData = { lat: 35.20, lon: -111.64080, heading: 90, speed: 0 };
+  // Start 90m west of maneuver 1 (outside the 75m auto floor), stationary.
+  // (0.00099° × 91,163 m/° ≈ 90 m at lat 35.20)
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64099, heading: 90, speed: 0 };
 
   const voiceFires = [];
   nav.onVoice((text) => voiceFires.push(text));
   nav.start(fixtureRouteWithTwoTurns());
   // Feed three stationary ticks.
-  nav.updateGPS({ latitude: 35.20, longitude: -111.64079, heading: 90, speed: 0 });
-  nav.updateGPS({ latitude: 35.20, longitude: -111.64078, heading: 90, speed: 0 });
-  nav.updateGPS({ latitude: 35.20, longitude: -111.64077, heading: 90, speed: 0 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64098, heading: 90, speed: 0 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64097, heading: 90, speed: 0 });
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64096, heading: 90, speed: 0 });
 
   assert.equal(voiceFires.length, 0,
     `I3: expected 0 prompts when stationary beyond floor, got ${voiceFires.length}`);
@@ -553,25 +554,27 @@ test('TTM edge: cooldown regression guard — adjacent near-prompts both fire', 
   assert.ok(oak.length >= 1, 'Oak near-tier must fire in the next tick — no cooldown');
 });
 
-test('TTM bicycle: near-tier does not fire outside 30m floor', async (t) => {
+test('TTM bicycle: near-tier does not fire outside 45m floor', async (t) => {
   const { nav, window: win } = await loadEngine();
   t.after(() => { try { nav.stop(); } catch (_) {} });
-  // 55m west of maneuver 1. At walking pace (1 m/s), TTM=55s >> bicycle far(20s),
-  // so neither far-tier (TTM>20s) nor near-tier (dist>30m floor, TTM>3s) fires.
-  win._geographicaGPSData = { lat: 35.20, lon: -111.64060, heading: 90, speed: 1 };
+  // 65m west of maneuver 1. At walking pace (1 m/s), TTM=65s >> bicycle far(20s),
+  // so neither far-tier (TTM>20s) nor near-tier (dist>45m floor, TTM>3s) fires.
+  // (0.00071° × 91,163 m/° ≈ 65 m at lat 35.20)
+  win._geographicaGPSData = { lat: 35.20, lon: -111.64071, heading: 90, speed: 1 };
 
   const voiceFires = [];
   nav.onVoice((text) => voiceFires.push(text));
   const bikeRoute = { ...fixtureRouteWithTwoTurns(), costing: 'bicycle' };
   nav.start(bikeRoute);
-  // Advance to ~35m from maneuver — still outside 30m floor.
-  // At 1 m/s, TTM = 35/1 = 35s > 20s far-threshold → far does NOT fire.
-  // 35m > 30m floor → near does NOT fire by floor.
-  // TTM 35s > 3s near-threshold → near does NOT fire by TTM.
-  nav.updateGPS({ latitude: 35.20, longitude: -111.64038, heading: 90, speed: 1 });
+  // Advance to ~50m from maneuver — still outside 45m floor.
+  // At 1 m/s, TTM = 50/1 = 50s > 20s far-threshold → far does NOT fire.
+  // 50m > 45m floor → near does NOT fire by floor.
+  // TTM 50s > 3s near-threshold → near does NOT fire by TTM.
+  // (0.00055° × 91,163 m/° ≈ 50 m at lat 35.20)
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64055, heading: 90, speed: 1 });
 
   assert.equal(voiceFires.length, 0,
-    'bicycle at 35m from maneuver at walking pace: outside 30m floor and TTM>20s, should not fire');
+    'bicycle at 50m from maneuver at walking pace: outside 45m floor and TTM>20s, should not fire');
 });
 
 test('TTM bicycle: near-tier fires when inside 30m floor', async (t) => {
@@ -927,22 +930,24 @@ test('TTM I11: chain-extension suppresses far-tier for chain-pre-announced maneu
     nav.updateGPS({ latitude: 35.20, longitude: lng, heading: 90, speed: 10 });
   }
 
-  // Expected: exactly 4 callbacks with chain-extension.
-  //   CB 1: M1 far "In 300 feet, turn left" (fires at 30s TTM ≈ 300m — actually
-  //         depart is only 80m, so far fires immediately since TTM = 8s < 30s)
-  //   CB 2: M1 near+chain "Turn left onto First, then right onto Second"
-  //         (chain marks M2-far as announced → I11 suppression)
-  //   CB 3: M2 near+chain "Turn right onto Second, then left onto Third"
+  // Expected: exactly 3 callbacks with chain-extension.
+  // The 75m near-tier floor (TTM I12) fires near-tier immediately at the
+  // start position (~80m from M1), suppressing M1's far-tier before it
+  // can fire (near returns early, blocking the far branch):
+  //   CB 1: M1 near+chain "Turn left onto First, then right onto Second"
+  //         (M1 far suppressed by floor-triggered near; chain marks M2-far → I11)
+  //   CB 2: M2 near+chain "Turn right onto Second, then left onto Third"
   //         (M2 far suppressed by I11; chain marks M3-far → I11)
-  //   CB 4: M3 near "Turn left onto Third Avenue"
+  //   CB 3: M3 near "Turn left onto Third Avenue"
   //         (M3 far suppressed by I11; no chain because afterIdx out of bounds)
-  assert.equal(voiceFires.length, 4,
-    `I11: expected 4 callbacks under chain-extension, got ${voiceFires.length}: ${JSON.stringify(voiceFires)}`);
+  assert.equal(voiceFires.length, 3,
+    `I11: expected 3 callbacks under chain-extension (TTM I12 floor), got ${voiceFires.length}: ${JSON.stringify(voiceFires)}`);
 
-  // Only ONE "In N feet" far-tier prompt (for M1 — no prior chain suppresses it).
+  // ZERO "In N feet" far-tier prompts — M1's far is suppressed by the 75m
+  // floor triggering near-tier first; subsequent fars suppressed by I11 chain.
   const fars = voiceFires.filter(t => /^In \d+/.test(t));
-  assert.equal(fars.length, 1,
-    `I11: exactly 1 far-tier prompt expected (M1); got ${fars.length}: ${JSON.stringify(fars)}`);
+  assert.equal(fars.length, 0,
+    `I11: 0 far-tier prompts expected (all suppressed by floor+I11); got ${fars.length}: ${JSON.stringify(fars)}`);
 
   // Three near-tier prompts, all "Turn X onto Y" style.
   const nears = voiceFires.filter(t => /^Turn /.test(t));
@@ -1025,4 +1030,22 @@ test('_geographicaUseImperial helper returns true when explicitly set true', asy
   win._geographicaUseImperial = true;
   const internals = win._geographicaNavEngineInternals;
   assert.equal(internals._useImperial(), true);
+});
+
+test('TTM I12: VOICE_DISTANCE_FLOOR.auto is 75 m', async () => {
+  const { window: win } = await loadEngine();
+  const internals = win._geographicaNavEngineInternals;
+  assert.equal(internals.VOICE_DISTANCE_FLOOR.auto, 75);
+});
+
+test('TTM I12: VOICE_DISTANCE_FLOOR.bicycle is 45 m', async () => {
+  const { window: win } = await loadEngine();
+  const internals = win._geographicaNavEngineInternals;
+  assert.equal(internals.VOICE_DISTANCE_FLOOR.bicycle, 45);
+});
+
+test('TTM I12: VOICE_DISTANCE_FLOOR.pedestrian unchanged at 15 m', async () => {
+  const { window: win } = await loadEngine();
+  const internals = win._geographicaNavEngineInternals;
+  assert.equal(internals.VOICE_DISTANCE_FLOOR.pedestrian, 15);
 });

@@ -50,9 +50,9 @@
     pedestrian: [15, 2]
   };
   var VOICE_DISTANCE_FLOOR = {
-    auto:       50,
-    bicycle:    30,
-    pedestrian: 15
+    auto:       75,  // +25 m. ~+2.6 s buffer at 25 mph fast voice / +1.2 s slow voice.
+    bicycle:    45,  // +15 m mirror. Same +50% relative scale.
+    pedestrian: 15   // unchanged. Walking-pace buffer ample.
   };
   var MIN_SPEED_FLOOR = 1.0;              // m/s — TTM denominator minimum
   var SPEED_WINDOW_SIZE = 3;              // median-of-3 rolling window
