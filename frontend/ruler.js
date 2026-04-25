@@ -12,6 +12,14 @@
 (function () {
   'use strict';
 
+  // Duplicate-load guard. If ruler.js is included twice (stale <script> tag,
+  // service-worker double-cache), skip the second load — the live module
+  // owns window._ruler and re-running the IIFE would blow away in-progress
+  // state. We check for the canonical .init function rather than just the
+  // truthy presence of window._ruler so that a sibling page-stub setting
+  // window._ruler = {} (e.g. a test harness) does not block real init.
+  if (window._ruler && typeof window._ruler.init === 'function') return;
+
   // ─── Module-private state ──────────────────────────────────────────
   var initialized = false;
   var map = null;
@@ -65,7 +73,9 @@
 
   // Reattach hook called by app.js's addPlaceholderSources on style.load
   function reattachSources(mapInstance) {
-    // Phase 1 fills this in.
+    // Phase 1 fills this in: re-add ruler-line / ruler-vertices / ruler-vertex-hit-circles
+    // sources + layers using the passed-in mapInstance after a style.load.
+    // (Use `mapInstance` arg, not module `map`, so style swaps with a different map work.)
   }
 
   // ─── Expose ────────────────────────────────────────────────────────
