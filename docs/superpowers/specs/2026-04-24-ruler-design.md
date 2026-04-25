@@ -1,15 +1,15 @@
-# Ruler / measurement tool — design (v2)
+# Ruler / measurement tool — design (v3)
 
-**Status:** v2 (post-R1–R4 adversarial review). v1 had 10 CRITICAL findings across 4 reviewers — three were load-bearing (wrong elevation decode formula, wrong z-level resolution claim, broken `useImperial` extraction). v2 corrects all CRITICAL and MAJOR findings inline, keeps the overall design shape (vertex-centric edit model, sidebar tab, ephemeral persistence). v1 git history preserved at commit `a0afd36`.
+**Status:** v3 (final pre-implementation, post-R5 Codex). v1 had 10 CRITICAL findings across 4 Sonnet reviewers; v2 fixed those and added 28 MAJOR fixes. R5 (Codex) attacked v2 and found one CRITICAL R1-R4 missed (editing-state click leakage) + 7 MAJOR + 4 MINOR. v3 incorporates all R5 findings. **Plan-ready.** v1 → v2 → v3 history preserved at commits `a0afd36` → `1fff90d` → (this commit).
 
 **Author:** Agent `cholla`, 2026-04-24
 
-**Adversarial review history:**
+**Adversarial review history (5 rounds, complete):**
 - R1 (architectural / API soundness, Sonnet): [dev/adversarial/2026-04-24-ruler-r1-architectural.md](../../../dev/adversarial/2026-04-24-ruler-r1-architectural.md) — 3 CRITICAL, 6 MAJOR, 4 MINOR
 - R2 (scale / performance, Sonnet): [dev/adversarial/2026-04-24-ruler-r2-scale-performance.md](../../../dev/adversarial/2026-04-24-ruler-r2-scale-performance.md) — 2 CRITICAL, 6 MAJOR, 3 MINOR
 - R3 (UX / mobile / a11y, Sonnet): [dev/adversarial/2026-04-24-ruler-r3-ux-mobile-a11y.md](../../../dev/adversarial/2026-04-24-ruler-r3-ux-mobile-a11y.md) — 3 CRITICAL, 8 MAJOR, 5 MINOR
 - R4 (robustness / failure modes, Sonnet): [dev/adversarial/2026-04-24-ruler-r4-robustness.md](../../../dev/adversarial/2026-04-24-ruler-r4-robustness.md) — 2 CRITICAL, 8 MAJOR, 6 MINOR
-- R5 (Codex cross-validation, gpt-5.4): *pending* — runs against this v2 to catch what the Sonnet rounds missed.
+- R5 (Codex cross-validation, gpt-5.4): [dev/adversarial/2026-04-24-ruler-r5-codex.md](../../../dev/adversarial/2026-04-24-ruler-r5-codex.md) — 1 CRITICAL, 7 MAJOR, 4 MINOR
 
 **Visual reference:** mockup at `.superpowers/brainstorm/1827880-1777091427/content/measure-tab-mockup.html` (gitignored). Three states rendered: drawing, editing, inserting.
 
@@ -29,10 +29,11 @@ The lack of a ruler is felt sharply enough that the missing capability has been 
 - Touch + mouse parity. Field-readable in sunlight (high-contrast palette via shadow halo + white stroke, not via foreground color contrast).
 - WCAG 2.5.5-compliant hit-targets (≥44 px tap area) via invisible expanded hit layer.
 - Self-contained `frontend/ruler.js` module — minimal, well-bounded touch to existing `app.js`, `index.html`, and `style.css`.
+- **English-only / no i18n in v1.** All user-facing strings, ARIA labels, unit abbreviations, decimal formatting, and hemisphere letters are English-only and hardcoded. Consistent with current Geographica posture; no i18n framework introduced.
 
 ## Non-goals
 
-- **Persistence / "save measurement".** v1 is purely ephemeral — measurements clear on tab switch, page reload, or "Clear" button. The data shape is kept KMZ-serializable so the future *My Places* cycle (a separate spec) can add save/load/export without refactoring ruler internals.
+- **Persistence / "save measurement".** v1 is purely ephemeral — measurements clear on tab switch, page reload, or "Clear" button. **The core geometry (`vertices` array) is exportable to a minimal KML/KMZ LineString** so the future *My Places* cycle (a separate spec) can add save/load/export without refactoring ruler internals. Runtime fields like `segments`, `coverageGaps`, `samplingState`, `samplingProgress`, and selection/edit-mode are NOT part of the persisted shape — they are recomputed on rehydrate.
 - **Polygon area** / closed-figure area measurement. Sibling future feature in the same "measurement tools" family.
 - **Magnetic bearing** with declination correction. True bearing only.
 - **Click-on-segment-line to insert vertex.** Rejected during brainstorming as unintuitive.
@@ -41,6 +42,7 @@ The lack of a ruler is felt sharply enough that the missing capability has been 
 - **Concurrent multiple measurements.** One at a time in v1.
 - **Reload-state restoration via sessionStorage.** Open Question deferred to a v1.1 follow-up if the post-ship UX surfaces a real need.
 - **A WCAG 1.4.11 high-contrast theme toggle.** Out of scope; current colors rely on the shadow-halo + white-stroke architecture for visibility, not foreground-vs-basemap contrast (see §D.4).
+- **Browser history integration** (back-button = undo; deep-linking; pushState/popstate). Out of scope. Ruler state is NOT in `history`. A future "permalink to a saved measurement" feature would belong in My Places, not in ruler.
 
 ## Architecture
 
@@ -59,7 +61,13 @@ window._ruler = {
 
 **Idempotency contract:** `init(map)` checks an internal `initialized` flag. Second call is a no-op. After `clear()`, the module is still alive — sources/layers removed, listeners cleaned up, but the next state mutation (e.g., user starts a new measurement) is permitted. There is no separate "destroyed" state; the IIFE module lives for the page lifetime.
 
-**Imperial/metric handling — live, not snapshot.** Per R1+R4 finding: spec v1's `_appAPI` extraction was wrong because `useImperial` is a `var` in app.js's IIFE closure, reassigned on toggle (app.js:1089). The codebase already exposes a live mirror at `window._geographicaUseImperial` (set at app.js:123 and kept in sync at 1090, added by commit `7bad09c`). **ruler.js reads `window._geographicaUseImperial` at format time** (each call to render the panel), not at init time. Unit-toggle updates propagate on the next render tick.
+**Imperial/metric handling — live read + explicit rerender event.** Per R1+R4 finding: spec v1's `_appAPI` extraction was wrong because `useImperial` is a `var` in app.js's IIFE closure, reassigned on toggle (app.js:1089). The codebase already exposes a live mirror at `window._geographicaUseImperial` (set at app.js:123 and kept in sync at 1090, added by commit `7bad09c`). **ruler.js reads `window._geographicaUseImperial` at format time** (each call to render the panel), not at init time.
+
+**Per R5 finding M1: live-read alone is insufficient** — without a rerender trigger, an already-rendered measurement keeps showing stale units until the next state mutation. v3 adds an explicit rerender contract:
+
+- **app.js dispatches a `CustomEvent('geographica:units-changed')`** from inside the existing units-radio handler at app.js:1086-1100 (one new line: `document.dispatchEvent(new CustomEvent('geographica:units-changed'));`).
+- **ruler.js subscribes to that event** in `init()` and calls `renderPanel()` (rebuilds vertex list distances/bearings, headline stats, and sparkline aria-label) without mutating data.
+- An integration test (`test_units_rerender_integration.js`) flips the real radio input and asserts that an already-rendered measurement updates immediately without other interaction.
 
 **Distance formatting — local, not extracted.** `formatRouteDistance` is in app.js but `formatNavDistance` is in nav-ui.js (R1 verified at nav-ui.js:800). A cross-module extraction is more trouble than it's worth. ruler.js implements its own ~12-line distance formatter that respects `window._geographicaUseImperial`:
 
@@ -82,17 +90,27 @@ This duplication is ~12 lines vs. the architectural cost of a cross-module API s
 
 **Haversine formatting — reuse `haversineDistance` from app.js.** Same pattern: `window._haversineDistance = haversineDistance;` exported at the end of app.js's IIFE.
 
-**Minimal touch to existing files:**
+**Minimal touch to existing files (v3 — corrected accounting per R5):**
 
 - `frontend/index.html` — add 5th tab button: `<button class="tab-btn" data-panel="measure-panel">Measure</button>`. Add `<div id="measure-panel" class="panel">…</div>` (per existing convention — class is `panel`, NOT `sidebar-panel hidden`; visibility toggled via `.active` class per R1 finding). Add `<script src="ruler.js"></script>`. ~32 added lines.
-- `frontend/app.js` — five inserts:
-  1. **Mode-flag suppression** at the existing reverse-geocode click handler at L1622 (~3 lines): early-return when `window._ruler && window._ruler.isActive()`.
-  2. **Mode-flag suppression** at the layer-specific click handler at L660 (imported-points / imported-lines / imported-polygons) (~3 lines). Per R4 finding: the v1 spec missed this handler; KMZ-pin click during ruler `drawing` mode would double-fire without the bail.
-  3. **Mode-flag suppression** at the search-result-circles click handler at L1272 (~3 lines). Same reason.
+- `frontend/app.js` — **6 inserts + 4 edits** (per R5 M2: prior accounting "5 inserts + 1 edit" was wrong even before R5's C1 fix):
+
+  **Inserts (new lines, no existing code modified):**
+  1. **Mode-flag bail** at the reverse-geocode click handler at L1622 (~3 lines): early-return when `window._ruler && window._ruler.isActive()`. Suppresses popup during `drawing` and `inserting`.
+  2. **Mode-flag bail** at the imported-layers click handler at L660 (~3 lines). Per R4: KMZ-pin click during ruler `drawing` would double-fire.
+  3. **Mode-flag bail** at the search-result-circles click handler at L1272 (~3 lines). Same reason.
   4. **`window._formatDD` and `window._haversineDistance` exports** at end of app.js's IIFE (~3 lines).
-  5. **`initRuler(map)` call** in the bootstrap sequence — explicitly placed AFTER `initSidebarTabs()` and BEFORE `restoreLastSidebarTab()` (per R1+R4: `restoreLastSidebarTab` at app.js:4105 reads `localStorage.getItem('sidebar-last-tab')` and activates it; ruler must be init-ed before that fires so a Measure-tab restore doesn't bind events to a non-init-ed module).
-- `frontend/app.js` — one **edit** (not insert): `VALID_SIDEBAR_PANELS` array at L4103 — append `'measure-panel'`. Per R4 finding: the whitelist silently rejects unknown panels, so without this edit, restore-Measure-tab would fail silently.
+  5. **`document.dispatchEvent(new CustomEvent('geographica:units-changed'))`** at end of the units-radio handler at L1086-1100 (~1 line). Per R5 M1: drives ruler.js rerender on toggle.
+  6. **`initRuler(map)` call** in the bootstrap sequence — explicitly placed AFTER `initSidebarTabs()` and BEFORE `restoreLastSidebarTab()` (per R1+R4: must init before tab-restore so Measure-tab restore doesn't bind to a non-init-ed module).
+
+  **Edits (existing lines / blocks modified):**
+  1. **`VALID_SIDEBAR_PANELS` array at L4103** — append `'measure-panel'`. Per R4: whitelist silently rejects unknown panels.
+  2. **`queryRenderedFeatures` exclusion list at L1628-1631** (inside the L1622 click handler) — append `'ruler-vertex-hit-circles'`, `'ruler-vertex-circles'`, `'ruler-line'`. Per R5 C1: in `editing` state, `_ruler.isActive()` is false but vertex-clicks must NOT fall through to reverse-geocode. The existing exclusion list approach matches the existing pattern for `imported-points` etc.
+  3. **`addPlaceholderSources()` body at app.js:295+** — add `if (window._ruler && window._ruler.reattachSources) window._ruler.reattachSources(map);` (~1 line). Per R1+R5: style-load reattach centralizes through this existing function, NOT a parallel handler.
+  4. **(Implicit, no code change but worth flagging)**: the in-bootstrap `map.on('style.load', addPlaceholderSources)` registration at app.js:143 already covers the ruler reattach automatically via edit #3.
 - `frontend/style.css` — additions for ruler classes (~80 lines).
+
+**Total app.js touch points: 9** (was claimed as "5 inserts + 1 edit" in v2 — that accounting was wrong on three counts: missing addPlaceholderSources hook, missing units-event dispatch, missing exclusion-list edit). The corrected 6+4 accounting is the basis for plan-writing.
 
 **Canonical state object (KMZ-serializable, no DOM/MapLibre refs):**
 
@@ -149,6 +167,8 @@ Four explicit states. No timeouts, no implicit transitions.
 
 **`isActive()` returns `true` for `drawing` and `inserting`, `false` for `idle` and `editing`**. The mode-flag bail at three click handlers (L1622, L660, L1272) suppresses competing handlers during the two states where empty-map / pin clicks have ruler-specific meaning.
 
+**Per R5 C1: `editing`-state vertex clicks need DIFFERENT protection.** Since `isActive() === false` in `editing` (intentional — empty-map clicks fall through to reverse-geocode), vertex clicks would also fall through, double-firing select AND reverse-geocode popup. **The fix is in the L1622 handler's existing `queryRenderedFeatures` exclusion list** (see §A edits #2): adding ruler layers to the exclusion list means clicks that hit a ruler vertex/line are recognized as "feature clicks" and the generic reverse-geocode handler bails — exactly mirroring how `imported-points` and `search-result-circles` clicks are excluded today. **Vertex-clicks in `editing` are claimed by ruler and MUST NOT reach reverse-geocode**; this contract is enforced both by the layer-scoped `map.on('click', 'ruler-vertex-hit-circles', ...)` listener AND by the generic-handler exclusion.
+
 ### C. Sidebar UI structure
 
 The Measure panel renders into `#measure-panel` (the new 5th tab — added after Admin, using `class="panel"` per existing convention). Six sections, top to bottom, conditionally visible per state:
@@ -199,7 +219,7 @@ The Measure panel renders into `#measure-panel` (the new 5th tab — added after
 | `ruler-vertex-circles` | circle | radius 8, fill #ffd400, stroke 2, stroke-color white |
 | `ruler-vertex-circles-selected` | circle | filter `['==', ['get', 'selected'], true]`, radius 11, fill #ff7a00, stroke 3, stroke-color white |
 | `ruler-vertex-hit-circles` | circle | radius 22 (i.e. 44 px diameter — WCAG 2.5.5), fill rgba(0,0,0,0), stroke 0; visible only via cursor change on hover |
-| `ruler-vertex-labels` | symbol | text-field `{label}`, text-font `['Metropolis Regular']` (per R1 — must specify; tileserver only serves Metropolis + Noto Sans), size 12, offset `[0,-1.4em]`, halo white, anchor bottom |
+| `ruler-vertex-labels` | symbol | text-field `{label}`, **text-font `['Metropolis Regular', 'Noto Sans Regular']`** (per R5 M3 — matches the two-font fallback in shipped `tileserver/styles/positron/style.json:662` + `darkmatter/style.json:743` + `hybrid/style.local.json:1196-1198`), size 12, offset `[0,-1.4em]`, halo white, anchor bottom |
 
 **Critical clarifications:**
 - The hit-circles layer is **visible-but-transparent**, NOT `visibility: 'none'` — MapLibre's hit-test query (`map.queryRenderedFeatures`) ignores layers with `visibility: 'none'`. Setting fill alpha = 0 keeps the layer hit-testable while invisible.
@@ -282,14 +302,24 @@ function bearingDeg(a, b) {
 **CRITICAL FIX (R1+R2+R4 convergent):** v1 used the wrong decode formula. Tiles are **Mapzen Terrarium-encoded** (verified at [app.js:325](frontend/app.js#L325) `encoding: 'terrarium'` and [download_elevation.py:39](scripts/download_elevation.py#L39) `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/`).
 
 ```js
-function elevationFromRGB(r, g, b) {
+function elevationFromRGB(r, g, b, a) {
   // Mapzen Terrarium decode. NOT Mapbox Terrain-RGB.
   // Reference: https://github.com/tilezen/joerd/blob/master/docs/formats.md
-  return (r * 256 + g + b / 256) - 32768;
+  // Per R5 M4: guard impossible / no-data values so they don't poison min/max/gain/loss.
+  if (a === 0) return null;                          // transparent pixel = no data
+  var elev = (r * 256 + g + b / 256) - 32768;
+  if (elev < -500 || elev > 9000) return null;       // outside plausible CONUS DEM range
+  return elev;
 }
 ```
 
-A unit test against known reference points (sea level near coastline, Death Valley negative elevation, Mount Whitney) is required to lock this in.
+**Per R5 M4: decode guards prevent (0,0,0)-pixel poisoning.** A raw decode of `(r=0,g=0,b=0,a=255)` yields `-32768m`. If that leaks through (tile edge, corrupted read, unexpected sentinel), it dominates min/max and skews gain/loss massively. The guards above catch:
+- alpha-zero pixels → null (transparent overlay regions, missing data)
+- decoded values < -500m or > 9000m → null (outside plausible CONUS DEM range; Death Valley is -86m, Mt. Whitney is +4421m, so the `[-500, 9000]` envelope is generous)
+
+Impossible samples become coverage gaps, not absurd numeric extremes.
+
+A unit test (`test_terrarium_decode.js` — renamed per R5 N4 from the v2 `test_terrain_rgb.js` to avoid reintroducing the wrong-format mental model) against known reference points (sea level, Death Valley, Mt. Whitney) plus the (0,0,0) and alpha-zero guard cases is required to lock this in.
 
 **Sample zoom: z=12.** Per R2 finding, the v1 spec's "9.5 m/px at AZ latitude" claim was wrong (that's z=14). Actual at z=12, lat=33.45° N: ~32 m/px. **Use z=12 because that's the max actual data zoom** — `download_elevation.py:41` defaults to `DEFAULT_ZOOM = "0-12"`. Higher zooms return 404 from the MBTiles. The MapLibre source declares `maxzoom: 14` but that's a request ceiling, not a data ceiling; the underlying MBTiles only contain z=0..12.
 
@@ -366,12 +396,16 @@ Run: `node --test --test-force-exit frontend/tests/ruler/`.
 | File | Coverage |
 |---|---|
 | `test_geodesy.js` | `haversineDistance` (round-trip, antipodes, zero-length, CONUS-mileage validation); `bearingDeg` (cardinals, reciprocals, AZ→CO USGS reference) |
-| `test_terrain_rgb.js` | `elevationFromRGB` decode against pngjs-decoded real Terrarium tile fixture (per R4 — JSDOM doesn't exercise canvas pixel readback, so use pngjs in Node directly). Reference points: sea level (0±1m), Mt. Whitney (~4421m), Death Valley (~-86m). |
+| `test_terrarium_decode.js` | `elevationFromRGB(r,g,b,a)` decode against pngjs-decoded real Terrarium tile fixture (per R4 — JSDOM doesn't exercise canvas pixel readback, so use pngjs in Node directly). Reference points: sea level (0±1m), Mt. Whitney (~4421m), Death Valley (~-86m). **Plus R5 M4 guard cases:** `(0,0,0,255)` → null, alpha-zero → null, decoded -32768m → null (out of range), decoded 100000m → null. |
 | `test_sample_path.js` | `samplePath(vertices, numSamples)` correctness (count, distribution, segment-spanning, degenerate inputs, divide-by-zero protection, segment-projection for Insert After). |
 | `test_state_machine.js` | All §B transitions; selectedVertex / insertSlot invariants per state; sidebar-tab-switched-away preservation rules. |
 | `test_unit_format.js` | `formatRulerDistance` imperial↔metric flip when `window._geographicaUseImperial` toggles. |
 | `test_sparkline.js` | `sparklinePath(samples, width, height)` SVG `points` correctness; min/max → chart top/bottom; coverage gaps split path; empty samples → empty path. |
 | `test_segment_projection.js` | `projectPointToSegment(latlng, segStart, segEnd)` correctness — point on segment, point off-side, point past endpoints (clamped). |
+| `test_tile_cache_lru.js` | (per R5 M5) Repeated workflow simulating 50+ tile fetches across many measurements: cache stays at ≤30 entries, oldest unused tile is evicted first, hard cap enforced under burst loads. |
+| `test_drag_raf.js` | (per R5 M5) Bursty mousemove / touchmove events (10+ per frame) collapse to one `setData()` call per `requestAnimationFrame` tick. Prevents per-frame source-update thrash from regressing. |
+| `test_touch_multitouch_cancel.js` | (per R5 M5) Single-finger `touchstart` on vertex begins drag; second finger arrival (`touches.length > 1`) cancels drag without corrupting state; subsequent single-finger touch starts a fresh drag. |
+| `test_units_rerender_integration.js` | (per R5 M1+M5) JSDOM: programmatically change the `input[name="units"]` radio, dispatch the `geographica:units-changed` event from the existing units handler, assert that `renderPanel()` rebuilds vertex distances/bearings without other interaction. |
 
 ### Integration / DOM tests — JSDOM
 | Test | Asserts |
@@ -380,42 +414,102 @@ Run: `node --test --test-force-exit frontend/tests/ruler/`.
 | `test_keyboard.js` | Per §C.6 table; Backspace pops during drawing (not when input focused); Esc cancels insert; Enter finishes; Tab/Space/Delete work; arrow keys move focus only. |
 | `test_mode_flag.js` | `_ruler.isActive()` matches state. |
 
-### Source-grep enforcement test (per R4 finding)
-A `test_app_js_bail_present.js` file uses regex-grep against the actual `app.js` source to verify the three bail lines are present at L1622, L660, L1272 regions. Pattern matches the overview-incremental enforcement test (`tests/test_overview_write_enforcement.py`). Without this, a future PR could silently remove a bail and JSDOM tests would still pass.
+### Source-grep enforcement test (per R4 + R5 M5 expansion)
+A `test_app_js_integration_present.js` file uses regex-grep against the actual `app.js` source to verify all expected integration points are intact:
 
-### Manual ship-gate checklist (extended per R4)
-Full Playwright is out of scope. Manual checklist before merge:
+1. **Three bail lines** at L1622, L660, L1272 regions (matching `_ruler.isActive()` early-return).
+2. **Per R5 C1+M5: `queryRenderedFeatures` exclusion at L1628-1631 includes ruler layers** — grep for the exclusion list `layers:` array containing `'ruler-vertex-hit-circles'`, `'ruler-vertex-circles'`, `'ruler-line'`. Catches the regression where a future PR rebuilds the array and forgets ruler entries.
+3. **`document.dispatchEvent(new CustomEvent('geographica:units-changed'))`** present in the units handler.
+4. **`addPlaceholderSources()` calls `_ruler.reattachSources(map)`**.
+5. **`'measure-panel'` present in `VALID_SIDEBAR_PANELS` array**.
 
+Pattern matches the overview-incremental enforcement test (`tests/test_overview_write_enforcement.py`). Without this, a future PR could silently remove an integration line and JSDOM tests would still pass.
+
+### Manual ship-gate checklist (post-R5 — measurable assertions, not vibes)
+Full Playwright is out of scope. Per R5 M6: vague items rewritten as falsifiable pass/fail criteria. A reviewer who runs through this should be able to fail items they would otherwise be tempted to wave through.
+
+**Functional happy path:**
 ```
-[ ] Open Measure tab → place 5 vertices → see line + circles + sidebar list
-[ ] Click Finish → measurement enters editing state; sampling kicks off
-[ ] Sampling progress counter shows X/Y tiles; resolves to elevation profile
-[ ] Click V3 in sidebar → orange highlight on map AND sparkline guide line
-[ ] Click [Insert After] → banner appears; tap on segment between V3/V4 → new vertex placed via projection (not at raw tap point)
-[ ] Drag V2 to new location → distances/bearings recompute on drag-end; sampling re-runs
-[ ] Click [Delete] on V4 → V4 removed, V5 renumbers to V4
-[ ] Switch to Layers tab → measurement preserved (state is editing) → switch back, see same data
-[ ] Switch to Layers tab during drawing with 0 vertices → state resets to idle on return
-[ ] Switch to Layers tab during drawing with ≥2 vertices → resumes in editing on return
-[ ] Click Clear → all gone, idle state
-[ ] iOS Safari touch: vertex tap → vertex circle drag → insert flow all work; no 300ms tap delay; pinch-zoom doesn't trigger drag
-[ ] iOS Safari PWA standalone (Add to Home Screen): same as above
-[ ] Android Chrome touch: same suite
-[ ] Gloved fingers (winter glove, photo of test on Pi): vertex tap-target reachable
-[ ] HTTPS Tailscale + HTTP LAN: ruler works identically
-[ ] Draw across edge of elevation coverage → dashed gap + warning; partial samplingState
-[ ] Network unplugged mid-sampling → samplingState: failed; "Failed to load elevation data" message
-[ ] 1000-mile path (3 western states) → 50-tile cap kicks in; UI responsive; "Path too long" notice
-[ ] Activate nav, then open Measure tab → ruler banner shows; nav voice prompts continue; visual nav banner occluded by ruler banner
-[ ] During measurement, toggle imperial↔metric — readouts re-render
-[ ] During measurement, toggle basemap (USGS → NAIP) — line and vertices remain visible (style-load reattach)
-[ ] Reload Measure-as-last-tab → empty Measure tab opens cleanly; no error
-[ ] Backspace during drawing pops last; Backspace in search box does NOT
-[ ] Esc during inserting returns to editing; Esc during editing deselects vertex
-[ ] Two parallel agents not stepping on each other (no merge conflicts in app.js insertion regions L660, L1272, L1622)
-[ ] Color contrast in sunlight on a real Pi tablet — line+halo and vertex+stroke clearly visible against light basemap and over imagery
-[ ] Two browser tabs open simultaneously — independent state, no cross-tab interference
-[ ] iOS Safari + Voice Over screen reader: vertex list announced as list with selectability; sparkline aria-label read; mode banner announced via aria-live
+[ ] Open Measure tab → place exactly 5 vertices on a known location (Phoenix metro) → vertex list shows V1..V5 with formatDD coordinates; map shows yellow line + 5 visible vertex circles
+[ ] Click Finish → state transitions to editing; "Loading elevation… X/Y tiles" counter appears
+[ ] Counter resolves to elevation profile within 30s on a 5-mile measurement; sparkline + min/max/gain/loss numbers appear
+[ ] Click V3 row in sidebar → V3 circle on map turns orange; sparkline draws orange dashed vertical guide at V3's x-position
+[ ] Click [Insert After] → floating banner reads "Tap map to insert after V3"; tap on segment-line midway between V3 and V4 → new vertex (now V4) inserted at the projected closest-point on the segment, NOT at raw tap location
+[ ] Drag V2 to a new map location → on mouseup, new distance + bearing for segment V1→V2 and V2→V3 update in vertex list within 1 frame; sampling re-runs
+[ ] Click [Delete] on V4 (was V5 before insert) → vertex removed from list and map; remaining vertices renumber contiguously
+[ ] Click Clear → all vertices and line disappear; state returns to idle; vertex list shows empty placeholder
+```
+
+**State preservation:**
+```
+[ ] Switch to Layers tab during drawing with 0 vertices → return to Measure → empty placeholder (state reset to idle)
+[ ] Switch to Layers tab during drawing with ≥2 vertices → return → measurement preserved as editing; sparkline visible
+[ ] Switch to Layers tab during editing → return → identical data; selection (if any) preserved
+[ ] Reload page with Measure as last-active tab → empty Measure panel opens; no console errors; no "previous measurement" message
+```
+
+**Touch / mobile (real devices, not emulators):**
+```
+[ ] iOS Safari (latest): tap empty map → vertex appears within visible-feedback time (no perceptible 300ms delay); tap-tap-tap-double-tap places 3 vertices then finishes; vertex drag works without page scroll; pinch-to-zoom never starts a drag (verify by attempting pinch over a vertex)
+[ ] iOS Safari PWA standalone (Add to Home Screen → reopen): same suite passes identically; system status bar / notch does not visually cover any ruler UI
+[ ] Android Chrome (latest): same suite as iOS
+[ ] Gloved-finger test: 8 of 10 first-attempt taps on a placed vertex must register as a select (no popup) — measured on a real Pi 5 tablet with a winter glove. Failure means hit-target sizing needs revision.
+```
+
+**Cross-network / cross-environment:**
+```
+[ ] Both HTTPS Tailscale (e.g., pandora.twin-bramble.ts.net) AND HTTP LAN (e.g., http://10.20.30.40): same vertex-placement flow, same units, same elevation profile rendering, same state machine transitions. Timing differences acceptable; missing UI states or different button enablement is NOT acceptable.
+[ ] Two browser tabs open simultaneously: each has its own measurement; clearing one does not affect the other; no cross-tab event bleed
+```
+
+**Coverage / failure modes:**
+```
+[ ] Draw a path that crosses the elevation-coverage boundary (e.g., one vertex inside the AZ DEM bbox, one outside): sparkline shows dashed gap segment; coverage warning badge displays a non-zero percentage matching the off-coverage fraction
+[ ] Network unplugged mid-sampling: counter stalls; samplingState transitions to "failed"; sidebar shows "Failed to load elevation data — showing distance only" without infinite spinner
+[ ] 1000-mile path crossing 3 western states: banner+panel+map remain interactive; "Path too long for full elevation profile" notice visible; 50-tile cap respected
+```
+
+**Coexistence with nav:**
+```
+[ ] Active nav + open Measure tab: ruler banner shows; #nav-banner is occluded; nav voice prompts continue audibly; ending nav while ruler is active leaves ruler banner correctly visible
+[ ] End nav, then open Measure tab: ruler banner shows in normal position; no leftover #nav-banner artifacts
+```
+
+**Unit toggle:**
+```
+[ ] Place 3 vertices, finish, observe miles+feet readouts. Toggle to metric. Without ANY other interaction (no hover, no click, no scroll), readouts must update to km+m within 1 frame (~16ms). Vertex list distances, headline total, sparkline aria-label, and min/max/gain/loss stats all update.
+```
+
+**Style-load reattach:**
+```
+[ ] Place 3 vertices on basemap. Toggle to imagery (NAIP). Line and vertices remain visible (style-load reattaches sources/layers). Toggle to dark basemap → still visible.
+```
+
+**Keyboard:**
+```
+[ ] Backspace during drawing (no input focused) pops last vertex
+[ ] Backspace inside the search input does NOT pop a vertex
+[ ] Esc during inserting returns to editing; Esc during editing deselects vertex if one was selected
+[ ] Enter during drawing with ≥2 vertices triggers Finish
+[ ] Tab cycles through interactive elements: tab buttons → vertex rows → action buttons → sparkline → footer buttons (verifiable by visible focus ring on each stop)
+```
+
+**Accessibility (real screen-reader):**
+```
+[ ] iOS Safari + VoiceOver: vertex list rows announce "V1, decimal degrees lat-lng, distance to next vertex, bearing degrees" (specific format, not generic "list item")
+[ ] iOS Safari + VoiceOver: sparkline announces "Elevation profile, min X feet, max Y feet, gain Z feet, loss W feet" once per render — not on every interaction
+[ ] iOS Safari + VoiceOver: floating mode banner announced via aria-live polite when entering drawing/inserting; cancel [×] button is reachable by swipe-navigation and named "Cancel ruler mode"
+```
+
+**Color contrast (objective measurement):**
+```
+[ ] Place a measurement crossing both light (positron / USGS basemap) and dark (NAIP imagery) areas. Photograph in direct sunlight on a Pi tablet. Visually verify: yellow line is clearly distinguishable in both halves; selected-orange vertex is distinguishable from regular yellow vertex.
+[ ] Optional rigor: WCAG contrast checker on the 7px black halo edge transition vs each underlying basemap shows ≥3:1 (geometric-edge contrast, not color-on-color contrast).
+```
+
+**Coordination with parallel agents (NOT a release-gate item — for the merge engineer's awareness):**
+```
+[ ] Pre-merge: rebase ruler branch onto current dev tip; verify the 9 app.js touch points apply cleanly; if conflicts in the L660/L1272/L1622 regions, manually relocate the bail / exclusion edits without changing semantics
 ```
 
 ### Pitfalls cross-reference
@@ -427,46 +521,47 @@ Specific patterns ruler must respect:
 - No `setInterval` / `setTimeout` references that survive `clear()`.
 - Touch events use `passive: false` where `preventDefault()` is required.
 - All keyboard handlers check `e.target.tagName` / `isContentEditable` before claiming the key.
-- Symbol layers always specify `text-font: ['Metropolis Regular']`.
+- Symbol layers always specify `text-font: ['Metropolis Regular', 'Noto Sans Regular']` (matches shipped style convention; per R5 M3).
 - Style-load reattach via `addPlaceholderSources()` at app.js:143, NOT a parallel `map.on('style.load')` handler.
+- **DOM rendering uses `textContent` exclusively for labels and stats**, never `innerHTML`. Per R5 N2: although v1 labels are auto-generated `V1`/`V2`/etc with no XSS surface, future My Places integration will pass through user-supplied names. Lock the textContent posture now to prevent a future regression. (KMZ-import already sanitizes via DOMPurify; ruler.js never has a need for `innerHTML` at all — labels and stats are short text only.)
+- **Generic click handler exclusion** at L1622 must include all current ruler hit-test layers (per R5 C1). The source-grep enforcement test catches regressions where a future PR rebuilds the array and forgets ruler entries.
 
 ## Coordination with parallel agents
 
 Two parallel sessions are touching nav/voice during this cycle (per `dev/adversarial/2026-04-24-nav-voice-followup-*.md` artifacts and recent commits `1e91579`, `d54c111`, `7800ae7`). Ruler's surface area is deliberately disjoint:
 
 - **No edits to** `frontend/navigation.js`, `frontend/nav-ui.js`, `frontend/voice-picker.js`, `frontend/wake-lock.js`, `frontend/silent-video-lock.js`.
-- **Five small inserts + one whitelist edit** to `app.js` — all in non-overlapping regions:
-  1. Click-handler bail at L1622 (reverse-geocode handler)
-  2. Click-handler bail at L660 (KMZ-pin / imported-geometry handler)
-  3. Click-handler bail at L1272 (search-result-circles handler)
-  4. `window._formatDD` and `window._haversineDistance` exports at end of IIFE
-  5. `initRuler(map)` call in bootstrap — explicitly between `initSidebarTabs()` and `restoreLastSidebarTab()`
-  6. Edit `VALID_SIDEBAR_PANELS` array at L4103 — append `'measure-panel'`
+- **9 app.js touch points (6 inserts + 4 edits)** — all in non-overlapping regions; full enumeration in §A. Summary by region:
+  - L660 (insert): KMZ-pin click handler bail
+  - L1086-1100 (insert): units-handler `dispatchEvent`
+  - L1272 (insert): search-pin click handler bail
+  - L1622 (insert): reverse-geocode handler bail
+  - L1628-1631 (edit): `queryRenderedFeatures` exclusion list — append ruler layers
+  - L295+ inside `addPlaceholderSources` (edit): call `_ruler.reattachSources(map)`
+  - L4103 (edit): `VALID_SIDEBAR_PANELS` array append
+  - End-of-IIFE (insert): `window._formatDD` / `window._haversineDistance` exports
+  - Bootstrap sequence (insert): `initRuler(map)` call between `initSidebarTabs()` and `restoreLastSidebarTab()`
+
+  Total: 9 touch points across 9 different regions of app.js. Maximum non-overlap with parallel agents.
 - **One tab insert** to `index.html` — adds 5th tab button + new `class="panel"` div + `<script src="ruler.js"></script>`.
+- **One units-handler insert** for the `geographica:units-changed` CustomEvent (counted above as one of the 9 app.js inserts).
 - **CSS additions** in `style.css` use the `.ruler-` prefix.
 
-If a merge conflict surfaces in any of the 6 app.js insertion points, resolve by relocating the insert to a non-conflicting nearby line; the inserts have no ordering dependencies beyond the bootstrap-sequence constraint (L4 must run between `initSidebarTabs()` and `restoreLastSidebarTab()`).
+If a merge conflict surfaces in any of the 9 app.js touch points, resolve by relocating the insert to a non-conflicting nearby line; the inserts have no ordering dependencies beyond the bootstrap-sequence constraint (initRuler must run between `initSidebarTabs()` and `restoreLastSidebarTab()`).
 
-## Open questions remaining for R5 (Codex cross-validation)
+## Open questions resolved
 
-R1-R4 resolved most of v1's open questions. Remaining for R5:
-
-1. **Subtle integration risks** — does Codex find any cross-module coupling we missed? Specifically: does the `window._formatDD` / `window._haversineDistance` export pattern cleanly survive a future app.js refactor that moves these helpers? (Lock pattern: keep them as named module-internal functions in app.js plus the explicit `window.X = X` exports at IIFE end.)
-2. **Touch-handling correctness** — Codex with web search may find iOS Safari behaviors we missed (e.g., `dragstart` event interaction, IndexedDB transaction abort during touchmove, MapLibre v5.x specific touch quirks).
-3. **Test coverage gap detection** — does the test list miss anything Codex would consider a CI-must-have?
-4. **Symbol-layer rendering in offline mode** — does the Metropolis font load offline reliably, or does the AREDN-mesh-no-internet context introduce a font-load failure mode?
-5. **The 50-tile cap derivation** — R2 already revised; R5 may have an even tighter recommendation given measured tile sizes.
-6. **The state-shape invariants** — are the four invariants in §A complete? (Codex may surface a fifth that v1 readers missed.)
+All R1-R5 open questions are now resolved in v3. No remaining design open questions for plan-writing.
 
 ## Scope estimate
 
-Roughly 4–5 days of subagent-driven implementation work (revised from v1's 3–4 days due to expanded surface area: ARIA/keyboard nav, hit-circles layer, segment-projection, sampling-state UI, banner-slot reuse, source-grep enforcement test):
+Roughly **4–5 days of subagent-driven implementation work** (revised from v1's 3–4 days due to expanded surface area from R1-R5 fixes: ARIA/keyboard nav, hit-circles layer, segment-projection, sampling-state UI, banner-slot reuse, source-grep enforcement test, terrarium guards, units-rerender event, `editing`-state click-exclusion, additional regression tests):
 
-- Phase 0: scaffolding (new file, init wiring, exports, tab DOM, panel class convention, VALID_SIDEBAR_PANELS edit)
-- Phase 1: drawing state + state machine + map sources/layers (incl. hit-circles layer)
-- Phase 2: vertex-centric edit (select / drag / delete / insert with segment projection)
-- Phase 3: elevation sampling (Terrarium decode, LRU cache, AbortController + gen counter, samplingState UI, skeleton sparkline)
-- Phase 4: edge cases, ARIA, keyboard nav, banner-slot reuse, error paths
-- Phase 5: review loops (≥3 rounds per build-robust-features) + manual ship-gate validation
+- **Phase 0: scaffolding** — new file, init wiring, exports, tab DOM, panel class convention, `VALID_SIDEBAR_PANELS` edit, units-handler dispatch insert.
+- **Phase 1: drawing state + map rendering** — state machine `idle → drawing → editing` happy path; sources/layers including `ruler-vertex-hit-circles`; bail at all three click handlers; `addPlaceholderSources` reattach hook; `queryRenderedFeatures` exclusion-list edit.
+- **Phase 2: vertex-centric edit** — select / drag (rAF-coalesced, multitouch-cancel) / delete / insert-with-segment-projection.
+- **Phase 3: elevation sampling** — Terrarium decode with `(0,0,0)` and out-of-range guards; LRU tile cache (30-tile cap); `AbortController` + gen counter; `samplingState` lifecycle; skeleton sparkline + tile counter UI.
+- **Phase 4: edges + a11y + i18n boundary** — ARIA roles/labels; keyboard nav table; banner-slot reuse with #nav-banner; English-only string locking; textContent enforcement.
+- **Phase 5: tests + review** — all unit / DOM / source-grep enforcement / integration tests including the new R5-driven ones; ≥3 review rounds per build-robust-features; manual ship-gate validation against the post-R5 measurable checklist.
 
-Detailed task breakdown will be produced by the writing-plans skill after R5.
+Detailed task breakdown will be produced by the writing-plans skill in the next step.
