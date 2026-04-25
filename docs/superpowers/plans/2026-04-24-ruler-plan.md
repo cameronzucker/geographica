@@ -3436,7 +3436,11 @@ Add a module-private flag to the `view = { ... }` init block (alongside `lastCli
     rafHandle: null,
     domListenerCleanups: [],
     lastClick: null,
-    measureTabActive: false,    // spec §B gate for handleMapClick (Phase 2.8)
+    // Spec §B gate for handleMapClick (Phase 2.8). Default true so tests
+    // that exercise _test.handleMapClick without calling init() aren't
+    // gated out. init() flips this to false for sibling tabs when the
+    // page actually has tab DOM (production case).
+    measureTabActive: true,
   };
 ```
 
