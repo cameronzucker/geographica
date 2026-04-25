@@ -1,5 +1,86 @@
 # Implementation Log
 
+## 2026-04-25 — Ruler / measurement tool — Phase 1: pure-function math (6 tasks)
+
+**Released as:** not yet released (Phase 2-5 remain; no UI surface yet, so no field smoke required at the Phase 1 boundary).
+**Plan / spec:** [docs/superpowers/plans/2026-04-24-ruler-plan.md](../docs/superpowers/plans/2026-04-24-ruler-plan.md) · [docs/superpowers/specs/2026-04-24-ruler-design.md](../docs/superpowers/specs/2026-04-24-ruler-design.md)
+**Adversarial reviews:** 12 per-task Sonnet reviews (spec compliance + code quality, both stages, on every task). A Codex adversarial round at the Phase 1 boundary was attempted but did not complete in this session — see "Phase 1 review checkpoint outcome" below. Per the handoff, Codex was optional for Phase 1 (cholla's R5 spec-time round already covered Codex cross-validation for the design); the per-task reviews are sufficient for pure-function math correctness.
+**Execution protocol:** `superpowers:subagent-driven-development` — fresh general-purpose Sonnet implementer per task, two-stage Sonnet review (spec → code-quality) per task, single combined commit per task. Plan-vs-code drift fixes landed as separate `docs(ruler):` / `test(ruler):` commits in lockstep with the feat commit they apply to.
+**Agent moniker:** ironwood. Sub-monikers `ironwood-impl-1.{1..6}`, `ironwood-spec-1.{1..6}`, `ironwood-cq-1.{1..6}` for per-task subagent dispatches.
+
+### Summary
+
+Six pure-function math primitives shipped to `frontend/ruler.js`, exposed via the `window._ruler._test` test seam off the existing IIFE. TDD throughout: each task wrote a failing `node:test` test file, watched it red, added the impl, watched it green, then committed both files together. Cumulative ruler test count: 42/42 (Phase 0 mode-flag 3 + Phase 1 geodesy 7 + terrarium-decode 9 + sample-path 7 + segment-projection 6 + unit-format 5 + sparkline 5). Phase 1 has no UI surface — Phase 2 will be the first user-visible work.
+
+The functions are all single-responsibility, sub-50-line, no external dependencies (other than `samplePath` which reads `window._haversineDistance`, exported in Phase 0 Task 0.3, and `formatRulerDistance` which live-reads `window._geographicaUseImperial`, the unit-toggle global maintained by app.js).
+
+### Key decisions
+
+- **Test seam discipline.** The `window._ruler._test = { ... }` object is a deliberate compromise. The IIFE wrapping ruler.js prevents ES `import`, so unit tests can't pull pure functions out without a seam. Tests load the file as a string via `vm.createContext({ window: win, document: {}, console })` and read `_test.<fn>`. Production code is contractually forbidden from touching `_test` (commented). All 6 functions are appended to `_test` in declaration order: bearingDeg, elevationFromRGB, samplePath, projectPointToSegment, formatRulerDistance, sparklinePath.
+
+- **`var` and IIFE-closure locals throughout.** Matches the existing ruler.js style and the wider app.js / nav-ui.js precedent. `let`/`const` would have been style-drift.
+
+- **Mapzen Terrarium formula locked in.** `(r * 256 + g + b / 256) - 32768`. Three independent design-cycle reviewers had flagged Mapzen-vs-Mapbox-Terrain-RGB confusion as a likely shipping bug; the v3 spec §E.3 fixes Terrarium because the upstream pipeline (`download_elevation.py:39`) and runtime (`app.js:325` `encoding: 'terrarium'`) both produce/consume Terrarium. Phase 5.1 will add a grep-enforcement test that asserts the literal formula string in ruler.js.
+
+- **`formatRulerDistance` live-reads `window._geographicaUseImperial`.** Each call. NOT snapshot-captured at init time. The `live read — toggle propagates` test mutates `win._geographicaUseImperial` between two calls in the same vm context to verify; a closure-capture refactor would fail it.
+
+- **Two-stage review per task held.** Each task got a fresh Sonnet implementer dispatch, then a Sonnet spec-compliance reviewer, then a `superpowers:code-reviewer` quality reviewer. No task skipped a stage. Reviews passed on first try in 5 of 6 tasks; Task 1.3 came back with a concern (cross-realm Array deepStrictEqual gotcha — see Notable bugs caught).
+
+- **Plan-vs-code drift discipline (4 of 6 tasks).** When an implementer flagged an issue rooted in the plan's verbatim test snippet, the controller landed a SEPARATE `docs(ruler):` or `test(ruler):` commit syncing the plan to match the corrected test, with an explanatory inline comment block in the plan so a future plan re-run does not re-introduce the bug. Pattern continues from manzanita's earlier 2026-04-24 ruler stream and is now well-rehearsed.
+
+### Notable bugs caught (all by TDD or per-task reviews; all fixed in lockstep)
+
+1. **Task 1.1 — reciprocal-bearing test formula (JS modulo semantics).** Plan's verbatim snippet used `((fwd - rev) % 360 + 540) % 360 - 180`, which is Python-modulo semantics. In JavaScript, `(-181.01) % 360 === -181.01` (sign-preserving), not `178.99`. On the AZ test fixture this gave diff = 179.989° instead of ~0.011°, meaning the test would fail against any correct implementation. Fixed to `((fwd - rev) + 360) % 360 - 180`. Landed as `fb22fb7`.
+
+2. **Task 1.1 — wrong PHX→DEN reference value.** Plan claimed ~37° as a "USGS reference forward azimuth"; direct spherical-Earth computation (verified two ways) gives ~40.35°. Plan miss exceeded the test's own ±1° tolerance. Updated reference to ~40.35°. Landed as `fb22fb7`.
+
+3. **Task 1.2 — misleading test name.** Plan's test 8 was named `'-500m at boundary returns null (strict <)'` but its assertion verified the value IS returned (the spec allows -500 exactly via strict-less-than). Renamed to `'-500m at boundary is allowed (strict <, returns -500)'` so name and assertion agree. Landed as `46f9aec`.
+
+4. **Task 1.3 — `assert.deepStrictEqual(result, [])` cross-realm failure.** Verified independently: arrays created inside `vm.createContext` have inner-realm `Array.prototype`, which Node's deepStrictEqual rejects on prototype-identity check even for structurally-empty arrays. The implementer's fix was `assert.strictEqual(result.length, 0)` (realm-safe). Synced plan with explanatory comment. Landed as `366cf81`. Phase 4's similar mock setups will hit this same gotcha; the inline comment is a breadcrumb.
+
+5. **Task 1.6 — sparkline regex omits the optional decimal on the x-coord.** Plan's test 2 regex was `/^\d+,\d+(\.\d+)?$/` — `\d+` matches `0`, then expects `,` but the implementation's `x.toFixed(1)` produces `0.0,76.0` (decimal on both coords). Predicted in-flight; implementer confirmed at Step 4 with the actual failure output. Fixed to `/^\d+(\.\d+)?,\d+(\.\d+)?$/`. Landed as `d3cf88d`.
+
+### Cross-cutting observations from the per-task reviews (carry forward to Phase 2-4)
+
+- **Test-helper duplication.** `loadRuler()` is now defined in 6 test files (one per Phase 1 topic), with `geodesy.test.mjs` / `segment-projection.test.mjs` / `terrarium-decode.test.mjs` / `sparkline.test.mjs` using the simple form, `sample-path.test.mjs` adding a haversine mock, and `unit-format.test.mjs` parameterizing on `useImperial`. Phase 4's elevation-sampling tests will need canvas + fetch mocks, fanning the boilerplate further. Plan v2's Phase 2 already calls for `frontend/tests/ruler/_fixtures.js` to consolidate this — that's the right time to extract.
+
+- **Single-sample sparkline pins to bottom of viewBox.** With 1 sample, `eRange = (0) || 1 = 1`, and the sample's normalized elevation is 0, so `y = marginY + (1 - 0) * usableY = height - marginY`. Production callers always have `vertices.length ≥ 2` (and thus `samples.length ≥ 50`), so this is unreachable in practice. Phase 2 panel renderer should decide whether to gate the sparkline on `valid.length ≥ 2` or accept this single-sample fallback.
+
+- **Linear-vs-geodesic projection for cross-state segments.** `projectPointToSegment` is lng/lat-linear (sub-meter divergence at typical AZ-mesh segment scales — well under DEM resolution). For hypothetical cross-CONUS segments (PHX→ABQ ~750 km), divergence could reach ~10s of meters. Spec §E.5 doesn't bound max segment length. Phase 3.5 reviewer should decide: (a) document a max-segment-length precondition, or (b) switch to ECEF-space projection. Not a Phase 1 blocker.
+
+- **Phase 1 plan-vs-code drift rate is ~67% (4 of 6 tasks).** The discipline worked — every drift was caught by an implementer running the test and watching it fail, not buried as a future bug. But the rate suggests Phase 2's plan-review checkpoint should add a "test-snippet eyeball-execution" pass before subagent dispatch, since Phase 2's DOM/events snippets will be harder to execute mentally than Phase 1's pure-function math.
+
+### Commits (all on `dev`, NOT pushed)
+
+| SHA | Subject |
+|---|---|
+| `baebd7c` | feat(ruler): bearingDeg — true forward azimuth, [0,360) |
+| `fb22fb7` | docs(ruler): fix Task 1.1 test assertions — reciprocal formula + PHX→DEN bearing |
+| `4d4bf9a` | feat(ruler): elevationFromRGB — Mapzen Terrarium decode + guards |
+| `46f9aec` | test(ruler): rename Task 1.2 -500m boundary test — name vs assertion mismatch |
+| `fc1c358` | feat(ruler): samplePath — distance-uniform path sampling |
+| `366cf81` | docs(ruler): sync Task 1.3 plan with cross-realm Array gotcha |
+| `ac5c402` | feat(ruler): projectPointToSegment — closest-point-on-segment |
+| `6e733c6` | feat(ruler): formatRulerDistance — imperial/metric live-read formatter |
+| `16a58dd` | feat(ruler): sparklinePath — SVG points string for elevation profile |
+| `d3cf88d` | docs(ruler): sync Task 1.6 plan with corrected sparkline regex |
+
+`git log origin/dev..dev --oneline` to enumerate local-only vs pushed.
+
+### Phase 1 review checkpoint outcome
+
+- **Test status:** ruler suite 42/42 green. The wider Python pytest suite shows 28 failures but ALL pre-date Phase 1 (verified by re-running the same files at baseline `5013f31` and inspecting per-file results in isolation — the failures are test-pollution-related, surfacing only when pytest runs the full suite in one invocation; no Phase 1 file is in any failing test's import path).
+- **Testing-pitfalls.md compliance:** audited. #10 (JS truthy-zero) — `sparklinePath` correctly uses `s.elevation_m != null` (not `||`); the `(maxE - minE) || 1` guard is intentional div-by-zero protection on a non-data-bearing computation. #11 (duplicated logic) — `formatRulerDistance` is local to ruler.js per spec §A, NOT duplicated from `nav-ui.js`'s `formatNavDistance` (different state shape, different scope). All other pitfalls (mocking, FTS5, path fixtures, async, Docker, OOM-via-pipelines, subprocess signals) are N/A for pure-function math.
+- **Adversarial Codex round (deferred).** Dispatched via `npx --yes @openai/codex exec` at the Phase 1 boundary, but did not produce output before the session's context budget ran out. Suspected cause: a stale `codex exec` process (PID 1483195) from a parallel agent's 2026-04-24 nav-voice R5 review has been running for >24 hours and may be holding a Codex authentication / serialization lock that is queueing new calls. **Action for Cameron:** decide whether to `kill 1483195` (and any descendants from `npm exec @openai/codex exec`) and re-run the Codex round at the Phase 2 review checkpoint, OR accept the per-task reviews as sufficient for Phase 1's pure-function math (low surface area, fully TDD-covered). The Codex round is OPTIONAL per the handoff and not load-bearing on Phase 1's correctness. If re-run is desired, the prompt is in this session's transcript and can be re-issued with `codex exec` directly once the stale process is cleared.
+
+### What's deferred
+
+- **Phase 2 — state machine + drawing state on map (8 tasks).** First UI surface; per the 2026-04-24 manzanita field-bug lesson (`5013f31`), browser-smoke at the Phase 2 review checkpoint is non-negotiable.
+- **Phases 3-5 (21 tasks remaining).** Vertex edit (3.x), elevation sampling (4.x), a11y / integration / ship gate (5.x). Plan v2 has skill-canonical detail for all of them.
+- **Push to origin.** ~30+ commits (mix of ruler + parallel nav/sidebar streams) are local-only as of this session close. Cameron decides when to push.
+
+---
+
 ## 2026-04-24 — Sidebar tab restore (Issue 3 split, iOS BFCache hardening, 3 tasks)
 
 **Released as:** not yet released (shipped on `dev`; ship gate is Cameron's iOS Safari acceptance per spec §6).
