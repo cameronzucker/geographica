@@ -1250,7 +1250,13 @@ test('samplePath: zero-length path (duplicate vertices) returns N at same point'
 
 test('samplePath: empty input returns empty array', () => {
   const t = loadRuler();
-  assert.deepStrictEqual(t.samplePath([], 10), []);
+  // NOTE: cannot use `assert.deepStrictEqual(result, [])` here — the array
+  // is constructed inside vm.createContext, so its prototype is the inner-
+  // realm Array.prototype, which fails Node's deepStrictEqual prototype
+  // identity check even for structurally-empty arrays. `length === 0` is
+  // realm-safe. (Use `Array.isArray(x)` to assert "is array" — it IS
+  // realm-safe — but the spec contract here is just "no samples".)
+  assert.strictEqual(t.samplePath([], 10).length, 0);
 });
 ```
 
