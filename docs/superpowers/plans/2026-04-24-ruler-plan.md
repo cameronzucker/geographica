@@ -1885,8 +1885,25 @@ test('initial state is idle, vertices empty', () => {
   assert.strictEqual(s.insertSlot, null);
 });
 
-test('addVertex from idle transitions to drawing', () => {
+test('startNewMeasurement transitions idle → drawing-empty', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
+  const s = t.getState();
+  assert.strictEqual(s.status, 'drawing');
+  assert.strictEqual(s.vertices.length, 0);
+});
+
+test('addVertex from idle is a no-op (explicit activation required)', () => {
+  const { test: t } = loadRuler();
+  t.addVertex(-112.07, 33.45);
+  const s = t.getState();
+  assert.strictEqual(s.status, 'idle');
+  assert.strictEqual(s.vertices.length, 0);
+});
+
+test('addVertex during drawing places V1', () => {
+  const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   const s = t.getState();
   assert.strictEqual(s.status, 'drawing');
@@ -1897,6 +1914,7 @@ test('addVertex from idle transitions to drawing', () => {
 
 test('addVertex twice produces 2 vertices and 1 segment', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   const s = t.getState();
@@ -1907,17 +1925,19 @@ test('addVertex twice produces 2 vertices and 1 segment', () => {
   assert.ok(s.segments[0].bearing_deg >= 0 && s.segments[0].bearing_deg < 360);
 });
 
-test('popVertex from drawing with 1 vertex returns to idle', () => {
+test('popVertex from drawing with 1 vertex stays in drawing-empty', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.popVertex();
   const s = t.getState();
-  assert.strictEqual(s.status, 'idle');
+  assert.strictEqual(s.status, 'drawing');
   assert.strictEqual(s.vertices.length, 0);
 });
 
 test('popVertex from drawing with multiple vertices stays in drawing', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.addVertex(-112.03, 33.47);
@@ -1929,6 +1949,7 @@ test('popVertex from drawing with multiple vertices stays in drawing', () => {
 
 test('finishDrawing requires >=2 vertices, transitions to editing', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.finishDrawing();   // 1 vertex: should be a no-op
   assert.strictEqual(t.getState().status, 'drawing');
@@ -1939,6 +1960,7 @@ test('finishDrawing requires >=2 vertices, transitions to editing', () => {
 
 test('clearAll resets to idle from any state', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -1952,8 +1974,22 @@ test('clearAll resets to idle from any state', () => {
   assert.strictEqual(s.totalDistance_m, 0);
 });
 
+test('startNewMeasurement from editing discards prior measurement', () => {
+  const { test: t } = loadRuler();
+  t.startNewMeasurement();
+  t.addVertex(-112.07, 33.45);
+  t.addVertex(-112.05, 33.46);
+  t.finishDrawing();
+  assert.strictEqual(t.getState().status, 'editing');
+  t.startNewMeasurement();
+  const s = t.getState();
+  assert.strictEqual(s.status, 'drawing');
+  assert.strictEqual(s.vertices.length, 0);
+});
+
 test('selectVertex requires editing state', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.selectVertex(0);  // still drawing — should be no-op
@@ -1965,6 +2001,7 @@ test('selectVertex requires editing state', () => {
 
 test('deselectVertex clears selection without leaving editing', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -1977,6 +2014,7 @@ test('deselectVertex clears selection without leaving editing', () => {
 
 test('startInsertAfter from editing transitions to inserting with slot=index+1', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -1989,6 +2027,7 @@ test('startInsertAfter from editing transitions to inserting with slot=index+1',
 
 test('startInsertBefore from editing transitions to inserting with slot=index', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -2001,6 +2040,7 @@ test('startInsertBefore from editing transitions to inserting with slot=index', 
 
 test('cancelInsert returns to editing with previous selection preserved', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -2017,6 +2057,7 @@ test('shape invariant: vertices.length < 2 ⇒ segments.length === 0', () => {
   const { test: t } = loadRuler();
   let s = t.getState();
   assert.strictEqual(s.segments.length, 0);
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   s = t.getState();
   assert.strictEqual(s.segments.length, 0);
@@ -2024,6 +2065,7 @@ test('shape invariant: vertices.length < 2 ⇒ segments.length === 0', () => {
 
 test('shape invariant: clearAll wipes everything atomically', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -2038,7 +2080,7 @@ test('shape invariant: clearAll wipes everything atomically', () => {
 - [ ] **Step 2: Run, expect failure.**
 
 Run: `node --test --test-force-exit frontend/tests/ruler/state-machine.test.mjs`
-Expected: 14 failures (`addVertex is not a function`, etc.).
+Expected: 17 failures (`startNewMeasurement is not a function`, etc.).
 
 - [ ] **Step 3: Implement helpers.**
 
@@ -2070,8 +2112,18 @@ In `frontend/ruler.js`, after the existing pure functions (after `sparklinePath`
   }
 
   // ─── State-machine transitions (spec §B) ───────────────────────────
+  // Activation is explicit: idle→drawing happens via startNewMeasurement()
+  // (the [+ New measurement] button), NOT via the first map tap. Cameron
+  // 2026-04-25: tab-as-activation breaks the project's UI metaphor
+  // (Layers tab doesn't auto-enable layers; Measure tab shouldn't auto-
+  // enable measurement). Map clicks only place vertices once the user
+  // has explicitly entered drawing mode.
+  function startNewMeasurement() {
+    clearAll();
+    state.status = 'drawing';
+  }
+
   function addVertex(lng, lat) {
-    if (state.status === 'idle') state.status = 'drawing';
     if (state.status !== 'drawing') return;
     state.vertices.push({ lng: lng, lat: lat, label: '' });
     relabel();
@@ -2084,7 +2136,7 @@ In `frontend/ruler.js`, after the existing pure functions (after `sparklinePath`
     state.vertices.pop();
     relabel();
     recompute();
-    if (state.vertices.length === 0) state.status = 'idle';
+    // Stay in drawing-empty when last vertex popped — Esc cancels back to idle.
   }
 
   function finishDrawing() {
@@ -2160,6 +2212,7 @@ In `frontend/ruler.js`, after the existing pure functions (after `sparklinePath`
 
 Then add to the `window._ruler._test = { ... }` object:
 ```javascript
+    startNewMeasurement: startNewMeasurement,
     addVertex: addVertex,
     popVertex: popVertex,
     finishDrawing: finishDrawing,
@@ -2185,7 +2238,7 @@ Update the public `clear()` function body to delegate:
 - [ ] **Step 4: Run, verify green.**
 
 Run: `node --test --test-force-exit frontend/tests/ruler/state-machine.test.mjs`
-Expected: 14 tests pass.
+Expected: 17 tests pass.
 
 - [ ] **Step 5: Commit.**
 
@@ -2194,13 +2247,16 @@ git add frontend/ruler.js frontend/tests/ruler/_fixtures.js frontend/tests/ruler
 git commit -m "$(cat <<'EOF'
 feat(ruler): state-machine helpers + relabel/recompute
 
-addVertex / popVertex / finishDrawing / clearAll / selectVertex /
-deselectVertex / startInsertBefore / startInsertAfter / cancelInsert
-implement the 9 spec §B transitions. relabel() reassigns V1..Vn
-contiguously after any mutation; recompute() rebuilds segments +
-totalDistance_m via window._haversineDistance + bearingDeg.
+startNewMeasurement / addVertex / popVertex / finishDrawing / clearAll /
+selectVertex / deselectVertex / startInsertBefore / startInsertAfter /
+cancelInsert implement the spec §B transitions. Activation is explicit:
+startNewMeasurement is the only idle→drawing edge; addVertex is a no-op
+in idle. popVertex on the last vertex stays in drawing-empty (Esc
+cancels to idle). relabel() reassigns V1..Vn contiguously after any
+mutation; recompute() rebuilds segments + totalDistance_m via
+window._haversineDistance + bearingDeg.
 
-14 tests covering all transitions + the §A shape invariants
+17 tests covering all transitions + the §A shape invariants
 (selectedVertex / status pairing; vertices.length < 2 ⇒ no segments;
 clearAll-from-any-state). getStateSnapshot is the read-only seam.
 _fixtures.js shared loadRuler helper for Phase 2-5 test files.
@@ -2630,8 +2686,17 @@ function fakeClickEvent(lng, lat, opts = {}) {
   };
 }
 
-test('handleMapClick during idle starts drawing with V1', () => {
+test('handleMapClick during idle is a no-op (explicit activation required)', () => {
   const { test: t } = loadRuler();
+  t.handleMapClick(fakeClickEvent(-112.07, 33.45));
+  const s = t.getState();
+  assert.strictEqual(s.status, 'idle');
+  assert.strictEqual(s.vertices.length, 0);
+});
+
+test('handleMapClick after startNewMeasurement places V1', () => {
+  const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.handleMapClick(fakeClickEvent(-112.07, 33.45));
   const s = t.getState();
   assert.strictEqual(s.status, 'drawing');
@@ -2640,6 +2705,7 @@ test('handleMapClick during idle starts drawing with V1', () => {
 
 test('handleMapClick during drawing appends', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.handleMapClick(fakeClickEvent(-112.07, 33.45, { t: 1000 }));
   t.handleMapClick(fakeClickEvent(-112.05, 33.46, { t: 2000, point: { x: 200, y: 200 } }));
   const s = t.getState();
@@ -2648,6 +2714,7 @@ test('handleMapClick during drawing appends', () => {
 
 test('handleMapClick debounces near-duplicate clicks within 5px AND 250ms', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.handleMapClick(fakeClickEvent(-112.07, 33.45, { t: 1000, point: { x: 100, y: 100 } }));
   // Second click 3px away, 100ms later → debounced
   t.handleMapClick(fakeClickEvent(-112.0701, 33.4500001, { t: 1100, point: { x: 102, y: 102 } }));
@@ -2657,6 +2724,7 @@ test('handleMapClick debounces near-duplicate clicks within 5px AND 250ms', () =
 
 test('handleMapClick does NOT debounce a click >5px away', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.handleMapClick(fakeClickEvent(-112.07, 33.45, { t: 1000, point: { x: 100, y: 100 } }));
   t.handleMapClick(fakeClickEvent(-112.06, 33.46, { t: 1100, point: { x: 110, y: 110 } }));
   const s = t.getState();
@@ -2665,6 +2733,7 @@ test('handleMapClick does NOT debounce a click >5px away', () => {
 
 test('handleMapClick does NOT debounce a click >250ms later', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.handleMapClick(fakeClickEvent(-112.07, 33.45, { t: 1000, point: { x: 100, y: 100 } }));
   t.handleMapClick(fakeClickEvent(-112.0701, 33.4500001, { t: 1300, point: { x: 102, y: 102 } }));
   const s = t.getState();
@@ -2673,30 +2742,35 @@ test('handleMapClick does NOT debounce a click >250ms later', () => {
 
 test('handleMapClick suppresses on Ctrl-click', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.handleMapClick(fakeClickEvent(-112.07, 33.45, { ctrlKey: true }));
   assert.strictEqual(t.getState().vertices.length, 0);
 });
 
 test('handleMapClick suppresses on Shift-click', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.handleMapClick(fakeClickEvent(-112.07, 33.45, { shiftKey: true }));
   assert.strictEqual(t.getState().vertices.length, 0);
 });
 
 test('handleMapClick suppresses on Meta-click (Cmd on macOS)', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.handleMapClick(fakeClickEvent(-112.07, 33.45, { metaKey: true }));
   assert.strictEqual(t.getState().vertices.length, 0);
 });
 
 test('handleMapClick suppresses on Alt-click', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.handleMapClick(fakeClickEvent(-112.07, 33.45, { altKey: true }));
   assert.strictEqual(t.getState().vertices.length, 0);
 });
 
 test('handleMapClick during editing is a no-op', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.handleMapClick(fakeClickEvent(-112.07, 33.45, { t: 1000 }));
   t.handleMapClick(fakeClickEvent(-112.05, 33.46, { t: 2000, point: { x: 200, y: 200 } }));
   t.finishDrawing();
@@ -2709,7 +2783,7 @@ test('handleMapClick during editing is a no-op', () => {
 - [ ] **Step 2: Run, expect failure.**
 
 Run: `node --test --test-force-exit frontend/tests/ruler/click-debounce.test.mjs`
-Expected: 10 failures.
+Expected: 11 failures.
 
 - [ ] **Step 3: Implement `handleMapClick`.**
 
@@ -2726,7 +2800,11 @@ In `frontend/ruler.js`, after the state-machine helpers, add:
       // Phase 3.5 wires this branch to commitInsert(). Stub for now.
       return;
     }
-    if (state.status !== 'idle' && state.status !== 'drawing') return;
+    // Idle is no longer a click-receiving state — the user must explicitly
+    // enter drawing mode via the [+ New measurement] button (spec §B
+    // post-2026-04-25). Idle clicks fall through to reverse-geocode /
+    // KMZ-pin / search-pin handlers normally.
+    if (state.status !== 'drawing') return;
 
     // Debounce: 5px AND 250ms vs the previous accepted click.
     var t = oe.timeStamp != null ? oe.timeStamp : Date.now();
@@ -2759,14 +2837,14 @@ In `init(mapInstance)`, add the click-listener registration:
     ensureSources();
     ensureLayers();
     map.on('click', handleMapClick);
-    // Phase 2.6 keyboard handler; Phase 5.2 units-changed; Phase 2.8 tab activation.
+    // Phase 2.6 keyboard handler; Phase 5.2 units-changed; Phase 2.8 button wiring.
   }
 ```
 
 - [ ] **Step 4: Run, verify green.**
 
 Run: `node --test --test-force-exit frontend/tests/ruler/click-debounce.test.mjs`
-Expected: 10 tests pass.
+Expected: 11 tests pass.
 
 - [ ] **Step 5: Commit.**
 
@@ -2775,16 +2853,18 @@ git add frontend/ruler.js frontend/tests/ruler/click-debounce.test.mjs
 git commit -m "$(cat <<'EOF'
 feat(ruler): handleMapClick — debounce + modifier-key suppression
 
-Map-click handler appends a vertex during idle/drawing, idempotently
+Map-click handler appends a vertex during drawing, idempotently
 debounces near-duplicates within 5px AND 250ms, and passes through
 modifier-key clicks (Ctrl/Shift/Alt/Meta) so map-pan/select gestures
-aren't intercepted. Editing-state empty-map clicks are silent (the
-generic reverse-geocode handler picks them up). Inserting-state is
-stubbed pending Task 3.5's commitInsert wiring.
+aren't intercepted. Idle-state clicks are a no-op — explicit activation
+via [+ New measurement] is required (spec §B post-2026-04-25).
+Editing-state empty-map clicks are silent (the generic reverse-geocode
+handler picks them up). Inserting-state is stubbed pending Task 3.5's
+commitInsert wiring.
 
-10 tests covering: idle→drawing, drawing append, debounce hit, two
-debounce-miss conditions (px and ms), all four modifier keys,
-editing-state no-op.
+11 tests covering: idle no-op, drawing-after-startNewMeasurement,
+drawing append, debounce hit, two debounce-miss conditions (px and ms),
+all four modifier keys, editing-state no-op.
 
 Refs: docs/superpowers/specs/2026-04-24-ruler-design.md §F
 Refs: docs/superpowers/plans/2026-04-24-ruler-plan.md (Task 2.5)
@@ -3090,7 +3170,8 @@ function makeMeasurePanelDocument() {
     elems[name].id = name;
     return elems[name];
   }
-  id('measure-panel'); id('ruler-banner-inline'); id('ruler-banner-inline-text', 'span');
+  id('measure-panel'); id('ruler-idle-hint', 'p');
+  id('ruler-banner-inline'); id('ruler-banner-inline-text', 'span');
   id('ruler-banner-inline-cancel', 'button');
   id('ruler-headline-section'); id('ruler-headline-total');
   id('ruler-vertex-section'); id('ruler-vertex-count', 'span');
@@ -3126,9 +3207,21 @@ test('renderPanel idle state: empty placeholder, finish hidden', () => {
   assert.strictEqual(doc.elems['ruler-mode-banner'].hidden, true);
 });
 
+test('renderPanel idle: [+ New measurement] button is visible (explicit-activation entry point)', () => {
+  const doc = makeMeasurePanelDocument();
+  const { test: t } = loadRuler({ fakeDocument: doc });
+  t.renderPanel();
+  assert.strictEqual(doc.elems['ruler-new'].hidden, false, 'idle should show [+ New measurement] button');
+  assert.strictEqual(doc.elems['ruler-finish'].hidden, true);
+  assert.strictEqual(doc.elems['ruler-clear'].hidden, true);
+  assert.strictEqual(doc.elems['ruler-undo'].hidden, true);
+  assert.strictEqual(doc.elems['ruler-idle-hint'].hidden, false);
+});
+
 test('renderPanel drawing state: banner visible, vertex list rendered', () => {
   const doc = makeMeasurePanelDocument();
   const { test: t } = loadRuler({ fakeDocument: doc });
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.renderPanel();
@@ -3140,6 +3233,7 @@ test('renderPanel drawing state: banner visible, vertex list rendered', () => {
 test('renderPanel uses textContent (NEVER innerHTML)', () => {
   const doc = makeMeasurePanelDocument();
   const { test: t } = loadRuler({ fakeDocument: doc });
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.renderPanel();
@@ -3155,6 +3249,7 @@ test('renderPanel uses textContent (NEVER innerHTML)', () => {
 test('renderPanel editing state: action row + new measurement button visible', () => {
   const doc = makeMeasurePanelDocument();
   const { test: t } = loadRuler({ fakeDocument: doc });
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -3170,6 +3265,7 @@ test('renderPanel editing state: action row + new measurement button visible', (
 test('renderPanel editing with selection: action row visible, empty hidden', () => {
   const doc = makeMeasurePanelDocument();
   const { test: t } = loadRuler({ fakeDocument: doc });
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -3182,6 +3278,7 @@ test('renderPanel editing with selection: action row visible, empty hidden', () 
 test('renderPanel: vertex count badge tracks state', () => {
   const doc = makeMeasurePanelDocument();
   const { test: t } = loadRuler({ fakeDocument: doc });
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.addVertex(-112.03, 33.47);
@@ -3193,7 +3290,7 @@ test('renderPanel: vertex count badge tracks state', () => {
 - [ ] **Step 2: Run, expect failure.**
 
 Run: `node --test --test-force-exit frontend/tests/ruler/panel-render.test.mjs`
-Expected: 6 failures.
+Expected: 7 failures.
 
 - [ ] **Step 3: Implement `renderPanel`.**
 
@@ -3336,8 +3433,10 @@ In `frontend/ruler.js`, after `handleKeydown`, add:
       setHidden(undo, true); setHidden(clearBtn, true);
       setHidden(finish, true); setHidden(newBtn, true);
     } else {
+      // idle: the [+ New measurement] button is the explicit-activation
+      // entry point. Map clicks are inert until the user clicks it.
       setHidden(undo, true); setHidden(clearBtn, true);
-      setHidden(finish, true); setHidden(newBtn, true);
+      setHidden(finish, true); setHidden(newBtn, false);
     }
   }
 
@@ -3348,12 +3447,27 @@ In `frontend/ruler.js`, after `handleKeydown`, add:
     var countEl = $id('ruler-vertex-count');
     if (countEl) countEl.textContent = String(state.vertices.length);
 
+    // Idle-state hint visible only when there's nothing else to show.
+    setHidden($id('ruler-idle-hint'), state.status !== 'idle');
+
     renderVertexList();
     renderBanners();
     renderHeadline();
     renderActionRow();
     renderFooter();
     // Phase 4.5+ adds renderElevation().
+
+    // Body class for active-mode CSS hooks. While drawing/inserting, the
+    // sidebar overlay's pointer-events are suppressed (style.css rule)
+    // so map clicks reach the MapLibre canvas instead of the overlay's
+    // close-sidebar handler. Mirrors _bboxDrawingActive at app.js:1206.
+    if (typeof document !== 'undefined' && document.body && document.body.classList) {
+      if (state.status === 'drawing' || state.status === 'inserting') {
+        document.body.classList.add('ruler-active');
+      } else {
+        document.body.classList.remove('ruler-active');
+      }
+    }
   }
 ```
 
@@ -3364,7 +3478,7 @@ Update `handleMapClick`, `handleKeydown`, and `clear()` to call `renderPanel()` 
 - [ ] **Step 4: Run, verify green.**
 
 Run: `node --test --test-force-exit frontend/tests/ruler/panel-render.test.mjs`
-Expected: 6 tests pass.
+Expected: 7 tests pass.
 
 Also run: `grep -n "innerHTML" frontend/ruler.js`
 Expected: no matches.
@@ -3382,9 +3496,16 @@ action row + footer per current state. Vertex list uses
 while(firstChild) removeChild(firstChild) for safe clearing;
 labels and coords are textContent only — NEVER innerHTML.
 
-6 tests including a textContent-only walker that fails if any
-rendered element has innerHTML set. Phase 4.6 will extend this with
-the elevation-section render path.
+renderFooter shows [+ New measurement] in idle (the explicit-activation
+entry point per spec §B post-2026-04-25). renderPanel toggles
+body.ruler-active during drawing/inserting so the style.css rule
+suppresses #sidebar-overlay pointer-events — map clicks reach the
+MapLibre canvas instead of closing the sidebar.
+
+7 tests including a textContent-only walker that fails if any
+rendered element has innerHTML set, plus an idle-button-visible
+assertion. Phase 4.6 will extend this with the elevation-section
+render path.
 
 Refs: docs/superpowers/specs/2026-04-24-ruler-design.md §C
 Refs: docs/superpowers/plans/2026-04-24-ruler-plan.md (Task 2.7)
@@ -3397,90 +3518,38 @@ EOF
 
 ---
 
-### Task 2.8: Tab activation hook + cursor management
+### Task 2.8: Explicit-activation button wiring + sidebar pinning + cursor management
 
-When the user clicks the Measure tab, `renderPanel()` runs once on activation (state-aware empty placeholder vs. resumed editing). Cursor is `crosshair` during `drawing` / `inserting`, `pointer` on hovered hit-circles during `editing`, otherwise default. Smoke tested only — cursor styling on a real MapLibre canvas is not reliably testable in Node.
+Wire the footer buttons in `init()` and add the body-class CSS rule that lets map clicks fall through `#sidebar-overlay` while the ruler is in `drawing` / `inserting`. Cursor is `crosshair` during `drawing` / `inserting`, `pointer` on hovered hit-circles during `editing`, otherwise default. Smoke tested only — cursor styling on a real MapLibre canvas is not reliably testable in Node.
+
+**Activation model (post-2026-04-25 redesign):** The Measure tab no longer activates anything — `renderPanel()` is called once at `init()` time. The single explicit-activation entry point is the `[+ New measurement]` button (idle → drawing-empty via `startNewMeasurement()`). This matches the project's UI metaphor: the Layers tab doesn't auto-enable layers, and the Measure tab shouldn't auto-enable measurement. There is no tab-active gate on map clicks — `addVertex` already bails unless `state.status === 'drawing'`, which is sufficient.
 
 **Files:**
 - Modify: `frontend/ruler.js`
-- Modify: `frontend/index.html` (none expected — DOM was already added in Task 0.2)
+- Modify: `frontend/index.html` (add idle-hint paragraph)
+- Modify: `frontend/style.css` (add `body.ruler-active` overlay rule)
 
-- [ ] **Step 1: Implement tab activation hook.**
+- [ ] **Step 1: Add idle-hint DOM + body-class CSS rule.**
 
-In `frontend/ruler.js`, add inside `init(mapInstance)`:
+In `frontend/index.html`, add the idle-state hint paragraph inside the `#measure-panel` div, after the panel's `<h3>Measure</h3>` header (above the inline banner / vertex section):
 
-```javascript
-    var measureBtn = document.querySelector('.tab-btn[data-panel="measure-panel"]');
-    if (measureBtn) {
-      measureBtn.addEventListener('click', function () {
-        // Tab DOM already activated by app.js's tab handler. Just refresh.
-        renderPanel();
-        updateCursor();
-      });
-    }
-    // Initial render — a fresh page may already have Measure as active tab.
-    renderPanel();
+```html
+<p id="ruler-idle-hint" class="ruler-action-empty">Measure distance, bearing, and elevation along a path. Click <strong>+ New measurement</strong> below to start.</p>
 ```
 
-- [ ] **Step 1.5: Add Measure-tab-active gate to handleMapClick.**
+In `frontend/style.css`, add the body-class rule that pins the sidebar open during ruler-active modes:
 
-Per spec §B: the `idle → drawing` transition requires "Measure tab visible AND no measurement in editing." Without an explicit gate, a first map-click while a non-Measure tab is the visible panel triggers the ruler's `handleMapClick` AND collides with the reverse-geocode click handler — the reverse-geocode bail checks `_ruler.isActive()`, which is `false` while state is still `idle`, so both handlers fire and the user gets a popup AND a placed V1 from a single click. Gating `handleMapClick` on Measure-tab-active state closes the collision regardless of MapLibre handler-registration order.
-
-Add a module-private flag to the `view = { ... }` init block (alongside `lastClick`):
-
-```javascript
-  var view = {
-    abortController: null,
-    samplingGen: 0,
-    tileCache: null,
-    rafHandle: null,
-    domListenerCleanups: [],
-    lastClick: null,
-    // Spec §B gate for handleMapClick (Phase 2.8). Default true so tests
-    // that exercise _test.handleMapClick without calling init() aren't
-    // gated out. init() flips this to false for sibling tabs when the
-    // page actually has tab DOM (production case).
-    measureTabActive: true,
-  };
+```css
+/* While ruler is in drawing/inserting mode, let map clicks fall through
+   the sidebar overlay so vertices can be placed without auto-closing the
+   sidebar (which would hide the live vertex list, banner, and Finish/Clear
+   actions). Mirrors the bbox-drawing flag pattern at app.js:1206. */
+body.ruler-active #sidebar-overlay {
+  pointer-events: none;
+}
 ```
 
-Wire the existing Measure-tab handler from Step 1 to flip the flag, and add sibling-tab handlers that unset it. Also seed the initial value at `init()` time in case the page loaded with Measure already active:
-
-```javascript
-    var measureBtn = document.querySelector('.tab-btn[data-panel="measure-panel"]');
-    if (measureBtn) {
-      measureBtn.addEventListener('click', function () {
-        view.measureTabActive = true;
-        renderPanel();
-        updateCursor();
-      });
-    }
-    // Sibling tab buttons unset the flag.
-    var siblingTabs = document.querySelectorAll('.tab-btn:not([data-panel="measure-panel"])');
-    siblingTabs.forEach(function (btn) {
-      btn.addEventListener('click', function () { view.measureTabActive = false; });
-    });
-    // Initial state: page may have loaded with Measure tab active.
-    var measurePanel = document.getElementById('measure-panel');
-    if (measurePanel && !measurePanel.hidden) view.measureTabActive = true;
-```
-
-Add the gate to `handleMapClick` (extending the handler from Task 2.5), AFTER the modifier-key check and BEFORE the `inserting`-state stub:
-
-```javascript
-  function handleMapClick(e) {
-    var oe = e.originalEvent || {};
-    if (oe.ctrlKey || oe.shiftKey || oe.altKey || oe.metaKey) return;
-
-    // Tab-active gate: spec §B requires Measure tab visible.
-    if (!view.measureTabActive) return;
-
-    if (state.status === 'inserting') { /* … */ }
-    /* … rest of handler from Task 2.5 … */
-  }
-```
-
-Add a regression test covering the gate (extending `frontend/tests/ruler/click-debounce.test.mjs` or a new `tab-gate.test.mjs`): with `measureTabActive=false`, a click is a no-op; after the Measure-tab handler runs, the same click adds V1.
+The `body.ruler-active` class is toggled inside `renderPanel()` (Task 2.7 added this) — no JS changes needed here beyond the index.html + CSS additions.
 
 - [ ] **Step 2: Implement cursor management.**
 
@@ -3490,7 +3559,7 @@ In `frontend/ruler.js`, add:
   // ─── Cursor management ─────────────────────────────────────────────
   function updateCursor() {
     if (!map) return;
-    var canvas = map.getCanvas();
+    var canvas = map.getCanvas && map.getCanvas();
     if (!canvas) return;
     if (state.status === 'drawing' || state.status === 'inserting') {
       canvas.style.cursor = 'crosshair';
@@ -3506,32 +3575,38 @@ In `frontend/ruler.js`, add:
   }
 ```
 
-Call `updateCursor()` after every state transition: at the end of `handleMapClick`, `handleKeydown`, `clear()`, etc. (Add a single call inside `renderPanel()` so it always runs together — DRY.)
+Add a single `updateCursor()` call inside `renderPanel()` (after `renderFooter()`, before the body-class block) so cursor updates always run alongside DOM updates — DRY:
 
 ```javascript
   function renderPanel() {
-    /* ... existing body ... */
+    /* ... existing body from Task 2.7 ... */
+    renderFooter();
     updateCursor();
+    /* ... body-class toggle from Task 2.7 ... */
   }
 ```
 
-- [ ] **Step 3: Wire `[Clear]` / `[Finish]` / `[+ New measurement]` / `[↶ Undo]` button handlers.**
-
-In `init(mapInstance)`:
+- [ ] **Step 3: Wire footer button handlers in `init(mapInstance)`.**
 
 ```javascript
+    // [+ New measurement] is the single explicit-activation entry point.
+    // In idle: transitions to drawing-empty. In editing: discards the
+    // current measurement and starts fresh. Either way: clearAll() then
+    // status='drawing' (drawing-empty, ready for first map tap).
+    var newBtn = document.getElementById('ruler-new');
+    if (newBtn) newBtn.addEventListener('click', function () {
+      startNewMeasurement();
+      refreshMapData();
+      renderPanel();
+    });
     var clearBtn = document.getElementById('ruler-clear');
     if (clearBtn) clearBtn.addEventListener('click', function () {
-      clear(); refreshMapData(); renderPanel();
+      clear();
     });
     var finishBtn = document.getElementById('ruler-finish');
     if (finishBtn) finishBtn.addEventListener('click', function () {
       finishDrawing(); refreshMapData(); renderPanel();
       // Phase 4.7 wires startSampling() here.
-    });
-    var newBtn = document.getElementById('ruler-new');
-    if (newBtn) newBtn.addEventListener('click', function () {
-      clear(); refreshMapData(); renderPanel();
     });
     var undoBtn = document.getElementById('ruler-undo');
     if (undoBtn) undoBtn.addEventListener('click', function () {
@@ -3550,36 +3625,46 @@ In `init(mapInstance)`:
     }
     if (inlineCancel) inlineCancel.addEventListener('click', cancelBannerHandler);
     if (floatCancel)  floatCancel.addEventListener('click', cancelBannerHandler);
+
+    // Initial render — a fresh page renders idle (with the hint + button).
+    renderPanel();
+    updateCursor();
 ```
+
+Note: there are **no** Measure-tab event listeners and **no** sibling-tab event listeners. The Measure tab no longer does anything ruler-specific; its only job is to show/hide the panel DOM (handled by app.js's existing tab handler).
 
 - [ ] **Step 4: Smoke test in browser.**
 
-Reload dev. Open Measure tab — empty placeholder shows. Click on map → cursor turns crosshair, vertex appears, banner reads "Tap map to add more, or [Finish] when done". Click again → 2 vertices, line drawn, headline shows total distance.
+Reload dev. Open Measure tab — see idle hint paragraph + `[+ New measurement]` button. Click any other tab (Layers, Search, etc.), then click the map → reverse-geocode popup appears (ruler is inert in idle, no V1 placed). Switch back to Measure tab → click `[+ New measurement]` → cursor turns crosshair, banner reads "Tap map to place first vertex". Tap map → V1 placed; sidebar STAYS OPEN (no auto-close). Tap again → V2 placed, line drawn, headline shows total distance.
 
-Press Enter → state transitions to editing; cursor returns to default; banner hides; clear+new buttons visible.
+Press Enter → state transitions to editing; cursor returns to default; banner hides; `[Clear]` + `[+ New measurement]` visible. Click `[+ New measurement]` from editing → measurement discarded, back to drawing-empty.
 
-Press Escape from editing — does nothing visible (no selection). Click `[+ New measurement]` → returns to idle empty.
+Press Escape from drawing-empty → returns to idle (hint + button visible).
 
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add frontend/ruler.js
+git add frontend/ruler.js frontend/index.html frontend/style.css
 git commit -m "$(cat <<'EOF'
-feat(ruler): tab activation + cursor management + footer button wiring
+feat(ruler): explicit-activation model + sidebar pinning + cursor management
 
-Measure tab click triggers renderPanel() (state-aware: empty
-placeholder OR resumed editing). Cursor is crosshair during
-drawing/inserting; default elsewhere (Phase 3.1+ adds pointer-on-
-vertex-hover for editing). Footer buttons wired:
-[Clear]/[+ New measurement]→clear, [Finish]→finishDrawing,
-[↶ Undo]→popVertex, banner [×] cancel buttons → state-appropriate
-exit.
+[+ New measurement] button is the single idle→drawing entry point
+(spec §B post-2026-04-25). The Measure tab no longer activates
+anything — renderPanel() runs once at init() and the body.ruler-active
+CSS rule lets map clicks fall through #sidebar-overlay during
+drawing/inserting (mirrors _bboxDrawingActive at app.js:1206).
+
+Cursor is crosshair during drawing/inserting; default elsewhere
+(Phase 3.1+ adds pointer-on-vertex-hover for editing). Footer buttons:
+[+ New measurement]→startNewMeasurement, [Clear]→clear,
+[Finish]→finishDrawing, [↶ Undo]→popVertex, banner [×] →
+state-appropriate exit.
 
 Smoke-tested only — MapLibre canvas cursor styling can't be reliably
 unit-tested in Node. Phase 5.1 grep enforcement covers regression
 of the wiring itself.
 
-Refs: docs/superpowers/specs/2026-04-24-ruler-design.md §C, §D.7
+Refs: docs/superpowers/specs/2026-04-24-ruler-design.md §B, §C, §D.7
 Refs: docs/superpowers/plans/2026-04-24-ruler-plan.md (Task 2.8)
 
 Agent: <moniker>
