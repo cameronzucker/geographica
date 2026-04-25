@@ -1325,7 +1325,7 @@ test('I13: far-tier fires "In a quarter mile, " prefix when above cutoff', async
   win._geographicaUseImperial = true;
   win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 16 };
   const fires = [];
-  nav.onVoice((t) => fires.push(t));
+  nav.onVoice((text) => fires.push(text));
   nav.start(fixtureLongFirstSegment());
   // Drive at 16 m/s. Far-tier ttm ≤ 30 → fires at distance ≤ 480 m.
   // Approach to ~470 m west of M1 (M1 at lng -111.628).
@@ -1336,7 +1336,13 @@ test('I13: far-tier fires "In a quarter mile, " prefix when above cutoff', async
   }
   // Far-tier should have fired.
   assert.ok(fires.length >= 1, 'expected far-tier to fire');
-  // Far-tier text MUST start with "In a quarter mile, " (~480 m fire = ~1575 ft, in [1000, 1980) band).
-  assert.match(fires[0], /^In a quarter mile, /,
-    `expected far-tier text to start with "In a quarter mile, ", got: ${JSON.stringify(fires[0])}`);
+  // Far-tier text MUST match the full transformed string (~480 m fire = ~1575 ft, in [1000, 1980) band).
+  assert.match(fires[0], /^In a quarter mile, turn left onto Test Avenue\.?$/,
+    `expected full transformed far-tier text "In a quarter mile, turn left onto Test Avenue", got: ${JSON.stringify(fires[0])}`);
 });
+
+// NOTE: I15 (exception-safety G11) is not testable via mock due to IIFE
+// closure binding — the helpers are bound at module-load time, so a test
+// can't substitute a throwing version. Invariant verified by code review:
+// announcedSet[farKey] = true is set BEFORE the consumeGPSRecoveryFlag /
+// stripBakedDistance / formatDistancePrefix calls. Confirmed in commit 8956ead.

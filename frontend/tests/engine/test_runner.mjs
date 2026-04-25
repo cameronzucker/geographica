@@ -280,6 +280,8 @@ export function fixtureLongFirstSegment() {
       {
         type: 1,
         instruction: 'Head east',
+        // M0 is the depart; checkVoice reads M[1]'s alert text, not M[0]'s. This
+        // field is dead data — kept for fixture-shape symmetry, do NOT rely on it.
         verbal_transition_alert_instruction: 'In 2000 feet, turn left',
         verbal_pre_transition_instruction: 'Head east',
         begin_shape_index: 0,
