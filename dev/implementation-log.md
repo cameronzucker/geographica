@@ -37,6 +37,66 @@ Production results, test counts, any surprises.
 
 ---
 
+## 2026-04-24 — Nav voice TTM follow-up (Issues 1+2, 10 tasks)
+
+**Released as:** not yet released (shipped on `dev`, ship-gate is Cameron's re-drive of Villa Rita → 19001 N 27th Ave Costco per spec §6).
+**Plan / spec:** [docs/superpowers/plans/2026-04-24-nav-voice-followup-plan.md](../docs/superpowers/plans/2026-04-24-nav-voice-followup-plan.md) · [docs/superpowers/specs/2026-04-24-nav-voice-followup-design.md](../docs/superpowers/specs/2026-04-24-nav-voice-followup-design.md) (v2 — post 5-round adversarial review).
+**Adversarial reviews:** 5 rounds, R1-R4 Claude (4 distinct lenses) + R5 Codex cross-validation. Transcripts at `dev/adversarial/2026-04-24-nav-voice-followup-r{1..5}-*.md`. Surfaced 8 MUST-FIX, 18 SHOULD-FIX; v2 spec incorporates all. v1 was net-regression (regex didn't match real Valhalla output, `/i` flag broke guard intactness, floor too low to absorb prefix TTS at slow voice).
+**Execution protocol:** `superpowers:subagent-driven-development` with two-stage review per task (spec compliance + code quality, plus a cross-task Opus checkpoint after Tasks 0-3 and again after Tasks 4-6).
+**Agent monikers:** `pinyon` (Tasks 0-6 implementations), `manzanita` (Tasks 6 fix, Tasks 7-9, all reviews).
+
+### Summary
+
+Two Cameron-field-surfaced fixes from the post-TTM-ship driving (handoff `handoff_20260420_nav_voice_ttm_kickoff.md`). Issue 1 lifts `VOICE_DISTANCE_FLOOR` (auto 50→75 m, bicycle 30→45 m) so near-tier prompts fire ~+1.3 s sooner at 25 mph — buys post-speech buffer before the maneuver. Issue 2 prepends a Google-Maps-style live-distance prefix ("In a quarter mile, turn right onto X") to far-tier, near-tier base text, AND chain-append. Spelled-out fractions for deterministic TTS pronunciation. 30 m / 100 ft cutoff preserves imminent-turn semantics in parking-lot clusters. GPS-recovery flag suppresses the prefix on the first checkVoice fire after a stale → fresh GPS transition (per Codex F5.4 — without it, an arbitrary "in 4 km, turn left" would speak immediately on signal recovery from data based on stale position). Issue 3 (sidebar BFCache) split into a separate spec; no plan yet.
+
+### Key decisions
+
+- **Floor lift scope: auto + bicycle only.** Pedestrian unchanged at 15 m. Cameron chose Option C in brainstorm Q1: walking pace doesn't have the "speech still in the air past the turn" problem.
+- **Floor lift values: 75 m (auto), 45 m (bicycle).** Cameron chose 75 over 80 noting "we can always easily adjust a fixed value in testing later" — pragmatic over perfect.
+- **Distance prefix on ALL THREE tiers**, not far-tier only. Cameron pushed back on R4's "drop near-tier prefix" suggestion: at 200 ft on a complex grid, the distance disambiguates which intersection X is — not for mental countdown but for "is this right now or some ways off?"
+- **G11 mark-order**: `announcedSet[nearKey/farKey] = true` happens BEFORE `consumeGPSRecoveryFlag()` and `formatDistancePrefix()`. If a helper throws on malformed Valhalla input, the maneuver stays "marked but never spoken" instead of refiring on every subsequent tick. Both tiers consistent (per Task 6's code-quality review C1 fix in commit `1687bc9`).
+- **`stripBakedDistance` subsumes the prior two-line trailing-Then-strip block** AND adds mid-string `". Then, in <dist>, X."` stripping. One helper, one set of patterns, less drift surface.
+- **GPS-recovery flag uses a deterministic test setter** (`_setGPSRecoveryFlag(b)`), not stale-time simulation. Plan's original `_setLastGPSTime(stale)` approach has a real timing race — `consumeGPSRecoveryFlag` only runs inside `nearWouldFire` / `farWouldFire` branches, so setting `lastGPSTime` stale between non-firing ticks doesn't update `prevTickWasStaleOrDR`. Caught during Task 7 implementation.
+- **Issue 3 split**: separate spec + PR per Codex F5.1 + R4 F4.13. Different file (`sidebar.js` vs `navigation.js`), different test harness, different risk surface.
+
+### Notable bugs caught (by the per-task spec + code-quality review loops)
+
+- **Task 6 / commit `1687bc9` (C1, Critical)**: G11 mark-order in near-tier branch. The implementer's marks landed AFTER `consumeGPSRecoveryFlag` / `formatDistancePrefix`, defeating the spec's exception-safety invariant. Code-quality reviewer caught it; spec-compliance reviewer had marked the same code ✅ because they read G11 narrowly (marks-before-chain-only) — illustrating why the workflow uses two reviewers with different mandates.
+- **Task 6 / commit `1687bc9` (C2, Critical)**: stale `I15` NOTE in test file claimed both tiers satisfied G11 invariant; only far-tier did before the C1 fix.
+- **Task 6 / commit `1687bc9` (I1, Important)**: `fixtureLongFirstSegment` comment was orphaned when `fixtureWiderCluster` was inserted above it.
+- **Task 6 / commit `90b41d8` (coordinate)**: plan-template longitude `-111.64698` placed driver 75 m PAST M1 (intended: 75 m WEST). Implementer corrected to `-111.64861` and updated the metric assertion accordingly. Same plan-template bug bit Task 7 (different fixture, 1.5 km off) and Task 8 (same fixture, same off-by-2× error). All caught + corrected by implementer self-review and confirmed by spec reviewers.
+- **Task 7 / commit `7aea517` (timing-race)**: plan's `_setLastGPSTime(stale)` between non-firing ticks doesn't arm the recovery flag because `consumeGPSRecoveryFlag` only runs inside firing branches. Implementer added a deterministic `_setGPSRecoveryFlag(b)` test internal — the cleanest fix.
+- **Task 7 / commit `05e26bd` (Important)**: I14b's resume-assertion was conditionally executable (`if (fires.length >= 2) { assert.match(...) }`). A future floor-constant change could degrade the test from "verifies resume" to "passes on no-fire". Replaced with unconditional `assert.ok(fires.length >= 2) + assert.match`.
+
+### Commits
+
+```
+1687bc9 fix(nav): G11 mark-order in near-tier + comment hygiene                 [Task 6 fix]
+90b41d8 feat(nav): live-distance prefix on near-tier base + chain-append        [Task 6]
+e3b2310 test(nav): tighten I13 far-tier assertion + 3 minor cleanup items       [Task 5 cleanup]
+8956ead feat(nav): live-distance prefix on far-tier voice prompts               [Task 5]
+7ab9bf7 feat(nav): GPS-recovery flag for prefix-suppression on first post-stale tick  [Task 4]
+fc22927 fix(nav): formatDistancePrefix rejects NaN/Infinity/negative input      [Tasks 0-3 fix]
+c259004 feat(nav): stripBakedDistance — strips Valhalla mid-string distance chains    [Task 3]
+7800ae7 feat(nav): formatDistancePrefix — Google-Maps-style live-distance helper      [Task 2]
+d54c111 docs(test): update stale floor-value refs in nav engine tests           [Task 1 cleanup]
+1e91579 fix(nav): raise near-tier distance floor for surface-street buffer      [Task 1]
+7bad09c feat(nav): _geographicaUseImperial helper for live-distance prefix      [Task 0]
+7aea517 test(nav): I14 GPS-recovery prefix-suppression integration              [Task 7]
+05e26bd test(nav): tighten I14b resume-assertion to fail on M2 no-fire          [Task 7 fix]
+f35cd8e test(nav): I13g full-pipeline — strip Valhalla chain + live prefix      [Task 8]
+```
+
+### Outcome
+
+`node --test --test-force-exit frontend/tests/engine/` → **80 / 80 pass** at HEAD (was 67 at session start; 13 new tests across the cycle: I12 floor unit + I13 prefix integration ×4 + I13g full-pipeline + I14 GPS-recovery ×2 + 5 helper unit tests). `python -m pytest tests/ services/search/tests/` → 1076 pass + 4 known pre-existing failures (test_pipeline_status_m2m ×2, test_wake_lock_static, test_bootstrap_messaging) + 21 test-isolation false-failures in `test_setup_main.py` (pass when run in isolation; pre-existing). No nav-voice regressions.
+
+Tests covering spec §5.5 invariants: I12 (floor values), I13 (prefix integration on Villa Rita + wider-cluster fixtures), I13g (full-pipeline order-of-ops on Valhalla multi-cue depart shape), I14 (GPS-recovery prefix-suppression + normal-flow resume), I16 (monotonicity property — implicit in formatDistancePrefix unit tests). I15 (exception safety) verified by code review only — see plan Task 5 / Task 6 for rationale.
+
+**Ship gate**: Cameron re-drives Villa Rita → 19001 N 27th Ave Costco. Acceptance criteria per spec §6: Issue 1 audible buffer at 25 mph; Issue 2 spoken prefixes on far/near/chain; total prompt count ≈ 11 (TTM v3 baseline preserved); GPS-recovery sanity (first post-recovery prompt has no prefix) verifiable via `_geographicaTTMDebugLog`. After acceptance: `git switch main && git merge --ff-only dev && git push origin main`. release-please auto-bumps to next minor (additive feature, no breaking change).
+
+---
+
 ## 2026-04-22 — Overview pyramid incremental rebuild (journal-based, 13 tasks)
 
 **Released as:** not yet released (shipped on `dev` at `b8a76a1`, pushed to `origin/dev`)
