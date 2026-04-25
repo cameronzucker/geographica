@@ -90,3 +90,16 @@ test('handleMapClick during editing is a no-op', () => {
   t.handleMapClick(fakeClickEvent(-112.03, 33.47, { t: 3000, point: { x: 300, y: 300 } }));
   assert.strictEqual(t.getState().vertices.length, 2);
 });
+
+test('clearAll resets lastClick — post-clear click within 5px+250ms is NOT debounced', () => {
+  const { test: t } = loadRuler();
+  // Place V1 at point P.
+  t.handleMapClick(fakeClickEvent(-112.07, 33.45, { t: 1000, point: { x: 100, y: 100 } }));
+  // Clear the measurement — should reset lastClick.
+  t.clearAll();
+  // A click 100 ms later within 3 px should NOT be debounced (lastClick is null).
+  t.handleMapClick(fakeClickEvent(-112.0701, 33.4500001, { t: 1100, point: { x: 102, y: 102 } }));
+  const s = t.getState();
+  assert.strictEqual(s.vertices.length, 1, 'click after clearAll should NOT be debounced');
+  assert.strictEqual(s.status, 'drawing');
+});

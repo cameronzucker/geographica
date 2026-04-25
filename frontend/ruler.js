@@ -43,6 +43,11 @@
     lastClick: null,          // { x, y, t } — debounce reference (Phase 2.5)
   };
 
+  // Click-debounce parameters per spec §F (5 px AND 250 ms).
+  var DEBOUNCE_PX = 5;
+  var DEBOUNCE_PX_SQ = DEBOUNCE_PX * DEBOUNCE_PX;
+  var DEBOUNCE_MS = 250;
+
   // ─── Public API ────────────────────────────────────────────────────
   function init(mapInstance) {
     if (initialized) return;       // idempotent per spec §A
@@ -259,6 +264,7 @@
       view.abortController = null;
     }
     view.samplingGen++;
+    view.lastClick = null;
     state.status = 'idle';
     state.selectedVertex = null;
     state.insertSlot = null;
@@ -335,7 +341,7 @@
       var dx = pt.x - view.lastClick.x;
       var dy = pt.y - view.lastClick.y;
       var dt = t - view.lastClick.t;
-      if ((dx * dx + dy * dy) < 25 && dt < 250) return;
+      if ((dx * dx + dy * dy) < DEBOUNCE_PX_SQ && dt < DEBOUNCE_MS) return;
     }
     view.lastClick = { x: pt.x, y: pt.y, t: t };
 
