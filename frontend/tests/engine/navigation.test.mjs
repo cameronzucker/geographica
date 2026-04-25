@@ -1276,3 +1276,44 @@ test('formatDistancePrefix: negative distance returns empty (defensive)', async 
   assert.equal(fmt(-50, true), '');
   assert.equal(fmt(-50, false), '');
 });
+
+test('consumeGPSRecoveryFlag: normal flow always returns false', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  const internals = win._geographicaNavEngineInternals;
+  // Simulate a fresh GPS state — never stale, never DR.
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 10 };
+  nav.start(fixtureRouteWithTwoTurns());
+  // Tick a few times with fresh GPS.
+  for (let i = 0; i < 3; i++) {
+    nav.updateGPS({ latitude: 35.20, longitude: -111.65, speed: 10 });
+  }
+  // After all-fresh ticks, the recovery flag should never have been armed.
+  assert.equal(internals._peekGPSRecoveryFlag(), false,
+    'recovery flag should be false after all-fresh ticks');
+});
+
+test('consumeGPSRecoveryFlag: arms after stale, fires once on recovery', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  const internals = win._geographicaNavEngineInternals;
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 10 };
+  nav.start(fixtureRouteWithTwoTurns());
+  // Tick once fresh — recovery flag stays disarmed (and the helper updates state).
+  nav.updateGPS({ latitude: 35.20, longitude: -111.65, speed: 10 });
+  // The flag is consumed via checkVoice; we test the helper directly here.
+  // Drive consumeGPSRecoveryFlag through the test hook to set up state.
+  // First call: prevTickWasStaleOrDR is false, nowFresh is true → returns false.
+  assert.equal(internals._consumeGPSRecoveryFlag(), false);
+  // Force "stale" — set lastGPSTime in the past via the test mutator.
+  internals._setLastGPSTime(Date.now() - 5000);  // 5 s old, exceeds 3 s timeout
+  // Now a tick is "stale" — calling the helper should NOT return true (we're stale, not recovering).
+  // It updates prevTickWasStaleOrDR = true and returns false.
+  assert.equal(internals._consumeGPSRecoveryFlag(), false);
+  // Restore fresh GPS time.
+  internals._setLastGPSTime(Date.now());
+  // Now the helper sees the recovery transition: prev was stale, now is fresh → return TRUE.
+  assert.equal(internals._consumeGPSRecoveryFlag(), true);
+  // Subsequent call: prev is now false (one-shot consumed), now is fresh → return false.
+  assert.equal(internals._consumeGPSRecoveryFlag(), false);
+});

@@ -159,6 +159,13 @@
   // Dead reckoning
   var drActive = false;
 
+  // GPS-recovery guard — spec v2 §5.3 + Codex F5.4. Tracks whether the previous
+  // tick was in DR / stale-GPS state so the FIRST fresh tick can suppress its
+  // prefix (prevents jarringly-precise distance from a single recovered sample).
+  // Module-scope state; consumed at most once per checkVoice fire path via the
+  // helper below.
+  var prevTickWasStaleOrDR = false;
+
   // Voice
   var muted = false;
   var suppressVoiceOnNextTick = false;
@@ -254,6 +261,20 @@
     // Pattern 3: leading "Then "
     text = text.replace(/^Then\s+/, '');
     return text;
+  }
+
+  // Per spec v2 §5.3. Returns true exactly once when a tick transitions from
+  // (drActive || stale) → fresh. Subsequent fresh ticks return false until the
+  // next stale episode arms the flag again. Updates prevTickWasStaleOrDR on
+  // every call so the state tracks observation latency.
+  function consumeGPSRecoveryFlag() {
+    var nowFresh = !drActive && (Date.now() - lastGPSTime <= GPS_STALE_TIMEOUT);
+    if (prevTickWasStaleOrDR && nowFresh) {
+      prevTickWasStaleOrDR = false;
+      return true;  // suppress prefix this tick
+    }
+    prevTickWasStaleOrDR = drActive || (Date.now() - lastGPSTime > GPS_STALE_TIMEOUT);
+    return false;
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -1058,7 +1079,10 @@
     _getAnnouncedKeys: function () { return Object.keys(announcedSet).sort(); },
     _useImperial: _geographicaUseImperial,
     _formatDistancePrefix: formatDistancePrefix,
-    _stripBakedDistance: stripBakedDistance
+    _stripBakedDistance: stripBakedDistance,
+    _consumeGPSRecoveryFlag: consumeGPSRecoveryFlag,
+    _peekGPSRecoveryFlag: function () { return prevTickWasStaleOrDR; },
+    _setLastGPSTime: function (t) { lastGPSTime = t; }
   };
 
 })();
