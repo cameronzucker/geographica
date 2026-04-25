@@ -1075,7 +1075,7 @@ test('formatDistancePrefix: imperial quarter-mile band entry', async () => {
   // 305 m = 1001 ft = 0.190 mi (just into [1000, 1980) ft = quarter band)
   assert.equal(fmt(305, true), 'In a quarter mile, ');
   assert.equal(fmt(500, true), 'In a quarter mile, '); // 1640 ft = 0.311 mi, still in quarter
-  assert.equal(fmt(504, true), 'In a quarter mile, '); // 1654 ft = 0.313 mi, still quarter (just inside upper boundary)
+  assert.equal(fmt(504, true), 'In a quarter mile, '); // 1654 ft = 0.313 mi, still quarter (well inside quarter band)
 });
 
 test('formatDistancePrefix: imperial half mile band', async () => {
@@ -1146,9 +1146,9 @@ test('formatDistancePrefix: monotonicity property — output never decreases as 
   const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
   function distanceValue(prefix, useImperial) {
     if (prefix === '') return -1;
-    var m = prefix.match(/In (.+?), /);
+    const m = prefix.match(/In (.+?), /);
     if (!m) throw new Error('unexpected prefix shape: ' + prefix);
-    var phrase = m[1];
+    const phrase = m[1];
     if (/feet$/.test(phrase)) return parseInt(phrase, 10) * 0.3048;
     if (phrase === 'a quarter mile')           return 0.25 * 1609.344;
     if (phrase === 'half a mile')              return 0.5  * 1609.344;
@@ -1555,7 +1555,10 @@ test('I14b: GPS-stale recovery composes with normal-flow prefix on second tick',
   // After the recovery-suppressed fire, the engine resumes normal prefix behavior.
   // M1's near is now announced. Drive past M1 toward M2 (-111.64560).
   // 75 m before M2 = -111.64560 + 0.000826° ≈ -111.64478 (driver approaching from west).
-  for (var i = 0; i < 3; i++) {
+  // M2 fires via the 75 m DISTANCE FLOOR (not TTM): 74.51 m / 11 m·s⁻¹ = 6.8 s TTM,
+  // above the 3 s near-tier TTM threshold. Floor-triggered fires are still expected to
+  // apply the prefix; the recovery flag was consumed on the M1 tick above.
+  for (let i = 0; i < 3; i++) {
     nav.updateGPS({ latitude: 35.20, longitude: -111.64478, speed: 11 });
   }
   // At this point M2's near-tier should have fired with a prefix (normal flow, no recovery).

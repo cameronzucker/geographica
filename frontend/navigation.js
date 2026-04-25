@@ -235,6 +235,9 @@
     if (meters < 100) return 'In ' + (Math.round(meters / 10) * 10) + ' meters, ';
     if (meters < 1000) return 'In ' + (Math.round(meters / 50) * 50) + ' meters, ';
     if (meters < 1500) return 'In one kilometer, ';
+    // .toFixed(1) can produce "N.0 km" (e.g., 2000 m → "In 2.0 kilometers, ").
+    // TTM/chain distances cap well below 2 km in practice, but the output is
+    // grammatically acceptable for TTS; no rounding change applied.
     return 'In ' + (Math.round(meters / 100) / 10).toFixed(1) + ' kilometers, ';
   }
 
@@ -245,7 +248,9 @@
   //   2. ". Then <rest>" (chain without distance, comma-form accepted) — strip whole
   //   3. "Then " leading — strip prefix only
   // (?:[^.]|\.(?=\d))* allows decimal-passthrough so "1.5 miles" isn't split.
-  // No /i flag — Valhalla always title-cases; (?=[A-Z]) lookahead intact.
+  // No /i flag — Valhalla always title-cases. Forward-compat note: future
+  // patterns may need a (?=[A-Z]) lookahead to anchor at sentence-boundary
+  // capitals — current patterns rely on \.\s* for the same effect.
   function stripBakedDistance(text) {
     if (!text) return text;
     // Pattern 1: trailing ". Then, in <dist> <unit>, <rest>"
@@ -267,6 +272,9 @@
   // (drActive || stale) → fresh. Subsequent fresh ticks return false until the
   // next stale episode arms the flag again. Updates prevTickWasStaleOrDR on
   // every call so the state tracks observation latency.
+  // Note: name says "Tick" but updates on every consumeGPSRecoveryFlag CALL.
+  // Ticks where neither tier fires don't call this helper — flag stays armed
+  // across those silent ticks.
   function consumeGPSRecoveryFlag() {
     var nowFresh = !drActive && (Date.now() - lastGPSTime <= GPS_STALE_TIMEOUT);
     if (prevTickWasStaleOrDR && nowFresh) {
@@ -559,7 +567,11 @@
       announcedSet[farKey] = true;  // mark BEFORE prefix construction (spec v2 §5.2 G11)
       // GPS-recovery guard: suppress prefix on first tick after stale/DR clears.
       if (!consumeGPSRecoveryFlag()) {
+        var farRaw = farText;
         farText = stripBakedDistance(farText);
+        if (typeof window !== 'undefined' && window._geographicaTTMDebug && farText.length === 0) {
+          console.warn('[nav] far-tier farText empty after stripBakedDistance — original:', farRaw);
+        }
         var farPrefix = formatDistancePrefix(distToNext, _geographicaUseImperial());
         if (farPrefix && farText && farText.length > 0) {
           farText = farPrefix + farText.charAt(0).toLowerCase() + farText.slice(1);
