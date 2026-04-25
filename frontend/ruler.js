@@ -40,6 +40,7 @@
     tileCache: null,          // LRU; created in init()
     rafHandle: null,
     domListenerCleanups: [],
+    lastClick: null,          // { x, y, t } — debounce reference (Phase 2.5)
   };
 
   // ─── Public API ────────────────────────────────────────────────────
@@ -49,8 +50,8 @@
     map = mapInstance;
     ensureSources();
     ensureLayers();
-    // Phase 2.5+ adds map click handler; Phase 2.6 keyboard handler;
-    // Phase 5.2 units-changed subscription; Phase 2.8 tab activation.
+    map.on('click', handleMapClick);
+    // Phase 2.6 keyboard handler; Phase 5.2 units-changed; Phase 2.8 tab activation.
   }
 
   function isActive() {
@@ -315,6 +316,34 @@
     };
   }
 
+  // ─── Click handler (drawing state only) ────────────────────────────
+  function handleMapClick(e) {
+    var oe = e.originalEvent || {};
+    // Modifier keys → pass-through (map-pan/select gesture).
+    if (oe.ctrlKey || oe.shiftKey || oe.altKey || oe.metaKey) return;
+
+    if (state.status === 'inserting') {
+      // Phase 3.5 wires this branch to commitInsert(). Stub for now.
+      return;
+    }
+    if (state.status !== 'idle' && state.status !== 'drawing') return;
+
+    // Debounce: 5px AND 250ms vs the previous accepted click.
+    var t = oe.timeStamp != null ? oe.timeStamp : Date.now();
+    var pt = e.point || { x: 0, y: 0 };
+    if (view.lastClick) {
+      var dx = pt.x - view.lastClick.x;
+      var dy = pt.y - view.lastClick.y;
+      var dt = t - view.lastClick.t;
+      if ((dx * dx + dy * dy) < 25 && dt < 250) return;
+    }
+    view.lastClick = { x: pt.x, y: pt.y, t: t };
+
+    addVertex(e.lngLat.lng, e.lngLat.lat);
+    refreshMapData();
+    // Phase 2.7 wires renderPanel() into this flow.
+  }
+
   // ─── Map source/layer wiring (spec §D) ─────────────────────────────
   // Layer IDs (also referenced by app.js queryRenderedFeatures exclusion
   // edit in addPlaceholderSources's sibling reverse-geocode click handler — keep in sync).
@@ -479,5 +508,6 @@
     relabel: relabel,
     recompute: recompute,
     refreshMapData: refreshMapData,
+    handleMapClick: handleMapClick,
   };
 })();
