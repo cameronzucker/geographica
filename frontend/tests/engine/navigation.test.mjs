@@ -1433,6 +1433,61 @@ test('I13: prompt count invariant on Villa Rita fixture (G9 regression guard)', 
     `expected 3 prompts (TTM v3 baseline preserved), got ${fires.length}: ${JSON.stringify(fires)}`);
 });
 
+test('I13g: full pipeline — multi-cue depart strips chain + applies live prefix', async (t) => {
+  // Synthesize a fixture with the real Valhalla multi-cue shape on the depart-leading maneuver.
+  // The mid-string ". Then, in 900 feet, X." is the actual Villa Rita depart pattern.
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  win._geographicaUseImperial = true;
+  const fires = [];
+  nav.onVoice((t) => fires.push(t));
+
+  // Build a route where M1 has the multi-cue VPT shape.
+  const route = {
+    coords: [
+      [-111.65000, 35.20],  // start
+      [-111.64780, 35.20],  // M1 boundary (200 m east)
+      [-111.64560, 35.20],  // route end
+    ],
+    maneuvers: [
+      {
+        type: 1,
+        instruction: 'Head east',
+        verbal_transition_alert_instruction: 'In 700 feet, turn left',
+        verbal_pre_transition_instruction: 'Head east',
+        begin_shape_index: 0,
+        end_shape_index: 1,
+      },
+      {
+        type: 15,
+        instruction: 'Turn left onto Test Avenue',
+        verbal_transition_alert_instruction: 'Turn left onto Test Avenue',
+        // Multi-cue VPT: real Valhalla depart shape with baked distance + chained next-turn.
+        verbal_pre_transition_instruction: 'Turn left onto Test Avenue. Then, in 900 feet, Continue on Test Avenue.',
+        begin_shape_index: 1,
+        end_shape_index: 2,
+      },
+    ],
+    summary: { length: 0.4, time: 40 },
+    totalDistance: 400,
+    totalTime: 40,
+    costing: 'auto',
+    remainingWaypoints: [],
+  };
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 11 };
+  nav.start(route);
+  // Drive to ~74 m before M1 to fire near-tier (74 m → 241 ft → bucket 200).
+  for (let i = 0; i < 3; i++) {
+    nav.updateGPS({ latitude: 35.20, longitude: -111.64861, speed: 11 });
+  }
+  assert.ok(fires.length >= 1, 'expected near-tier to fire');
+  // Expected: stripBakedDistance removes ". Then, in 900 feet, Continue on Test Avenue.";
+  // residual is "Turn left onto Test Avenue."; uppercase preserved; live prefix "In 200 feet, "
+  // prepended with first letter lowercased: "In 200 feet, turn left onto Test Avenue."
+  assert.equal(fires[fires.length - 1], 'In 200 feet, turn left onto Test Avenue.',
+    `pipeline order broken — expected clean strip + prefix, got: ${JSON.stringify(fires[fires.length - 1])}`);
+});
+
 test('I14: GPS-recovery guard suppresses prefix on first post-stale tick', async (t) => {
   const { nav, window: win } = await loadEngine();
   t.after(() => { try { nav.stop(); } catch (_) {} });
