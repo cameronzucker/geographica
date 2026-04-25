@@ -147,17 +147,19 @@ A separate (NOT serialized) view-state object holds map-marker handles, listener
 
 ### B. State machine
 
-Four explicit states. No timeouts, no implicit transitions.
+Four explicit states. No timeouts, no implicit transitions. **Activation is explicit** (post-2026-04-25 redesign): the ruler arms via the `[+ New measurement]` button, NOT via map taps or tab activation. This matches the project's UI metaphor — the Layers tab doesn't auto-enable layers, and the Measure tab shouldn't auto-enable measurement.
 
 | From | To | Trigger |
 |---|---|---|
-| `idle` | `drawing` | First map tap (Measure tab visible AND no measurement in editing) |
-| `drawing` | `drawing` | Map tap appends vertex; Backspace pops last (debounced); modifier keys (Ctrl/Shift) suppress placement |
+| `idle` | `drawing` (empty) | `[+ New measurement]` button click. NOT triggered by map taps — idle-state clicks pass through to reverse-geocode / KMZ-pin / search-pin handlers normally |
+| `drawing` | `drawing` | Map tap appends vertex; Backspace pops last (debounced); modifier keys (Ctrl/Shift/Alt/Meta) suppress placement |
+| `drawing` | `drawing` (empty) | Backspace on the last remaining vertex stays in drawing-empty (user is still actively measuring; Esc cancels back to idle) |
 | `drawing` | `editing` | Finish gesture: double-click empty map, Enter key, or `[Finish]` button (only enabled with ≥2 vertices) |
-| `drawing` | `idle` | Esc, `[Clear]`, or sidebar tab switched away with <2 vertices |
+| `drawing` | `idle` | Esc with <2 vertices, or `[Clear]`, or sidebar tab switched away with <2 vertices |
 | `editing` | `editing` | Tap vertex (selects); drag vertex (reposition on `mouseup`); tap empty map → falls through to existing reverse-geocode handler |
 | `editing` | `inserting` | `[Insert Before]` or `[Insert After]` clicked on a selected vertex |
-| `editing` | `idle` | `[Clear]` or `[+ New measurement]` |
+| `editing` | `drawing` (empty) | `[+ New measurement]` button discards current measurement and arms a fresh drawing session |
+| `editing` | `idle` | `[Clear]` |
 | `inserting` | `editing` | Map tap commits insert at projected segment-point (new vertex selected); OR Esc / banner `[×]` / re-click same Insert button cancels |
 | `inserting` | `idle` | `[Clear]` |
 | any | `idle` | Sidebar tab switched away with <2 vertices; or page reload |
@@ -166,6 +168,8 @@ Four explicit states. No timeouts, no implicit transitions.
 **Sidebar tab restoration behavior** (R1 finding): `restoreLastSidebarTab()` at [app.js:4105](frontend/app.js#L4105) activates the tab from `localStorage`. If the user's last tab was Measure and they reload, the ruler module is `idle` (page reload clears in-memory state per ephemeral non-goal). The Measure panel renders the empty-state placeholder. This is intentional — no "your last measurement was lost" message, since saving is an explicit My Places follow-up.
 
 **`isActive()` returns `true` for `drawing` and `inserting`, `false` for `idle` and `editing`**. The mode-flag bail at three click handlers (L1622, L660, L1272) suppresses competing handlers during the two states where empty-map / pin clicks have ruler-specific meaning.
+
+**Sidebar overlay during active modes** (post-2026-04-25 redesign): when `state.status` is `drawing` or `inserting`, ruler.js adds the `ruler-active` class to `document.body`. CSS rule `body.ruler-active #sidebar-overlay { pointer-events: none; }` lets map clicks fall through the invisible full-viewport sidebar-overlay (whose default behavior closes the sidebar on tap) and reach the MapLibre canvas. Without this, the first map tap during measurement would close the sidebar and hide the live vertex list / banner / Finish button. Mirrors the existing `_bboxDrawingActive` pattern at [app.js:1206](frontend/app.js#L1206).
 
 **Per R5 C1: `editing`-state vertex clicks need DIFFERENT protection.** Since `isActive() === false` in `editing` (intentional — empty-map clicks fall through to reverse-geocode), vertex clicks would also fall through, double-firing select AND reverse-geocode popup. **The fix is in the L1622 handler's existing `queryRenderedFeatures` exclusion list** (see §A edits #2): adding ruler layers to the exclusion list means clicks that hit a ruler vertex/line are recognized as "feature clicks" and the generic reverse-geocode handler bails — exactly mirroring how `imported-points` and `search-result-circles` clicks are excluded today. **Vertex-clicks in `editing` are claimed by ruler and MUST NOT reach reverse-geocode**; this contract is enforced both by the layer-scoped `map.on('click', 'ruler-vertex-hit-circles', ...)` listener AND by the generic-handler exclusion.
 
