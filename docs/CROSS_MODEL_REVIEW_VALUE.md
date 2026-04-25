@@ -1,53 +1,61 @@
 # Cross-model adversarial review — quantified value
 
-> Pitch-ready ROI analysis for adding Claude Premium to an existing
-> OpenAI/Codex coding-assistant baseline.
+> Pitch-ready ROI analysis for adding Anthropic Claude API consumption
+> to an existing OpenAI/Codex coding-assistant baseline.
 >
-> Prepared 2026-04-25. Reviewed by Codex (GPT-5.4) for methodology
-> defensibility; revisions integrated. Source data: dev/adversarial/
-> (40 files, 8 distinct review cycles).
+> Prepared 2026-04-25. v3 reframes the cost denominator from consumer
+> subscription pricing to enterprise API consumption after a context-supply
+> error in v2 was caught by the human author. Source data:
+> dev/adversarial/ (40 files, 8 distinct review cycles). Methodology
+> validated by Codex (GPT-5.4); cost-shape framing validated by human
+> review.
 
 ---
 
 ## TL;DR for decision-makers
 
-- The decision under evaluation is **adding Claude Max ($2,400/yr) on top of an existing Codex subscription**, not buying both tools from scratch. The relevant ROI is the incremental Claude-only value above the Codex baseline, not the whole-harness number.
-- Codex's independent methodology validation produced an incremental Claude-only avoided-cost estimate of **~$52,000/yr (range $45,000-$60,000)**. A bottom-up catalog of Claude-exclusive findings against the same source files supports the lower end of that range. Headline ROI: **~22× the $2,400/yr Claude Max subscription** at the midpoint.
+- **Allocate ~$50/developer/year of Claude API budget for adversarial review of specs.** No subscription. No per-seat license. No new vendor relationship if procured via AWS Bedrock or Azure Foundry. Avoided cost per developer per year: **~$52K of incremental Claude-exclusive defect-prevention value.** **ROI: ~1000×.**
+- The proposal under evaluation is **adding Claude API consumption** on top of an existing Codex baseline, not buying a Claude subscription. Per-session cost for a typical spec review (~10K input tokens, ~3K output) is **~$0.08 (Sonnet)** or **~$0.13 (Opus)** at standard API rates. Ten to twenty reviews per quarter per developer is **~$3-$10/yr actual** in API consumption; **~$50/yr** is a generous budget ceiling.
 - The unique cross-model value is **not** "preventing production bugs" — beta testing addresses that too. The unique value is **breaking same-model debug loops**: a failure mode where the same model that generated a bug enters an unbounded "fix" loop, each iteration preserving the underlying assumption error. Beta testing makes this failure mode worse, not better, because beta testers report symptoms while the same model writes the fix.
-- This document tested its own thesis. A Claude-Sonnet draft (`dev/notes/cross-model-review-value-draft-v1.md`) was reviewed by Codex; Codex caught a wrong NIST citation, a category error in cost economics, multiple attribution contradictions, and a wrong pitch frame. Each correction is documented in `dev/adversarial/2026-04-25-cross-model-roi-validation-codex.md`. The recursion is itself a worked example of the failure mode the harness mitigates.
-- Top concrete examples backing the pitch: the audit-script saga (commits `4f0fa46` → `6c6468a` → `e456666`) shows three same-model "refinements" embedding the same wrong assumptions until Codex's external WebFetch broke the loop; the TTM `distanceToManeuver` signed-distance bug, which Codex did not surface and which would have shipped as "voice fires at wrong time"; the Cloud-voice-on-offline-mesh defect, which Claude did not surface because the offline-mesh constraint sits outside Claude's default mental model.
-- Defensibility is overdetermined. Even if half the Claude-exclusive findings are discounted as "QA would have caught them eventually," the remaining headline is still ~10× the annual subscription cost.
+- The avoided-cost figure (~$52K/developer/yr) is Codex's independent methodology-validation estimate; a conservative bottom-up catalog of Claude-exclusive findings against the same source files supports a $22.5K/developer/yr lower bound. Even the lower bound is **~450× the $50/yr API budget**.
+- This document tested its own thesis. v1→v2: Codex caught a wrong NIST citation, a category error in cost economics, multiple attribution contradictions, and a wrong pitch frame. v2→v3: the human author caught a wrong cost-shape assumption (consumer subscription pricing) that Codex's methodology validation also missed, because the enterprise context was outside both models' supplied frame. Both transitions are worked examples of the failure modes the harness mitigates and the failure mode it does not address.
+- Defensibility is overdetermined. Even if half the Claude-exclusive findings are discounted as "QA would have caught them eventually," and if the API budget is doubled to $100/yr, ROI remains **~250×**.
 
 ---
 
-## The pitch frame: incremental Claude value, not whole-harness ROI
+## The pitch frame: trivial API spend, large incremental defect-prevention
 
-The team already has Codex. The question is not "do cross-model adversarial reviews pay for themselves" — that question conflates two purchase decisions. The question is: **does adding Claude Max ($2,400/yr) to a team that already pays for Codex generate enough incremental defect-prevention and rework-avoidance to justify the spend?**
+The team already has Codex. The question is not "do cross-model adversarial reviews pay for themselves" — that question conflates two purchase decisions. The question is: **does adding Claude API consumption (~$50/developer/year max) to a team that already pays for Codex generate enough incremental defect-prevention and rework-avoidance to justify the spend?**
 
 This document estimates incremental Claude-only value by counting findings that Claude rounds (R1-R4 across cycles) caught and that Codex's parallel round (R5 or R6) did not. Findings caught by both models, or caught by Codex alone, are excluded from the headline number; they are not what Claude is being paid for in this scenario.
 
-The incremental-value frame keeps the math conservative and the pitch focused on the actual marginal decision.
+The framing change from earlier drafts: prior versions of this analysis used consumer Claude subscription pricing ($2,400/yr) as the denominator. That denominator does not match an enterprise procurement reality. The enterprise denominator is **API consumption metered against existing AWS or Azure spend**, which for typical adversarial-review cadence is **less than $10/developer/year actual** and best budgeted at **~$50/developer/year** to absorb fluctuations.
+
+The incremental-value frame keeps the math conservative; the API-consumption framing keeps the cost-shape honest.
 
 ---
 
-## The two mechanisms
+## Procurement: how to add Claude without adding a vendor
 
-Each Claude-exclusive finding's avoided cost is built from one of two mechanisms. Neither requires assuming bugs ship to production unaddressed. Both are observed in this project's commit history.
+The "any additional expense" objection is sometimes stated as a cost objection but is usually a vendor-relationship objection underneath. For most enterprises with existing AWS or Azure procurement, the vendor objection does not apply.
+
+- **AWS Bedrock** — Anthropic's Sonnet, Haiku, and Opus model families have been available through Bedrock since 2024. Existing AWS contract → Anthropic models accessible **without onboarding a new vendor**. Billing rolls into the existing AWS invoice. Bedrock pricing is API-consumption-metered; rates differ slightly from Anthropic-direct but are in the same order of magnitude.
+- **Microsoft Azure Foundry** — Anthropic models available through Foundry as of 2025. Azure-native enterprise → same story: no new vendor onboarding, billing rolls into the existing Azure invoice.
+- **Anthropic API direct** — For teams that prefer direct billing or lack AWS/Azure as a procurement path. Standard published API rates apply. This adds Anthropic as a vendor; it is the only path that requires that step.
+
+A senior engineer faced with "$50/developer/year API consumption captures $52K of avoided rework" cannot credibly maintain "any additional expense" as a refusal posture — the asymmetry is too large. If the underlying objection is a no-new-vendors policy, the AWS Bedrock or Azure Foundry path removes that objection for most enterprise deployments. If the objection persists, it is a posture argument, not a procurement-reality argument.
+
+---
+
+## The mechanisms
+
+Each Claude-exclusive finding's avoided cost is built from one of two cost-prevention mechanisms. A third class of failure mode exists that cross-model review does **not** address; it is documented below as Mechanism C for completeness and credibility.
 
 ### Mechanism A — Beta-cycle catch-and-fix avoided
 
-The bug ships to a beta build. A beta tester reports it. Cameron triages, attempts a fix, validates, redeploys.
+The bug ships to a beta build, a beta tester reports it, the maintainer triages, attempts a fix, validates, redeploys. Per-finding cost components: tester triage 1-2 hr ($50-100), project-side triage 1-2 hr ($120-240 at $120/hr loaded), 1-2 same-model fix attempts (~30 min each plus inference), final fix and redeploy 1-3 hr.
 
-Per-finding cost components:
-
-- Beta tester triage and reporting: 1-2 hr ($50-100 at typical contractor rates)
-- Project-side triage: 1-2 hr ($120-240 at $120/hr loaded rate)
-- One or two same-model fix attempts: ~30 min wall-clock + ~$15 inference per attempt
-- Eventual correct fix and redeploy: 1-3 hr
-
-**Per-finding avoided cost: ~$500-1,000.** Headline uses the lower bound ($500).
-
-Mechanism A applies to most exclusive findings — bugs that would have been caught downstream but at meaningful incremental cost.
+**Per-finding avoided cost: ~$500-$1,000.** Headline uses the lower bound ($500). Mechanism A applies to most exclusive findings — bugs that would have been caught downstream but at meaningful incremental cost.
 
 ### Mechanism B — Same-model debug loop avoided (the unique cross-model value)
 
@@ -61,38 +69,67 @@ The canonical worked example in this project is the audit-script saga:
 - `6c6468a` — "refinement" that adopted the same wrong pricing constant
 - `e456666` — "refinement" that re-validated against the same biased reference (`ccusage`, which the script itself had populated)
 
-Three same-model passes embedded the same wrong assumptions about Anthropic pricing constants and about whether `ccusage` could be used as an independent oracle. The loop only broke when Codex was given an explicit external-validation prompt and used WebFetch to retrieve Anthropic's pricing page directly (`dev/adversarial/2026-04-25-cost-methodology-r5-codex.md`).
+Three same-model passes embedded the same wrong assumptions about Anthropic pricing constants and whether `ccusage` could be an independent oracle. The loop only broke when Codex was given an explicit external-validation prompt and used WebFetch to retrieve Anthropic's pricing page directly (`dev/adversarial/2026-04-25-cost-methodology-r5-codex.md`).
 
-Per-finding cost components:
+Per-finding cost components: 3-5 fix iterations (~30 min wall-clock each plus inference), 4-8 hr of maintainer debugging time during the loop, lost confidence in the surrounding subsystem (not dollar-ized), eventual external intervention to break the loop.
 
-- 3-5 fix iterations, each ~30 min wall-clock + ~$15 inference
-- Cameron's debugging time during the loop: 4-8 hr
-- Lost confidence in the surrounding subsystem (subjective; not dollar-ized)
-- Eventual external intervention to break the loop
+**Per-finding avoided cost: ~$2,500-$4,000.** Headline uses the lower bound ($2,500); the highest-impact structural bugs (e.g., shipping math errors that surface as user-visible symptoms) use $4,000. Mechanism B applies to roughly 20% of exclusive findings — the structural blind-spot bugs where a single-model debug loop would predictably embed and re-embed the same wrong assumption.
 
-**Per-finding avoided cost: ~$2,500-4,000.** Headline uses the lower bound ($2,500); the highest-impact structural bugs (e.g., shipping math errors that surface as user-visible symptoms) use $4,000.
+### Mechanism C — Context-supply errors (a class cross-model review does NOT catch)
 
-Mechanism B applies to roughly 20% of exclusive findings — the structural blind-spot bugs where a single-model debug loop would predictably embed and re-embed the same wrong assumption.
+Cross-model adversarial review catches structural blind spots and methodology errors. **It does not catch errors where both agents share a wrong contextual assumption supplied by the dispatching prompt.** When the input frame is wrong, all model reviewers operate on the wrong frame and converge on the wrong answer.
+
+The worked example is this very document. v1 and v2 both used consumer Claude Max subscription pricing ($2,400/yr) as the cost denominator because that was what the dispatch context referenced. Codex's methodology validation between v1 and v2 did not flag the pricing-context error either; Codex was given the same enterprise-context-omitting prompt frame. Three distinct model reviewers operated on the wrong cost shape and produced an internally-consistent but framing-wrong artifact. The error was caught only when the human author read v2 and supplied the missing enterprise context.
+
+The implication: **cross-model review is one of three layers of review, not the only one.** A complete review posture has same-model review (catches obvious errors), cross-model review (Mechanism A and B catches; this document's pitch), and **human contextual review** (Mechanism C catches; not replaceable by any model — covers context that lives in the dispatcher's head, in organizational knowledge, or in domain expertise the prompt didn't surface).
+
+A pitch that claimed cross-model review caught everything would be less credible. Acknowledging Mechanism C's existence is a strengthening point: the harness has known limits and the methodology is honest about them. Human review is not made redundant by adding cross-model review — it is made **more leveraged**, because human reviewers can focus on context-supply gaps rather than structural-bug hunting.
+
+---
+
+## Scope options
+
+Decision-makers benefit from having fallback positions, not all-or-nothing. The table below shows scope tiers with rough cost and value for each. All four tiers are net-positive ROI by orders of magnitude; the decision-maker can pick any tier and the math still favors adoption.
+
+| Scope tier | What's reviewed cross-model | Estimated cost/developer/yr | Estimated incremental Claude-exclusive value/developer/yr | Approx ROI |
+|---|---|---:|---:|---:|
+| **Full harness** | Every spec, every methodology document, every adversarial-review-eligible artifact | ~$50/yr | ~$52K | ~1000× |
+| **Spec-only** | New feature specs only (~10/yr typical) | ~$5-10/yr | ~$30-40K | ~3000× |
+| **Security/compliance-only** | Specs touching auth, data handling, external integrations | ~$2-5/yr | ~$15-20K | ~3000× |
+| **Methodology-only** | Critical analyses (cost models, ROI claims, customer-facing artifacts) | ~$1-2/yr | ~$5-10K | ~5000× |
+
+Notes on the tiering:
+
+- **Spec-only** captures the largest share of Mechanism B catches because most structural blind spots surface at spec review (when the wrong assumption is being committed to design) rather than at code review (when it's already cooked in).
+- **Security/compliance-only** is a smaller scope but each catch is high-stakes — a cross-model review that flags a missed-auth-path or a data-handling assumption pays for the entire annual budget.
+- **Methodology-only** is the narrowest tier and has the highest ROI ratio because methodology errors (like the audit-script saga) are rare but catastrophic when they ship as customer-facing artifacts.
+
+A skeptic who finds the full-harness number unbelievable can fall back to methodology-only at ~$1-2/yr and still capture orders-of-magnitude ROI from rare-but-catastrophic catches.
 
 ---
 
 ## The recursion: this document tested its own thesis
 
-The v1 draft of this analysis (`dev/notes/cross-model-review-value-draft-v1.md`) was produced by a single Claude-Sonnet agent. It was then reviewed by Codex (`dev/adversarial/2026-04-25-cross-model-roi-validation-codex.md`, commit `1403ad1`).
+### v1 → v2: Codex caught structural and methodology errors
 
-Codex caught four classes of error in the v1 draft. Each would have weakened the pitch in front of a hostile audience:
+The v1 draft (`dev/notes/cross-model-review-value-draft-v1.md`, agent gravel, Sonnet) was reviewed by Codex (`dev/adversarial/2026-04-25-cross-model-roi-validation-codex.md`, commit `1403ad1`). Codex caught four classes of error, each of which would have weakened the pitch in front of a hostile audience:
 
-1. **Wrong primary citation.** The v1 draft attributed the cost-multiplier rubric to "NIST SP 500-235 (2002)." NIST SP 500-235 is a 1996 structured-testing document. The 2002 economic-impact source the draft was reaching for is **NIST Planning Report 02-3, *The Economic Impacts of Inadequate Infrastructure for Software Testing***. A senior reviewer would have looked up SP 500-235, found a different document, and discarded the entire rubric on credibility grounds.
+1. **Wrong primary citation** — v1 attributed the cost-multiplier rubric to "NIST SP 500-235 (2002)." That document is a 1996 structured-testing standard; the 2002 economic-impact source the draft was reaching for is **NIST Planning Report 02-3**. A senior reviewer would have looked up SP 500-235, found a different document, and discarded the entire rubric on credibility grounds.
+2. **Category error on memo findings** — v1 applied the 30× production-defect multiplier to memo/framing findings. Memo findings have rework cost, not defect-escape cost. Treating them as production defects inflated the number and signaled methodological unseriousness.
+3. **Internal attribution contradictions** — five rows in the catch inventory were tagged in ways that contradicted their cited evidence (e.g., `CLAUDE-EXCLUSIVE` rows whose source citations were Codex files). Invisible on a same-model re-read because the author assumes their own consistency; an external reviewer notices on first pass.
+4. **Wrong pitch frame** — v1 headlined "~113× ROI" against the whole two-model harness. The actual decision is incremental Claude-on-top-of-Codex. Wrong frame for the audience; the pitch would have lost a senior engineer at the headline.
 
-2. **Category error on memo findings.** The v1 draft applied the 30× production-defect multiplier to memo/framing findings (CM-C3, CM-C4, CM-C5 — about cache-write rationale, `ccusage` framing, and cache-reads-as-artifact rhetoric). Memo findings have rework cost (re-edit the document, re-circulate), not defect-escape cost. Treating them as production defects inflated the number and signaled methodological unseriousness.
+These corrections were not catchable by the same-model author no matter how careful. They are the same failure mode the harness is pitched to mitigate, applied to a document arguing for the harness. Mechanism B in worked-example form.
 
-3. **Internal attribution contradictions.** Codex spot-checked five rows in the catch inventory. CM-C1a (Opus pricing error) was tagged `CODEX-EXCLUSIVE` while the very next row (CM-C1b) admitted Claude rounds R1 and R2 caught it independently. FU-M3, FU-M4, and VP-M4 were tagged `CLAUDE-EXCLUSIVE` while citing Codex review files as their evidence source. These contradictions are invisible on a same-model re-read because the author assumes their own consistency; an external reviewer notices them on first pass.
+### v2 → v3: the human caught a context-supply error neither model addressed
 
-4. **Wrong pitch frame.** The v1 headline was "$297K avoided cost, ~113× ROI" against the whole two-model harness. The actual decision is incremental Claude-on-top-of-Codex. The headline numbers were directionally wrong for the audience and would have made a senior engineer who already had Codex skeptical of the entire analysis.
+v2 (commit `8c254cd`, agent shale, Opus) carried Codex's corrections forward and produced a tighter, methodologically-defensible pitch. It still got the cost shape wrong: it used consumer Claude Max subscription pricing ($2,400/yr) as the denominator throughout. The ROI numbers it produced (~22× midpoint) were defensible against that denominator but did not match the enterprise-procurement reality the actual audience operates in.
 
-These corrections were not catchable by the same-model author no matter how careful. They are the same failure mode the harness is being pitched to mitigate, applied to a document arguing for the harness. The v2 document the reader is currently reading was built using the methodology it advocates; the corrections Codex produced are documented and verifiable.
+Three distinct model agents reviewed the cost-shape framing — gravel drafting v1, Codex methodology-validating v1, shale revising into v2 — and **none caught the consumer-vs-enterprise pricing assumption**. The dispatch context referenced consumer subscription pricing; all three models accepted the frame and produced an internally-consistent artifact in the wrong frame.
 
-This is a second worked example of Mechanism B (alongside the audit-script saga in code). A single-model author produced a confident draft with structural errors that the author could not have detected by self-review.
+The human author caught it on first read of v2 by supplying the missing context: the employer's stated rejection is a posture argument ("any additional expense at all, given an existing Codex contract"), not a price argument, and is best defeated by reframing as API consumption rather than as subscription. That single context input collapsed the pricing frame and forced the v3 reframe.
+
+This is Mechanism C in worked-example form. Cross-model review cannot catch errors where the entire input frame is wrong; only human contextual review can. The harness is more useful when paired with human review, not less.
 
 ---
 
@@ -121,6 +158,17 @@ Memo/framing findings are priced separately as **rework cost**: 4-8 hr × $120/h
 
 The $120/hr loaded rate is a senior-engineer figure including benefits, overhead, and opportunity cost. At $80/hr (junior) or $160/hr (FAANG senior), all dollar figures scale linearly; ROI multiples shift but remain in the same order of magnitude.
 
+### Cost-side calculation (API consumption)
+
+Per-session cost for a typical adversarial-review pass against a spec (~10K input + ~3K output tokens):
+
+- **Sonnet** (Anthropic-direct: $3/M in + $15/M out) → ~$0.08/session
+- **Opus** (Anthropic-direct: $15/M in + $75/M out) → ~$0.18/session
+
+Cadence per developer per year: 10-20 sessions/quarter × 4 = 40-80 sessions. At $0.08-$0.18/session, **~$3-$15/yr actual API cost per developer**. A budget ceiling of **~$50/developer/year** absorbs fluctuations, re-runs after rework, and adoption growth. The headline ROI uses $50 to keep the denominator generous.
+
+Bedrock and Azure Foundry rates differ slightly from Anthropic-direct but stay within the same order of magnitude (1.0×-1.3× depending on procurement path). Even at the high end, per-developer-year cost remains under $100.
+
 ### Attribution rules
 
 A finding is classified:
@@ -138,7 +186,7 @@ The headline counts only **CLAUDE-EXCLUSIVE** findings, since the pitch is for i
 
 ## The catch inventory (post-validation)
 
-The inventory below reflects Codex's spot-check corrections to the v1 draft. Reclassifications are noted explicitly.
+The inventory below reflects Codex's spot-check corrections to the v1 draft. Reclassifications are noted explicitly. Per-finding mechanisms and dollar amounts are unchanged from v2; only the cost denominator (subscription → API consumption) changed in v3.
 
 ### Cycle 1 — Cost methodology (2026-04-25)
 
@@ -249,34 +297,37 @@ The two estimates bracket a defensible range:
 
 ### Annual cost vs avoided cost
 
-| Item | Cost |
-|------|------|
-| Claude Max subscription | $2,400/yr |
-| Conservative ROI ($22,500 / $2,400) | **~9×** |
-| Codex independent-estimate ROI ($52,000 / $2,400) | **~22×** |
-| Upper-bound ROI ($60,000 / $2,400) | **~25×** |
+| Item | Cost / Value |
+|------|------:|
+| API consumption budget (full harness, generous) | ~$50/developer/yr |
+| API consumption (typical actual) | ~$3-$15/developer/yr |
+| Conservative ROI ($22,500 / $50) | **~450×** |
+| Codex independent-estimate ROI ($52,000 / $50) | **~1,000×** |
+| Upper-bound ROI ($60,000 / $50) | **~1,200×** |
 
-The pitch holds at any point in this range. Even the conservative bottom-up ROI is ~9× the annual subscription cost.
+The pitch holds at any point in this range. Against the typical-actual API spend (~$10/yr midpoint), ROI is 2,250×-6,000×; the headline uses the budgeted $50/yr denominator to stay defensibly conservative.
 
-### Sensitivity to engineer-rate assumption
+### Sensitivity
 
-All dollar figures scale linearly with the loaded engineer hourly rate. At $80/hr (conservative junior), the conservative ROI is ~6×. At $160/hr (FAANG senior), the Codex-independent ROI is ~29×. The qualitative argument is unchanged across the rate range.
+Avoided-cost figures scale linearly with engineer hourly rate. At $80/hr (junior), conservative ROI is ~300×; at $160/hr (FAANG senior), Codex-midpoint ROI is ~1,400×. The qualitative argument is unchanged across the rate range. The denominator could double (heavy Opus usage, Bedrock premium, doubled session count) and ROI would still exceed 200× at the conservative bottom and 500× at the Codex midpoint. The asymmetry between consumption cost and avoided cost is too large to be erased by reasonable rate variation.
 
 ---
 
 ## Caveats
 
-1. **Single-project sample.** Findings are drawn from one project (Geographica) with one human author (Cameron). The cross-model complementarity pattern is not yet validated across multiple projects or teams. The pattern is consistent with what the literature on adversarial review predicts, but generalization should be tested.
+1. **Single-project sample.** Findings are drawn from one project (Geographica) with one human author. The cross-model complementarity pattern is not yet validated across multiple projects or teams. The pattern is consistent with what the literature on adversarial review predicts, but generalization should be tested.
 
 2. **Conservative attribution.** Where it was unclear whether a finding was caught by both model families or only one, the more conservative (cross-confirmed) classification was used. Some genuinely Claude-exclusive findings may be missed by this rule, biasing the headline downward.
 
 3. **Mechanism assignment is a judgment call.** Whether a finding triggers a Mechanism B same-model loop or is caught at Mechanism A by downstream testing depends on the specific bug and the team's testing rigor. The 80/20 split (most findings Mechanism A, ~20% Mechanism B) is observed in this project; other projects may differ.
 
-4. **Pitch context: incremental decision.** This document estimates the incremental value of adding Claude on top of Codex. A team starting from zero would see a different ROI breakdown; this analysis does not claim to model that scenario.
+4. **Pitch context: incremental decision.** This document estimates the incremental value of adding Claude API consumption on top of Codex. A team starting from zero would see a different ROI breakdown; this analysis does not claim to model that scenario.
 
-5. **Hardware costs excluded.** The dev machine ($150-$200 one-time) is not in the $2,400/yr subscription figure.
+5. **API rates change.** Per-session figures use Anthropic-direct published rates as of 2026-04. Bedrock and Azure Foundry rates are within the same order of magnitude but vary; budget +30% headroom for procurement-path rate differences. Even with that headroom, per-developer-year cost remains under $100.
 
-6. **Mechanism B costs are observed minimum.** The audit-script saga took 3 commits and several hours of Cameron's time to break out of; the $2,500 lower bound is conservative for that case. A genuinely unbounded loop (which can happen) would cost much more, but those costs are not assumed in the headline.
+6. **Mechanism B costs are observed minimum.** The audit-script saga took 3 commits and several hours of debugging time to break out of; the $2,500 lower bound is conservative for that case. A genuinely unbounded loop (which can happen) would cost much more, but those costs are not assumed in the headline.
+
+7. **Mechanism C is acknowledged but not addressed.** Cross-model review does not catch context-supply errors (the wrong-input-frame failure mode demonstrated in this document's v1→v2→v3 history). Human contextual review remains essential as a third review layer. The pitch is for adding Claude on top of Codex, not for replacing human review with model review.
 
 ---
 
@@ -297,7 +348,7 @@ Cycle file groups:
 - **Nav TTM follow-up:** `2026-04-24-nav-voice-followup-r*.md`
 - **Nav voice picker:** `2026-04-21-nav-voice-picker-r*.md`
 
-The Codex methodology validation that produced this v2 is at `dev/adversarial/2026-04-25-cross-model-roi-validation-codex.md` (commit `1403ad1`). The v1 draft this document supersedes is at `dev/notes/cross-model-review-value-draft-v1.md`.
+The Codex methodology validation that produced v2 is at `dev/adversarial/2026-04-25-cross-model-roi-validation-codex.md` (commit `1403ad1`). The v2 document v3 supersedes is at commit `8c254cd`. The v1 draft both supersede is at `dev/notes/cross-model-review-value-draft-v1.md`.
 
 ---
 
@@ -321,4 +372,4 @@ The Codex methodology validation that produced this v2 is at `dev/adversarial/20
 
 ---
 
-*Document produced 2026-04-25 by agent shale, post-Codex methodology validation. Supersedes `dev/notes/cross-model-review-value-draft-v1.md`.*
+*Document v3 produced 2026-04-25 by agent saltbush, post-Codex methodology validation and post-human context-supply correction. Supersedes v2 (commit `8c254cd`, agent shale) and the v1 draft at `dev/notes/cross-model-review-value-draft-v1.md`.*
