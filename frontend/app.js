@@ -1629,10 +1629,16 @@
       if (e.originalEvent.ctrlKey || e.originalEvent.shiftKey) return;
       if (wasDragging) { wasDragging = false; return; }
 
+      // Ruler measurement tool — suppress popup during drawing/inserting.
+      if (window._ruler && window._ruler.isActive()) return;
+
       // Don't fire if clicking on an existing feature layer or search pin
       var features = map.queryRenderedFeatures(e.point, {
         layers: ['imported-points', 'imported-lines', 'imported-polygons',
-                 'imported-polygon-outlines', 'search-result-circles']
+                 'imported-polygon-outlines', 'search-result-circles',
+                 // Ruler measurement tool — vertex-clicks in editing state
+                 // must NOT fall through to reverse-geocode (spec R5 C1).
+                 'ruler-vertex-hit-circles', 'ruler-vertex-circles', 'ruler-line']
       });
       if (features.length > 0) return;
 
