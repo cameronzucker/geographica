@@ -328,7 +328,7 @@ test('TTM I1: 2 prompts per maneuver when entering from outside far (steady 10 m
     const lng = startLng + k * 0.0001;  // ~10m per step at lat 35
     nav.updateGPS({ latitude: 35.20, longitude: lng, heading: 90, speed: 10 });
   }
-  // Expected: far-tier fires at ~300m, near-tier fires at ~50m floor = 2 prompts for maneuver 1.
+  // Expected: far-tier fires at ~300m, near-tier fires at ~75m floor = 2 prompts for maneuver 1.
   assert.equal(voiceFires.length, 2,
     `I1: expected exactly 2 prompts for maneuver 1, got ${voiceFires.length}`);
 });
@@ -336,7 +336,7 @@ test('TTM I1: 2 prompts per maneuver when entering from outside far (steady 10 m
 test('TTM I2: 1 prompt per maneuver when entering already inside near (D1 suppression)', async (t) => {
   const { nav, window: win } = await loadEngine();
   t.after(() => { try { nav.stop(); } catch (_) {} });
-  // Start 30m west of maneuver 1 (well inside the 50m floor).
+  // Start 30m west of maneuver 1 (well inside the 75m floor).
   // First move a bit so TTM pipeline is allowed to fire (NG8: no start-time voice).
   win._geographicaGPSData = { lat: 35.20, lon: -111.64030, heading: 90, speed: 10 };
 
@@ -373,7 +373,7 @@ test('TTM I3: zero prompts when stationary beyond distance floor', async (t) => 
 test('TTM I4: near-tier fires when stationary at distance floor', async (t) => {
   const { nav, window: win } = await loadEngine();
   t.after(() => { try { nav.stop(); } catch (_) {} });
-  // Start 30m west of maneuver 1 (inside the 50m floor), stationary.
+  // Start 30m west of maneuver 1 (inside the 75m floor), stationary.
   win._geographicaGPSData = { lat: 35.20, lon: -111.64030, heading: 90, speed: 0 };
 
   const voiceFires = [];
@@ -484,7 +484,7 @@ test('TTM I8: muted state — announcedSet still populates, un-mute does not rep
   nav.onVoice((text) => voiceFires.push(text));
   nav.setMuted(true);
   nav.start(fixtureRouteWithTwoTurns());
-  // First movement tick — near-tier condition met (inside 50m floor).
+  // First movement tick — near-tier condition met (inside 75m floor).
   nav.updateGPS({ latitude: 35.20, longitude: -111.64025, heading: 90, speed: 10 });
 
   assert.equal(voiceFires.length, 0, 'muted: no voice fires');
@@ -577,7 +577,7 @@ test('TTM bicycle: near-tier does not fire outside 45m floor', async (t) => {
     'bicycle at 50m from maneuver at walking pace: outside 45m floor and TTM>20s, should not fire');
 });
 
-test('TTM bicycle: near-tier fires when inside 30m floor', async (t) => {
+test('TTM bicycle: near-tier fires when inside 45m floor', async (t) => {
   const { nav, window: win } = await loadEngine();
   t.after(() => { try { nav.stop(); } catch (_) {} });
   win._geographicaGPSData = { lat: 35.20, lon: -111.64025, heading: 90, speed: 3 };
@@ -586,10 +586,10 @@ test('TTM bicycle: near-tier fires when inside 30m floor', async (t) => {
   nav.onVoice((text) => voiceFires.push(text));
   const bikeRoute = { ...fixtureRouteWithTwoTurns(), costing: 'bicycle' };
   nav.start(bikeRoute);
-  // 25m from maneuver, inside 30m bicycle floor.
+  // 25m from maneuver, inside 45m bicycle floor.
   nav.updateGPS({ latitude: 35.20, longitude: -111.64023, heading: 90, speed: 3 });
   assert.ok(voiceFires.length >= 1,
-    'bicycle inside 30m floor must fire near-tier');
+    'bicycle inside 45m floor must fire near-tier');
 });
 
 test('TTM pedestrian: near-tier fires inside 15m floor', async (t) => {
@@ -802,7 +802,7 @@ test('TTM reroute stale-drop: speedSamples and announcedSet preserved', async (t
 test('TTM reroute re-tick: no voice fires on the immediate re-tick inside applyReroute', async (t) => {
   const { nav, window: win } = await loadEngine();
   t.after(() => { try { nav.stop(); } catch (_) {} });
-  // Start 20m west of maneuver 1, inside the 50m floor.
+  // Start 20m west of maneuver 1, inside the 75m floor.
   // Seed GPS so applyReroute's re-tick has a cached lastGPS.
   win._geographicaGPSData = { lat: 35.20, lon: -111.64020, heading: 90, speed: 10 };
 
