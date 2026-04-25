@@ -658,6 +658,8 @@
 
       // Click to show popup with feature properties
       map.on('click', layerId, function (e) {
+        // Ruler measurement tool — suppress KMZ-pin popup during drawing/inserting.
+        if (window._ruler && window._ruler.isActive()) return;
         if (!e.features || !e.features.length) return;
 
         var feature = e.features[0];
@@ -1275,6 +1277,8 @@
     // Search pin click handler — popup with name, distance, route button
     var _searchPinClicked = false;
     map.on('click', 'search-result-circles', function (e) {
+      // Ruler measurement tool — suppress search-pin popup during drawing/inserting.
+      if (window._ruler && window._ruler.isActive()) return;
       if (!e.features || !e.features.length) return;
       _searchPinClicked = true;
       setTimeout(function () { _searchPinClicked = false; }, 200);
