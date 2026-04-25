@@ -363,3 +363,231 @@ curl -s http://localhost:8093/stt/health | python3 -m json.tool
 ```
 
 Open a browser to **http://&lt;your-pi-ip&gt;:8093** to use the map.
+
+## Stack management
+
+```bash
+docker compose up -d       # start
+docker compose down        # stop
+docker compose ps          # health check
+docker compose logs -f     # tail all logs
+docker compose restart X   # restart one service
+
+# Rebuild after code changes to gps, search, or stt
+docker compose build && docker compose up -d
+
+# Rebuild pipeline image (needed for admin panel downloads)
+docker compose --profile pipeline build
+```
+
+## Config panel
+
+The admin config panel is accessible at **http://localhost:8097/config/** from
+the Pi only. It provides a 4-tab interface:
+
+**Dashboard** — Service health with color-coded status dots (green/yellow/red),
+disk usage (used/free/% full), TLS mode and certificate status, and a pipeline
+progress banner linking to the Pipelines tab.
+
+**Pipelines** — 7-source card grid layout: USGS Direct (z0-z14 basemap tiles),
+USGS M2M (z19 NAIP via ERS API), National Map ImageServer (z15+ NAIP, free),
+NOAA Digital Coast (z17 NAIP from Azure with z0-z16 overviews, free, unthrottled),
+Sentinel-2 (Copernicus), NAIP county mosaic lookup, and BYO GeoTIFF import. Each
+card shows resolution, auth requirements, and estimated time. Includes a MapLibre
+minimap with draw-to-select bounding box. NOAA has a pre-download estimate (tile
+count, size, ETA) and 3-stage progress tracking (downloaded/reprojected/merged)
+with live ETA during runs. Only one pipeline runs at a time.
+
+**Inventory** — MapLibre map with clustered coverage markers showing downloaded
+imagery sources. Click a source to see zoom range, tile count, file size, and
+download date. Delete individual sources from the map.
+
+**Settings** — Credential management via GNOME Keyring (M2M, Copernicus),
+TLS configuration display, and STT service status.
+
+Security is handled via Docker port binding — port 8097 is bound to `127.0.0.1`,
+so no password is needed. The panel is unreachable from the network.
+
+To access the config panel remotely, use an SSH tunnel:
+
+```bash
+ssh -L 8097:localhost:8097 user@pi-ip
+# Then open http://localhost:8097/config/ in your local browser
+```
+
+## HTTPS via Tailscale
+
+If Tailscale is installed on the Pi, you can get trusted HTTPS with a real
+Let's Encrypt certificate — no self-signed CA distribution needed. This enables
+browser Geolocation API (device GPS) and secure remote access.
+
+The Pi serves both protocols simultaneously:
+- **HTTP on :8093** — for LAN and AREDN mesh clients (unchanged)
+- **HTTPS on :443** — for Tailscale clients via `https://<hostname>.ts.net`
+
+### Setup
+
+```bash
+# 1. Provision the certificate (requires root)
+sudo ./scripts/provision_tailscale_tls.sh
+
+# 2. Configure the environment (idempotent swap: rewrite if present, else append)
+grep -q "^TLS_MODE=" .env && sed -i 's/^TLS_MODE=.*/TLS_MODE=tailscale/' .env || echo 'TLS_MODE=tailscale' >> .env
+grep -q "^TLS_CERT_DIR=" .env && sed -i 's|^TLS_CERT_DIR=.*|TLS_CERT_DIR=/srv/geographica/tls/tailscale|' .env || echo 'TLS_CERT_DIR=/srv/geographica/tls/tailscale' >> .env
+
+# 3. Restart the frontend
+docker compose restart frontend
+
+# 4. Enable automatic certificate renewal
+sudo cp systemd/geographica-tls-renew.service /etc/systemd/system/
+sudo cp systemd/geographica-tls-renew.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now geographica-tls-renew.timer
+```
+
+Visit `https://<your-tailscale-hostname>` — green padlock, GPS works.
+
+## Companion data utility
+
+For faster imagery downloads on hardware with more bandwidth and CPU (desktop,
+laptop), use the [Geographica Companion](https://github.com/cameronzucker/geographica-companion)
+utility. It runs the same NOAA NAIP pipeline on your desktop, then transfers the
+finished MBTiles to the Pi via SCP. This is significantly faster than running the
+pipeline on the Pi itself — a desktop with 8+ cores and no swap pressure processes
+tiles ~3x faster.
+
+The companion produces the same output format (MBTiles with JPEG tiles, edge
+erosion, inpainting) — just copy the file to `/srv/geographica/data/` on the Pi
+and register it with TileServer:
+
+```bash
+scp imagery_noaa.mbtiles user@pi-ip:/srv/geographica/data/
+ssh user@pi-ip "cd ~/geographica && python3 scripts/tileserver_config.py add tileserver/config.json imagery_noaa /srv/data/imagery_noaa.mbtiles && docker compose restart tileserver"
+```
+
+## Customizing coverage area
+
+To cover a different region, adjust these values consistently:
+
+1. **`.env`** — set `BBOX` to your region's bounding box (`lon_min,lat_min,lon_max,lat_max`)
+2. **Download PBFs** — get the relevant state/country extracts from Geofabrik
+3. **Re-run data pipeline** — vector tiles, elevation, POI index
+4. **Update `tileserver/config.json`** — change `tilejson.bounds` in each style entry
+5. **Nominatim** — remove the DB volume and restart:
+   ```bash
+   docker compose down
+   docker volume rm geographica_nominatim-db geographica_nominatim-flatnode
+   docker compose up -d
+   ```
+6. **Valhalla** — delete generated graph and restart:
+   ```bash
+   rm -f data/valhalla/valhalla_tiles.tar data/valhalla/valhalla_tiles -rf
+   docker compose restart valhalla
+   ```
+
+## Ports
+
+| Port | Service | Purpose |
+|------|---------|---------|
+| **8093** | **NGINX (frontend)** | **Main entry point — UI + API proxy (HTTP)** |
+| **443** | **NGINX (frontend)** | **HTTPS — when TLS is configured** |
+| **8097** | **NGINX (config)** | **Config panel — localhost only (127.0.0.1)** |
+| 8090 | TileServer GL | Vector and raster tile API |
+| 8092 | Nominatim | Geocoding and reverse geocoding |
+| 8094 | Valhalla | Routing engine |
+| 8095 | GPS | WebSocket GPS relay |
+| 8096 | Search | Unified search API |
+| 8098 | STT | Speech-to-text (Whisper) |
+| 8099 | Setup wizard | Browser-based setup (localhost only, ephemeral) |
+| — | Pipeline (on-demand) | Imagery/elevation/OSM POI pipeline container |
+
+All services are proxied through NGINX on port 8093. The config panel on port
+8097 is bound to 127.0.0.1 and only accessible from the Pi itself. Direct port
+access is only needed for debugging.
+
+## Troubleshooting
+
+**Nominatim shows "unhealthy" during first run**
+Normal. The import takes 6-12 hours. The web server doesn't start until import
+completes. Monitor with `docker compose logs -f nominatim`. Rank 30 is the
+final (and longest) indexing stage.
+
+**Valhalla shows "unhealthy" during first run**
+Normal. Graph building takes 1-2 hours. Watch with
+`docker compose logs -f valhalla`.
+
+**Container killed by OOM**
+Check with `docker inspect <container> --format='{{.State.OOMKilled}}'`.
+**Important:** Docker memory limits require kernel cgroup support. On Raspberry Pi OS,
+this is NOT enabled by default. Run `docker info | grep "memory limit"` — if it says
+"No memory limit support," add `cgroup_enable=memory cgroup_memory=1` to
+`/boot/firmware/cmdline.txt` and reboot. Until then, the per-container `memory:` limits
+in `docker-compose.yml` are silently ignored.
+
+**GPS service can't connect to gpsd**
+gpsd defaults to listening on localhost only. Docker containers can't reach
+localhost on the host. Apply the systemd socket override in step 10 so gpsd
+listens on `0.0.0.0:2947`.
+
+**GPS shows "Expecting value" errors**
+Intermittent JSON parse errors from gpsd. Harmless — the service reconnects
+automatically. Verify gpsd is running: `systemctl status gpsd`.
+
+**Search service won't start**
+Search depends on Nominatim being healthy. It won't start until the Nominatim
+import completes. This is expected on first run.
+
+**"No route found" from Valhalla**
+The routing graph only covers the region in your PBF. Ensure your start/end
+points are within the coverage area.
+
+**TileServer returns 404 for imagery after a pipeline run**
+The pipeline uses WAL journal mode during writes. If the process exits without
+checkpointing, a multi-GB WAL file prevents TileServer from reading the MBTiles.
+Fix: `python3 -c "import sqlite3; c=sqlite3.connect('/srv/geographica/data/imagery_noaa.mbtiles'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.execute('PRAGMA journal_mode=DELETE'); c.close()"`,
+then `docker compose restart tileserver`. This is handled automatically in the
+pipeline's post-processing since commit `68edf6d`.
+
+**STT returns 405 or HTML instead of JSON**
+The NGINX config is stale. Docker file bind mounts track inodes — git operations
+that replace `nginx/nginx.conf` leave the container serving the old version.
+Fix: `docker compose up -d --force-recreate frontend`.
+
+**NAIP county mosaic pipeline returns no data**
+The USDA Gateway (`data.nal.usda.gov/api/3/`) has been unavailable since
+April 2026. The `acquire_naip.py` script targets this source but it is currently
+nonfunctional. Use NOAA Digital Coast (free, unthrottled) or National Map
+ImageServer (free, rate-limited) for NAIP imagery instead.
+
+**System crashed / OOM during first run**
+Ensure cgroup memory limits are enabled (see above). The NOAA imagery pipeline
+runs rasterio in-process with 4 reproject threads (peak RSS ~800 MB after
+GDAL_CACHEMAX cap + single-file fast path). The M2M pipeline holds all scene
+metadata in memory (~1.5 GB for Arizona's 16,000+ scenes). On 8 GB Pi 5, stop
+Docker services before running large M2M downloads: `docker compose stop`.
+NOAA runs are safe on 8 GB — the pipeline is memory-optimized with gc.collect,
+malloc_trim, cursor-based iteration, and capped GDAL cache.
+
+**Slow spatial search (5+ seconds)**
+If spatial search is slow only in the browser (curl is fast), enable HTTP/2 on
+NGINX: change `listen 443 ssl;` to `listen 443 ssl http2;` in
+`nginx/tls-include.conf`. Without HTTP/2, the browser queues search requests
+behind dozens of concurrent tile fetches (6-connection limit on HTTP/1.1).
+
+**Free-look camera (CTRL+drag) does ground orbit instead of sky rotation**
+MapLibre's internal `dragRotate` handler intercepts CTRL+drag even when
+disabled via the public API. The fix is to remove `mouseRotate` and
+`mousePitch` from MapLibre's internal `_handlers._handlersById`. This is done
+in `initFreeLookCamera()` and the `style.load` handler. If broken after code
+changes, see `docs/pitfalls/implementation-pitfalls.md` Pitfall #11.
+
+**Imagery appears blurry in hybrid mode**
+The hybrid style's imagery source needs `"tileSize": 256`. Without it, MapLibre
+defaults to 512 and requests tiles one zoom level too low. Check
+`tileserver/styles/hybrid/style.local.json` sources section.
+
+**M2M pipeline fills disk**
+The pipeline downloads GeoTIFFs in batches of 50, converts each batch to
+MBTiles, then deletes the raw files. If disk fills, the per-batch cleanup may
+have failed — check staging directories: `du -sh data/m2m_staging_*`. Clean
+with `sudo rm -rf data/m2m_staging_*`.
