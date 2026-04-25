@@ -1977,6 +1977,17 @@ body.nav-active #search-container.nav-search-open #search-icon {
 }
 .ruler-footer button:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 
+/* ── [hidden] overrides — UA stylesheet [hidden] { display: none } loses
+   to the four ruler rules above that set display: flex / grid / block.
+   Re-assert hidden=true wins. Specificity 0,2,0 (class+attribute) beats
+   the bare class 0,1,0 so no !important needed. ───────────────────── */
+.ruler-banner-inline[hidden],
+.ruler-actions[hidden],
+.ruler-stats[hidden],
+.ruler-sparkline[hidden] {
+  display: none;
+}
+
 /* ── Mobile responsive ────────────────────────────────────────── */
 @media (max-width: 480px) {
   .ruler-actions button { flex: 1 1 100%; }

@@ -760,6 +760,17 @@ Append this block to the end of `frontend/style.css`:
 }
 .ruler-footer button:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 
+/* ── [hidden] overrides — UA stylesheet [hidden] { display: none } loses
+   to the four ruler rules above that set display: flex / grid / block.
+   Re-assert hidden=true wins. Specificity 0,2,0 (class+attribute) beats
+   the bare class 0,1,0 so no !important needed. ───────────────────── */
+.ruler-banner-inline[hidden],
+.ruler-actions[hidden],
+.ruler-stats[hidden],
+.ruler-sparkline[hidden] {
+  display: none;
+}
+
 /* ── Mobile responsive ────────────────────────────────────────── */
 @media (max-width: 480px) {
   .ruler-actions button { flex: 1 1 100%; }
@@ -770,6 +781,8 @@ Append this block to the end of `frontend/style.css`:
   touch-action: manipulation;
 }
 ```
+
+**Why the `[hidden]` overrides matter:** `.ruler-banner-inline` (display:flex), `.ruler-actions` (display:flex), `.ruler-stats` (display:grid), and `.ruler-sparkline` (display:block) each set an explicit `display:` rule that beats the UA stylesheet's `[hidden] { display: none }`. Without the explicit `[hidden]` overrides, those elements remain visible despite carrying the `hidden` HTML attribute. The Phase 0 ship surfaced this on the inline banner — the empty Measure tab showed a gray banner box with a non-functional ✕ button until the fix landed.
 
 - [ ] **Step 2: Smoke test.**
 
