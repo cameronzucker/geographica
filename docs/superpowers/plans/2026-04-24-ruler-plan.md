@@ -908,21 +908,29 @@ test('bearingDeg: result always in [0, 360)', () => {
 
 test('bearingDeg: reciprocal differs by ~180°', () => {
   const t = loadRuler();
-  // For short segments at modest latitudes the reciprocal is within 0.5°
+  // For short segments at modest latitudes the reciprocal is within 0.5°.
+  // Normalize: wrap |fwd - rev| to [0°, 360°) then measure distance from 180°.
+  // (Note: JS `%` is sign-preserving, so we must do `+ 360 then % 360`
+  // — Python-style `((x % 360 + 540) % 360 - 180)` does NOT work in JS for
+  // negative `x`. See impl-log 2026-04-25 Task 1.1.)
   const a = [-112.07, 33.45];
   const b = [-112.05, 33.46];
   const fwd = t.bearingDeg(a, b);
   const rev = t.bearingDeg(b, a);
-  const diff = Math.abs(((fwd - rev) % 360 + 540) % 360 - 180);
+  const diff = Math.abs(((fwd - rev) + 360) % 360 - 180);
   assert.ok(diff < 0.5, `reciprocal mismatch: fwd=${fwd} rev=${rev} diff=${diff}`);
 });
 
-test('bearingDeg: AZ→CO USGS reference (Phoenix → Denver) ~37° (NE)', () => {
+test('bearingDeg: AZ→CO reference (Phoenix → Denver) ~40° (NE)', () => {
   const t = loadRuler();
-  // Phoenix Sky Harbor [-112.0117, 33.4342] → Denver DIA [-104.6739, 39.8617]
-  // USGS reference forward azimuth: ~37.0° at start
+  // Phoenix Sky Harbor [-112.0117, 33.4342] → Denver DIA [-104.6739, 39.8617].
+  // Standard great-circle initial bearing: ~40.35° (verified directly against
+  // the formula and cross-checked with multiple geodesy calculators).
+  // (Plan v1/v2 cited ~37° as a "USGS reference" — that was wrong; the
+  // correct spherical-Earth value is ~40.35°. See impl-log 2026-04-25
+  // Task 1.1.)
   const b = t.bearingDeg([-112.0117, 33.4342], [-104.6739, 39.8617]);
-  assert.ok(Math.abs(b - 37.0) < 1.0, `expected ~37°, got ${b}`);
+  assert.ok(Math.abs(b - 40.35) < 1.0, `expected ~40.35°, got ${b}`);
 });
 ```
 
