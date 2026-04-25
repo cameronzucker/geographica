@@ -347,6 +347,14 @@
       view.abortController.abort();
       view.abortController = null;
     }
+    // If a vertex drag is in progress when state machine resets (e.g.,
+    // user clicks [+ New measurement] mid-drag), re-enable dragPan and
+    // clear the sub-state. Without this, dragPan stays disabled and the
+    // map is unpannable until the next drag completes.
+    if (view.dragging) {
+      if (map) map.dragPan.enable();
+      view.dragging = null;
+    }
     view.samplingGen++;
     view.lastClick = null;
     state.status = 'idle';

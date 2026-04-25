@@ -15,10 +15,8 @@ test('scheduleSourceUpdate coalesces N calls per frame to 1 callback', async () 
   vmCtx.requestAnimationFrame = ctx.requestAnimationFrame;
   vmCtx.cancelAnimationFrame  = ctx.cancelAnimationFrame;
 
-  let updateCount = 0;
-  // Stub refreshMapData via a side-channel: since refreshMapData is internal,
-  // we instead instrument scheduleSourceUpdate's behaviour by counting how
-  // many times rAF was queued.
+  // refreshMapData is internal, so instead of spying on it we instrument
+  // scheduleSourceUpdate's coalescing behaviour by counting rAF registrations.
   for (let i = 0; i < 10; i++) t.scheduleSourceUpdate();
   // The coalescer must register at most ONE rAF.
   assert.strictEqual(frameCallbacks.length, 1, 'expected 1 rAF call, got ' + frameCallbacks.length);
