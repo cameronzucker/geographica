@@ -66,7 +66,8 @@
 
   function clear() {
     clearAll();
-    // Phase 2.7+ extends this to call renderPanel() + refreshMapData() for view sync.
+    refreshMapData();
+    renderPanel();
   }
 
   // ─── Geodesy ───────────────────────────────────────────────────────
@@ -348,7 +349,7 @@
 
     addVertex(e.lngLat.lng, e.lngLat.lat);
     refreshMapData();
-    // Phase 2.7 wires renderPanel() into this flow.
+    renderPanel();
   }
 
   // ─── Keyboard handler (spec §C.6) ──────────────────────────────────
@@ -364,7 +365,7 @@
         popVertex();
         if (e.preventDefault) e.preventDefault();
         refreshMapData();
-        // Phase 2.7 renders the panel.
+        renderPanel();
         return;
       }
       // Phase 3.7 extends this to handle editing-state vertex deletion.
@@ -377,18 +378,21 @@
         else clearAll();
         if (e.preventDefault) e.preventDefault();
         refreshMapData();
+        renderPanel();
         return;
       }
       if (state.status === 'inserting') {
         cancelInsert();
         if (e.preventDefault) e.preventDefault();
         refreshMapData();
+        renderPanel();
         return;
       }
       if (state.status === 'editing' && state.selectedVertex !== null) {
         deselectVertex();
         if (e.preventDefault) e.preventDefault();
         refreshMapData();
+        renderPanel();
         return;
       }
       return;
@@ -399,12 +403,169 @@
         finishDrawing();
         if (e.preventDefault) e.preventDefault();
         refreshMapData();
+        renderPanel();
         // Phase 4.7 wires startSampling() here.
         return;
       }
       return;
     }
     // Phase 5.3 extends to Tab/Space/Arrows.
+  }
+
+  // ─── DOM rendering — panel + banner ────────────────────────────────
+  // Single source-of-truth: every state mutation calls renderPanel().
+  // NEVER use innerHTML. textContent only. Safe-clear via removeChild.
+
+  function $id(id) { return document.getElementById(id); }
+
+  function setHidden(el, hidden) {
+    if (!el) return;
+    el.hidden = !!hidden;
+  }
+
+  function clearChildren(el) {
+    if (!el) return;
+    while (el.firstChild) el.removeChild(el.firstChild);
+  }
+
+  function renderVertexList() {
+    var listEl = $id('ruler-vertex-list');
+    if (!listEl) return;
+    clearChildren(listEl);
+    for (var i = 0; i < state.vertices.length; i++) {
+      var v = state.vertices[i];
+      var row = document.createElement('li');
+      row.className = 'ruler-vertex-row';
+      row.setAttribute('role', 'listitem');
+      row.setAttribute('tabindex', '0');
+      row.setAttribute('data-vertex-index', String(i));
+      if (state.selectedVertex === i) {
+        row.classList.add('selected');
+        row.setAttribute('aria-selected', 'true');
+      } else {
+        row.setAttribute('aria-selected', 'false');
+      }
+      var top = document.createElement('div');
+      top.className = 'ruler-vertex-row-top';
+      var labelEl = document.createElement('span');
+      labelEl.className = 'ruler-vertex-row-label';
+      labelEl.textContent = v.label;
+      var coordsEl = document.createElement('span');
+      coordsEl.className = 'ruler-vertex-row-coords';
+      coordsEl.textContent =
+        window._formatDD(v.lat, 'NS') + ', ' + window._formatDD(v.lng, 'EW');
+      top.appendChild(labelEl);
+      top.appendChild(coordsEl);
+      row.appendChild(top);
+
+      if (i < state.vertices.length - 1 && state.segments[i]) {
+        var seg = state.segments[i];
+        var segEl = document.createElement('div');
+        segEl.className = 'ruler-vertex-row-seg';
+        var dEl = document.createElement('span');
+        dEl.textContent = '↓ ' + formatRulerDistance(seg.distance_m);
+        var bEl = document.createElement('span');
+        bEl.textContent = seg.bearing_deg.toFixed(1) + '°';
+        segEl.appendChild(dEl);
+        segEl.appendChild(bEl);
+        row.appendChild(segEl);
+      }
+
+      // Click handler closes over the index for this row.
+      row.addEventListener('click', (function (idx) {
+        return function () {
+          if (state.status === 'editing') {
+            if (state.selectedVertex === idx) deselectVertex();
+            else selectVertex(idx);
+            refreshMapData();
+            renderPanel();
+          }
+        };
+      })(i));
+
+      listEl.appendChild(row);
+    }
+  }
+
+  function renderBanners() {
+    var floating = $id('ruler-mode-banner');
+    var floatingTxt = $id('ruler-mode-banner-text');
+    var inline = $id('ruler-banner-inline');
+    var inlineTxt = $id('ruler-banner-inline-text');
+    if (state.status === 'drawing') {
+      var msg = state.vertices.length === 0
+        ? 'Tap map to place first vertex'
+        : 'Tap map to add more, or [Finish] when done';
+      if (floatingTxt) floatingTxt.textContent = msg;
+      if (inlineTxt) inlineTxt.textContent = msg;
+      setHidden(floating, false);
+      setHidden(inline, false);
+    } else if (state.status === 'inserting') {
+      var slot = state.insertSlot ? state.insertSlot.before : 0;
+      var msg2 = 'Tap map to insert vertex (slot V' + (slot + 1) + ')';
+      if (floatingTxt) floatingTxt.textContent = msg2;
+      if (inlineTxt) inlineTxt.textContent = msg2;
+      setHidden(floating, false);
+      setHidden(inline, false);
+    } else {
+      setHidden(floating, true);
+      setHidden(inline, true);
+    }
+  }
+
+  function renderHeadline() {
+    var headlineSection = $id('ruler-headline-section');
+    var totalEl = $id('ruler-headline-total');
+    var visible = state.vertices.length >= 2;
+    setHidden(headlineSection, !visible);
+    if (visible && totalEl) totalEl.textContent = formatRulerDistance(state.totalDistance_m);
+  }
+
+  function renderActionRow() {
+    var actionRow = $id('ruler-action-row');
+    var actionEmpty = $id('ruler-action-empty');
+    var visible = state.status === 'editing' && state.selectedVertex !== null;
+    setHidden(actionRow, !visible);
+    setHidden(actionEmpty, visible || state.status !== 'editing');
+  }
+
+  function renderFooter() {
+    var undo = $id('ruler-undo');
+    var clearBtn = $id('ruler-clear');
+    var finish = $id('ruler-finish');
+    var newBtn = $id('ruler-new');
+    if (state.status === 'drawing') {
+      setHidden(undo, false);
+      setHidden(clearBtn, false);
+      setHidden(finish, state.vertices.length < 2);
+      setHidden(newBtn, true);
+    } else if (state.status === 'editing') {
+      setHidden(undo, true);
+      setHidden(clearBtn, false);
+      setHidden(finish, true);
+      setHidden(newBtn, false);
+    } else if (state.status === 'inserting') {
+      setHidden(undo, true); setHidden(clearBtn, true);
+      setHidden(finish, true); setHidden(newBtn, true);
+    } else {
+      setHidden(undo, true); setHidden(clearBtn, true);
+      setHidden(finish, true); setHidden(newBtn, true);
+    }
+  }
+
+  function renderPanel() {
+    var vertexSection = $id('ruler-vertex-section');
+    var visible = state.vertices.length > 0;
+    setHidden(vertexSection, !visible);
+    var countEl = $id('ruler-vertex-count');
+    if (countEl) countEl.textContent = String(state.vertices.length);
+
+    renderVertexList();
+    renderBanners();
+    renderHeadline();
+    renderActionRow();
+    renderFooter();
+    // Phase 4.5+ adds renderElevation().
   }
 
   // ─── Map source/layer wiring (spec §D) ─────────────────────────────
@@ -573,5 +734,6 @@
     refreshMapData: refreshMapData,
     handleMapClick: handleMapClick,
     handleKeydown: handleKeydown,
+    renderPanel: renderPanel,
   };
 })();
