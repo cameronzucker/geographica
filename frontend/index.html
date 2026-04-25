@@ -47,6 +47,7 @@
       <button class="tab-btn" data-panel="route-panel">Route</button>
       <button class="tab-btn" data-panel="import-panel">Import</button>
       <button class="tab-btn" data-panel="admin-panel">Admin</button>
+      <button class="tab-btn" data-panel="measure-panel">Measure</button>
     </div>
 
     <!-- Layers panel -->
@@ -250,6 +251,49 @@
 
       <p class="admin-refresh-note">Auto-refreshes every 10s</p>
     </div>
+
+    <!-- Measure panel — ruler / measurement tool -->
+    <div id="measure-panel" class="panel">
+      <h3>Measure</h3>
+      <div id="ruler-banner-inline" class="ruler-banner-inline" role="status" aria-live="polite" hidden>
+        <span id="ruler-banner-inline-text"></span>
+        <button type="button" id="ruler-banner-inline-cancel" aria-label="Cancel ruler mode">×</button>
+      </div>
+      <div id="ruler-headline-section" hidden>
+        <div class="ruler-headline-label">Total distance</div>
+        <div id="ruler-headline-total" class="ruler-headline">—</div>
+      </div>
+      <div id="ruler-vertex-section" class="ruler-section" hidden>
+        <h4>Vertices (<span id="ruler-vertex-count">0</span>)</h4>
+        <ol id="ruler-vertex-list" role="list" aria-label="Measurement vertices"></ol>
+        <div id="ruler-action-row" class="ruler-actions" hidden>
+          <button type="button" id="ruler-insert-before" class="primary">↑ Insert Before</button>
+          <button type="button" id="ruler-insert-after"  class="primary">↓ Insert After</button>
+          <button type="button" id="ruler-delete-vertex" class="danger">✗ Delete</button>
+        </div>
+        <p id="ruler-action-empty" class="ruler-action-empty">Tap a vertex on the map or in the list above to edit.</p>
+      </div>
+      <div id="ruler-elevation-section" class="ruler-section" hidden>
+        <h4>Elevation profile</h4>
+        <div id="ruler-sampling-progress" class="ruler-sampling-progress" hidden>
+          <span id="ruler-sampling-counter">Loading elevation… 0 / 0 tiles</span>
+        </div>
+        <svg id="ruler-sparkline" class="ruler-sparkline" viewBox="0 0 250 80" preserveAspectRatio="none" role="img" aria-label="Elevation profile placeholder" hidden></svg>
+        <div id="ruler-stats" class="ruler-stats" hidden>
+          <div class="label">Min:</div>  <div id="ruler-stat-min"  class="value">—</div>
+          <div class="label">Max:</div>  <div id="ruler-stat-max"  class="value">—</div>
+          <div class="label">Gain:</div> <div id="ruler-stat-gain" class="value">—</div>
+          <div class="label">Loss:</div> <div id="ruler-stat-loss" class="value">—</div>
+        </div>
+        <div id="ruler-coverage-warn" class="ruler-coverage-warn" hidden></div>
+      </div>
+      <div id="ruler-footer" class="ruler-footer">
+        <button type="button" id="ruler-undo"   hidden>↶ Undo</button>
+        <button type="button" id="ruler-clear"  hidden>Clear</button>
+        <button type="button" id="ruler-finish" class="primary" hidden>Finish</button>
+        <button type="button" id="ruler-new"    class="primary" hidden>+ New measurement</button>
+      </div>
+    </div>
   </div>
 
   <!-- ===== GPS status badge ===== -->
@@ -340,6 +384,11 @@
       <span id="nav-speed"></span>
     </div>
     <div id="nav-banner" class="hidden"></div>
+    <!-- Ruler floating mode banner — overlays the map during drawing/inserting -->
+    <div id="ruler-mode-banner" class="hidden" role="status" aria-live="polite" hidden>
+      <span id="ruler-mode-banner-text"></span>
+      <button type="button" id="ruler-mode-banner-cancel" aria-label="Cancel ruler mode">×</button>
+    </div>
   </div>
 
   <!-- ===== Re-center on route button ===== -->
@@ -365,6 +414,7 @@
   <script src="silent-video-lock.js?v=20260420"></script>
   <script src="wake-lock.js?v=20260420"></script>
   <script src="voice-picker.js?v=20260421"></script>
+  <script src="ruler.js"></script>
   <script src="navigation.js?v=20260420"></script>
   <script src="nav-ui.js?v=20260420"></script>
   <script src="stt.js"></script>
