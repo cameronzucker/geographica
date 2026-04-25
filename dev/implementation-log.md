@@ -1,5 +1,65 @@
 # Implementation Log
 
+## 2026-04-25 — README overhaul Phases 0-4 + cost-methodology adversarial cycle + ROI pitch document
+
+**Released as:** not yet released (Phase 5-7 remain — screenshots + OG image + final review).
+**Spec / plan:** [docs/superpowers/specs/2026-04-25-readme-overhaul-design.md](../docs/superpowers/specs/2026-04-25-readme-overhaul-design.md) v2 (commit `432bb5b`) + [docs/superpowers/plans/2026-04-25-readme-overhaul-plan.md](../docs/superpowers/plans/2026-04-25-readme-overhaul-plan.md) (commit `4be2554`).
+**Agent moniker:** tinaja (Opus 4.7, 1M context). 16 unique subagent dispatches (registry in handoff).
+**Handoff:** [memory/handoff_20260425_readme_overhaul_phases_0_4_SHIPPED_phase_5_pending.md](../../.claude/projects/-home-administrator-Code-geographica/memory/handoff_20260425_readme_overhaul_phases_0_4_SHIPPED_phase_5_pending.md)
+
+### Summary
+
+Cameron requested a polish pass on the 838-line monolithic README to make Geographica presentable to "important people as an example of what modern agent team development can accomplish on a minimal budget in a short timespan." The session executed Phases 0-4 of a 7-phase plan plus a separately-scoped enterprise-pitch artifact.
+
+Three high-value side effects came out of the adversarial-review discipline:
+
+1. **Cost-methodology adversarial cycle caught a 6-8× headline-cost overstatement before it shipped to "important people."** The brainstorm-era audit code had three compounding bugs: subagent glob double-counting (~30% inflation on subagents), per-line summing of streaming JSONL records (1.85× per-message inflation), and wrong Opus pricing constants ($15/$75 vs Anthropic's actual $5/$25 for Opus 4.5/4.6/4.7 — 3× per-Opus-token overstatement). 4 reviewers in parallel (R1 wren / R2 basalt / R3 flint Sonnet + R5 Codex GPT-5.4) caught all three in ~30 minutes wall-clock. Codex's WebFetch of Anthropic's pricing page broke the same-model debug loop that 3 Sonnet rounds and 3 prior code iterations could not. Corrected canonical numbers: **$284 uncached / $3,593 full list**, vs the brainstorm-era inflated $2,489 / $21,858. R3 also caught 3 CRITICAL framing errors (cache-write exclusion unjustified, "matches ccusage" appeal-to-tool, cache-reads-as-artifact asserted-not-argued) that cleaned up the methodology-page voice.
+
+2. **`docs/CROSS_MODEL_REVIEW_VALUE.md` shipped as a separate enterprise-pitch artifact** for Cameron's employer (currently OpenAI/Codex-only, evaluating whether to add Claude). Went through 3 revisions: gravel/Sonnet v1 → Codex methodology validation caught 4 structural errors → shale/Opus v2 → Cameron caught a context-supply error (consumer-vs-enterprise pricing assumption that 3 model agents shared) → saltbush/Opus v3 reframed around API consumption (~$50/dev/yr) instead of subscription pricing. Headline ROI: ~1000× (incremental Claude API budget vs avoided downstream cost). Notably introduced **Mechanism C — context-supply errors** as a third class of failure mode that even cross-model review explicitly does not catch (only human contextual review does). Documented in both CROSS_MODEL_REVIEW_VALUE.md and PROCESS.md §5.
+
+3. **All 5 production docs hold the no-first-person voice rule** (per `feedback_writing_voice_no_first_person.md`). Verified by grep gate on every commit. Voice rule is most-at-risk in PROCESS.md (most narrative document) — held throughout.
+
+### Production docs shipped
+
+| File | Lines | Commit | Author |
+|---|---:|---|---|
+| `README.md` (rewrite from 838 → 202 lines) | 202 | `2235f40` | mesquite |
+| `docs/SETUP.md` (new) | 104 | `be4abd1` | pumice |
+| `docs/MANUAL_SETUP.md` (new, extracted) | 593 | `49e6902` | torrey |
+| `docs/PROCESS.md` (new) | 184 | `b9a2ff2` | tumbleweed |
+| `docs/COST_METHODOLOGY.md` (new) | 150 | `89f3da0` | yarrow |
+| `docs/CACHE_OPTIMIZATION.md` (new) | 119 | `89f3da0` | yarrow |
+| `docs/CROSS_MODEL_REVIEW_VALUE.md` (new) | 375 | `7b4e188` | saltbush |
+| `scripts/audit_inference_cost.py` (new, with tests + fixtures) | — | `e456666` | lichen (final correction) |
+
+### Adversarial reviews committed (all in `dev/adversarial/`)
+
+- `2026-04-25-cost-methodology-r1-math.md` (wren, `20af93f`)
+- `2026-04-25-cost-methodology-r2-coverage.md` (basalt, `eccf056`)
+- `2026-04-25-cost-methodology-r3-framing.md` (flint, `981c5d3`)
+- `2026-04-25-cost-methodology-r5-codex.md` (Codex, committed with spec v2 in `432bb5b`)
+- `2026-04-25-cross-model-roi-validation-codex.md` (Codex methodology validation of the ROI doc, `1403ad1`)
+
+### What did NOT ship — Phase 5, 6, 7 deferred
+
+Phase 5 (screenshots) is the most coordination-heavy phase and was deferred for next session. Hardware dependencies: live stack at `:8093`/`:8097` for Playwright captures, Cameron's phone for in-vehicle nav shot, Cameron's GPS state for the hero "everything shot." Until Phase 5 lands, the README has 6 broken image refs visible on github.com.
+
+Phase 6 (OG image, link audit, Mermaid render verification) is mostly downstream of Phase 5. Phase 7 (user end-to-end review + final impl-log) is the close-out.
+
+### Key lessons captured
+
+- **Brainstorm-era code with no ground-truth gets confidently wrong.** The original cost number ($16K → $17K → $22K across three iterations) was each pass's "more careful" estimate. None of them questioned the underlying assumptions. Only fixture-driven TDD (with known token counts) plus a different model's WebFetch (with known pricing) broke out.
+- **Cross-model review catches what same-model review systematically misses.** R3 (Sonnet/framing) flagged the cost number's framing as suspicious *structurally*; R5 (Codex/math) caught the *mechanistic* root causes. Either alone produced a partial fix; together produced a complete one.
+- **Cross-model review does NOT catch context-supply errors.** All three model agents drafting the ROI doc accepted "Claude Max ($2,400/yr)" because the dispatch context referenced consumer pricing. Cameron caught it on first read of v2. This is now Mechanism C in PROCESS.md.
+- **Single-Opus full-doc dispatches outperform N-task sequential dispatches** for prose-heavy production documents. Phase 2 (yarrow), Phase 3 (tumbleweed), and Phase 4 (mesquite) all used single-dispatch pattern; the plan's per-task dispatch model was over-fragmented for what Opus can handle in one task.
+- **Line targets in dispatch consistently over-shoot actual landing.** yarrow (150 vs 250-300), tumbleweed (184 vs 250-350), saltbush (375 vs 280-340), mesquite (202 vs 180-220 — only one in target range). The pattern: information-dense prose lands shorter than estimated. Don't pad to hit a line target; trust the substance check.
+
+### Numbers as of this entry
+
+974 commits at session start (`tumbleweed` re-verified for PROCESS.md §1) → 979+ at handoff. 25 named agents. 42 specs, 25 plans, 105 test files. Inference cost for whole project: $284 uncached / $3,593 full list / ~$200/mo paid.
+
+---
+
 ## 2026-04-25 — Ruler / measurement tool — Phase 2 redesign + field-verified
 
 **Released as:** not yet released (Phase 3-5 remain). Cameron field-verified the new UX as "wildly improved" — Phase 2 is functionally ship-ready pending Phase 3 wrap-up.
