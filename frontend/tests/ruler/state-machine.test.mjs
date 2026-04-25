@@ -11,8 +11,25 @@ test('initial state is idle, vertices empty', () => {
   assert.strictEqual(s.insertSlot, null);
 });
 
-test('addVertex from idle transitions to drawing', () => {
+test('addVertex from idle is a no-op (explicit activation required)', () => {
   const { test: t } = loadRuler();
+  t.addVertex(-112.07, 33.45);
+  const s = t.getState();
+  assert.strictEqual(s.status, 'idle');
+  assert.strictEqual(s.vertices.length, 0);
+});
+
+test('startNewMeasurement transitions idle → drawing-empty', () => {
+  const { test: t } = loadRuler();
+  t.startNewMeasurement();
+  const s = t.getState();
+  assert.strictEqual(s.status, 'drawing');
+  assert.strictEqual(s.vertices.length, 0);
+});
+
+test('addVertex during drawing appends V1', () => {
+  const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   const s = t.getState();
   assert.strictEqual(s.status, 'drawing');
@@ -23,6 +40,7 @@ test('addVertex from idle transitions to drawing', () => {
 
 test('addVertex twice produces 2 vertices and 1 segment', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   const s = t.getState();
@@ -33,17 +51,19 @@ test('addVertex twice produces 2 vertices and 1 segment', () => {
   assert.ok(s.segments[0].bearing_deg >= 0 && s.segments[0].bearing_deg < 360);
 });
 
-test('popVertex from drawing with 1 vertex returns to idle', () => {
+test('popVertex from drawing with 1 vertex stays in drawing-empty', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.popVertex();
   const s = t.getState();
-  assert.strictEqual(s.status, 'idle');
+  assert.strictEqual(s.status, 'drawing');
   assert.strictEqual(s.vertices.length, 0);
 });
 
 test('popVertex from drawing with multiple vertices stays in drawing', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.addVertex(-112.03, 33.47);
@@ -55,6 +75,7 @@ test('popVertex from drawing with multiple vertices stays in drawing', () => {
 
 test('finishDrawing requires >=2 vertices, transitions to editing', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.finishDrawing();   // 1 vertex: should be a no-op
   assert.strictEqual(t.getState().status, 'drawing');
@@ -65,6 +86,7 @@ test('finishDrawing requires >=2 vertices, transitions to editing', () => {
 
 test('clearAll resets to idle from any state', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -78,8 +100,22 @@ test('clearAll resets to idle from any state', () => {
   assert.strictEqual(s.totalDistance_m, 0);
 });
 
+test('startNewMeasurement from editing discards prior measurement', () => {
+  const { test: t } = loadRuler();
+  t.startNewMeasurement();
+  t.addVertex(-112.07, 33.45);
+  t.addVertex(-112.05, 33.46);
+  t.finishDrawing();
+  assert.strictEqual(t.getState().status, 'editing');
+  t.startNewMeasurement();
+  const s = t.getState();
+  assert.strictEqual(s.status, 'drawing');
+  assert.strictEqual(s.vertices.length, 0);
+});
+
 test('selectVertex requires editing state', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.selectVertex(0);  // still drawing — should be no-op
@@ -91,6 +127,7 @@ test('selectVertex requires editing state', () => {
 
 test('deselectVertex clears selection without leaving editing', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -103,6 +140,7 @@ test('deselectVertex clears selection without leaving editing', () => {
 
 test('startInsertAfter from editing transitions to inserting with slot=index+1', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -115,6 +153,7 @@ test('startInsertAfter from editing transitions to inserting with slot=index+1',
 
 test('startInsertBefore from editing transitions to inserting with slot=index', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -127,6 +166,7 @@ test('startInsertBefore from editing transitions to inserting with slot=index', 
 
 test('cancelInsert returns to editing with previous selection preserved', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -143,6 +183,7 @@ test('shape invariant: vertices.length < 2 ⇒ segments.length === 0', () => {
   const { test: t } = loadRuler();
   let s = t.getState();
   assert.strictEqual(s.segments.length, 0);
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   s = t.getState();
   assert.strictEqual(s.segments.length, 0);
@@ -150,6 +191,7 @@ test('shape invariant: vertices.length < 2 ⇒ segments.length === 0', () => {
 
 test('shape invariant: clearAll wipes everything atomically', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();

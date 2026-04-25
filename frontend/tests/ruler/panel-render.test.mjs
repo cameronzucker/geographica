@@ -47,7 +47,8 @@ function makeMeasurePanelDocument() {
     elems[name].id = name;
     return elems[name];
   }
-  id('measure-panel'); id('ruler-banner-inline'); id('ruler-banner-inline-text', 'span');
+  id('measure-panel'); id('ruler-idle-hint', 'p');
+  id('ruler-banner-inline'); id('ruler-banner-inline-text', 'span');
   id('ruler-banner-inline-cancel', 'button');
   id('ruler-headline-section'); id('ruler-headline-total');
   id('ruler-vertex-section'); id('ruler-vertex-count', 'span');
@@ -86,6 +87,7 @@ test('renderPanel idle state: empty placeholder, finish hidden', () => {
 test('renderPanel drawing state: banner visible, vertex list rendered', () => {
   const doc = makeMeasurePanelDocument();
   const { test: t } = loadRuler({ fakeDocument: doc });
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.renderPanel();
@@ -97,6 +99,7 @@ test('renderPanel drawing state: banner visible, vertex list rendered', () => {
 test('renderPanel uses textContent (NEVER innerHTML)', () => {
   const doc = makeMeasurePanelDocument();
   const { test: t } = loadRuler({ fakeDocument: doc });
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.renderPanel();
@@ -112,6 +115,7 @@ test('renderPanel uses textContent (NEVER innerHTML)', () => {
 test('renderPanel editing state: action row + new measurement button visible', () => {
   const doc = makeMeasurePanelDocument();
   const { test: t } = loadRuler({ fakeDocument: doc });
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -127,6 +131,7 @@ test('renderPanel editing state: action row + new measurement button visible', (
 test('renderPanel editing with selection: action row visible, empty hidden', () => {
   const doc = makeMeasurePanelDocument();
   const { test: t } = loadRuler({ fakeDocument: doc });
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -139,9 +144,21 @@ test('renderPanel editing with selection: action row visible, empty hidden', () 
 test('renderPanel: vertex count badge tracks state', () => {
   const doc = makeMeasurePanelDocument();
   const { test: t } = loadRuler({ fakeDocument: doc });
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.addVertex(-112.03, 33.47);
   t.renderPanel();
   assert.strictEqual(doc.elems['ruler-vertex-count'].textContent, '3');
+});
+
+test('renderPanel idle: [+ New measurement] button is visible (explicit-activation entry point)', () => {
+  const doc = makeMeasurePanelDocument();
+  const { test: t } = loadRuler({ fakeDocument: doc });
+  t.renderPanel();
+  assert.strictEqual(doc.elems['ruler-new'].hidden, false, 'idle should show [+ New measurement] button');
+  assert.strictEqual(doc.elems['ruler-finish'].hidden, true);
+  assert.strictEqual(doc.elems['ruler-clear'].hidden, true);
+  assert.strictEqual(doc.elems['ruler-undo'].hidden, true);
+  assert.strictEqual(doc.elems['ruler-idle-hint'].hidden, false);
 });

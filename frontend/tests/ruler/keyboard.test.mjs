@@ -17,6 +17,7 @@ function fakeKey(key, opts = {}) {
 
 test('Backspace during drawing pops last vertex', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.handleKeydown(fakeKey('Backspace'));
@@ -27,6 +28,7 @@ test('Backspace during drawing pops last vertex', () => {
 
 test('Backspace inside an INPUT does NOT pop a vertex', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.handleKeydown(fakeKey('Backspace', { tagName: 'INPUT' }));
@@ -35,6 +37,7 @@ test('Backspace inside an INPUT does NOT pop a vertex', () => {
 
 test('Backspace inside a TEXTAREA does NOT pop a vertex', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.handleKeydown(fakeKey('Backspace', { tagName: 'TEXTAREA' }));
@@ -43,6 +46,7 @@ test('Backspace inside a TEXTAREA does NOT pop a vertex', () => {
 
 test('Backspace inside contentEditable does NOT pop a vertex', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.handleKeydown(fakeKey('Backspace', { isContentEditable: true }));
@@ -51,6 +55,7 @@ test('Backspace inside contentEditable does NOT pop a vertex', () => {
 
 test('Esc during drawing with >=2 vertices transitions to editing', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.handleKeydown(fakeKey('Escape'));
@@ -59,13 +64,23 @@ test('Esc during drawing with >=2 vertices transitions to editing', () => {
 
 test('Esc during drawing with <2 vertices returns to idle', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
+  t.handleKeydown(fakeKey('Escape'));
+  assert.strictEqual(t.getState().status, 'idle');
+});
+
+test('Esc during drawing-empty (no vertices) returns to idle', () => {
+  const { test: t } = loadRuler();
+  t.startNewMeasurement();
+  // No vertices yet; user pressed Esc to cancel out of measure mode.
   t.handleKeydown(fakeKey('Escape'));
   assert.strictEqual(t.getState().status, 'idle');
 });
 
 test('Esc during inserting returns to editing', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -77,6 +92,7 @@ test('Esc during inserting returns to editing', () => {
 
 test('Esc during editing with selection deselects vertex', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.finishDrawing();
@@ -89,6 +105,7 @@ test('Esc during editing with selection deselects vertex', () => {
 
 test('Enter during drawing with >=2 vertices finishes', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.addVertex(-112.05, 33.46);
   t.handleKeydown(fakeKey('Enter'));
@@ -97,6 +114,7 @@ test('Enter during drawing with >=2 vertices finishes', () => {
 
 test('Enter during drawing with <2 vertices is a no-op', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.07, 33.45);
   t.handleKeydown(fakeKey('Enter'));
   assert.strictEqual(t.getState().status, 'drawing');

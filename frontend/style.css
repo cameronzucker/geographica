@@ -1137,6 +1137,14 @@ h4 {
   display: block;
 }
 
+/* While ruler is in drawing/inserting mode, let map clicks fall through
+   the sidebar overlay so vertices can be placed without auto-closing the
+   sidebar (which would hide the live vertex list, banner, and Finish/Clear
+   actions). Mirrors the bbox-drawing flag pattern at app.js:1206. */
+body.ruler-active #sidebar-overlay {
+  pointer-events: none;
+}
+
 /* ----- About Dialog ----- */
 #about-overlay {
   position: fixed; inset: 0; z-index: 100;

@@ -41,12 +41,6 @@
     rafHandle: null,
     domListenerCleanups: [],
     lastClick: null,          // { x, y, t } — debounce reference (Phase 2.5)
-    // spec §B gate for handleMapClick (Phase 2.8). Defaults to true so
-    // unit-test contexts (which never call init() and therefore never
-    // discover the page's tab DOM) don't have every click suppressed.
-    // init() flips to the correct boolean by inspecting #measure-panel.hidden
-    // and wiring tab-button click listeners.
-    measureTabActive: true,
   };
 
   // Click-debounce parameters per spec §F (5 px AND 250 ms).
@@ -74,35 +68,17 @@
     map.on('click', handleMapClick);
     document.addEventListener('keydown', handleKeydown);
 
-    // ── Tab activation + Measure-tab-active flag (Step 1 + 1.5) ──
-    var measureBtn = document.querySelector
-      ? document.querySelector('.tab-btn[data-panel="measure-panel"]')
-      : null;
-    if (measureBtn) {
-      measureBtn.addEventListener('click', function () {
-        view.measureTabActive = true;
-        renderPanel();
-        updateCursor();
-      });
-    }
-    var siblingTabs = document.querySelectorAll
-      ? document.querySelectorAll('.tab-btn:not([data-panel="measure-panel"])')
-      : null;
-    if (siblingTabs && siblingTabs.forEach) {
-      siblingTabs.forEach(function (btn) {
-        btn.addEventListener('click', function () { view.measureTabActive = false; });
-      });
-    }
-    // Initialize from current panel-active state. Project convention uses
-    // the .active class on the panel (CSS-driven, see style.css .panel.active),
-    // NOT the [hidden] attribute. If no panel exists, leave the default
-    // (true) — there's no UI to gate against.
-    var measurePanel = document.getElementById('measure-panel');
-    if (measurePanel && measurePanel.classList) {
-      view.measureTabActive = measurePanel.classList.contains('active');
-    }
-
-    // ── Footer button wiring (Step 3) ──
+    // ── Footer button wiring ──
+    // [+ New measurement] is the single explicit-activation entry point.
+    // In idle state it transitions to drawing; in editing it discards the
+    // current measurement and starts fresh. Either way: clearAll() then
+    // status='drawing' (drawing-empty, ready for first map tap).
+    var newBtn = document.getElementById('ruler-new');
+    if (newBtn) newBtn.addEventListener('click', function () {
+      startNewMeasurement();
+      refreshMapData();
+      renderPanel();
+    });
     var clearBtn = document.getElementById('ruler-clear');
     if (clearBtn) clearBtn.addEventListener('click', function () {
       clear();
@@ -113,10 +89,6 @@
       refreshMapData();
       renderPanel();
       // Phase 4.7 wires startSampling() here.
-    });
-    var newBtn = document.getElementById('ruler-new');
-    if (newBtn) newBtn.addEventListener('click', function () {
-      clear();
     });
     var undoBtn = document.getElementById('ruler-undo');
     if (undoBtn) undoBtn.addEventListener('click', function () {
@@ -139,7 +111,7 @@
     if (inlineCancel) inlineCancel.addEventListener('click', cancelBannerHandler);
     if (floatCancel)  floatCancel.addEventListener('click', cancelBannerHandler);
 
-    // Initial render — a fresh page may already have Measure as active tab.
+    // Initial render.
     renderPanel();
     updateCursor();
     // Phase 5.2 wires units-changed redraw.
@@ -321,8 +293,18 @@
   }
 
   // ─── State-machine transitions (spec §B) ───────────────────────────
+  // Activation is explicit: idle→drawing happens via startNewMeasurement()
+  // (the [+ New measurement] button), NOT via the first map tap. Cameron
+  // 2026-04-25: tab-as-activation breaks the project's UI metaphor
+  // (Layers tab doesn't auto-enable layers; Measure tab shouldn't auto-
+  // enable measurement). Map clicks only place vertices once the user
+  // has explicitly entered drawing mode.
+  function startNewMeasurement() {
+    clearAll();
+    state.status = 'drawing';
+  }
+
   function addVertex(lng, lat) {
-    if (state.status === 'idle') state.status = 'drawing';
     if (state.status !== 'drawing') return;
     state.vertices.push({ lng: lng, lat: lat, label: '' });
     relabel();
@@ -335,7 +317,8 @@
     state.vertices.pop();
     relabel();
     recompute();
-    if (state.vertices.length === 0) state.status = 'idle';
+    // Stay in drawing-empty when the last vertex is popped — user is
+    // still actively measuring; they'd press Esc to truly cancel.
   }
 
   function finishDrawing() {
@@ -415,18 +398,13 @@
     // Modifier keys → pass-through (map-pan/select gesture).
     if (oe.ctrlKey || oe.shiftKey || oe.altKey || oe.metaKey) return;
 
-    // Tab-active gate (spec §B): without this, an idle map-click while a
-    // non-Measure tab is the visible panel triggers BOTH this handler and
-    // the reverse-geocode click handler in app.js — the latter's
-    // _ruler.isActive() bail returns false (state still idle), so the user
-    // gets a popup AND a placed V1 from a single click.
-    if (!view.measureTabActive) return;
-
     if (state.status === 'inserting') {
       // Phase 3.5 wires this branch to commitInsert(). Stub for now.
       return;
     }
-    if (state.status !== 'idle' && state.status !== 'drawing') return;
+    // Idle is no longer a click-receiving state — the user must explicitly
+    // enter drawing mode via [+ New measurement] (spec §B post-2026-04-25).
+    if (state.status !== 'drawing') return;
 
     // Debounce: 5px AND 250ms vs the previous accepted click.
     var t = oe.timeStamp != null ? oe.timeStamp : Date.now();
@@ -647,8 +625,10 @@
       setHidden(undo, true); setHidden(clearBtn, true);
       setHidden(finish, true); setHidden(newBtn, true);
     } else {
+      // idle: the [+ New measurement] button is the explicit-activation
+      // entry point. Map clicks are inert until the user clicks it.
       setHidden(undo, true); setHidden(clearBtn, true);
-      setHidden(finish, true); setHidden(newBtn, true);
+      setHidden(finish, true); setHidden(newBtn, false);
     }
   }
 
@@ -687,6 +667,17 @@
     renderFooter();
     // Phase 4.5+ adds renderElevation().
     updateCursor();
+
+    // Body class for active-mode CSS hooks. While drawing/inserting, the
+    // sidebar overlay's pointer-events are suppressed so map clicks reach
+    // the MapLibre canvas instead of the overlay's close-sidebar handler.
+    if (typeof document !== 'undefined' && document.body && document.body.classList) {
+      if (state.status === 'drawing' || state.status === 'inserting') {
+        document.body.classList.add('ruler-active');
+      } else {
+        document.body.classList.remove('ruler-active');
+      }
+    }
   }
 
   // ─── Map source/layer wiring (spec §D) ─────────────────────────────
@@ -840,6 +831,7 @@
     projectPointToSegment: projectPointToSegment,
     formatRulerDistance: formatRulerDistance,
     sparklinePath: sparklinePath,
+    startNewMeasurement: startNewMeasurement,
     addVertex: addVertex,
     popVertex: popVertex,
     finishDrawing: finishDrawing,
