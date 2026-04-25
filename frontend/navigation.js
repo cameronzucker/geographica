@@ -229,6 +229,31 @@
     return 'In ' + (Math.round(meters / 100) / 10).toFixed(1) + ' kilometers, ';
   }
 
+  // Per spec v2 §5.1. Strips Valhalla's mid-string baked distance from a
+  // verbal_pre_transition or verbal_transition_alert string. Three patterns
+  // applied in sequence:
+  //   1. ". Then, in <dist>, <Imperative>." (mid-string distance chain) — strip whole
+  //   2. ". Then <rest>" (chain without distance, comma-form accepted) — strip whole
+  //   3. "Then " leading — strip prefix only
+  // (?:[^.]|\.(?=\d))* allows decimal-passthrough so "1.5 miles" isn't split.
+  // No /i flag — Valhalla always title-cases; (?=[A-Z]) lookahead intact.
+  function stripBakedDistance(text) {
+    if (!text) return text;
+    // Pattern 1: trailing ". Then, in <dist> <unit>, <rest>"
+    text = text.replace(
+      /\.\s*Then[\s,]+in\s+[a-zA-Z0-9.\s]+?\s(?:feet|foot|mile|miles|meters?|kilometers?|km)\s*,\s*(?:[^.]|\.(?=\d))*\.?\s*$/,
+      '.'
+    );
+    // Pattern 2: trailing ". Then <rest>" (no distance) — broadened to accept "Then,"
+    text = text.replace(
+      /\.\s*Then[\s,]+(?:[^.]|\.(?=\d))*\.?\s*$/,
+      '.'
+    );
+    // Pattern 3: leading "Then "
+    text = text.replace(/^Then\s+/, '');
+    return text;
+  }
+
   // ─────────────────────────────────────────────────────────────────────
 
   // Callbacks
@@ -1030,7 +1055,8 @@
     _speedMedian: function () { return speedMedian(); },
     _getAnnouncedKeys: function () { return Object.keys(announcedSet).sort(); },
     _useImperial: _geographicaUseImperial,
-    _formatDistancePrefix: formatDistancePrefix   // NEW
+    _formatDistancePrefix: formatDistancePrefix,
+    _stripBakedDistance: stripBakedDistance
   };
 
 })();

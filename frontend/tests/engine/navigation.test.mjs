@@ -1166,3 +1166,87 @@ test('formatDistancePrefix: monotonicity property — output never decreases as 
     }
   }
 });
+
+test('stripBakedDistance: no chain — passes through unchanged', async () => {
+  const { window: win } = await loadEngine();
+  const strip = win._geographicaNavEngineInternals._stripBakedDistance;
+  assert.equal(strip('Turn left onto Main.'), 'Turn left onto Main.');
+});
+
+test('stripBakedDistance: real Valhalla mid-string distance chain', async () => {
+  const { window: win } = await loadEngine();
+  const strip = win._geographicaNavEngineInternals._stripBakedDistance;
+  // Pulled from live Valhalla auto route (Villa Rita depart maneuver).
+  assert.equal(
+    strip('Drive east on West Villa Rita Drive. Then, in 900 feet, Turn left onto North 21st Avenue.'),
+    'Drive east on West Villa Rita Drive.'
+  );
+});
+
+test('stripBakedDistance: mid-string non-distance chain (existing Then suffix)', async () => {
+  const { window: win } = await loadEngine();
+  const strip = win._geographicaNavEngineInternals._stripBakedDistance;
+  assert.equal(
+    strip('Turn right onto 24th Drive. Then Turn left onto West Union Hills Drive.'),
+    'Turn right onto 24th Drive.'
+  );
+});
+
+test('stripBakedDistance: comma-form Then (the latent bug we are fixing)', async () => {
+  const { window: win } = await loadEngine();
+  const strip = win._geographicaNavEngineInternals._stripBakedDistance;
+  // Existing engine regex /\.\s*Then\s+/ failed on this comma form. Spec v2 fixes.
+  assert.equal(
+    strip('Turn right. Then, Turn right.'),
+    'Turn right.'
+  );
+});
+
+test('stripBakedDistance: leading "Then " (existing pattern preserved)', async () => {
+  const { window: win } = await loadEngine();
+  const strip = win._geographicaNavEngineInternals._stripBakedDistance;
+  assert.equal(
+    strip('Then turn left onto Union Hills Drive.'),
+    'turn left onto Union Hills Drive.'
+  );
+});
+
+test('stripBakedDistance: decimal distance in chain — does not stop at decimal point', async () => {
+  const { window: win } = await loadEngine();
+  const strip = win._geographicaNavEngineInternals._stripBakedDistance;
+  // R1 F1.5: existing [^.]* in the strip regex stops at "1.5", leaving baked chain.
+  // Spec v2's (?:[^.]|\.(?=\d))* allows decimal-point passthrough.
+  assert.equal(
+    strip('In 1.5 miles, Merge onto I-5. Then, in 0.3 miles, Take exit 42.'),
+    'In 1.5 miles, Merge onto I-5.'
+  );
+});
+
+test('stripBakedDistance: fractional-words chain (Valhalla quarter mile form)', async () => {
+  const { window: win } = await loadEngine();
+  const strip = win._geographicaNavEngineInternals._stripBakedDistance;
+  assert.equal(
+    strip('Drive north. Then, in a quarter mile, Keep left to stay on North Central Avenue.'),
+    'Drive north.'
+  );
+});
+
+test('stripBakedDistance: leading "In <dist>, X" NOT stripped (no real Valhalla emission)', async () => {
+  const { window: win } = await loadEngine();
+  const strip = win._geographicaNavEngineInternals._stripBakedDistance;
+  // Spec v2 §5.1 deliberately does NOT strip leading "In <dist>" because
+  // live Valhalla doesn't emit that shape on transition_alert / pre_transition.
+  // Caller's own prefix logic handles this case.
+  assert.equal(
+    strip('In 400 feet, Turn left.'),
+    'In 400 feet, Turn left.'
+  );
+});
+
+test('stripBakedDistance: empty / null / undefined input — returns unchanged', async () => {
+  const { window: win } = await loadEngine();
+  const strip = win._geographicaNavEngineInternals._stripBakedDistance;
+  assert.equal(strip(''), '');
+  assert.equal(strip(undefined), undefined);
+  assert.equal(strip(null), null);
+});
