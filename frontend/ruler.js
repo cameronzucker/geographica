@@ -106,6 +106,57 @@
     return elev;
   }
 
+  // ─── Path sampling ─────────────────────────────────────────────────
+  // Sample N points evenly distributed by cumulative distance along
+  // the path, using linear interpolation within each segment.
+  // Returns [{ lng, lat, distance_m }, ...]. Empty path → []. Single
+  // vertex → []. Zero-length path → N copies at the same point.
+  function samplePath(vertices, numSamples) {
+    if (!vertices || vertices.length < 2) return [];
+    if (numSamples < 2) numSamples = 2;
+
+    var hav = window._haversineDistance;
+    var segLengths = [];
+    var totalLen = 0;
+    for (var i = 0; i < vertices.length - 1; i++) {
+      var a = [vertices[i].lng, vertices[i].lat];
+      var b = [vertices[i + 1].lng, vertices[i + 1].lat];
+      var d = hav(a, b);
+      segLengths.push(d);
+      totalLen += d;
+    }
+
+    var samples = [];
+    if (totalLen === 0) {
+      for (var k = 0; k < numSamples; k++) {
+        samples.push({ lng: vertices[0].lng, lat: vertices[0].lat, distance_m: 0 });
+      }
+      return samples;
+    }
+
+    for (var s = 0; s < numSamples; s++) {
+      var frac = s / (numSamples - 1);
+      var target = frac * totalLen;
+      // Find segment containing target distance
+      var accum = 0;
+      var segIdx = 0;
+      for (segIdx = 0; segIdx < segLengths.length; segIdx++) {
+        if (accum + segLengths[segIdx] >= target) break;
+        accum += segLengths[segIdx];
+      }
+      if (segIdx >= segLengths.length) segIdx = segLengths.length - 1;
+      var local = segLengths[segIdx] === 0 ? 0 : (target - accum) / segLengths[segIdx];
+      var v1 = vertices[segIdx];
+      var v2 = vertices[segIdx + 1];
+      samples.push({
+        lng: v1.lng + (v2.lng - v1.lng) * local,
+        lat: v1.lat + (v2.lat - v1.lat) * local,
+        distance_m: target,
+      });
+    }
+    return samples;
+  }
+
   // ─── Expose ────────────────────────────────────────────────────────
   window._ruler = {
     init: init,
@@ -119,5 +170,6 @@
   window._ruler._test = {
     bearingDeg: bearingDeg,
     elevationFromRGB: elevationFromRGB,
+    samplePath: samplePath,
   };
 })();
