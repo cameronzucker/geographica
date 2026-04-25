@@ -41,25 +41,15 @@ def model_tier(model_id):
 def aggregate_directory(directory, parent_glob="*.jsonl", subagent_glob="*/subagents/*.jsonl"):
     """Sum token counts across parent and subagent transcripts in a directory.
 
-    Subagent directories are discovered by correlating each matched parent
-    file's stem to a same-named subdirectory: ``<stem>/subagents/*.jsonl``.
-    This prevents cross-contamination when a specific parent_glob is passed
-    (e.g. in tests) while still collecting the right subagents in production
-    where parent files are named by session UUID.
-
-    ``subagent_glob`` is accepted for API compatibility but is ignored in
-    favour of the stem-correlation approach; pass ``subagent_glob=None`` to
-    explicitly opt out (no effect either way).
+    parent_glob:    glob pattern (relative to directory) for parent transcripts
+    subagent_glob:  glob pattern (relative to directory) for subagent transcripts;
+                    pass empty string ("") to disable subagent scanning entirely
+                    (useful for tests that want to scope to one parent file)
     """
     directory = Path(directory)
-    parent_files = sorted(directory.glob(parent_glob))
-
-    # Collect subagent files correlated to each parent by stem (session ID).
-    subagent_files = []
-    for pf in parent_files:
-        subagent_files += sorted(directory.glob(f"{pf.stem}/subagents/*.jsonl"))
-
-    files = parent_files + subagent_files
+    files = sorted(directory.glob(parent_glob))
+    if subagent_glob:
+        files += sorted(directory.glob(subagent_glob))
 
     totals = defaultdict(lambda: defaultdict(int))
     for fp in files:

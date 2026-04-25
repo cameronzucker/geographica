@@ -7,7 +7,7 @@ FIXTURES = Path(__file__).parent / "fixtures" / "audit_inference_cost"
 
 
 def test_aggregate_single_opus_turn():
-    totals = aggregate_directory(FIXTURES, parent_glob="parent_opus_only.jsonl")
+    totals = aggregate_directory(FIXTURES, parent_glob="parent_opus_only.jsonl", subagent_glob="")
     assert totals["opus"]["input"] == 10
     assert totals["opus"]["cache_w_5m"] == 200
     assert totals["opus"]["cache_w_1h"] == 800
@@ -19,23 +19,28 @@ def test_aggregate_single_opus_turn():
 
 
 def test_empty_file_does_not_crash():
-    totals = aggregate_directory(FIXTURES, parent_glob="empty.jsonl")
+    totals = aggregate_directory(FIXTURES, parent_glob="empty.jsonl", subagent_glob="")
     # Empty file → no turns recorded but no exception
     assert totals == {} or all(t.get("turns", 0) == 0 for t in totals.values())
 
 
 def test_subagent_transcripts_are_picked_up():
-    """Subagent dir lives at <project>/<sessid>/subagents/*.jsonl."""
+    """Subagent dir lives at <project>/<sessid>/subagents/*.jsonl.
+
+    This test uses the DEFAULT subagent_glob (the flat */subagents/*.jsonl pattern
+    that matches production behavior), not stem-correlated. The fixture
+    abc123/subagents/sub_sonnet.jsonl is set up so the flat glob picks it up.
+    """
     totals = aggregate_directory(FIXTURES, parent_glob="parent_with_subagent_ref.jsonl")
     # Parent contributed Opus
     assert totals["opus"]["turns"] >= 1
-    # Subagent dir abc123/ contributed Sonnet + Haiku
+    # Subagent dir abc123/ contributed Sonnet + Haiku (picked up by flat glob)
     assert totals["sonnet"]["turns"] == 1
     assert totals["haiku"]["turns"] == 1
 
 
 def test_price_totals_opus_known_values():
-    totals = aggregate_directory(FIXTURES, parent_glob="parent_opus_only.jsonl")
+    totals = aggregate_directory(FIXTURES, parent_glob="parent_opus_only.jsonl", subagent_glob="")
     priced = price_totals(totals)
     expected_full = (
         10 / 1e6 * 15
