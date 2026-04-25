@@ -157,6 +157,22 @@
     return samples;
   }
 
+  // ─── Segment projection ────────────────────────────────────────────
+  // Closest point on segment a→b to point p, in lng/lat (linear,
+  // not geodesic — at segment scales we use for Insert After, the
+  // difference is sub-meter).
+  // Clamps to segment endpoints (no extrapolation).
+  function projectPointToSegment(p, a, b) {
+    var dx = b[0] - a[0];
+    var dy = b[1] - a[1];
+    var len2 = dx * dx + dy * dy;
+    if (len2 === 0) return [a[0], a[1]];   // zero-length segment
+    var t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    return [a[0] + t * dx, a[1] + t * dy];
+  }
+
   // ─── Expose ────────────────────────────────────────────────────────
   window._ruler = {
     init: init,
@@ -171,5 +187,6 @@
     bearingDeg: bearingDeg,
     elevationFromRGB: elevationFromRGB,
     samplePath: samplePath,
+    projectPointToSegment: projectPointToSegment,
   };
 })();
