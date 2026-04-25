@@ -56,7 +56,8 @@
     ensureSources();
     ensureLayers();
     map.on('click', handleMapClick);
-    // Phase 2.6 keyboard handler; Phase 5.2 units-changed; Phase 2.8 tab activation.
+    document.addEventListener('keydown', handleKeydown);
+    // Phase 5.2 units-changed; Phase 2.8 tab activation.
   }
 
   function isActive() {
@@ -350,6 +351,62 @@
     // Phase 2.7 wires renderPanel() into this flow.
   }
 
+  // ─── Keyboard handler (spec §C.6) ──────────────────────────────────
+  function handleKeydown(e) {
+    // Don't steal keys from text inputs.
+    var tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (e.target && e.target.isContentEditable) return;
+
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      if (state.status === 'drawing') {
+        if (state.vertices.length === 0) return;
+        popVertex();
+        if (e.preventDefault) e.preventDefault();
+        refreshMapData();
+        // Phase 2.7 renders the panel.
+        return;
+      }
+      // Phase 3.7 extends this to handle editing-state vertex deletion.
+      return;
+    }
+
+    if (e.key === 'Escape') {
+      if (state.status === 'drawing') {
+        if (state.vertices.length >= 2) state.status = 'editing';
+        else clearAll();
+        if (e.preventDefault) e.preventDefault();
+        refreshMapData();
+        return;
+      }
+      if (state.status === 'inserting') {
+        cancelInsert();
+        if (e.preventDefault) e.preventDefault();
+        refreshMapData();
+        return;
+      }
+      if (state.status === 'editing' && state.selectedVertex !== null) {
+        deselectVertex();
+        if (e.preventDefault) e.preventDefault();
+        refreshMapData();
+        return;
+      }
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      if (state.status === 'drawing' && state.vertices.length >= 2) {
+        finishDrawing();
+        if (e.preventDefault) e.preventDefault();
+        refreshMapData();
+        // Phase 4.7 wires startSampling() here.
+        return;
+      }
+      return;
+    }
+    // Phase 5.3 extends to Tab/Space/Arrows.
+  }
+
   // ─── Map source/layer wiring (spec §D) ─────────────────────────────
   // Layer IDs (also referenced by app.js queryRenderedFeatures exclusion
   // edit in addPlaceholderSources's sibling reverse-geocode click handler — keep in sync).
@@ -515,5 +572,6 @@
     recompute: recompute,
     refreshMapData: refreshMapData,
     handleMapClick: handleMapClick,
+    handleKeydown: handleKeydown,
   };
 })();
