@@ -39,6 +39,7 @@
     samplingGen: 0,
     tileCache: null,          // LRU; created in init()
     rafHandle: null,
+    dragging: null,           // { index, startX, startY, startT, mode } during drag (Phase 3.3)
     domListenerCleanups: [],
     lastClick: null,          // { x, y, t } — debounce reference (Phase 2.5)
   };
@@ -67,6 +68,7 @@
     }
     map.on('click', handleMapClick);
     map.on('click', 'ruler-vertex-hit-circles', handleVertexLayerClick);
+    map.on('mousedown', 'ruler-vertex-hit-circles', handleVertexMouseDown);
     // mouseenter/mouseleave for cursor pointer-on-hover
     map.on('mouseenter', 'ruler-vertex-hit-circles', function () {
       if (state.status === 'editing' && map.getCanvas()) {
@@ -761,6 +763,76 @@
     if (vertSrc) vertSrc.setData(buildVertexFeatures());
   }
 
+  // ─── rAF coalescer (spec §D.6) ─────────────────────────────────────
+  function scheduleSourceUpdate() {
+    if (view.rafHandle != null) return;  // already queued for this frame
+    view.rafHandle = requestAnimationFrame(function () {
+      view.rafHandle = null;
+      refreshMapData();
+    });
+  }
+
+  // ─── Mouse drag (spec §D.6) ────────────────────────────────────────
+  function handleVertexMouseDown(e) {
+    if (state.status !== 'editing') return;
+    if (!e.features || e.features.length === 0) return;
+    var idx = e.features[0].properties.index;
+    if (typeof idx !== 'number') return;
+    e.preventDefault();
+    if (e.originalEvent && e.originalEvent.preventDefault) e.originalEvent.preventDefault();
+
+    map.dragPan.disable();
+    view.dragging = {
+      index: idx,
+      startX: e.point ? e.point.x : 0,
+      startY: e.point ? e.point.y : 0,
+      startT: Date.now(),
+      mode: 'mouse',
+    };
+
+    // mousemove + mouseup on window (not canvas) so off-canvas release still fires.
+    var onMove = function (ev) { handleMouseMoveDrag(ev); };
+    var onUp   = function (ev) { handleMouseUpDrag(ev, onMove, onUp); };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function handleMouseMoveDrag(ev) {
+    if (!view.dragging) return;
+    var rect = map.getCanvas().getBoundingClientRect();
+    var x = ev.clientX - rect.left;
+    var y = ev.clientY - rect.top;
+    var ll = map.unproject([x, y]);
+    state.vertices[view.dragging.index].lng = ll.lng;
+    state.vertices[view.dragging.index].lat = ll.lat;
+    scheduleSourceUpdate();
+  }
+
+  function handleMouseUpDrag(ev, onMove, onUp) {
+    if (!view.dragging) {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      return;
+    }
+    var rect = map.getCanvas().getBoundingClientRect();
+    var x = ev.clientX - rect.left;
+    var y = ev.clientY - rect.top;
+    var moved = !isTap(
+      { x: view.dragging.startX, y: view.dragging.startY, t: view.dragging.startT },
+      { x: x, y: y, t: Date.now() }, 'mouse');
+    if (moved) {
+      relabel();
+      recompute();
+      // Phase 4.7: re-trigger sampling after drag commits a new layout.
+    }
+    map.dragPan.enable();
+    view.dragging = null;
+    refreshMapData();
+    renderPanel();
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+  }
+
   function ensureSources() {
     if (!map) return;
     if (!map.getSource(SOURCE_LINE)) {
@@ -889,5 +961,6 @@
     updateCursor: updateCursor,
     isTap: isTap,
     handleVertexLayerClick: handleVertexLayerClick,
+    scheduleSourceUpdate: scheduleSourceUpdate,
   };
 })();
