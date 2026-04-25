@@ -763,6 +763,11 @@
     _tryAddTileJSONSource('imagery-sentinel', '/tiles/data/imagery_sentinel.json', 'raster');
     _tryAddTileJSONSource('imagery-noaa', '/tiles/data/imagery_noaa.json', 'raster');
     _tryAddTileJSONSource('imagery-custom', '/tiles/data/imagery_custom.json', 'raster');
+
+    // Ruler measurement tool — reattach on initial load + every style.load.
+    if (window._ruler && window._ruler.reattachSources) {
+      window._ruler.reattachSources(map);
+    }
   }
 
   /** Helper: empty GeoJSON FeatureCollection */

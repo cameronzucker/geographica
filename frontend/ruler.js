@@ -47,8 +47,10 @@
     if (initialized) return;       // idempotent per spec §A
     initialized = true;
     map = mapInstance;
-    // Phase 1+ tasks fill in: source/layer wiring, click handlers,
-    // keyboard handlers, units-changed subscription, etc.
+    ensureSources();
+    ensureLayers();
+    // Phase 2.5+ adds map click handler; Phase 2.6 keyboard handler;
+    // Phase 5.2 units-changed subscription; Phase 2.8 tab activation.
   }
 
   function isActive() {
@@ -58,13 +60,6 @@
   function clear() {
     clearAll();
     // Phase 2.7+ extends this to call renderPanel() + refreshMapData() for view sync.
-  }
-
-  // Reattach hook called by app.js's addPlaceholderSources on style.load
-  function reattachSources(mapInstance) {
-    // Phase 1 fills this in: re-add ruler-line / ruler-vertices / ruler-vertex-hit-circles
-    // sources + layers using the passed-in mapInstance after a style.load.
-    // (Use `mapInstance` arg, not module `map`, so style swaps with a different map work.)
   }
 
   // ─── Geodesy ───────────────────────────────────────────────────────
@@ -320,6 +315,151 @@
     };
   }
 
+  // ─── Map source/layer wiring (spec §D) ─────────────────────────────
+  // Layer IDs (also referenced by app.js queryRenderedFeatures exclusion
+  // edit at L1628 — keep in sync with that list).
+  var SOURCE_LINE = 'ruler-line-source';
+  var SOURCE_VERTEX = 'ruler-vertex-source';
+  var LAYER_LINE_SHADOW = 'ruler-line-shadow';
+  var LAYER_LINE = 'ruler-line';
+  var LAYER_VERTEX_CIRCLES = 'ruler-vertex-circles';
+  var LAYER_VERTEX_CIRCLES_SELECTED = 'ruler-vertex-circles-selected';
+  var LAYER_VERTEX_HIT_CIRCLES = 'ruler-vertex-hit-circles';
+  var LAYER_VERTEX_LABELS = 'ruler-vertex-labels';
+
+  function buildLineFeature() {
+    if (state.vertices.length < 2) {
+      return { type: 'Feature', geometry: { type: 'LineString', coordinates: [] }, properties: {} };
+    }
+    var coords = state.vertices.map(function (v) { return [v.lng, v.lat]; });
+    return { type: 'Feature', geometry: { type: 'LineString', coordinates: coords }, properties: {} };
+  }
+
+  function buildVertexFeatures() {
+    return {
+      type: 'FeatureCollection',
+      features: state.vertices.map(function (v, i) {
+        return {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [v.lng, v.lat] },
+          properties: {
+            index: i,
+            label: v.label,
+            selected: state.selectedVertex === i,
+          },
+        };
+      }),
+    };
+  }
+
+  function refreshMapData() {
+    if (!map) return;
+    var lineSrc = map.getSource(SOURCE_LINE);
+    var vertSrc = map.getSource(SOURCE_VERTEX);
+    if (lineSrc) lineSrc.setData(buildLineFeature());
+    if (vertSrc) vertSrc.setData(buildVertexFeatures());
+  }
+
+  function ensureSources() {
+    if (!map) return;
+    if (!map.getSource(SOURCE_LINE)) {
+      map.addSource(SOURCE_LINE, { type: 'geojson', data: buildLineFeature() });
+    }
+    if (!map.getSource(SOURCE_VERTEX)) {
+      map.addSource(SOURCE_VERTEX, { type: 'geojson', data: buildVertexFeatures() });
+    }
+  }
+
+  function ensureLayers() {
+    if (!map) return;
+    // Order matters: shadow → line → circles → selected circles → hit circles → labels.
+    if (!map.getLayer(LAYER_LINE_SHADOW)) {
+      map.addLayer({
+        id: LAYER_LINE_SHADOW, type: 'line', source: SOURCE_LINE,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': 'rgba(0,0,0,0.55)', 'line-width': 7 },
+      });
+    }
+    if (!map.getLayer(LAYER_LINE)) {
+      map.addLayer({
+        id: LAYER_LINE, type: 'line', source: SOURCE_LINE,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#ffd400', 'line-width': 4, 'line-opacity': 0.95 },
+      });
+    }
+    if (!map.getLayer(LAYER_VERTEX_CIRCLES)) {
+      map.addLayer({
+        id: LAYER_VERTEX_CIRCLES, type: 'circle', source: SOURCE_VERTEX,
+        paint: {
+          'circle-radius': 8,
+          'circle-color': '#ffd400',
+          'circle-stroke-width': 2,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
+    }
+    if (!map.getLayer(LAYER_VERTEX_CIRCLES_SELECTED)) {
+      map.addLayer({
+        id: LAYER_VERTEX_CIRCLES_SELECTED, type: 'circle', source: SOURCE_VERTEX,
+        // MapLibre v3+ requires the explicit ['get', ...] expression form.
+        filter: ['==', ['get', 'selected'], true],
+        paint: {
+          'circle-radius': 11,
+          'circle-color': '#ff7a00',
+          'circle-stroke-width': 3,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
+    }
+    if (!map.getLayer(LAYER_VERTEX_HIT_CIRCLES)) {
+      // Visible-but-transparent: 44px diameter (WCAG 2.5.5). MUST NOT be
+      // visibility:'none' — that would skip queryRenderedFeatures.
+      map.addLayer({
+        id: LAYER_VERTEX_HIT_CIRCLES, type: 'circle', source: SOURCE_VERTEX,
+        paint: { 'circle-radius': 22, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-width': 0 },
+      });
+    }
+    if (!map.getLayer(LAYER_VERTEX_LABELS)) {
+      map.addLayer({
+        id: LAYER_VERTEX_LABELS, type: 'symbol', source: SOURCE_VERTEX,
+        layout: {
+          'text-field': ['get', 'label'],
+          // Two-font fallback per spec §D / R5 M3 — matches positron/darkmatter/hybrid.
+          'text-font': ['Metropolis Regular', 'Noto Sans Regular'],
+          'text-size': 12,
+          'text-offset': [0, -1.4],
+          'text-anchor': 'bottom',
+          'text-allow-overlap': true,
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': '#000000',
+          'text-halo-width': 2,
+        },
+      });
+    }
+  }
+
+  function reattachSources(mapInstance) {
+    // Called by app.js's addPlaceholderSources() on initial load and on
+    // every style.load (basemap toggle / 3D enable). Idempotent.
+    map = mapInstance;
+    ensureSources();
+    ensureLayers();
+    refreshMapData();
+  }
+
+  function teardownSourcesAndLayers() {
+    if (!map) return;
+    [LAYER_VERTEX_LABELS, LAYER_VERTEX_HIT_CIRCLES, LAYER_VERTEX_CIRCLES_SELECTED,
+     LAYER_VERTEX_CIRCLES, LAYER_LINE, LAYER_LINE_SHADOW].forEach(function (id) {
+      if (map.getLayer(id)) map.removeLayer(id);
+    });
+    [SOURCE_VERTEX, SOURCE_LINE].forEach(function (id) {
+      if (map.getSource(id)) map.removeSource(id);
+    });
+  }
+
   // ─── Expose ────────────────────────────────────────────────────────
   window._ruler = {
     init: init,
@@ -349,5 +489,6 @@
     getState: getStateSnapshot,
     relabel: relabel,
     recompute: recompute,
+    refreshMapData: refreshMapData,
   };
 })();
