@@ -4100,7 +4100,7 @@
   //  BOOTSTRAP
   // =====================================================================
 
-  var VALID_SIDEBAR_PANELS = ['layers-panel', 'route-panel', 'import-panel', 'admin-panel'];
+  var VALID_SIDEBAR_PANELS = ['layers-panel', 'route-panel', 'import-panel', 'admin-panel', 'measure-panel'];
 
   function restoreLastSidebarTab() {
     var saved;
@@ -4126,6 +4126,9 @@
     initImport();
     initGPS();
     initAdmin();
+    // Ruler / measurement tool — must init before restoreLastSidebarTab
+    // so a Measure-as-last-tab restore lands on a ready module.
+    if (window._ruler) window._ruler.init(map);
     restoreLastSidebarTab();
     if (window.VoicePicker && typeof window.VoicePicker.init === 'function') {
       window.VoicePicker.init();
