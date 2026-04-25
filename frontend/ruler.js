@@ -41,6 +41,12 @@
     rafHandle: null,
     domListenerCleanups: [],
     lastClick: null,          // { x, y, t } — debounce reference (Phase 2.5)
+    // spec §B gate for handleMapClick (Phase 2.8). Defaults to true so
+    // unit-test contexts (which never call init() and therefore never
+    // discover the page's tab DOM) don't have every click suppressed.
+    // init() flips to the correct boolean by inspecting #measure-panel.hidden
+    // and wiring tab-button click listeners.
+    measureTabActive: true,
   };
 
   // Click-debounce parameters per spec §F (5 px AND 250 ms).
@@ -57,7 +63,74 @@
     ensureLayers();
     map.on('click', handleMapClick);
     document.addEventListener('keydown', handleKeydown);
-    // Phase 5.2 units-changed; Phase 2.8 tab activation.
+
+    // ── Tab activation + Measure-tab-active flag (Step 1 + 1.5) ──
+    var measureBtn = document.querySelector
+      ? document.querySelector('.tab-btn[data-panel="measure-panel"]')
+      : null;
+    if (measureBtn) {
+      measureBtn.addEventListener('click', function () {
+        view.measureTabActive = true;
+        renderPanel();
+        updateCursor();
+      });
+    }
+    var siblingTabs = document.querySelectorAll
+      ? document.querySelectorAll('.tab-btn:not([data-panel="measure-panel"])')
+      : null;
+    if (siblingTabs && siblingTabs.forEach) {
+      siblingTabs.forEach(function (btn) {
+        btn.addEventListener('click', function () { view.measureTabActive = false; });
+      });
+    }
+    // Initialize from current panel-hidden state. If the page has the
+    // Measure tab DOM, trust the panel.hidden attribute as the source of
+    // truth; otherwise leave the default (true) — there's no UI to gate
+    // against.
+    var measurePanel = document.getElementById('measure-panel');
+    if (measurePanel) view.measureTabActive = !measurePanel.hidden;
+
+    // ── Footer button wiring (Step 3) ──
+    var clearBtn = document.getElementById('ruler-clear');
+    if (clearBtn) clearBtn.addEventListener('click', function () {
+      clear();
+    });
+    var finishBtn = document.getElementById('ruler-finish');
+    if (finishBtn) finishBtn.addEventListener('click', function () {
+      finishDrawing();
+      refreshMapData();
+      renderPanel();
+      // Phase 4.7 wires startSampling() here.
+    });
+    var newBtn = document.getElementById('ruler-new');
+    if (newBtn) newBtn.addEventListener('click', function () {
+      clear();
+    });
+    var undoBtn = document.getElementById('ruler-undo');
+    if (undoBtn) undoBtn.addEventListener('click', function () {
+      popVertex();
+      refreshMapData();
+      renderPanel();
+    });
+    var inlineCancel = document.getElementById('ruler-banner-inline-cancel');
+    var floatCancel = document.getElementById('ruler-mode-banner-cancel');
+    function cancelBannerHandler() {
+      if (state.status === 'drawing') {
+        if (state.vertices.length >= 2) state.status = 'editing';
+        else clearAll();
+      } else if (state.status === 'inserting') {
+        cancelInsert();
+      }
+      refreshMapData();
+      renderPanel();
+    }
+    if (inlineCancel) inlineCancel.addEventListener('click', cancelBannerHandler);
+    if (floatCancel)  floatCancel.addEventListener('click', cancelBannerHandler);
+
+    // Initial render — a fresh page may already have Measure as active tab.
+    renderPanel();
+    updateCursor();
+    // Phase 5.2 wires units-changed redraw.
   }
 
   function isActive() {
@@ -330,6 +403,13 @@
     // Modifier keys → pass-through (map-pan/select gesture).
     if (oe.ctrlKey || oe.shiftKey || oe.altKey || oe.metaKey) return;
 
+    // Tab-active gate (spec §B): without this, an idle map-click while a
+    // non-Measure tab is the visible panel triggers BOTH this handler and
+    // the reverse-geocode click handler in app.js — the latter's
+    // _ruler.isActive() bail returns false (state still idle), so the user
+    // gets a popup AND a placed V1 from a single click.
+    if (!view.measureTabActive) return;
+
     if (state.status === 'inserting') {
       // Phase 3.5 wires this branch to commitInsert(). Stub for now.
       return;
@@ -553,6 +633,24 @@
     }
   }
 
+  // ─── Cursor management ─────────────────────────────────────────────
+  function updateCursor() {
+    if (!map) return;
+    var canvas = map.getCanvas && map.getCanvas();
+    if (!canvas) return;
+    if (state.status === 'drawing' || state.status === 'inserting') {
+      canvas.style.cursor = 'crosshair';
+      return;
+    }
+    if (state.status === 'editing') {
+      // pointer-on-hover handled by mouseenter/mouseleave on the hit layer
+      // (Phase 3.1+ wires the hover transitions). Default cursor for now.
+      canvas.style.cursor = '';
+      return;
+    }
+    canvas.style.cursor = '';
+  }
+
   function renderPanel() {
     var vertexSection = $id('ruler-vertex-section');
     var visible = state.vertices.length > 0;
@@ -566,6 +664,7 @@
     renderActionRow();
     renderFooter();
     // Phase 4.5+ adds renderElevation().
+    updateCursor();
   }
 
   // ─── Map source/layer wiring (spec §D) ─────────────────────────────
@@ -735,5 +834,6 @@
     handleMapClick: handleMapClick,
     handleKeydown: handleKeydown,
     renderPanel: renderPanel,
+    updateCursor: updateCursor,
   };
 })();
