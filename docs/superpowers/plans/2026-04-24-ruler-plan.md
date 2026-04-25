@@ -2371,17 +2371,6 @@ In `frontend/ruler.js`, after the state-machine helpers, before the `_test` expo
     ensureLayers();
     refreshMapData();
   }
-
-  function teardownSourcesAndLayers() {
-    if (!map) return;
-    [LAYER_VERTEX_LABELS, LAYER_VERTEX_HIT_CIRCLES, LAYER_VERTEX_CIRCLES_SELECTED,
-     LAYER_VERTEX_CIRCLES, LAYER_LINE, LAYER_LINE_SHADOW].forEach(function (id) {
-      if (map.getLayer(id)) map.removeLayer(id);
-    });
-    [SOURCE_VERTEX, SOURCE_LINE].forEach(function (id) {
-      if (map.getSource(id)) map.removeSource(id);
-    });
-  }
 ```
 
 Update `init(mapInstance)` to call `ensureSources()` + `ensureLayers()`:
