@@ -325,7 +325,7 @@ Find the existing `#nav-banner` element. Immediately after its closing tag, add:
 
 ```html
     <!-- Ruler floating mode banner — overlays the map during drawing/inserting -->
-    <div id="ruler-mode-banner" class="hidden" role="status" aria-live="polite" hidden>
+    <div id="ruler-mode-banner" class="hidden" role="status" aria-live="polite">
       <span id="ruler-mode-banner-text"></span>
       <button type="button" id="ruler-mode-banner-cancel" aria-label="Cancel ruler mode">×</button>
     </div>
@@ -336,8 +336,10 @@ Find the existing `#nav-banner` element. Immediately after its closing tag, add:
 Find the existing `<script src="voice-picker.js"></script>` line near the bottom of the body. Immediately after, add:
 
 ```html
-    <script src="ruler.js"></script>
+    <script src="ruler.js?v=20260424"></script>
 ```
+
+The `?v=YYYYMMDD` cache-buster matches the convention used on sibling script includes (`voice-picker.js?v=20260421`, `wake-lock.js?v=20260420`, etc.).
 
 - [ ] **Step 5: Smoke test (manual).**
 
