@@ -266,7 +266,6 @@ export function fixtureValhallaThenChainedCluster() {
 // Remove when all plan tasks have been converted.
 export const fixtureTwoManeuverRoute = fixtureRouteWithTwoTurns;
 
-// Fixture: 2-maneuver route with a long first segment so far-tier fires at
 // Fixture: 4-maneuver route with 200 m maneuver spacing — wide enough that
 // near-tier fires above the new 30 m cutoff AND chain-append distance is
 // also above cutoff. For I13 prefix-firing assertions.
@@ -324,6 +323,7 @@ export function fixtureWiderCluster() {
   };
 }
 
+// Fixture: 2-maneuver route with a long first segment so far-tier fires at
 // a TTM-governed distance well above the cutoff. Used for I13 prefix tests.
 // 2000 m segment at lat 35.20 (1° longitude ≈ 91 km at lat 35, so 2000 m ≈ 0.022°).
 export function fixtureLongFirstSegment() {

@@ -492,6 +492,12 @@
       if (text.length > 0) {
         text = text.charAt(0).toUpperCase() + text.slice(1);
       }
+      // Mark BEFORE prefix construction and chain-append (spec v2 §5.2 G11
+      // exception safety). If formatDistancePrefix or stripBakedDistance ever
+      // throw on a malformed input, the maneuver stays "marked but never
+      // spoken" instead of refiring on every subsequent tick.
+      announcedSet[nearKey] = true;
+      announcedSet[farKey] = true;
       // GPS-recovery guard — single consume per tick, shared with chain-append below.
       var skipPrefix = consumeGPSRecoveryFlag();
       // Prepend live-distance prefix to base text (spec v2 §5.2).
@@ -501,11 +507,6 @@
           text = nearPrefix + text.charAt(0).toLowerCase() + text.slice(1);
         }
       }
-      // Mark BEFORE chain-append construction (G11 exception safety).
-      // Slight reorder from prior engine which marked after chain; safe because
-      // chain doesn't read these keys (only writes announcedSet[afterIdx+'-far']).
-      announcedSet[nearKey] = true;
-      announcedSet[farKey] = true;
       var afterIdx = nextIdx + 1;
       if (afterIdx < route.maneuvers.length) {
         var distBetween = distanceToManeuver(

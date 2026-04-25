@@ -1436,5 +1436,8 @@ test('I13: prompt count invariant on Villa Rita fixture (G9 regression guard)', 
 // NOTE: I15 (exception-safety G11) is not testable via mock due to IIFE
 // closure binding — the helpers are bound at module-load time, so a test
 // can't substitute a throwing version. Invariant verified by code review:
-// announcedSet[farKey] = true is set BEFORE the consumeGPSRecoveryFlag /
-// stripBakedDistance / formatDistancePrefix calls. Confirmed in commit 8956ead.
+// in BOTH the far-tier branch (navigation.js around line 558) and the
+// near-tier branch (around line 495), announcedSet is marked BEFORE the
+// consumeGPSRecoveryFlag / stripBakedDistance / formatDistancePrefix calls
+// AND before the chain-append construction. Confirmed in commits 8956ead
+// (far-tier) and the post-Task-6 reorder.
