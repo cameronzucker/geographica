@@ -317,7 +317,7 @@
 
   // ─── Map source/layer wiring (spec §D) ─────────────────────────────
   // Layer IDs (also referenced by app.js queryRenderedFeatures exclusion
-  // edit at L1628 — keep in sync with that list).
+  // edit in addPlaceholderSources's sibling reverse-geocode click handler — keep in sync).
   var SOURCE_LINE = 'ruler-line-source';
   var SOURCE_VERTEX = 'ruler-vertex-source';
   var LAYER_LINE_SHADOW = 'ruler-line-shadow';
@@ -447,17 +447,6 @@
     ensureSources();
     ensureLayers();
     refreshMapData();
-  }
-
-  function teardownSourcesAndLayers() {
-    if (!map) return;
-    [LAYER_VERTEX_LABELS, LAYER_VERTEX_HIT_CIRCLES, LAYER_VERTEX_CIRCLES_SELECTED,
-     LAYER_VERTEX_CIRCLES, LAYER_LINE, LAYER_LINE_SHADOW].forEach(function (id) {
-      if (map.getLayer(id)) map.removeLayer(id);
-    });
-    [SOURCE_VERTEX, SOURCE_LINE].forEach(function (id) {
-      if (map.getSource(id)) map.removeSource(id);
-    });
   }
 
   // ─── Expose ────────────────────────────────────────────────────────
