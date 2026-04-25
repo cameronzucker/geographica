@@ -501,6 +501,13 @@
   function setHidden(el, hidden) {
     if (!el) return;
     el.hidden = !!hidden;
+    // Project convention: some default-hidden elements (e.g. #ruler-mode-banner)
+    // use class="hidden" rather than the [hidden] attribute. The global
+    // .hidden { display: none !important } rule wins over the [hidden] UA
+    // style, so toggling el.hidden alone leaves them visually unchanged.
+    // Toggle both — handles either convention safely.
+    if (hidden) el.classList.add('hidden');
+    else el.classList.remove('hidden');
   }
 
   function clearChildren(el) {
