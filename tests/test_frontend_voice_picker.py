@@ -166,3 +166,56 @@ def test_sidebar_tab_persistence_wired() -> None:
         r"var\s+panelEl\s*=\s*document\.getElementById\(target\)\s*;\s*if\s*\(\s*!panelEl\s*\)\s*return",
         src,
     ), "tab-click handler must null-guard target panel before mutating DOM"
+
+
+def test_sidebar_tab_restore_covers_pageshow_and_visibilitychange():
+    """f1687df closed the DOMContentLoaded path. This test ensures the
+    restoration also fires on iOS Safari BFCache restores (pageshow regardless
+    of e.persisted) AND on app-switch return paths that fire visibilitychange
+    without pageshow.
+    """
+    src = read("frontend/app.js")
+    # Original DOMContentLoaded restoration path must still exist
+    assert "DOMContentLoaded" in src
+    assert "restoreLastSidebarTab()" in src
+    # NEW: pageshow listener (covers BFCache + tab-discard restores)
+    pageshow_match = re.search(
+        r"addEventListener\s*\(\s*['\"]pageshow['\"]\s*,\s*function\s*\([^)]*\)\s*\{[^}]{0,400}restoreLastSidebarTab\s*\(",
+        src,
+    )
+    assert pageshow_match is not None, (
+        "Missing pageshow listener calling restoreLastSidebarTab. iOS Safari "
+        "BFCache restores fire pageshow but NOT DOMContentLoaded; without this "
+        "listener, sidebar reverts to default Layers tab on every BFCache restore."
+    )
+    # NEW: visibilitychange listener (covers app-switch returns without pageshow)
+    visibility_match = re.search(
+        r"addEventListener\s*\(\s*['\"]visibilitychange['\"]\s*,\s*function\s*\(\)\s*\{[^}]{0,400}restoreLastSidebarTab\s*\(",
+        src,
+    )
+    assert visibility_match is not None, (
+        "Missing visibilitychange listener calling restoreLastSidebarTab. Some "
+        "iOS app-switch returns fire visibilitychange without pageshow; without "
+        "this listener, those return paths leave the sidebar on default Layers."
+    )
+
+
+def test_sidebar_tab_restore_preserves_form_focus():
+    """When the user was editing #route-start (or any input) at backgrounding
+    time and the saved tab is Route, the synthetic .click() inside
+    restoreLastSidebarTab must NOT clobber input focus or selection.
+    """
+    src = read("frontend/app.js")
+    # restoreLastSidebarTab must capture activeElement before click
+    capture_match = re.search(
+        r"function\s+restoreLastSidebarTab\s*\(\s*\)\s*\{[\s\S]{0,1000}?"
+        r"document\.activeElement[\s\S]{0,500}?"
+        r"\.click\s*\(\s*\)",
+        src,
+    )
+    assert capture_match is not None, (
+        "restoreLastSidebarTab must capture document.activeElement BEFORE "
+        "calling targetTab.click(), then restore focus + selection after. "
+        "Without this, switching tabs during active form editing clobbers "
+        "the user's input focus."
+    )
