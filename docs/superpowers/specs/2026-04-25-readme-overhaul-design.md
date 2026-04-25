@@ -55,11 +55,27 @@ The README opens as a real product (artifact-first). The meta-story ("built by a
 
 ### 4.2 Cost framing — Prose-led, no hardware dollar figure
 
-The "How it was built" callout is one paragraph of prose (not a stat strip). Cost: "**~$2,500 of API-equivalent model output**, paid as a Claude Max subscription (~$200/mo)." Hardware dollar figures are omitted (they age poorly; "Pi 5" already reads cheap by reputation). Two trailing inline links: `Read the process →` · `Cost methodology →`.
+The "How it was built" callout is one paragraph of prose (not a stat strip). Cost: "**~$300 of API-equivalent model output**, paid as a Claude Max subscription (~$200/mo)." Hardware dollar figures are omitted (they age poorly; "Pi 5" already reads cheap by reputation). Two trailing inline links: `Read the process →` · `Cost methodology →`.
+
+> **Numbers locked 2026-04-25** after a 4-reviewer adversarial cycle (R1 wren / R2 basalt / R3 flint / R5 Codex) caught two CRITICAL bugs in the original audit: per-line summing inflated counts ~1.85× (Claude Code emits multiple JSONL lines per assistant response, all with the same `usage`); and Opus pricing was hard-coded to legacy 4.0/4.1 rates ($15/$75) when Anthropic's published rates for Opus 4.5/4.6/4.7 are $5/$25. Combined ~6-8× overstatement. The corrected canonical numbers are **$284.42 uncached / $3,592.72 full** (snapshot at `dev/notes/cost-audit-snapshot-2026-04-25.md`); the README rounds to "~$300" for the headline.
 
 ### 4.3 Cost methodology — Honest two-number disclosure
 
-The full $21,858 list-price number is **not** in the README. It lives in `docs/COST_METHODOLOGY.md` with full reasoning: cache reads dominate the list price, cache reads are a harness artifact (not work), the $2,489 number is the honest "model work" measure that any reader can reproduce with `ccusage` or the included audit script. No lie of omission, but the headline is the meaningful number.
+The full ~$3,600 list-price number is **not** in the README headline. It lives in `docs/COST_METHODOLOGY.md` with full reasoning. The methodology page must address all five framing CRITICAL findings from the adversarial cycle:
+
+1. **Cache-write exclusion needs principled rationale (R3 C1).** Cache writes are real, billable, full-rate tokens. Excluding them from the headline without explicit reasoning looks like cherry-picking. The page must argue: cache writes scale with context window size, not with the work requested in each turn — they are context-management overhead, not productive generation. They appear in the full list price; they don't belong in the "model work" measure.
+
+2. **Reframe the ccusage citation (R3 C2 + R2 C2).** The original spec said "any reader can reproduce with ccusage" — this is FALSE on two counts: ccusage uses correct per-model pricing (so reproducing the spec's $2,489 was impossible) AND ccusage doesn't filter by project (it returns all-projects total). Methodology page must drop the "matches ccusage" claim. Replace with: "uses the same convention as ccusage (uncached input + output only), but ccusage is not the authority on this number — Anthropic is. The audit script ships with this repo so the calculation can be inspected and challenged."
+
+3. **Cache-reads-as-harness-artifact must be argued, not asserted (R3 C3).** The page must explain: cache reads scale with session length and context window size, not with the complexity of the requested work. A session doing trivial edits accumulates the same cache-read cost as one writing complex algorithms. They are charged by Anthropic (which is why they appear in the full list price) but they measure harness behavior, not generation work. Readers who consider them part of the cost should use the full list price.
+
+4. **Disclose Codex usage explicitly (R2 M1).** ~30 Codex sessions occurred during the project (adversarial reviews), totaling ~50K output tokens via the user's existing ChatGPT Plus subscription. Out-of-pocket impact: ~$0 marginal. List-rate equivalent: ~$17–68 (negligible vs. the headline). The methodology page must add one sentence acknowledging this so the disclosure is complete: "Codex (OpenAI) was used for adversarial reviews under a separate ChatGPT Plus subscription. Approximately 30 sessions across the project produced ~50K output tokens — list-rate equivalent ~$17–68; not included in the figures above because they were not Anthropic-billed."
+
+5. **Reproducibility honesty (R3 M3).** Replace "any reader can reproduce" with: "Cameron can re-verify these numbers at any time by re-running `scripts/audit_inference_cost.py` against the project's transcript directory. Independent third-party verification is not possible because the transcript data is private to the user; what readers CAN do is audit their own Claude Code project costs using the same script and methodology."
+
+The methodology page also adds a **reference-comparison block (R3 M5)**: $300 model output vs. ~$65–75K of senior-engineer-loaded labor for an equivalent 6-month build, ~$5-20K/yr off-the-shelf GIS license, ~$200/mo Claude Max subscription. Without this, readers anchor on the wrong reference class.
+
+The `<synthetic>` model exclusion (R2 m3) is documented in a footnote: 13 transcript turns use this internal Claude Code test/mock model with all-zero token counts; the audit script reports them but they don't affect the dollar figures.
 
 ### 4.4 Tone — Declarative, no first-person
 
@@ -160,25 +176,29 @@ The meta-story as a first-class linkable artifact.
 
 | # | Section | Notes |
 |---|---|---|
-| 1 | What was built, in numbers | 19 days, 932 commits, 17 named agents, 41 specs, 104 test files, 7 services, ~$2.5K inference |
+| 1 | What was built, in numbers | 19 days, 932 commits, 17 named agents, 41 specs, 104 test files, 7 services, ~$300 inference (corrected number — see PROCESS.md §3 for the adversarial-review story behind it) |
 | 2 | The workflow | brainstorm → adversarial spec review → TDD execution by parallel sub-agents (one full feature walked through end-to-end as worked example) |
-| 3 | Adversarial review patterns | multi-model rounds (Sonnet, Opus, Codex); what each model is good at finding; the "Codex catches what 4 Claudes miss" pattern with a concrete example |
+| 3 | Adversarial review patterns | multi-model rounds (Sonnet, Opus, Codex); what each model is good at finding; the "Codex catches what 4 Claudes miss" pattern with a concrete example. **Use the 2026-04-25 cost-methodology adversarial cycle as the worked example** — Codex caught two CRITICAL math bugs (per-line summing, wrong Opus pricing) that 3 parallel Sonnet rounds would not have surfaced; the bugs caused a ~6-8× overstatement of the cost figure that R3 (Sonnet) flagged structurally but R5 (Codex) caught mechanistically. The full cycle (4 reviewers, ~30 minutes wall-clock, all 4 reviews committed under `dev/adversarial/2026-04-25-cost-methodology-*.md`) is on-disk and can be cited verbatim. |
 | 4 | Subagent orchestration | agent monikers, branch hygiene, lessons from the 2026-04 worktree-escape incidents (link out to the recovery write-up in `docs/pitfalls/implementation-pitfalls.md` §14–15 rather than re-narrating in this doc) |
 | 5 | What this enables (and what it doesn't) | honest read on what works (full-cycle features under good specs) and what doesn't (visual polish, ambiguous specs, anything benefiting from human aesthetic judgment) |
 | 6 | Companion utility | the cross-platform desktop tool moves here as a process artifact |
 | 7 | References | links to `docs/superpowers/specs/`, `dev/implementation-log.md`, `CHANGELOG.md` as the receipts |
 
-### 6.4 `docs/COST_METHODOLOGY.md` (~120 lines, audience C)
+### 6.4 `docs/COST_METHODOLOGY.md` (~200 lines, audience C)
 
-Sketched in the brainstorm. Honest audit of the cost number.
+Honest audit of the cost number. Numbers locked 2026-04-25 after a 4-reviewer adversarial cycle (see §4.2 note); methodology page must integrate all 5 framing fixes from §4.3.
 
 | # | Section | Notes |
 |---|---|---|
-| 1 | Headline number ($2,489) | API-equivalent model output (uncached input × $15/M + output × $75/M for Opus, proportional rates for Sonnet/Haiku); matches what `ccusage` reports |
-| 2 | Full list-price number ($21,858) | Headline + cache-read tokens (8.1 B at $1.50/M = $12.1K) + cache-write tokens (110 M at $18.75–$30/M = $3.3K); explains cache reads are a harness artifact |
-| 3 | What was actually paid | Claude Max subscription, ~$200/mo for one month; Pi 5 hardware (per repo README hardware section) |
-| 4 | Why two numbers, not one | Both are honest; they answer different questions; explicit framing |
-| 5 | Reproduction | invocation of `scripts/audit_inference_cost.py` with sample output; reader can verify on their own `~/.claude/projects/*/` |
+| 1 | Headline number (~$284) | API-equivalent model output for the project transcripts: uncached input × per-model rate + output × per-model rate. Per-model breakdown table (Opus 4.6, Opus 4.7, Sonnet 4.6, Haiku 4.5). Names the convention as "same as ccusage" but explicitly NOT "verified by ccusage" — Anthropic is the authority. |
+| 2 | Full list-price number (~$3,593) | Headline + cache-read tokens at $0.50/M (Opus 4.5+) + cache-write tokens at 1.25× / 2× input. Explains cache reads scale with session length and context size, not with work complexity, and are a harness behavior measurement (this is the §4.3.3 argument made explicit). |
+| 3 | Why exclude cache writes from the headline | The §4.3.1 argument: cache writes scale with context window size, not with new work requested. They are real billable tokens that the model processed at full rate; they appear in the full list price; they don't belong in a "model work" measure. |
+| 4 | What was actually paid | Claude Max subscription, ~$200/mo for one month. Codex (OpenAI) used for adversarial reviews under separate ChatGPT Plus subscription (~$20/mo, ~30 sessions, ~50K output tokens, list-rate equivalent ~$17–68 — disclosed for completeness, not in the Anthropic-billed figures above). Hardware: Pi 5 (see repo README hardware section). |
+| 5 | Why two numbers, not one | Both are honest; they answer different questions. "$284" answers: *what did the model actually generate?* "$3,593" answers: *what would Anthropic have charged at full API list, no subscription?* Neither is the "real" cost to the exclusion of the other. |
+| 6 | Reference comparisons | Per §4.3 R3 M5 fix. ~$300 model output vs. ~$65–75K loaded labor for an equivalent senior-engineer 6-month build · ~$5–20K/yr off-the-shelf GIS license · ~$200/mo Claude Max subscription. Without these anchors, readers default to the wrong reference class. |
+| 7 | Reproduction (and its limits) | Per §4.3 R3 M3 fix. Cameron can re-verify by re-running `scripts/audit_inference_cost.py`. Independent third-party verification is impossible because transcript data is private; readers can audit *their own* Claude Code projects with the same script. |
+| 8 | Methodology corrections | Brief note that the adversarial-review cycle on 2026-04-25 caught two CRITICAL math bugs in the original audit script (per-line summing → 1.85× inflation; wrong Opus pricing → 3× inflation). Cross-link to PROCESS.md §3 for the full story. Demonstrates that the methodology has been pressure-tested, not just asserted. |
+| 9 | The cache-optimization aside | One paragraph + cross-link to `docs/CACHE_OPTIMIZATION.md` (or a fold-in if that doc gets folded). Acknowledges that the practices documented there could reduce the full list price further; the "$3,593" is what was actually consumed, not what was minimum-possible. |
 
 ---
 
@@ -194,6 +214,7 @@ Sketched in the brainstorm. Honest audit of the cost number.
 | Mermaid architecture diagram | embedded in `README.md` | low (direct translation of current ASCII) |
 | Custom badges | inline in `README.md` badge row | low (shields.io URL-only) |
 | Cross-link audit | manual checklist or `scripts/audit_doc_links.sh` | low (one-time grep) |
+| `docs/CACHE_OPTIMIZATION.md` (or fold-in to COST_METHODOLOGY.md §9) | `docs/CACHE_OPTIMIZATION.md` | medium — drafted at `dev/notes/cache-optimization-draft.md` 2026-04-25; needs revision after corrected numbers (the "$10K could be saved" framing in v1 is wrong; total full price is ~$3,600). Decide promote-as-doc vs fold-in to methodology page. |
 
 ---
 
@@ -214,9 +235,11 @@ Sketched in the brainstorm. Honest audit of the cost number.
 
 If the Playwright-captured shots look amateurish or fail to convey what they need to (e.g., 3D terrain doesn't read as 3D in a still frame; voice search needs a moment-in-time UI that's hard to script), the README's audience-B and audience-C impact drops sharply. **Mitigation:** Mixed capture method (decision 4.8) + explicit fallback to manual capture if Playwright output is poor; only screenshots are at stake, not the spec.
 
-### 9.2 The two-cost-number framing may still confuse skeptical readers
+### 9.2 The two-cost-number framing — risk significantly reduced after 2026-04-25 review cycle
 
-Some peers will read "~$2.5K" in the README, click through to `COST_METHODOLOGY.md`, see "$22K", and conclude the README is misleading. **Mitigation:** the methodology page leads with the headline number being the honest one and cache reads being overhead — but the framing depends on the reader trusting the explanation. **Acceptance:** this is the cost of being honest; the alternative (omitting the $22K) would be worse.
+**Original concern (now mostly moot):** Some peers will read the README's headline cost, click through to `COST_METHODOLOGY.md`, see a much larger number, and conclude the README is misleading. With the original (incorrect) numbers ($2,500 vs $22K), the headline-vs-full gap was 9× and the absolute amount ($22K) was big enough to invite "you spent how much?" reactions.
+
+**After the corrected audit:** the gap is ~$300 vs ~$3,600 (12.6×), but the absolute amount ($3,600) is small enough that even the "full" number reads as cheap rather than alarming. The framing risk is now narrower: the reader who runs the audit themselves will see numbers within ~$100 of the README's "$300" rather than seeing a 9× discrepancy. The methodology page must still address the cache-write rationale and the cache-reads-as-artifact argument (per §4.3.1 and §4.3.3) so the reader doesn't have to take the framing on faith. **Acceptance:** the residual risk is small relative to the gain in clarity; the methodology page's expanded §6.4 §1–§5 directly addresses what's left.
 
 ### 9.3 `MANUAL_SETUP.md` carries forward existing rough edges
 
