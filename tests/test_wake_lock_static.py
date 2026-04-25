@@ -117,7 +117,19 @@ def test_silent_video_lock_js_exists_and_exports_api():
 def test_wake_lock_js_exists_and_exports_api():
     src = read("frontend/wake-lock.js")
     clean = strip_js_noise(src)
-    assert "if (window.WakeLock) return" in clean, "duplicate-load guard missing"
+    # Typed duplicate-load guard (post-6bc0ba3): must check that
+    # window.WakeLock has an `.acquire` method, not just truthiness. The
+    # simple `if (window.WakeLock) return` form short-circuits on browsers
+    # that expose the native Screen Wake Lock API — `window.WakeLock` is
+    # also the spec's sentinel-class name there, but the native class has
+    # no `.acquire` method, so OUR IIFE never runs and the first
+    # `WakeLock.acquire()` call from the navigation start path throws
+    # TypeError. Guarding on `typeof ....acquire` distinguishes our module
+    # from the native API. Regression here re-introduces the `6bc0ba3` bug.
+    assert re.search(
+        r"if\s*\(\s*window\.WakeLock\s*&&\s*typeof\s+window\.WakeLock\.acquire\b",
+        clean,
+    ), "typed duplicate-load guard missing — must check .acquire is callable, not just truthy (see 6bc0ba3)"
     export_match = re.search(r"window\.WakeLock\s*=\s*\{([^}]*)\}", clean)
     assert export_match, "window.WakeLock export not found"
     keys = export_match.group(1)
