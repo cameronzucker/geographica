@@ -59,8 +59,18 @@
     if (initialized) return;       // idempotent per spec §A
     initialized = true;
     map = mapInstance;
-    ensureSources();
-    ensureLayers();
+    // Style may not be loaded yet at init time — ensureSources/ensureLayers
+    // can throw "Style is not done loading" from MapLibre. They're idempotent,
+    // and app.js's addPlaceholderSources callback (registered on map.on('load'))
+    // re-invokes reattachSources after the style is ready, so a deferred
+    // failure here is safely retried. Catch and log so init() finishes
+    // registering listeners + buttons + tab handlers either way.
+    try { ensureSources(); ensureLayers(); }
+    catch (err) {
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[ruler] deferring source/layer setup until style.load:', err && err.message);
+      }
+    }
     map.on('click', handleMapClick);
     document.addEventListener('keydown', handleKeydown);
 
@@ -83,12 +93,14 @@
         btn.addEventListener('click', function () { view.measureTabActive = false; });
       });
     }
-    // Initialize from current panel-hidden state. If the page has the
-    // Measure tab DOM, trust the panel.hidden attribute as the source of
-    // truth; otherwise leave the default (true) — there's no UI to gate
-    // against.
+    // Initialize from current panel-active state. Project convention uses
+    // the .active class on the panel (CSS-driven, see style.css .panel.active),
+    // NOT the [hidden] attribute. If no panel exists, leave the default
+    // (true) — there's no UI to gate against.
     var measurePanel = document.getElementById('measure-panel');
-    if (measurePanel) view.measureTabActive = !measurePanel.hidden;
+    if (measurePanel && measurePanel.classList) {
+      view.measureTabActive = measurePanel.classList.contains('active');
+    }
 
     // ── Footer button wiring (Step 3) ──
     var clearBtn = document.getElementById('ruler-clear');
@@ -664,6 +676,9 @@
     setHidden(vertexSection, !visible);
     var countEl = $id('ruler-vertex-count');
     if (countEl) countEl.textContent = String(state.vertices.length);
+
+    // Idle-state hint visible only when there's nothing to show otherwise.
+    setHidden($id('ruler-idle-hint'), state.status !== 'idle');
 
     renderVertexList();
     renderBanners();
