@@ -56,19 +56,8 @@
   }
 
   function clear() {
-    if (view.abortController) {
-      view.abortController.abort();
-      view.abortController = null;
-    }
-    view.samplingGen++;
-    state.status = 'idle';
-    state.selectedVertex = null;
-    state.insertSlot = null;
-    state.vertices = [];
-    state.segments = [];
-    state.totalDistance_m = 0;
-    state.elevationProfile = null;
-    // Phase 1+ tasks fill in: source mutation, panel render, banner hide, cursor restore.
+    clearAll();
+    // Phase 2.7+ extends this to call renderPanel() + refreshMapData() for view sync.
   }
 
   // Reattach hook called by app.js's addPlaceholderSources on style.load
@@ -219,6 +208,118 @@
     return points.join(' ');
   }
 
+  // ─── State recompute / relabel ─────────────────────────────────────
+  function relabel() {
+    for (var i = 0; i < state.vertices.length; i++) {
+      state.vertices[i].label = 'V' + (i + 1);
+    }
+  }
+
+  function recompute() {
+    state.segments = [];
+    state.totalDistance_m = 0;
+    var hav = window._haversineDistance;
+    for (var i = 0; i < state.vertices.length - 1; i++) {
+      var a = [state.vertices[i].lng,     state.vertices[i].lat];
+      var b = [state.vertices[i + 1].lng, state.vertices[i + 1].lat];
+      var d = hav(a, b);
+      var brg = bearingDeg(a, b);
+      state.segments.push({
+        distance_m: d, bearing_deg: brg,
+        from: state.vertices[i].label, to: state.vertices[i + 1].label,
+      });
+      state.totalDistance_m += d;
+    }
+  }
+
+  // ─── State-machine transitions (spec §B) ───────────────────────────
+  function addVertex(lng, lat) {
+    if (state.status === 'idle') state.status = 'drawing';
+    if (state.status !== 'drawing') return;
+    state.vertices.push({ lng: lng, lat: lat, label: '' });
+    relabel();
+    recompute();
+  }
+
+  function popVertex() {
+    if (state.status !== 'drawing') return;
+    if (state.vertices.length === 0) return;
+    state.vertices.pop();
+    relabel();
+    recompute();
+    if (state.vertices.length === 0) state.status = 'idle';
+  }
+
+  function finishDrawing() {
+    if (state.status !== 'drawing') return;
+    if (state.vertices.length < 2) return;
+    state.status = 'editing';
+    state.elevationProfile = null;  // sampling kicks off in Phase 4
+  }
+
+  function clearAll() {
+    if (view.abortController) {
+      view.abortController.abort();
+      view.abortController = null;
+    }
+    view.samplingGen++;
+    state.status = 'idle';
+    state.selectedVertex = null;
+    state.insertSlot = null;
+    state.vertices = [];
+    state.segments = [];
+    state.totalDistance_m = 0;
+    state.elevationProfile = null;
+  }
+
+  function selectVertex(index) {
+    if (state.status !== 'editing') return;
+    if (index < 0 || index >= state.vertices.length) return;
+    state.selectedVertex = index;
+  }
+
+  function deselectVertex() {
+    if (state.status !== 'editing') return;
+    state.selectedVertex = null;
+  }
+
+  function startInsertBefore() {
+    if (state.status !== 'editing') return;
+    if (state.selectedVertex === null) return;
+    state.status = 'inserting';
+    state.insertSlot = { before: state.selectedVertex };
+  }
+
+  function startInsertAfter() {
+    if (state.status !== 'editing') return;
+    if (state.selectedVertex === null) return;
+    state.status = 'inserting';
+    state.insertSlot = { before: state.selectedVertex + 1 };
+  }
+
+  function cancelInsert() {
+    if (state.status !== 'inserting') return;
+    state.status = 'editing';
+    state.insertSlot = null;
+  }
+
+  // Read-only state snapshot for tests + view-layer rendering.
+  function getStateSnapshot() {
+    return {
+      status: state.status,
+      selectedVertex: state.selectedVertex,
+      insertSlot: state.insertSlot ? { before: state.insertSlot.before } : null,
+      vertices: state.vertices.map(function (v) {
+        return { lng: v.lng, lat: v.lat, label: v.label };
+      }),
+      segments: state.segments.map(function (s) {
+        return { distance_m: s.distance_m, bearing_deg: s.bearing_deg, from: s.from, to: s.to };
+      }),
+      totalDistance_m: state.totalDistance_m,
+      elevationProfile: state.elevationProfile,
+    };
+  }
+
   // ─── Expose ────────────────────────────────────────────────────────
   window._ruler = {
     init: init,
@@ -236,5 +337,17 @@
     projectPointToSegment: projectPointToSegment,
     formatRulerDistance: formatRulerDistance,
     sparklinePath: sparklinePath,
+    addVertex: addVertex,
+    popVertex: popVertex,
+    finishDrawing: finishDrawing,
+    clearAll: clearAll,
+    selectVertex: selectVertex,
+    deselectVertex: deselectVertex,
+    startInsertBefore: startInsertBefore,
+    startInsertAfter: startInsertAfter,
+    cancelInsert: cancelInsert,
+    getState: getStateSnapshot,
+    relabel: relabel,
+    recompute: recompute,
   };
 })();
