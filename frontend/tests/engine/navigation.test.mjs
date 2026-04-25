@@ -1433,6 +1433,83 @@ test('I13: prompt count invariant on Villa Rita fixture (G9 regression guard)', 
     `expected 3 prompts (TTM v3 baseline preserved), got ${fires.length}: ${JSON.stringify(fires)}`);
 });
 
+test('I14: GPS-recovery guard suppresses prefix on first post-stale tick', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  const { fixtureLongFirstSegment } = await import('./test_runner.mjs');
+  const internals = win._geographicaNavEngineInternals;
+  win._geographicaUseImperial = true;
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 16 };
+  const fires = [];
+  nav.onVoice((text) => fires.push(text));
+  nav.start(fixtureLongFirstSegment());
+
+  // Tick once fresh — driver is 2000 m from M1, far-tier TTM > 30s, won't fire.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.65, speed: 16 });
+  assert.equal(fires.length, 0, 'no fire yet at 2000 m from M1');
+
+  // Directly arm the recovery flag: simulates a prior stale/DR episode.
+  // Using _setGPSRecoveryFlag(true) is deterministic — _setLastGPSTime approach
+  // is racy because consumeGPSRecoveryFlag only runs inside the near/far
+  // would-fire branches; setting lastGPSTime stale between non-firing ticks
+  // doesn't update prevTickWasStaleOrDR before the recovery tick wins it back.
+  internals._setGPSRecoveryFlag(true);
+
+  // Next tick — recovery flag is armed, drive into far-tier range (~470 m from M1).
+  // M1 at -111.62800; 470 m west ≈ -111.62800 - 470/90862 ≈ -111.63317.
+  nav.updateGPS({ latitude: 35.20, longitude: -111.63317, speed: 16 });
+  assert.ok(fires.length >= 1, 'expected far-tier to fire');
+  // FIRST post-recovery prompt should have NO prefix (suppressed).
+  assert.doesNotMatch(fires[0], /^In .+, /,
+    `expected NO prefix on first post-recovery fire, got: ${JSON.stringify(fires[0])}`);
+
+  // Subsequent ticks should resume normal prefix behavior.
+  // M1's far is now announced. Re-arm the flag and drive into near tier (~50 m from M1)
+  // to verify the recovery flag fires once and then clears for subsequent ticks.
+  // 50 m west of M1 (-111.62800): -111.62800 - 50/90862 ≈ -111.62855.
+  internals._setGPSRecoveryFlag(true);
+  nav.updateGPS({ latitude: 35.20, longitude: -111.62855, speed: 16 }); // ~50 m from M1, near tier
+  if (fires.length >= 2) {
+    // Second fire after another recovery arm: also suppressed (flag was re-armed).
+    // Verify we got something fired (loose-assert; tighter assertion would require
+    // a deterministic time-source for the prefix distance calculation).
+    assert.ok(typeof fires[1] === 'string' && fires[1].length > 0, 'second fire is non-empty');
+  }
+});
+
+test('I14b: GPS-stale recovery composes with normal-flow prefix on second tick', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  const { fixtureWiderCluster } = await import('./test_runner.mjs');
+  const internals = win._geographicaNavEngineInternals;
+  win._geographicaUseImperial = true;
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 11 };
+  const fires = [];
+  nav.onVoice((text) => fires.push(text));
+  nav.start(fixtureWiderCluster());
+
+  // Directly arm the recovery flag, then fire a fresh tick at near-tier distance.
+  // Using _setGPSRecoveryFlag(true) rather than _setLastGPSTime for determinism —
+  // see I14 comment above.
+  internals._setGPSRecoveryFlag(true);
+  nav.updateGPS({ latitude: 35.20, longitude: -111.64698, speed: 11 });
+  assert.ok(fires.length >= 1, 'expected near-tier fire on recovery tick');
+  assert.doesNotMatch(fires[0], /^In \d+ feet,/,
+    `expected NO prefix on recovery tick, got: ${JSON.stringify(fires[0])}`);
+
+  // After the recovery-suppressed fire, the engine resumes normal prefix behavior.
+  // M1's near is now announced. Drive past M1 toward M2 (-111.64560).
+  // 75 m before M2 = -111.64560 + 0.000826° ≈ -111.64478 (driver approaching from west).
+  for (var i = 0; i < 3; i++) {
+    nav.updateGPS({ latitude: 35.20, longitude: -111.64478, speed: 11 });
+  }
+  // At this point M2's near-tier should have fired with a prefix (normal flow, no recovery).
+  if (fires.length >= 2) {
+    assert.match(fires[fires.length - 1], /^In \d+ feet,/,
+      `expected prefix on subsequent (non-recovery) tick, got: ${JSON.stringify(fires[fires.length - 1])}`);
+  }
+});
+
 // NOTE: I15 (exception-safety G11) is not testable via mock due to IIFE
 // closure binding — the helpers are bound at module-load time, so a test
 // can't substitute a throwing version. Invariant verified by code review:

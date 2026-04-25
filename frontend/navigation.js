@@ -1097,7 +1097,8 @@
     _stripBakedDistance: stripBakedDistance,
     _consumeGPSRecoveryFlag: consumeGPSRecoveryFlag,
     _peekGPSRecoveryFlag: function () { return prevTickWasStaleOrDR; },
-    _setLastGPSTime: function (t) { lastGPSTime = t; }
+    _setLastGPSTime: function (t) { lastGPSTime = t; },
+    _setGPSRecoveryFlag: function (b) { prevTickWasStaleOrDR = !!b; }
   };
 
 })();
