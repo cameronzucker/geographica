@@ -1075,7 +1075,7 @@ test('elevationFromRGB: < -500m returns null', () => {
   assert.strictEqual(e, null);
 });
 
-test('elevationFromRGB: -500m at boundary returns null (strict <)', () => {
+test('elevationFromRGB: -500m at boundary is allowed (strict <, returns -500)', () => {
   // Spec says < -500 → null. -500 exactly is allowed.
   const t = loadRuler();
   const [r, g, b] = encodeTerrarium(-500);
