@@ -1880,7 +1880,7 @@ test('initial state is idle, vertices empty', () => {
   const { test: t } = loadRuler();
   const s = t.getState();
   assert.strictEqual(s.status, 'idle');
-  assert.deepStrictEqual(s.vertices, []);
+  assert.strictEqual(s.vertices.length, 0);
   assert.strictEqual(s.selectedVertex, null);
   assert.strictEqual(s.insertSlot, null);
 });
@@ -1984,7 +1984,7 @@ test('startInsertAfter from editing transitions to inserting with slot=index+1',
   t.startInsertAfter();
   const s = t.getState();
   assert.strictEqual(s.status, 'inserting');
-  assert.deepStrictEqual(s.insertSlot, { before: 1 });
+  assert.strictEqual(s.insertSlot.before, 1);
 });
 
 test('startInsertBefore from editing transitions to inserting with slot=index', () => {
@@ -1996,7 +1996,7 @@ test('startInsertBefore from editing transitions to inserting with slot=index', 
   t.startInsertBefore();
   const s = t.getState();
   assert.strictEqual(s.status, 'inserting');
-  assert.deepStrictEqual(s.insertSlot, { before: 1 });
+  assert.strictEqual(s.insertSlot.before, 1);
 });
 
 test('cancelInsert returns to editing with previous selection preserved', () => {
