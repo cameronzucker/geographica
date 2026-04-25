@@ -66,6 +66,18 @@
       }
     }
     map.on('click', handleMapClick);
+    map.on('click', 'ruler-vertex-hit-circles', handleVertexLayerClick);
+    // mouseenter/mouseleave for cursor pointer-on-hover
+    map.on('mouseenter', 'ruler-vertex-hit-circles', function () {
+      if (state.status === 'editing' && map.getCanvas()) {
+        map.getCanvas().style.cursor = 'pointer';
+      }
+    });
+    map.on('mouseleave', 'ruler-vertex-hit-circles', function () {
+      if (state.status === 'editing' && map.getCanvas()) {
+        updateCursor();  // restore default
+      }
+    });
     document.addEventListener('keydown', handleKeydown);
 
     // ── Footer button wiring ──
@@ -418,6 +430,30 @@
     view.lastClick = { x: pt.x, y: pt.y, t: t };
 
     addVertex(e.lngLat.lng, e.lngLat.lat);
+    refreshMapData();
+    renderPanel();
+  }
+
+  // ─── Tap-vs-drag detector (spec §D.6) ──────────────────────────────
+  function isTap(start, end, mode) {
+    var pxThreshold = mode === 'touch' ? 8 : 5;
+    var msThreshold = mode === 'touch' ? 250 : 200;
+    var dx = end.x - start.x;
+    var dy = end.y - start.y;
+    var dt = end.t - start.t;
+    if (dx * dx + dy * dy > pxThreshold * pxThreshold) return false;
+    if (dt > msThreshold) return false;
+    return true;
+  }
+
+  // ─── Layer-scoped click on ruler-vertex-hit-circles (editing only) ─
+  function handleVertexLayerClick(e) {
+    if (state.status !== 'editing') return;
+    if (!e.features || e.features.length === 0) return;
+    var idx = e.features[0].properties.index;
+    if (typeof idx !== 'number') return;
+    if (state.selectedVertex === idx) deselectVertex();
+    else selectVertex(idx);
     refreshMapData();
     renderPanel();
   }
@@ -849,5 +885,7 @@
     handleKeydown: handleKeydown,
     renderPanel: renderPanel,
     updateCursor: updateCursor,
+    isTap: isTap,
+    handleVertexLayerClick: handleVertexLayerClick,
   };
 })();
