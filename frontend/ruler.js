@@ -173,6 +173,20 @@
     return [a[0] + t * dx, a[1] + t * dy];
   }
 
+  // ─── Distance formatting ───────────────────────────────────────────
+  // Live-reads window._geographicaUseImperial at format time so unit
+  // toggle propagates immediately (per spec §A).
+  function formatRulerDistance(meters) {
+    var imperial = window._geographicaUseImperial;
+    if (imperial) {
+      if (meters < 1609.34) return Math.round(meters * 3.28084) + ' ft';
+      return (meters / 1609.34).toFixed(2) + ' mi';
+    } else {
+      if (meters < 1000) return Math.round(meters) + ' m';
+      return (meters / 1000).toFixed(2) + ' km';
+    }
+  }
+
   // ─── Expose ────────────────────────────────────────────────────────
   window._ruler = {
     init: init,
@@ -188,5 +202,6 @@
     elevationFromRGB: elevationFromRGB,
     samplePath: samplePath,
     projectPointToSegment: projectPointToSegment,
+    formatRulerDistance: formatRulerDistance,
   };
 })();
