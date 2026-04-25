@@ -549,7 +549,15 @@
 
     if (farWouldFire) {
       var farText = m.verbal_transition_alert_instruction || m.instruction || "";
-      announcedSet[farKey] = true;
+      announcedSet[farKey] = true;  // mark BEFORE prefix construction (spec v2 §5.2 G11)
+      // GPS-recovery guard: suppress prefix on first tick after stale/DR clears.
+      if (!consumeGPSRecoveryFlag()) {
+        farText = stripBakedDistance(farText);
+        var farPrefix = formatDistancePrefix(distToNext, _geographicaUseImperial());
+        if (farPrefix && farText && farText.length > 0) {
+          farText = farPrefix + farText.charAt(0).toLowerCase() + farText.slice(1);
+        }
+      }
       if (!muted && farText && onVoiceCb) {
         if (typeof window !== 'undefined' && window._geographicaTTMDebug) {
           (window._geographicaTTMDebugLog = window._geographicaTTMDebugLog || []).push({

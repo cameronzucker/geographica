@@ -265,3 +265,39 @@ export function fixtureValhallaThenChainedCluster() {
 // Backward-compat alias: earlier plan tasks reference the old name.
 // Remove when all plan tasks have been converted.
 export const fixtureTwoManeuverRoute = fixtureRouteWithTwoTurns;
+
+// Fixture: 2-maneuver route with a long first segment so far-tier fires at
+// a TTM-governed distance well above the cutoff. Used for I13 prefix tests.
+// 2000 m segment at lat 35.20 (1° longitude ≈ 91 km at lat 35, so 2000 m ≈ 0.022°).
+export function fixtureLongFirstSegment() {
+  return {
+    coords: [
+      [-111.65000, 35.20],     // depart start
+      [-111.62800, 35.20],     // M1 boundary (2000 m east)
+      [-111.62700, 35.20],     // route end (100 m past M1)
+    ],
+    maneuvers: [
+      {
+        type: 1,
+        instruction: 'Head east',
+        verbal_transition_alert_instruction: 'In 2000 feet, turn left',
+        verbal_pre_transition_instruction: 'Head east',
+        begin_shape_index: 0,
+        end_shape_index: 1,
+      },
+      {
+        type: 15,
+        instruction: 'Turn left onto Test Avenue',
+        verbal_transition_alert_instruction: 'Turn left onto Test Avenue',
+        verbal_pre_transition_instruction: 'Turn left onto Test Avenue',
+        begin_shape_index: 1,
+        end_shape_index: 2,
+      },
+    ],
+    summary: { length: 2.1, time: 130 },
+    totalDistance: 2100,
+    totalTime: 130,
+    costing: 'auto',
+    remainingWaypoints: [],
+  };
+}

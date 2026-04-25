@@ -1317,3 +1317,26 @@ test('consumeGPSRecoveryFlag: arms after stale, fires once on recovery', async (
   // Subsequent call: prev is now false (one-shot consumed), now is fresh → return false.
   assert.equal(internals._consumeGPSRecoveryFlag(), false);
 });
+
+test('I13: far-tier fires "In a quarter mile, " prefix when above cutoff', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  const { fixtureLongFirstSegment } = await import('./test_runner.mjs');
+  win._geographicaUseImperial = true;
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 16 };
+  const fires = [];
+  nav.onVoice((t) => fires.push(t));
+  nav.start(fixtureLongFirstSegment());
+  // Drive at 16 m/s. Far-tier ttm ≤ 30 → fires at distance ≤ 480 m.
+  // Approach to ~470 m west of M1 (M1 at lng -111.628).
+  // dx_deg = 470 / (6371000 * cos(35.20° * π/180) * π/180) ≈ 0.005173
+  // GPS at lng = -111.628 - 0.005173 ≈ -111.63317
+  for (let i = 0; i < 3; i++) {
+    nav.updateGPS({ latitude: 35.20, longitude: -111.63317, speed: 16 });
+  }
+  // Far-tier should have fired.
+  assert.ok(fires.length >= 1, 'expected far-tier to fire');
+  // Far-tier text MUST start with "In a quarter mile, " (~480 m fire = ~1575 ft, in [1000, 1980) band).
+  assert.match(fires[0], /^In a quarter mile, /,
+    `expected far-tier text to start with "In a quarter mile, ", got: ${JSON.stringify(fires[0])}`);
+});
