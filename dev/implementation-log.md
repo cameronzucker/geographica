@@ -1,5 +1,82 @@
 # Implementation Log
 
+## 2026-04-25 — Ruler / measurement tool — Phase 2: drawing state end-to-end (8 tasks)
+
+**Released as:** not yet released (Phase 3-5 remain; Phase 2 is the FIRST UI surface and requires Cameron-driven browser smoke at the Phase 2 review checkpoint before merge / before Phase 3 starts).
+**Plan / spec:** [docs/superpowers/plans/2026-04-24-ruler-plan.md](../docs/superpowers/plans/2026-04-24-ruler-plan.md) · [docs/superpowers/specs/2026-04-24-ruler-design.md](../docs/superpowers/specs/2026-04-24-ruler-design.md)
+**Adversarial reviews:** Per-task two-stage Sonnet review (spec compliance + code quality) for Tasks 2.1-2.5. Consolidated single-pass review (Phase A spec + Phase B code-quality in one agent response) for Tasks 2.6 and 2.7 to conserve controller context — same rigor, ~50% fewer subagent dispatches. A Codex adversarial round at the Phase 2 boundary was deferred to next session's Phase 2 review checkpoint per the handoff.
+**Execution protocol:** `superpowers:subagent-driven-development` — fresh general-purpose Sonnet implementer per task, two-stage Sonnet review (spec → code-quality) per task, single combined commit per task. Plan-vs-code drift fixes landed as separate `docs(ruler):` / `fix(ruler):` / `refactor(ruler):` commits in lockstep with the feat commit they apply to.
+**Agent moniker:** saguaro. Sub-monikers `saguaro-impl-2.{1..8}`, `saguaro-impl-2.{1,2,5,8}b` for lockstep-fix follow-ups, `saguaro-spec-2.{1..5}` and `saguaro-cq-2.{1..5}` for staged reviews, `saguaro-review-2.{6,7}` for consolidated reviews.
+
+### Summary
+
+Eight tasks shipped to `frontend/ruler.js` and `frontend/app.js`, bringing up the `drawing` state end-to-end. After Phase 2: user can click Measure tab → tap map → vertex appears → tap again → line + vertex render → keyboard-undo / Esc-cancel / Enter-finish → vertex list updates live → click [Finish] → editing state. No editing / inserting / elevation yet — those are Phases 3 and 4. Cumulative ruler test count: 84/84 (Phase 0+1 = 42, Phase 2.1 state-machine = 14, Phase 2.5 click-debounce = 11, Phase 2.6 keyboard = 11, Phase 2.7 panel-render = 6). Phase 2 is the first UI surface so manual browser smoke at the Phase 2 review checkpoint is non-negotiable per `feedback_browser_smoke_before_ship.md` (the 5013f31 [hidden]-vs-display field-bug from manzanita's Phase 0 ship proves static review alone misses CSS specificity bugs).
+
+The implementation grew `frontend/ruler.js` from ~240 to ~700 lines, organized into clean sections: state machine (Task 2.1) → click handler (Task 2.5) → keyboard handler (Task 2.6) → DOM rendering (Task 2.7) → cursor management (Task 2.8) → map source/layer wiring (Task 2.2) → public API (with `init` orchestrating the wiring at the bottom). `frontend/app.js` got 12 lines total: the reverse-geocode bail + 3-layer exclusion (Task 2.3), the KMZ-pin and search-pin bails (Task 2.4), and the `_ruler.reattachSources(map)` call inside `addPlaceholderSources` (Task 2.2).
+
+### Key decisions
+
+- **Three CRITICAL fixes from R1-R5 adversarial review landed in Phase 2.** #4 (R5 C1) editing-state vertex-click exclusion-list extension at `frontend/app.js:1641` (Task 2.3) — the editing state intentionally has `_ruler.isActive() === false`, so the `isActive()` bail alone is insufficient; the exclusion-list extension covers the editing state by including `ruler-vertex-hit-circles`, `ruler-vertex-circles`, and `ruler-line` in the existing `queryRenderedFeatures` exclusion array. #6 (R5 M3) two-font fallback `['Metropolis Regular', 'Noto Sans Regular']` at `frontend/ruler.js:428` (Task 2.2) — single-font would break fallback glyph rendering across positron/darkmatter/hybrid styles. #7 textContent-only with safe-clear pattern in `renderPanel` and all sub-renderers (Task 2.7) — `while (firstChild) removeChild(firstChild)` is the canonical safe-clear; there is no `innerHTML` escape hatch in the new code (verified with `grep -nE "\.innerHTML\s*=" frontend/ruler.js` returning zero).
+
+- **Plan-vs-code drift discipline scaled for Phase 2.** 4 of 8 tasks needed lockstep-fix (drift rate ~50%, slightly lower than Phase 1's ~67% but still high). Each drift landed in a separate `docs(ruler):` / `fix(ruler):` / `refactor(ruler):` commit with explanatory inline notes so a future plan re-run does not re-introduce the bug. The pattern from Phase 1 (manzanita / ironwood) continues with no modifications needed.
+
+- **Consolidated single-pass review for Tasks 2.6 and 2.7.** The skill's two-stage review (spec compliance THEN code quality) was preserved for Tasks 2.1-2.5 — six fresh agent dispatches per task plus the implementer. For Tasks 2.6 (keyboard) and 2.7 (renderPanel), the controller dispatched ONE general-purpose agent with both phases in the prompt — Phase A (spec compliance) AND Phase B (code quality), separated in the response. Same rigor (the agent's response had clear phase boundaries), ~50% fewer subagent dispatches. Recommend this pattern for future phases when controller context tightens after the first 4-5 tasks.
+
+- **`measureTabActive: true` as default** (Task 2.8 lockstep-fix). Plan originally said `false`; tests don't call `init()`, so default `false` would gate every click-debounce test. Production `init()` flips to `false` for sibling tabs when actual tab DOM is present — authoritative override at init time. Plan synced to match (`63b2ea0`).
+
+### Plan-vs-code drift fixes (4 of 8 tasks)
+
+1. **Task 2.1 — cross-realm `deepStrictEqual` failure.** 3 of 14 test assertions used `assert.deepStrictEqual` against values returned from `getStateSnapshot()`, which executes inside a VM context. Node's `deepStrictEqual` enforces prototype identity across realms — `[].constructor` from the VM is the VM's Array, not the host's. Same class as Phase 1 Task 1.3's drift. Fixed by swapping 3 assertions to primitive `strictEqual` on the property-of-interest. Landed as `7418c13` + `09e87c9`.
+
+2. **Task 2.2 — `teardownSourcesAndLayers` contradicts spec §A.** Plan included the helper, but spec §A line 58 says: "No teardown(): clear() is the canonical reset path." Pure dead code — no consumer in any Phase 2-5 task. Removed function from `frontend/ruler.js` and the snippet from the plan. Landed as `8e1b5b3` + `794d4e6`.
+
+3. **Task 2.5 — `view.lastClick` not reset by `clearAll()` + magic numbers.** Two findings from code-quality review: (a) `clearAll()` didn't reset `view.lastClick`, so a click within 5 px AND 250 ms of the last accepted click before a clear was silently debounced (narrow but real edge-case bug); (b) magic numbers `25` (5²) and `250` in the debounce predicate were opaque without context. Fixed by adding `view.lastClick = null;` to `clearAll()` + regression test, and hoisting `DEBOUNCE_PX`, `DEBOUNCE_PX_SQ`, `DEBOUNCE_MS` as module-private constants. Landed as `868e4b9`. Same review also surfaced the spec-vs-plan gap re first-click reverse-geocode collision (idle→drawing missing the spec §B "Measure tab visible" gate) — plan updated with new Step 1.5 in Task 2.8 (`0c3d614`).
+
+4. **Task 2.8 — `measureTabActive` default value.** Plan said `false`; default `false` would gate every click-debounce test (tests don't call `init()`). Implementer correctly chose default `true` per option (a) in the dispatch. Plan synced to match (`63b2ea0`).
+
+### Carry-forward observations from the per-task reviews (for Phase 3-5)
+
+- **Test-helper migration.** `_fixtures.js` was created and used by all Phase 2 tests, but the 7 Phase 1 test files still carry their own inline `loadRuler` shims (~10-25 lines each). They'll diverge from `_fixtures.js` over time. Recommend a single-commit cleanup task during Phase 3 (could be a side-task, not phase-blocker).
+
+- **`getStateSnapshot.elevationProfile` is leaked by reference.** Currently always `null` (Phase 1+2 don't populate it). Phase 4.4 will populate it with `samples`, `coverageGaps`, `samplingProgress` — at that point a renderer holding the snapshot reference can mutate elevation state. Recommend Phase 4.4 add the deep-clone shape (already drafted in saguaro-cq-2.1 review).
+
+- **Transition-matrix coverage gaps in `state-machine.test.mjs`.** Several no-op cases aren't tested (popVertex outside drawing, selectVertex with invalid index, startInsert with no selection, clearAll from inserting, addVertex in editing/inserting). Phase 3 implementers should consider extending the test file with these.
+
+- **Delete key untested.** `handleKeydown` at `ruler.js:361` matches `'Backspace' || 'Delete'`, but no test exercises Delete. Phase 3.7 (editing-state vertex deletion) is the natural place to add coverage.
+
+- **`evt.prevented` not asserted in keyboard tests.** The `fakeKey` factory has a `.prevented` getter, but no test asserts on it. preventDefault on Backspace prevents browser-back; on Esc prevents iOS Safari fullscreen-exit — real production hazards. Phase 3.7 keyboard tests should add assertions.
+
+- **Clock-source mixing in `handleMapClick`.** `oe.timeStamp != null ? oe.timeStamp : Date.now()` mixes DOMHighResTimeStamp and wall-clock epochs. Theoretical for production (real MapLibre events always have timeStamp), worth hardening with `performance.now()` fallback or `Math.abs(dt)` guard. Low priority.
+
+- **Banner message strings inline in `renderBanners`.** Three user-visible strings could be hoisted as constants for spec/i18n discipline. Phase 5 territory if i18n is on the radar.
+
+- **First-click reverse-geocode collision.** Caught by saguaro-cq-2.5 reviewer. Closed in Task 2.8 via the new `measureTabActive` gate (Step 1.5 added to plan in `0c3d614`). Browser smoke at the Phase 2 review checkpoint must verify this is fully resolved.
+
+### Phase 2 commits
+
+| Commit | Subject |
+|---|---|
+| `7418c13` | feat(ruler): state-machine helpers + relabel/recompute |
+| `09e87c9` | docs(ruler): sync Task 2.1 plan with cross-realm deepStrictEqual gotcha |
+| `14d8531` | feat(ruler): map sources + 6 layers + style-load reattach hook |
+| `8e1b5b3` | refactor(ruler): drop teardownSourcesAndLayers — spec §A says no teardown() |
+| `794d4e6` | docs(ruler): sync Task 2.2 plan — drop teardownSourcesAndLayers per spec §A |
+| `57ed307` | feat(app): ruler bail at reverse-geocode handler + exclusion list |
+| `09eb077` | feat(app): ruler bails at KMZ-pin + search-pin click handlers |
+| `77939b7` | feat(ruler): handleMapClick — debounce + modifier-key suppression |
+| `868e4b9` | fix(ruler): reset view.lastClick in clearAll + name debounce constants |
+| `0c3d614` | docs(ruler): add Measure-tab-active gate to Task 2.8 plan |
+| `e8f6699` | feat(ruler): keyboard handler — Backspace/Esc/Enter + input guard |
+| `d2e53ca` | feat(ruler): renderPanel — state-driven DOM via safe-clear pattern |
+| `bd5d21f` | feat(ruler): tab activation + cursor management + button wiring |
+| `63b2ea0` | docs(ruler): sync Task 2.8 Step 1.5 — measureTabActive default true |
+
+### Phase 2 review checkpoint outcome
+
+**Pending at session close.** Phase 2 is code-shipped (14 ruler commits, all reviewed via subagent-driven-development), but the Phase 2 review checkpoint REQUIRES Cameron-driven browser smoke (first UI surface) and an optional Codex adversarial round. Both are deferred to next session per the handoff at [memory/handoff_20260425_ruler_phase2_SHIPPED_checkpoint_pending.md](../../.claude/projects/-home-administrator-Code-geographica/memory/handoff_20260425_ruler_phase2_SHIPPED_checkpoint_pending.md). Browser-smoke checklist: tab activation → tap map → vertex render → 2nd tap → line render → cursor crosshair → Enter / [Finish] → editing → cursor default → [+ New measurement] → idle. Plus the cross-handler bails: tap KMZ pin during drawing → vertex placed, no popup; tap search pin during drawing → same; tap empty map during editing → reverse-geocode popup (no double-fire). Console must be clean throughout. Any smoke-found bug gets a `fix(ruler):` lockstep commit before Phase 3 starts.
+
+---
+
 ## 2026-04-25 — Ruler / measurement tool — Phase 1: pure-function math (6 tasks)
 
 **Released as:** not yet released (Phase 2-5 remain; no UI surface yet, so no field smoke required at the Phase 1 boundary).
