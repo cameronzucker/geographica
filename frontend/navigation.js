@@ -191,6 +191,8 @@
   // Speed history for ETA adjustment: [{time, actual, expected}]
   var speedHistory = [];
 
+  // ─── Voice prefix helpers (spec v2 §5.1, §5.3) ─────────────────────
+
   // Returns true when the UI should display imperial units (miles / feet).
   // Reads window._geographicaUseImperial at call time so live changes are
   // reflected without a page reload. Defaults to true (imperial) when unset,
@@ -198,6 +200,36 @@
   function _geographicaUseImperial() {
     return typeof window !== 'undefined' && window._geographicaUseImperial !== false;
   }
+
+  // Cutoff: below this, prompts read as imminent ("turn right" with no prefix).
+  var DISTANCE_PREFIX_CUTOFF_METERS = 30;  // ≈ 100 ft
+
+  // Per spec v2 §5.1. Returns "" if below cutoff. Output ends with ", ".
+  // Imperial bands: feet (round 100) up to 999 ft; then fractional miles
+  // (a quarter / half a / three quarters of a / one); then whole miles
+  // (Math.round). Metric: meters (round 10 < 100 m, round 50 from 100-999 m);
+  // then "In one kilometer" at 1000 m exactly; then N.N km via explicit
+  // Math.round(m/100)/10 (avoids JS .toFixed rounding quirks).
+  function formatDistancePrefix(meters, useImperial) {
+    if (meters < DISTANCE_PREFIX_CUTOFF_METERS) return '';
+    if (useImperial) {
+      var feet = meters * 3.28084;
+      if (feet < 1000) return 'In ' + (Math.round(feet / 100) * 100) + ' feet, ';
+      var miles = feet / 5280;
+      if (miles < 1980 / 5280) return 'In a quarter mile, ';
+      if (miles < 3300 / 5280) return 'In half a mile, ';
+      if (miles < 4620 / 5280) return 'In three quarters of a mile, ';
+      if (miles < 7920 / 5280) return 'In one mile, ';
+      return 'In ' + Math.round(miles) + ' miles, ';
+    }
+    // metric
+    if (meters < 100) return 'In ' + (Math.round(meters / 10) * 10) + ' meters, ';
+    if (meters < 1000) return 'In ' + (Math.round(meters / 50) * 50) + ' meters, ';
+    if (meters < 1500) return 'In one kilometer, ';
+    return 'In ' + (Math.round(meters / 100) / 10).toFixed(1) + ' kilometers, ';
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
 
   // Callbacks
   var onUpdateCb = null;
@@ -997,7 +1029,8 @@
     _getSpeedSamples: function () { return Array.from(speedSamples); },
     _speedMedian: function () { return speedMedian(); },
     _getAnnouncedKeys: function () { return Object.keys(announcedSet).sort(); },
-    _useImperial: _geographicaUseImperial
+    _useImperial: _geographicaUseImperial,
+    _formatDistancePrefix: formatDistancePrefix   // NEW
   };
 
 })();

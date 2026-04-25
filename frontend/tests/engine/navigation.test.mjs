@@ -1049,3 +1049,120 @@ test('TTM I12: VOICE_DISTANCE_FLOOR.pedestrian unchanged at 15 m', async () => {
   const internals = win._geographicaNavEngineInternals;
   assert.equal(internals.VOICE_DISTANCE_FLOOR.pedestrian, 15);
 });
+
+test('formatDistancePrefix: imperial cutoff (29 m → "")', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  assert.equal(fmt(0, true), '');
+  assert.equal(fmt(29, true), '');
+});
+
+test('formatDistancePrefix: imperial feet band (round to 100)', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  assert.equal(fmt(31, true), 'In 100 feet, ');
+  assert.equal(fmt(91, true), 'In 300 feet, ');
+  assert.equal(fmt(290, true), 'In 1000 feet, ');  // 951 ft rounds to 1000
+});
+
+test('formatDistancePrefix: imperial quarter-mile band entry', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  // 305 m = 1001 ft = 0.190 mi (just into [1000, 1980) ft = quarter band)
+  assert.equal(fmt(305, true), 'In a quarter mile, ');
+  assert.equal(fmt(500, true), 'In a quarter mile, '); // 1640 ft = 0.311 mi, still in quarter
+  assert.equal(fmt(504, true), 'In a quarter mile, '); // 1654 ft = 0.313 mi, still quarter (just inside upper boundary)
+});
+
+test('formatDistancePrefix: imperial half mile band', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  assert.equal(fmt(700, true), 'In half a mile, ');  // 2297 ft, in [1980, 3300)
+  assert.equal(fmt(800, true), 'In half a mile, ');
+});
+
+test('formatDistancePrefix: imperial three-quarter mile band', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  assert.equal(fmt(1100, true), 'In three quarters of a mile, ');  // 3609 ft, in [3300, 4620)
+});
+
+test('formatDistancePrefix: imperial one mile band', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  assert.equal(fmt(1500, true), 'In one mile, ');  // 4921 ft, in [4620, 7920)
+  assert.equal(fmt(2100, true), 'In one mile, ');  // 6890 ft, still in band
+});
+
+test('formatDistancePrefix: imperial multi-mile (round to whole)', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  assert.equal(fmt(2500, true), 'In 2 miles, ');  // 8202 ft = 1.553 mi, rounds to 2
+  assert.equal(fmt(8000, true), 'In 5 miles, ');  // 4.972 mi, rounds to 5
+});
+
+test('formatDistancePrefix: metric cutoff', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  assert.equal(fmt(0, false), '');
+  assert.equal(fmt(29, false), '');
+});
+
+test('formatDistancePrefix: metric meters band low (round to 10)', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  assert.equal(fmt(31, false), 'In 30 meters, ');
+  assert.equal(fmt(85, false), 'In 90 meters, ');
+});
+
+test('formatDistancePrefix: metric meters band mid (round to 50)', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  assert.equal(fmt(101, false), 'In 100 meters, ');
+  assert.equal(fmt(480, false), 'In 500 meters, ');
+  assert.equal(fmt(998, false), 'In 1000 meters, ');  // edge: rounds to 1000
+});
+
+test('formatDistancePrefix: metric one-kilometer band', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  assert.equal(fmt(1000, false), 'In one kilometer, ');
+  assert.equal(fmt(1499, false), 'In one kilometer, ');
+});
+
+test('formatDistancePrefix: metric multi-kilometer (round to 0.1)', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  assert.equal(fmt(1500, false), 'In 1.5 kilometers, ');  // Math.round(15)/10 = 1.5
+  assert.equal(fmt(2345, false), 'In 2.3 kilometers, ');  // Math.round(23.45)/10 = 2.3
+});
+
+test('formatDistancePrefix: monotonicity property — output never decreases as meters increases', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  function distanceValue(prefix, useImperial) {
+    if (prefix === '') return -1;
+    var m = prefix.match(/In (.+?), /);
+    if (!m) throw new Error('unexpected prefix shape: ' + prefix);
+    var phrase = m[1];
+    if (/feet$/.test(phrase)) return parseInt(phrase, 10) * 0.3048;
+    if (phrase === 'a quarter mile')           return 0.25 * 1609.344;
+    if (phrase === 'half a mile')              return 0.5  * 1609.344;
+    if (phrase === 'three quarters of a mile') return 0.75 * 1609.344;
+    if (phrase === 'one mile')                 return 1.0  * 1609.344;
+    if (/miles$/.test(phrase))   return parseInt(phrase, 10) * 1609.344;
+    if (phrase === 'one kilometer') return 1000;
+    if (/kilometers$/.test(phrase)) return parseFloat(phrase) * 1000;
+    if (/meters$/.test(phrase))     return parseInt(phrase, 10);
+    throw new Error('unmatched phrase: ' + phrase);
+  }
+  for (const useImperial of [true, false]) {
+    let prevValue = -2;
+    for (let m = 0; m <= 10000; m += 10) {
+      const v = distanceValue(fmt(m, useImperial), useImperial);
+      assert.ok(v >= prevValue,
+        `non-monotone at m=${m} useImperial=${useImperial}: prev=${prevValue}, now=${v}, prefix="${fmt(m, useImperial)}"`);
+      prevValue = v;
+    }
+  }
+});
