@@ -3422,6 +3422,62 @@ In `frontend/ruler.js`, add inside `init(mapInstance)`:
     renderPanel();
 ```
 
+- [ ] **Step 1.5: Add Measure-tab-active gate to handleMapClick.**
+
+Per spec §B: the `idle → drawing` transition requires "Measure tab visible AND no measurement in editing." Without an explicit gate, a first map-click while a non-Measure tab is the visible panel triggers the ruler's `handleMapClick` AND collides with the reverse-geocode click handler — the reverse-geocode bail checks `_ruler.isActive()`, which is `false` while state is still `idle`, so both handlers fire and the user gets a popup AND a placed V1 from a single click. Gating `handleMapClick` on Measure-tab-active state closes the collision regardless of MapLibre handler-registration order.
+
+Add a module-private flag to the `view = { ... }` init block (alongside `lastClick`):
+
+```javascript
+  var view = {
+    abortController: null,
+    samplingGen: 0,
+    tileCache: null,
+    rafHandle: null,
+    domListenerCleanups: [],
+    lastClick: null,
+    measureTabActive: false,    // spec §B gate for handleMapClick (Phase 2.8)
+  };
+```
+
+Wire the existing Measure-tab handler from Step 1 to flip the flag, and add sibling-tab handlers that unset it. Also seed the initial value at `init()` time in case the page loaded with Measure already active:
+
+```javascript
+    var measureBtn = document.querySelector('.tab-btn[data-panel="measure-panel"]');
+    if (measureBtn) {
+      measureBtn.addEventListener('click', function () {
+        view.measureTabActive = true;
+        renderPanel();
+        updateCursor();
+      });
+    }
+    // Sibling tab buttons unset the flag.
+    var siblingTabs = document.querySelectorAll('.tab-btn:not([data-panel="measure-panel"])');
+    siblingTabs.forEach(function (btn) {
+      btn.addEventListener('click', function () { view.measureTabActive = false; });
+    });
+    // Initial state: page may have loaded with Measure tab active.
+    var measurePanel = document.getElementById('measure-panel');
+    if (measurePanel && !measurePanel.hidden) view.measureTabActive = true;
+```
+
+Add the gate to `handleMapClick` (extending the handler from Task 2.5), AFTER the modifier-key check and BEFORE the `inserting`-state stub:
+
+```javascript
+  function handleMapClick(e) {
+    var oe = e.originalEvent || {};
+    if (oe.ctrlKey || oe.shiftKey || oe.altKey || oe.metaKey) return;
+
+    // Tab-active gate: spec §B requires Measure tab visible.
+    if (!view.measureTabActive) return;
+
+    if (state.status === 'inserting') { /* … */ }
+    /* … rest of handler from Task 2.5 … */
+  }
+```
+
+Add a regression test covering the gate (extending `frontend/tests/ruler/click-debounce.test.mjs` or a new `tab-gate.test.mjs`): with `measureTabActive=false`, a click is a no-op; after the Measure-tab handler runs, the same click adds V1.
+
 - [ ] **Step 2: Implement cursor management.**
 
 In `frontend/ruler.js`, add:
