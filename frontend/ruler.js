@@ -78,11 +78,30 @@
     // (Use `mapInstance` arg, not module `map`, so style swaps with a different map work.)
   }
 
+  // ─── Geodesy ───────────────────────────────────────────────────────
+  // Initial bearing (forward azimuth) from a → b in decimal degrees [0, 360).
+  // Standard great-circle formula. NOT rhumb-line.
+  function bearingDeg(a, b) {
+    var lat1 = a[1] * Math.PI / 180;
+    var lat2 = b[1] * Math.PI / 180;
+    var dLng = (b[0] - a[0]) * Math.PI / 180;
+    var y = Math.sin(dLng) * Math.cos(lat2);
+    var x = Math.cos(lat1) * Math.sin(lat2) -
+            Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+    return ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360;
+  }
+
   // ─── Expose ────────────────────────────────────────────────────────
   window._ruler = {
     init: init,
     isActive: isActive,
     clear: clear,
     reattachSources: reattachSources,
+  };
+
+  // Test-only: expose pure functions for unit testing. Production code
+  // never reaches into _test.
+  window._ruler._test = {
+    bearingDeg: bearingDeg,
   };
 })();
