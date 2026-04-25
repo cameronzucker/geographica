@@ -1,5 +1,63 @@
 # Implementation Log
 
+## 2026-04-25 — Ruler / measurement tool — Phase 2 redesign + field-verified
+
+**Released as:** not yet released (Phase 3-5 remain). Cameron field-verified the new UX as "wildly improved" — Phase 2 is functionally ship-ready pending Phase 3 wrap-up.
+**Plan / spec:** updated lockstep — see [docs/superpowers/specs/2026-04-24-ruler-design.md](../docs/superpowers/specs/2026-04-24-ruler-design.md) §B and [docs/superpowers/plans/2026-04-24-ruler-plan.md](../docs/superpowers/plans/2026-04-24-ruler-plan.md) Tasks 2.1, 2.5, 2.7, 2.8.
+**Agent moniker:** saguaro (continuation of the same session as the original 8-task build below).
+
+### Summary
+
+The original subagent-driven build of Phase 2 shipped a tab-as-activation model (idle→drawing on first map tap when Measure tab was visible). Cameron field-tested and surfaced two compounding UX failures that triggered a mid-session redesign:
+
+1. **Wrong activation metaphor.** Opening the Measure tab implicitly armed the tool — every map click placed a vertex. No other Geographica feature works this way (the Layers tab doesn't auto-enable layers; the Search tab doesn't auto-search). Users would not predict that entering Measure means "I'm now measuring."
+
+2. **Sidebar auto-close ate the workflow.** The first map click during drawing fired `#sidebar-overlay`'s dismiss handler (an invisible full-viewport tap-target that closes the sidebar on tap). User had to manually re-open the panel to do anything else, breaking the multi-vertex flow entirely.
+
+The redesign replaced both with an explicit-activation model: idle state shows a `[+ New measurement]` button as the single armed-vs-not switch. Click it → state transitions to drawing-empty (cursor crosshair, banner appears, body picks up `.ruler-active` class). Map clicks only place vertices in `drawing` state. CSS rule `body.ruler-active #sidebar-overlay { pointer-events: none; }` lets map clicks fall through the overlay so the sidebar stays open during measurement (mirrors the existing `_bboxDrawingActive` pattern at [app.js:1206](../frontend/app.js#L1206)).
+
+90/90 ruler tests green (was 84 before redesign — added 6 to cover the new model's contracts).
+
+### Redesign commits (all on `dev`)
+
+| Commit | Subject |
+|---|---|
+| `cc877ec` | fix(ruler): setHidden toggles class="hidden" too — surfaced by browser smoke |
+| `17f64a6` | fix(ruler): defer source/layer init, fix tab-active detection, add idle hint |
+| `eac9d9b` | fix(ruler): explicit-activation model — button starts drawing, sidebar pinned |
+| `bfad7df` | docs(ruler): sync plan Tasks 2.1/2.5/2.7/2.8 to explicit-activation model |
+| `36bb5aa` | docs(ruler): sync spec §B to explicit-activation model |
+
+### Three project-wide patterns established
+
+These deserve carry-forward attention because they generalize beyond ruler:
+
+1. **`setHidden(el, hidden)` toggles BOTH the HTML5 `hidden` attribute AND the `hidden` CSS class.** The project's `style.css:1171` defines `.hidden { display: none !important; }` with `!important`. Elements that use `class="hidden"` (e.g., the original `#ruler-mode-banner` at index.html:388, plus 9 other elements across the app) cannot be made visible by toggling `el.hidden = false` alone — the class-based rule wins. Future UI code that uses setHidden gets defense-in-depth for both styles.
+
+2. **`body.<feature>-active` + `pointer-events: none` on `#sidebar-overlay`** is the right pattern for any feature that needs the sidebar pinned during sustained map-canvas interaction. Mirrors `_bboxDrawingActive`. Same pattern would apply to a future "draw a polygon" or "trace a route by tap" feature.
+
+3. **Cachebust strings on script tags MUST be bumped on every phase that modifies the script.** Phase 1 modified `ruler.js` without bumping, Phase 2 originally did not bump either — both burned on browser cache when Cameron tested. Bumped to `v=20260425-phase2d` in the redesign work. Add to phase-end checklist for any future phase that touches a versioned `<script>`.
+
+### Process lessons
+
+- **Browser smoke EARLIER for first-UI-surface tasks.** The original Phase 2 was code-shipped + reviewed (8 tasks, 14 commits, 90 tests, two-stage review on every task) before Cameron drove the smoke. The redesign happened in the smoke phase. If Cameron had smoked Tasks 2.1+2.2 (state machine + map sources) before continuing through 2.3-2.8, the activation-model issue would have surfaced 6 tasks earlier and saved ~5 follow-up commits and a partial spec/plan rewrite. Recommendation: **for any first-UI-surface phase, insert a Cameron-driven smoke checkpoint after the second or third task**, not at end-of-phase. Subagent-driven-development is great when behavior is fully specified, but if there's any UX uncertainty, the user's eyes need to be in the loop sooner.
+
+- **Spec/plan are not infallible.** The original spec §B specified "First map tap when Measure tab is visible" as the idle→drawing trigger — through R1-R5 adversarial review, multiple Sonnet rounds, and a Codex round, that trigger survived. None of the reviewers were UX-grounded enough to flag it as a violation of the project's UI metaphor. Cameron caught it in 30 seconds of field testing. Lesson: adversarial review catches correctness bugs and edge cases; it does not substitute for the user looking at the actual UI.
+
+- **Lockstep-fix discipline scaled to spec changes.** When the redesign altered the state-machine contract (idle→drawing trigger), the lockstep-fix discipline (which had been used 4 times in Phase 2 for plan-vs-code drift on test snippets) extended cleanly to spec/plan sync. Code commit `eac9d9b` → plan sync `bfad7df` → spec sync `36bb5aa`, each in its own commit with explanatory body. No deferred drift; doc state matches code state.
+
+### Carry-forward concerns updated
+
+The "Phase 1 carry-forward concerns" from the original Phase 2 entry (test-helper migration, elevationProfile leak, transition-matrix coverage gaps, Delete key untested, evt.prevented assertions, clock-source mixing, banner string constants) all still apply unchanged to Phase 3+.
+
+The first-click reverse-geocode collision (Task 2.8 Step 1.5's `measureTabActive` gate, briefly added by `0c3d614`) is no longer relevant — the explicit-activation model means idle clicks pass through to reverse-geocode normally, which is exactly what the user expects when not measuring.
+
+### Phase 2 final commit list (24 commits — original 14 + redesign 5 + impl-log 1 + others)
+
+Combined view: see `git log dc83c0a..36bb5aa --oneline` for the full local-only commit set on `dev`.
+
+---
+
 ## 2026-04-25 — Ruler / measurement tool — Phase 2: drawing state end-to-end (8 tasks)
 
 **Released as:** not yet released (Phase 3-5 remain; Phase 2 is the FIRST UI surface and requires Cameron-driven browser smoke at the Phase 2 review checkpoint before merge / before Phase 3 starts).
