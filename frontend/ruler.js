@@ -91,6 +91,21 @@
     return ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360;
   }
 
+  // ─── Elevation decode ──────────────────────────────────────────────
+  // Mapzen Terrarium encoding: meters = (r*256 + g + b/256) - 32768.
+  // Reference: https://github.com/tilezen/joerd/blob/master/docs/formats.md
+  //
+  // Per spec v3 §E.3 (R5 M4 guards):
+  // - alpha-zero pixel  → null (transparent / no-data)
+  // - decoded < -500m   → null (below plausible CONUS DEM range)
+  // - decoded > 9000m   → null (above plausible CONUS DEM range)
+  function elevationFromRGB(r, g, b, a) {
+    if (a === 0) return null;
+    var elev = (r * 256 + g + b / 256) - 32768;
+    if (elev < -500 || elev > 9000) return null;
+    return elev;
+  }
+
   // ─── Expose ────────────────────────────────────────────────────────
   window._ruler = {
     init: init,
@@ -103,5 +118,6 @@
   // never reaches into _test.
   window._ruler._test = {
     bearingDeg: bearingDeg,
+    elevationFromRGB: elevationFromRGB,
   };
 })();
