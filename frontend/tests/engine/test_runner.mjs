@@ -267,6 +267,63 @@ export function fixtureValhallaThenChainedCluster() {
 export const fixtureTwoManeuverRoute = fixtureRouteWithTwoTurns;
 
 // Fixture: 2-maneuver route with a long first segment so far-tier fires at
+// Fixture: 4-maneuver route with 200 m maneuver spacing — wide enough that
+// near-tier fires above the new 30 m cutoff AND chain-append distance is
+// also above cutoff. For I13 prefix-firing assertions.
+// 200 m at lat 35.20 ≈ 0.0022°.
+export function fixtureWiderCluster() {
+  return {
+    coords: [
+      [-111.65000, 35.20],
+      [-111.64780, 35.20],     // M1 boundary (200 m east)
+      [-111.64560, 35.20],     // M2 boundary
+      [-111.64340, 35.20],     // M3 boundary
+      [-111.64120, 35.20],     // route end
+    ],
+    maneuvers: [
+      {
+        type: 1,
+        instruction: 'Head east',
+        // M0 is the depart; checkVoice reads M[1]'s alert text, not M[0]'s.
+        // This field is dead data — kept for fixture-shape symmetry.
+        verbal_transition_alert_instruction: 'In 700 feet, turn left',
+        verbal_pre_transition_instruction: 'Head east',
+        begin_shape_index: 0,
+        end_shape_index: 1,
+      },
+      {
+        type: 15,
+        instruction: 'Turn left onto First Street',
+        verbal_transition_alert_instruction: 'Turn left onto First Street',
+        verbal_pre_transition_instruction: 'Turn left onto First Street',
+        begin_shape_index: 1,
+        end_shape_index: 2,
+      },
+      {
+        type: 10,
+        instruction: 'Turn right onto Second Road',
+        verbal_transition_alert_instruction: 'Turn right onto Second Road',
+        verbal_pre_transition_instruction: 'Turn right onto Second Road',
+        begin_shape_index: 2,
+        end_shape_index: 3,
+      },
+      {
+        type: 4,
+        instruction: 'Turn left onto Third Avenue',
+        verbal_transition_alert_instruction: 'Turn left onto Third Avenue',
+        verbal_pre_transition_instruction: 'Turn left onto Third Avenue',
+        begin_shape_index: 3,
+        end_shape_index: 4,
+      },
+    ],
+    summary: { length: 0.8, time: 80 },
+    totalDistance: 800,
+    totalTime: 80,
+    costing: 'auto',
+    remainingWaypoints: [],
+  };
+}
+
 // a TTM-governed distance well above the cutoff. Used for I13 prefix tests.
 // 2000 m segment at lat 35.20 (1° longitude ≈ 91 km at lat 35, so 2000 m ≈ 0.022°).
 export function fixtureLongFirstSegment() {

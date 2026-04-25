@@ -485,49 +485,55 @@
 
     if (nearWouldFire) {
       var text = m.verbal_pre_transition_instruction || m.instruction || "";
-
-      // Valhalla bakes its own continuation into verbal_pre_transition in two
-      // shapes when the maneuver is part of a quick-succession sequence:
-      //   (a) trailing ". Then X." — current maneuver's vpt already ends with
-      //       ", Then turn right onto Oak Road." pre-announcing the next turn.
-      //       Our chain-append below would then re-announce X — doubled speech.
-      //   (b) leading "Then turn left onto Union Hills Drive." — current
-      //       maneuver's vpt is phrased as a continuation of a prior prompt.
-      //       When I11 already chain-pre-announced this maneuver, the leading
-      //       "Then" sounds like a new instruction to the driver who just
-      //       heard it 3-8s ago in the prior near-tier's chain.
-      // Strip both, in order. (a) first so (b) can't accidentally match the
-      // sentence-boundary "Then"; (b) after to normalize the leading token.
-      text = text.replace(/\.\s*Then\s+[^.]*\.?\s*$/i, '.');
-      text = text.replace(/^Then\s+/i, '');
+      // stripBakedDistance subsumes the prior two-line Then-strip block (spec v2 §5.1).
+      // Handles leading "Then ", trailing ". Then <rest>", and mid-string
+      // ". Then, in <dist>, X" patterns in one helper.
+      text = stripBakedDistance(text);
       if (text.length > 0) {
         text = text.charAt(0).toUpperCase() + text.slice(1);
       }
-
-      // Next-after-next chain — preserved from prior behavior.
-      // Chain extension (I11): when the chain actually appends, mark
-      // announcedSet[(afterIdx)-far] so the next-after-next maneuver's
-      // far-tier is suppressed on subsequent ticks. The chain prompt
-      // already informally announced the upcoming turn; firing its
-      // own "In 80m, turn …" 3-8 seconds later duplicates information
-      // the driver just heard (the 40-90m mixed-spacing cluster case).
+      // GPS-recovery guard — single consume per tick, shared with chain-append below.
+      var skipPrefix = consumeGPSRecoveryFlag();
+      // Prepend live-distance prefix to base text (spec v2 §5.2).
+      if (!skipPrefix) {
+        var nearPrefix = formatDistancePrefix(distToNext, _geographicaUseImperial());
+        if (nearPrefix && text && text.length > 0) {
+          text = nearPrefix + text.charAt(0).toLowerCase() + text.slice(1);
+        }
+      }
+      // Mark BEFORE chain-append construction (G11 exception safety).
+      // Slight reorder from prior engine which marked after chain; safe because
+      // chain doesn't read these keys (only writes announcedSet[afterIdx+'-far']).
+      announcedSet[nearKey] = true;
+      announcedSet[farKey] = true;
       var afterIdx = nextIdx + 1;
       if (afterIdx < route.maneuvers.length) {
         var distBetween = distanceToManeuver(
           { segmentIndex: m.begin_shape_index, t: 0 }, afterIdx
         );
         if (distBetween <= NEXT_AFTER_NEXT_DISTANCE) {
-          var afterText = route.maneuvers[afterIdx].instruction || "";
+          var afterText = stripBakedDistance(route.maneuvers[afterIdx].instruction || "");
           if (afterText) {
-            // Strip trailing period from base text so the comma-chain reads
-            // naturally as one sentence ("X, then Y" not "X., then Y").
-            text = text.replace(/\.\s*$/, '') + ", then " + afterText;
+            // Mark afterIdx-far suppression BEFORE chain text construction (G11).
             announcedSet[afterIdx + "-far"] = true;  // I11 chain extension
+            // Reuse skipPrefix from above — single consume per tick.
+            var chainJoin;
+            if (!skipPrefix) {
+              var afterPrefix = formatDistancePrefix(distBetween, _geographicaUseImperial());
+              if (afterPrefix) {
+                var lcPrefix = afterPrefix.charAt(0).toLowerCase() + afterPrefix.slice(1);
+                var lcAfter  = afterText.charAt(0).toLowerCase()  + afterText.slice(1);
+                chainJoin = ", then " + lcPrefix + lcAfter;
+              } else {
+                chainJoin = ", then " + afterText;
+              }
+            } else {
+              chainJoin = ", then " + afterText;
+            }
+            text = text.replace(/\.\s*$/, '') + chainJoin;
           }
         }
       }
-      announcedSet[nearKey] = true;
-      announcedSet[farKey] = true;  // D1 suppression
       if (!muted && text && onVoiceCb) {
         if (typeof window !== 'undefined' && window._geographicaTTMDebug) {
           (window._geographicaTTMDebugLog = window._geographicaTTMDebugLog || []).push({

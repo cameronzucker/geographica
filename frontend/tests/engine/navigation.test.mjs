@@ -934,23 +934,25 @@ test('TTM I11: chain-extension suppresses far-tier for chain-pre-announced maneu
   // The 75m near-tier floor (TTM I12) fires near-tier immediately at the
   // start position (~80m from M1), suppressing M1's far-tier before it
   // can fire (near returns early, blocking the far branch):
-  //   CB 1: M1 near+chain "Turn left onto First, then right onto Second"
+  //   CB 1: M1 near+chain "In X feet, turn left onto First, then in Y feet, right onto Second"
   //         (M1 far suppressed by floor-triggered near; chain marks M2-far → I11)
-  //   CB 2: M2 near+chain "Turn right onto Second, then left onto Third"
+  //   CB 2: M2 near+chain "In X feet, turn right onto Second, then in Y feet, left onto Third"
   //         (M2 far suppressed by I11; chain marks M3-far → I11)
-  //   CB 3: M3 near "Turn left onto Third Avenue"
+  //   CB 3: M3 near "In X feet, turn left onto Third Avenue"
   //         (M3 far suppressed by I11; no chain because afterIdx out of bounds)
+  // Per spec v2 §5.2 (Task 6): near-tier now includes distance prefix.
   assert.equal(voiceFires.length, 3,
     `I11: expected 3 callbacks under chain-extension (TTM I12 floor), got ${voiceFires.length}: ${JSON.stringify(voiceFires)}`);
 
-  // ZERO "In N feet" far-tier prompts — M1's far is suppressed by the 75m
-  // floor triggering near-tier first; subsequent fars suppressed by I11 chain.
-  const fars = voiceFires.filter(t => /^In \d+/.test(t));
-  assert.equal(fars.length, 0,
-    `I11: 0 far-tier prompts expected (all suppressed by floor+I11); got ${fars.length}: ${JSON.stringify(fars)}`);
+  // ALL 3 prompts now start with "In N feet," — near-tier has distance prefix
+  // per spec v2 §5.2. No far-tier fired: M1 far suppressed by floor; M2/M3
+  // far suppressed by I11 chain marks.
+  const allHavePrefix = voiceFires.every(t => /^In \d+/.test(t));
+  assert.ok(allHavePrefix,
+    `I11: all 3 near-tier prompts must have "In N" prefix (spec v2 §5.2); got ${JSON.stringify(voiceFires)}`);
 
-  // Three near-tier prompts, all "Turn X onto Y" style.
-  const nears = voiceFires.filter(t => /^Turn /.test(t));
+  // Three near-tier prompts — all contain "turn" (case-insensitive) after the prefix.
+  const nears = voiceFires.filter(t => /turn /i.test(t));
   assert.equal(nears.length, 3,
     `I11: exactly 3 near-tier prompts expected; got ${nears.length}`);
 
@@ -961,9 +963,9 @@ test('TTM I11: chain-extension suppresses far-tier for chain-pre-announced maneu
     `I11: exactly 2 near-tier prompts must contain the chain; got ${chained.length}`);
 
   // M3's near-tier must NOT have a chain (no maneuver after it). Match M3's
-  // own standalone prompt, not the M2 chain that mentions Third Avenue via
-  // ", then Turn left onto Third Avenue".
-  const m3Own = voiceFires.find(t => t.startsWith('Turn left onto Third Avenue'));
+  // own standalone prompt by content — after Task 6 prefix it starts with "In X feet,"
+  // not "Turn left onto Third Avenue" directly.
+  const m3Own = voiceFires.find(t => /Third Avenue/.test(t) && !/, then /.test(t));
   assert.ok(m3Own, 'M3 standalone near-tier prompt must have fired');
   assert.ok(!/, then /.test(m3Own),
     'M3 standalone near-tier must not have chain (last maneuver)');
@@ -990,8 +992,9 @@ test('TTM Valhalla-Then strip: vpt trailing ". Then X." and leading "Then " are 
 
   // Find M2's (Turn right onto 24th Drive) near-tier prompt. It should contain
   // the Union Hills chain ONCE (from our append), not twice (Valhalla's baked-in
-  // suffix + ours).
-  const m24 = voiceFires.find(t => t.startsWith('Turn right onto 24th Drive'));
+  // suffix + ours). Per spec v2 §5.2 (Task 6), near-tier now starts with a
+  // distance prefix "In X feet," before the turn instruction.
+  const m24 = voiceFires.find(t => /24th Drive/i.test(t));
   assert.ok(m24, 'M2 (24th Drive) near-tier must have fired');
   const unionMentions = (m24.match(/Union Hills/g) || []).length;
   assert.equal(unionMentions, 1,
@@ -999,13 +1002,14 @@ test('TTM Valhalla-Then strip: vpt trailing ". Then X." and leading "Then " are 
 
   // Find M3's (Union Hills) standalone near-tier prompt. Valhalla's vpt is
   // "Then turn left onto West Union Hills Drive." — leading "Then" must be
-  // stripped so the prompt reads "Turn left onto West Union Hills Drive."
-  const m3 = voiceFires.find(t => /Union Hills/i.test(t) && !t.startsWith('Turn right onto 24th'));
+  // stripped. With spec v2 §5.2 Task 6 prefix, the prompt starts with "In X
+  // feet," followed by the turn instruction (NOT "Then").
+  const m3 = voiceFires.find(t => /Union Hills/i.test(t) && !/24th Drive/i.test(t));
   assert.ok(m3, 'M3 (Union Hills) standalone near-tier must have fired');
   assert.ok(!/^Then\b/i.test(m3),
     `Valhalla-Then strip: M3 standalone must not start with "Then"; got ${JSON.stringify(m3)}`);
-  assert.ok(m3.startsWith('Turn left onto'),
-    `Valhalla-Then strip: M3 standalone must start with "Turn left onto" after strip; got ${JSON.stringify(m3)}`);
+  assert.ok(/turn left onto/i.test(m3),
+    `Valhalla-Then strip: M3 standalone must contain "turn left onto" after strip; got ${JSON.stringify(m3)}`);
 });
 
 test('_geographicaUseImperial helper returns true by default', async () => {
@@ -1339,6 +1343,94 @@ test('I13: far-tier fires "In a quarter mile, " prefix when above cutoff', async
   // Far-tier text MUST match the full transformed string (~480 m fire = ~1575 ft, in [1000, 1980) band).
   assert.match(fires[0], /^In a quarter mile, turn left onto Test Avenue\.?$/,
     `expected full transformed far-tier text "In a quarter mile, turn left onto Test Avenue", got: ${JSON.stringify(fires[0])}`);
+});
+
+test('I13: near-tier fires "In 200 feet, " prefix at 75 m floor', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  const { fixtureWiderCluster } = await import('./test_runner.mjs');
+  win._geographicaUseImperial = true;
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 11 };
+  const fires = [];
+  nav.onVoice((text) => fires.push(text));
+  nav.start(fixtureWiderCluster());
+  // Position car ~74 m WEST of M1 (within 75 m near-tier floor). M1 at -111.64780.
+  // haversine([-111.64861, 35.20], M1) ≈ 73.6 m → distToNext <= 75 floor → near-tier fires.
+  // (Note: -111.64863 gives 75.4 m which is above floor, so use -111.64861.)
+  for (let i = 0; i < 3; i++) {
+    nav.updateGPS({ latitude: 35.20, longitude: -111.64861, speed: 11 });
+  }
+  assert.ok(fires.length >= 1, 'expected near-tier to fire');
+  // ~73.6 m fire = 241 ft → round(241/100)*100 = 200 → "In 200 feet, " prefix
+  // Chain to M2 (200 m after M1) → 656 ft → round(656/100)*100 = 700 → "then in 700 feet, ..."
+  assert.match(fires[0],
+    /^In 200 feet, turn left onto First Street, then in 700 feet, turn right onto Second Road/,
+    `expected near+chain prefix structure, got: ${JSON.stringify(fires[0])}`);
+});
+
+test('I13: cutoff suppresses near-tier prefix for very-short-spacing fixture', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  const { fixtureVillaRitaCluster } = await import('./test_runner.mjs');
+  win._geographicaUseImperial = true;
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 11 };
+  const fires = [];
+  nav.onVoice((text) => fires.push(text));
+  nav.start(fixtureVillaRitaCluster());
+  // Villa Rita uses 30 m spacing. M1 at -111.64967. Drive to within ~25 m WEST of M1.
+  // 25 m at lat 35.20: dx_deg ≈ 0.000275 → -111.64967 + 0.000275 = -111.64940 (rough)
+  for (let i = 0; i < 3; i++) {
+    nav.updateGPS({ latitude: 35.20, longitude: -111.64940, speed: 11 });
+  }
+  assert.ok(fires.length >= 1, 'expected near-tier to fire');
+  // At ~25 m fire distance (below 30 m cutoff), no prefix.
+  assert.doesNotMatch(fires[0], /^In \d+ feet,/,
+    `expected no prefix at sub-cutoff distance, got: ${JSON.stringify(fires[0])}`);
+});
+
+test('I13: imperial vs metric dispatch — same fixture switches units', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  const { fixtureWiderCluster } = await import('./test_runner.mjs');
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 11 };
+  const fires = [];
+  nav.onVoice((text) => fires.push(text));
+  // Run as metric.
+  win._geographicaUseImperial = false;
+  nav.start(fixtureWiderCluster());
+  // Same position as test 74: ~74 m WEST of M1 (-111.64861, ~73.6 m from M1).
+  for (let i = 0; i < 3; i++) {
+    nav.updateGPS({ latitude: 35.20, longitude: -111.64861, speed: 11 });
+  }
+  assert.ok(fires.length >= 1, 'expected near-tier to fire');
+  // ~73.6 m → metric: 73.6 < 100 → round(73.6/10)*10 = 70 → "In 70 meters, "
+  // Chain 200 m → metric: 200 < 1000 → round(200/50)*50 = 200 → "In 200 meters, "
+  assert.match(fires[0],
+    /^In 70 meters, turn left onto First Street, then in 200 meters, turn right onto Second Road/,
+    `metric dispatch failed, got: ${JSON.stringify(fires[0])}`);
+});
+
+test('I13: prompt count invariant on Villa Rita fixture (G9 regression guard)', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  const { fixtureVillaRitaCluster } = await import('./test_runner.mjs');
+  win._geographicaUseImperial = true;
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 10 };
+  const fires = [];
+  nav.onVoice((text) => fires.push(text));
+  nav.start(fixtureVillaRitaCluster());
+  // Drive through all three maneuvers (matches the existing TTM v3 test from §6.4).
+  const lngs = [
+    -111.6498, -111.6497, -111.6496,
+    -111.6495, -111.6494, -111.6493,
+    -111.6492, -111.6491, -111.6490,
+  ];
+  for (const lng of lngs) {
+    nav.updateGPS({ latitude: 35.20, longitude: lng, speed: 10 });
+  }
+  // TTM v3 baseline asserts exactly 3 prompts. New prefix logic must preserve.
+  assert.equal(fires.length, 3,
+    `expected 3 prompts (TTM v3 baseline preserved), got ${fires.length}: ${JSON.stringify(fires)}`);
 });
 
 // NOTE: I15 (exception-safety G11) is not testable via mock due to IIFE
