@@ -211,7 +211,9 @@
   // then "In one kilometer" at 1000 m exactly; then N.N km via explicit
   // Math.round(m/100)/10 (avoids JS .toFixed rounding quirks).
   function formatDistancePrefix(meters, useImperial) {
-    if (meters < DISTANCE_PREFIX_CUTOFF_METERS) return '';
+    // Reject NaN, Infinity, negative, and below-cutoff. The !(>=) form
+    // catches NaN (all NaN comparisons return false) where (<) does not.
+    if (!(meters >= DISTANCE_PREFIX_CUTOFF_METERS) || !isFinite(meters)) return '';
     if (useImperial) {
       var feet = meters * 3.28084;
       if (feet < 1000) return 'In ' + (Math.round(feet / 100) * 100) + ' feet, ';

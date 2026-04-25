@@ -1250,3 +1250,29 @@ test('stripBakedDistance: empty / null / undefined input — returns unchanged',
   assert.equal(strip(undefined), undefined);
   assert.equal(strip(null), null);
 });
+
+test('formatDistancePrefix: NaN and Infinity safety (imperial)', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  // NaN should fall to the cutoff branch — distance is unknown, no prefix.
+  assert.equal(fmt(NaN, true), '');
+  assert.equal(fmt(Infinity, true), '');
+  assert.equal(fmt(-Infinity, true), '');
+});
+
+test('formatDistancePrefix: NaN and Infinity safety (metric)', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  assert.equal(fmt(NaN, false), '');
+  assert.equal(fmt(Infinity, false), '');
+  assert.equal(fmt(-Infinity, false), '');
+});
+
+test('formatDistancePrefix: negative distance returns empty (defensive)', async () => {
+  const { window: win } = await loadEngine();
+  const fmt = win._geographicaNavEngineInternals._formatDistancePrefix;
+  // Negative meters shouldn't reach this function (caller's distToNext <= 0 guards),
+  // but defensively returning "" is safer than nonsense like "In -300 feet, ".
+  assert.equal(fmt(-50, true), '');
+  assert.equal(fmt(-50, false), '');
+});
