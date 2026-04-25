@@ -4246,4 +4246,11 @@
     }, 30000);
   });
 
+  // ─── Cross-module exports for ruler.js (per spec v3 §A) ──────────
+  // Live-read pattern: ruler.js reads these at format time, not at
+  // init time. window._geographicaUseImperial is also live-read by
+  // ruler.js but is already exported elsewhere (line 123).
+  window._formatDD = formatDD;
+  window._haversineDistance = haversineDistance;
+
 })();
