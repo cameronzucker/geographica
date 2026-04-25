@@ -880,6 +880,8 @@
     getState: getStateSnapshot,
     relabel: relabel,
     recompute: recompute,
+    buildVertexFeatures: buildVertexFeatures,
+    buildLineFeature: buildLineFeature,
     refreshMapData: refreshMapData,
     handleMapClick: handleMapClick,
     handleKeydown: handleKeydown,
