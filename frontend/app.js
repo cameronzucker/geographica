@@ -4110,10 +4110,30 @@
     // localStorage via devtools — though that's a same-origin trust assumption.
     var targetTab = Array.from(document.querySelectorAll('.tab-btn'))
       .find(function (t) { return t.dataset.panel === saved; });
-    if (targetTab && !targetTab.classList.contains('active')) {
-      // Use the real click path — preserves admin-polling start/stop semantics
-      // wired in initAdmin(). Must be called AFTER initAdmin() in DOMContentLoaded.
-      targetTab.click();
+    if (!targetTab) return;
+    if (targetTab.classList.contains('active')) return;  // idempotent
+
+    // Capture form focus + selection before the synthetic click (spec §4.2).
+    var prevFocus = document.activeElement;
+    var prevStart = null, prevEnd = null, prevDir = null, hadFocus = false;
+    if (prevFocus && (prevFocus.tagName === 'INPUT' || prevFocus.tagName === 'TEXTAREA')) {
+      try {
+        hadFocus = true;
+        prevStart = prevFocus.selectionStart;
+        prevEnd = prevFocus.selectionEnd;
+        prevDir = prevFocus.selectionDirection;
+      } catch (e) {}
+    }
+    targetTab.click();  // use real click path — preserves admin-polling semantics
+
+    // Restore focus + selection if it was an editable control.
+    if (hadFocus && prevFocus && document.body.contains(prevFocus)) {
+      try {
+        prevFocus.focus();
+        if (prevStart !== null && prevEnd !== null) {
+          prevFocus.setSelectionRange(prevStart, prevEnd, prevDir || 'none');
+        }
+      } catch (e) { /* defensive — accept degradation if focus/selection fails */ }
     }
   }
 
@@ -4247,6 +4267,26 @@
       _tryAddTileJSONSource('imagery-noaa', '/tiles/data/imagery_noaa.json', 'raster');
       _tryAddTileJSONSource('imagery-custom', '/tiles/data/imagery_custom.json', 'raster');
     }, 30000);
+  });
+
+  // ─── iOS Safari lifecycle hooks for sidebar tab restore (spec §4.1) ─────
+  // DOMContentLoaded does not fire on BFCache restores (persisted=true),
+  // tab-discard restores (persisted=false after renderer eviction), or
+  // app-switch returns. Wire pageshow + visibilitychange at script-parse time
+  // so they survive any early-load race. restoreLastSidebarTab() is idempotent
+  // (early-returns when target tab already active) — unconditional invocation
+  // is safe.
+  window.addEventListener('pageshow', function (e) {
+    // Skip if DOM not yet ready (first-load fires pageshow BEFORE
+    // DOMContentLoaded; the DOMContentLoaded path will handle it).
+    if (document.readyState === 'loading') return;
+    restoreLastSidebarTab();
+  });
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) return;
+    if (document.readyState === 'loading') return;
+    restoreLastSidebarTab();
   });
 
   // ─── Cross-module exports for ruler.js (per spec v3 §A) ──────────
