@@ -1,97 +1,110 @@
-# Nav voice TTM follow-up — low-speed floor lift + live-distance prefix + sidebar BFCache restore
+# Nav voice TTM follow-up — low-speed floor lift + live-distance prefix
 
 **Date:** 2026-04-24
 **Agent:** pinyon
-**Scope:** Three surgical fixes for field-surfaced issues on the live dev stack post-TTM-ship. All three are follow-ups to shipped work (TTM v3 `9a3836d`, voice-picker `97922b8`, sidebar persistence `f1687df`). Delivered together because they compose cleanly, share a field-test gate (Villa Rita → Costco), and all three are observable on the same drive.
-**Files:** [frontend/navigation.js](../../../frontend/navigation.js) (Issues 1 + 2), [frontend/app.js](../../../frontend/app.js) (Issue 3), [frontend/tests/engine/navigation.test.mjs](../../../frontend/tests/engine/navigation.test.mjs) (Issue 1 + 2 tests), [tests/test_frontend_voice_picker.py](../../../tests/test_frontend_voice_picker.py) (Issue 3 structural test).
+**Scope:** Two surgical changes to `frontend/navigation.js` for field-surfaced issues post-TTM-ship: (1) raise the near-tier distance floor to give surface-street drivers ~+1 s of post-speech buffer; (2) add a Google-Maps-style live-distance prefix to far-tier, near-tier, and chain-append prompts so eyes-free drivers can disambiguate "this turn vs the next intersection." Issue 3 (sidebar BFCache restore) was originally in this spec; **split out** to [2026-04-24-sidebar-tab-restore-design.md](2026-04-24-sidebar-tab-restore-design.md) per adversarial review F5.1 / F4.13 — different file, different test harness, different risk surface.
+**Files:** [frontend/navigation.js](../../../frontend/navigation.js) (primary), [frontend/tests/engine/navigation.test.mjs](../../../frontend/tests/engine/navigation.test.mjs) (tests).
 **Prior art:**
-- [2026-04-20-nav-voice-ttm-design.md](2026-04-20-nav-voice-ttm-design.md) — TTM v3 spec (the baseline this amends for Issues 1 + 2)
-- [2026-04-21-nav-voice-picker-design.md](2026-04-21-nav-voice-picker-design.md) — voice picker (orthogonal, but the `onVoiceCb` boundary we're preserving)
-- Sidebar persistence commit `f1687df` (the partial fix Issue 3 completes)
+- [2026-04-20-nav-voice-ttm-design.md](2026-04-20-nav-voice-ttm-design.md) — TTM v3 spec (the baseline this amends)
+- [2026-04-21-nav-voice-picker-design.md](2026-04-21-nav-voice-picker-design.md) — voice picker (orthogonal; preserves the `onVoiceCb` boundary this amends)
 
 ## Revision history
 
-- **v1 (2026-04-24)** — Initial design, brainstormed with agent pinyon and Cameron. Decisions locked:
-  - Issue 1 scope: auto + bicycle (pedestrian unchanged).
-  - Issue 1 direction: raise `VOICE_DISTANCE_FLOOR` only, leave `VOICE_TTM` tier thresholds unchanged.
-  - Issue 1 values: auto 50 → 65 m, bicycle 30 → 40 m (+1.3 s post-speech buffer at the 25 mph field symptom, absorbs variable TTS init latency).
-  - Issue 2 scope: prefix far-tier + near-tier + chain-append; apply to all three costings.
-  - Issue 2 format: fractional miles à la Google Maps (feet under 1000 ft, then 1/4 · 1/3 · 1/2 · 3/4 · 1 mile bands, then whole miles).
-  - Issue 2 cutoff: omit prefix below 100 ft / 30 m.
-  - Issue 3 mechanism: add `pageshow` listener that calls `restoreLastSidebarTab()` when `e.persisted === true`.
-  - Pending: 5-round adversarial review (at least one round via Codex).
+- **v2 (2026-04-24)** — Substantial rewrite after 5-round adversarial review (4× Claude lenses + 1× Codex cross-validation). Findings live at [dev/adversarial/2026-04-24-nav-voice-followup-r{1..5}-*.md](../../../dev/adversarial/). 8 MUST-FIX, 18 SHOULD-FIX (deduped) addressed:
+  - **Floor raised 65 → 75 m** (auto), 40 → 45 m (bicycle). Original 65 m left slow-voice users net-worse-than-baseline once prefix TTS was accounted for (R4 F4.1, R3 F3.N-8, R1 F1.3). 75 m holds positive buffer for slow voices; Cameron's call ("we can adjust later in testing"), prioritizing pragmatic deployability over over-fitting.
+  - **`stripBakedDistance` regex fundamentally rewritten.** Original `^In <dist> <unit>,` anchor never matched real Valhalla emissions, which use mid-string `". Then, in <dist>, <Imperative>"` form (R2 F2.1, R3 F3.N-4). New regex strips the trailing `". Then, in <dist>, <rest>"` chain entirely (since the new live-prefix replaces it). Also fixes the existing `". Then "` strip to accept `". Then, "` (comma form), which was a pre-existing latent bug.
+  - **`/i` flag dropped.** Combined with `(?=[A-Z])` lookahead it was meaningless — `[A-Z]` becomes case-insensitive under `/i` (R2 F2.2, R3 F3.N-3). Valhalla always emits title-case so `/i` was unnecessary.
+  - **Spelled-out fractions** instead of `"1/4 mile"` literal. Matches Valhalla's own phrasing ("a quarter mile"), pronounces deterministically across TTS engines (R3 F3.N-7), reads more naturally. Bands collapse from 5 fractional steps to 4 (1/4, 1/2, 3/4, 1) — drop the 1/3 band that no real navigation app uses.
+  - **Metric band redrawn.** Spec'd `>= 900 m → "In 0.9 kilometers"` was a real regression — value drops 1000× across a 1 m boundary (R3 F3.N-2). New: meters band extends to 999 m, switch to "In one kilometer" at 1000 m (no fractional km below 1.0).
+  - **`(0.95).toFixed(1) === "0.9"` test-vector trap removed** (R3 F3.N-1) — explicit `Math.round(meters/100)/10` for km, no `.toFixed`.
+  - **GPS-recovery guard added** (Codex F5.4): on the first tick after `drActive` ends or `gpsStale` clears, the prefix is suppressed for that tick. Prompt fires with maneuver text only ("Turn left onto X"), not a jarringly-precise "In 200 feet, turn left onto X" computed from a single recovered GPS sample.
+  - **Issue 3 split out** (Codex F5.1, R4 F4.13): see separate spec.
+  - **§5.4 Villa Rita transcripts re-derived** from live Valhalla output (per R2 F2.1's correction that the v1 transcripts were partly fictional). All distances and prefixes re-checked against the actual `/valhalla/route` response.
+  - **Same-maneuver far/near with two different distance prefixes accepted** as standard escalation UX (Codex F5.3 noted but deferred). Cameron: "second prompt as escalation, not correction" — matches Google Maps behavior; only revisit if field-tested as confusing.
+  - **Reject `verbal_succinct_transition_instruction` substitution** (R2 F2.7): succinct drops the street name (`"Turn left."` vs `"Turn left onto North 21st Avenue."`), which destroys the disambiguation case that motivates Issue 2 in the first place. Stay on `verbal_pre_transition_instruction`.
+  - **Empty-text + announcedSet exception-safety** (R1 F1.1, F1.2): mark `announcedSet` BEFORE the prefix-text construction so an exception in `formatDistancePrefix` doesn't leave the maneuver in a "fired but mute" state.
+  - **Dead chain-append strip kept** (R1 F2.8 NICE-TO-HAVE): comment marks it as defensive in case a future change reads `verbal_pre_transition_instruction` for the chain.
+- **v1 (2026-04-24, commit `4321de7`)** — Initial design covering Issues 1+2+3 in a single spec. Bundled per delivery cohesion, but adversarial review surfaced that the bundling muddies risk analysis and the v1 design has 8 MUST-FIX issues (regex doesn't match real output; floor lift doesn't survive prefix TTS; sidebar fix is narrower than claimed). Replaced by v2.
 
 ## 1. Summary
 
-Three field-surfaced defects from Cameron's post-TTM-ship field testing:
+Two field-surfaced defects on the live dev stack post-TTM-ship:
 
-1. **Near-tier fires too close at surface speeds <25 mph.** The 50 m distance floor at [navigation.js:53](../../../frontend/navigation.js#L53) governs whenever `3 × speed < 50`, which is all speeds below ~37 mph. At 25 mph the prompt fires 4.5 s before the intersection; after ~3 s of TTS speech plus ~0.5 s network/init latency, the driver has effectively 0 s of post-speech buffer and the prompt completes "as the vehicle broaches the intersection on a 3-way junction." Fix: raise the floor (auto 50→65, bicycle 30→40) to buy +1.3 s of post-speech buffer at the symptom speed while leaving TTM-governed speeds (≥ 37 mph) unchanged.
+1. **Near-tier fires too close at surface speeds.** The 50 m floor at [navigation.js:53](../../../frontend/navigation.js#L53) governs whenever `3 × speed < 50` (i.e., speeds below ~37 mph). At 25 mph the prompt fires 4.5 s before the intersection; after ~3 s of TTS speech plus ~0.5 s network/init latency, the driver has effectively 0 s of post-speech buffer. **Fix:** raise the floor (auto 50 → 75 m, bicycle 30 → 45 m). At 25 mph that's 6.7 s of warning, leaving ~1.6 s of post-speech buffer even when the prefix is added (Issue 2) and even on slow TTS voices (eSpeak, iOS Daniel). High-speed (≥37 mph) timing is unchanged because TTM still governs.
 
-2. **Prompts lack distance context.** Valhalla's `verbal_transition_alert_instruction` for most turns on the canonical Villa Rita → Costco route is the bare turn ("Turn left onto West Utopia Road.") — no distance. Driven at 36 mph on Union Hills, the far-tier fires at 486 m (≈ 0.3 mi) but the TTS says nothing about distance. The near-tier's chain-append (", then turn left onto Utopia Road") also carries no distance ever. A driver with eyes-on-road can't disambiguate "turn right" meaning imminent vs. a third of a mile out. Fix: compute the live distance from the TTM snapshot already in hand inside `checkVoice` (`distToNext` and a new `distBetween` for chain-append), format by `useImperial` preference, and prepend.
-
-3. **Sidebar tab resets to "Layers" after reopening during active navigation.** The `f1687df` fix stores the last-selected tab in localStorage and restores it in the `DOMContentLoaded` handler, but iOS Safari restores backgrounded pages via the BFCache — which fires `pageshow` with `e.persisted === true` and **does not fire `DOMContentLoaded`**. So the restore logic never runs on the real-world trigger. Hardcoded `class="tab-btn active"` on the Layers button in [index.html:46](../../../frontend/index.html#L46) wins the BFCache restore. Fix: add a `pageshow` listener that invokes `restoreLastSidebarTab()` when `e.persisted` is true. The existing restore function is idempotent (early-returns if the target tab already has `.active`), so the call is safe on every pageshow.
+2. **Prompts lack distance context.** Valhalla's `verbal_transition_alert_instruction` for most turns is the bare turn ("Turn left onto West Utopia Road.") with no distance. The far-tier fires at 486 m on Union Hills (36 mph), but the spoken text says nothing about distance. The near-tier's chain-append (", then turn left onto Utopia Road") also carries no distance ever. An eyes-free driver can't disambiguate "is this turn imminent or a third of a mile out?" — the disambiguation case Cameron flagged. **Fix:** compute the live distance from the TTM snapshot already in hand (`distToNext` for the current maneuver, `distBetween` for the chain-append), strip any baked-in distance Valhalla bakes into the source text (mid-string "Then, in <dist>" form), format by user unit preference (spelled-out fractions in imperial; meters/kilometers in metric), prepend.
 
 ## 2. Goals & non-goals
 
 ### Goals
 
-- **G1 (Issue 1).** At the field-symptom speed (25 mph surface streets), the near-tier fires ≥ 1 s earlier than current, giving ≥ 2.8 s of post-speech buffer (up from ~1.5 s baseline). Absolute change: fire at 65 m instead of 50 m on auto, 40 m instead of 30 m on bicycle.
-- **G2 (Issue 1).** High-speed (≥ 37 mph) near-tier timing is bit-identical to pre-fix — the floor is inactive whenever `3 × speed ≥ floor`.
-- **G3 (Issue 1).** Stationary-driver invariants from TTM spec v3 (I3, I4) remain structurally correct with the new floor values. I3: zero announcements when stationary beyond the new floor. I4: near-tier fires when stationary within the new floor.
-- **G4 (Issue 2).** Every voice prompt fired by `checkVoice` carries a live-distance prefix unless the distance is below the small-distance cutoff (30 m / 100 ft).
-- **G5 (Issue 2).** The chain-appended suffix (", then <next maneuver>") carries its own distance prefix measured from the current maneuver to the next-after-next.
-- **G6 (Issue 2).** Format follows user unit preference. Imperial: sub-1000 ft in feet rounded to 100; ≥ 1000 ft in fractional miles through 1 mile; ≥ 1.25 mi in whole miles. Metric: sub-900 m in meters rounded to 50 (to 10 under 100 m); ≥ 900 m in kilometers rounded to 0.1.
-- **G7 (Issue 2).** No change in prompt count, prompt ordering, or chain-eligibility logic. Issue-2 is a pure presentation-layer change; counts must remain invariant on the canonical Villa Rita → Costco trace (verified as 11 under v3 in this design doc).
-- **G8 (Issue 2).** When Valhalla bakes a distance into the source text (rare in alert-tier, occasionally present in the near-tier's multi-cue depart), we strip it before prepending the live distance, to avoid double-stating ("In 200 feet, In 900 feet, Turn left onto 21st Avenue").
-- **G9 (Issue 3).** Reopening the sidebar after any iOS Safari BFCache restore-event produces the tab that was active before the backgrounding, matching the user expectation Cameron field-tested.
-- **G10 (Issue 3).** Normal (non-BFCache) page loads continue to work identically. The `pageshow` listener is additive, and `restoreLastSidebarTab()` is idempotent.
-- **G11 (across issues).** Villa Rita → Costco field drive (the TTM v3 ship gate) still produces the same 11 prompts with the same ordering. Timing shifts (Issue 1), text content changes (Issue 2), and sidebar-state survival (Issue 3) are the only observable deltas.
+- **G1.** At 25 mph (the field-symptom speed), the near-tier fires ≥ 1 s earlier than current (50 → 75 m absolute distance change). With the 75 m floor governing, the floor itself provides the timing improvement; the absolute change is independent of speed within the floor-governed regime.
+- **G2.** Even with Issue 2's prefix added (~0.7 s extra TTS for fast voices, ~1.5 s for slow voices), post-speech buffer at 25 mph remains positive across the full voice-picker matrix. Slow-voice scenario: 75 m / 11.2 m/s = 6.7 s warning − 5 s slow-voice TTS − 0.5 s init = 1.2 s buffer.
+- **G3.** TTM-governed timing (≥ 37 mph speeds) is bit-identical to pre-fix for Issue 1. The floor is inactive whenever `3 × speed ≥ floor`.
+- **G4.** Stationary-driver invariants from TTM v3 (I3, I4) preserved with the new floor values. I3: zero announcements when stationary > floor. I4: near-tier fires when stationary ≤ floor.
+- **G5.** Every voice prompt fired by `checkVoice` carries a live-distance prefix unless distance < 30 m / 100 ft cutoff (imminent-turn semantics). Same prefix logic for far-tier, near-tier, and chain-append — same disambiguation across all tiers.
+- **G6.** Chain-append carries its own distance prefix measured from current maneuver to next-after-next.
+- **G7.** Format follows `useImperial`. Imperial: feet (rounded 100) up to 999 ft, then "In a quarter mile" / "In half a mile" / "In three quarters of a mile" / "In one mile", then "In N miles" (Math.round, smallest output is 2). Metric: meters (rounded 10 below 100 m, rounded 50 from 100-999 m), then "In one kilometer" at 1000 m, then "In N kilometers" (1-decimal rounded, smallest 1.5 from band lift).
+- **G8.** When Valhalla bakes a distance into the source text via the multi-cue mechanism (mid-string ". Then, in <dist>, <Imperative>" form), the trailing chain is stripped before the live-distance prefix is prepended. Single distance announcement per prompt — no "In 200 feet, drive east on X. Then, in 900 feet, Turn left onto Y" doubling.
+- **G9.** Prompt count, ordering, and chain-eligibility logic UNCHANGED. Issue 2 is a presentation-layer transform; counts must be invariant on the canonical Villa Rita → Costco trace (verified 11 prompts in §5.4).
+- **G10.** GPS-recovery guard (Codex F5.4): on the first tick after `drActive` clears OR after `gpsStale` clears (whichever comes first), the prefix is suppressed for that tick — prompt fires with maneuver text only. Prevents jarringly-precise "In 200 feet" computed from a single recovered GPS sample after dead-reckoning estimation.
+- **G11.** `announcedSet` mutation order is exception-safe. Marks happen BEFORE prefix construction, so a thrown exception in `formatDistancePrefix` or `stripBakedDistance` doesn't permanently mute a maneuver. The cost of this ordering is that an exception leaves the maneuver "marked but never spoken" — better than "mute forever."
+- **G12.** Villa Rita → Costco field drive (canonical TTM regression route) still produces 11 prompts in the same order. Timing shifts (Issue 1) and text content changes (Issue 2) are the only observable deltas.
 
 ### Non-goals
 
-- **NG1.** No change to `VOICE_TTM` tier thresholds (`[30, 3]` auto / `[20, 3]` bicycle / `[15, 2]` pedestrian). The 30-second far-tier and 3-second near-tier advance-notice semantics are correct; only the floor was wrong.
-- **NG2.** No change to pedestrian profile floor (stays 15 m). Walking-pace scenarios have ample buffer today; a change here would expand scope without field evidence.
-- **NG3.** No change to `NEXT_AFTER_NEXT_DISTANCE = 500 m` chain-eligibility threshold. Chain math is unchanged.
-- **NG4.** No introduction of TTS-aware announcement semantics (e.g., reading back the last N words of a long prompt, suppression based on measured speech duration). Those would require cross-file wiring into `nav-ui.js`'s speech pipeline. Out of scope.
-- **NG5.** No changes to `frontend/nav-ui.js`. The `onVoiceCb(text)` boundary is preserved; text is formed inside `navigation.js` and handed to `nav-ui` unchanged in shape.
-- **NG6.** No change to Valhalla routing. We consume the route output as-is; the distance-prefix feature uses live engine-side distances, not Valhalla's baked route-planning distances.
-- **NG7.** No retroactive amendment of TTM v3 spec invariants I1–I11. I3 and I4's floor references now resolve to 65/40/15 instead of 50/30/15, but the invariant shapes are unchanged.
-- **NG8.** No deprecation of `useImperial` preference or changes to how it's exposed. `window._geographicaUseImperial` continues to be the source of truth.
-- **NG9.** No changes to sidebar tab click semantics, localStorage key name, or the `VALID_SIDEBAR_PANELS` whitelist.
-- **NG10.** No attempt to detect or handle the "memory-kill without BFCache" path (full reload past the BFCache window). The existing `DOMContentLoaded` path handles that case; the bug was the missing BFCache path.
+- **NG1.** No change to `VOICE_TTM` tier thresholds (`[30, 3]` auto / `[20, 3]` bicycle / `[15, 2]` pedestrian). Only the floor.
+- **NG2.** No change to pedestrian profile floor (stays 15 m). Walking-pace scenarios have ample buffer; field evidence absent.
+- **NG3.** No change to `NEXT_AFTER_NEXT_DISTANCE = 500 m` chain-eligibility.
+- **NG4.** No introduction of TTS-aware semantics (measured speech duration, mid-utterance suppression). Out of scope.
+- **NG5.** No changes to `frontend/nav-ui.js`, `frontend/app.js`, `frontend/index.html`, or CSS. The `onVoiceCb(text)` boundary is preserved.
+- **NG6.** No change to Valhalla routing. We consume route output as-is.
+- **NG7.** No retroactive amendment of TTM v3 invariants I1–I11. I3 and I4's floor references resolve to 75/45/15 (was 50/30/15); shapes unchanged.
+- **NG8.** No use of `verbal_succinct_transition_instruction` for the near-tier base text. Succinct drops street names ("Turn left.") which destroys the disambiguation case (Cameron's stated motivation). Stay on `verbal_pre_transition_instruction`.
+- **NG9.** No second-tier "imminent" form for the near-tier when the same maneuver's far-tier already fired (Codex F5.3 deferred). Standard escalation UX matches Google Maps; revisit only if field-tested as confusing.
+- **NG10.** No locale support beyond en-US. Frontend never passes `directions_options.language` ([nav-ui.js:534](../../../frontend/nav-ui.js#L534)) so Valhalla defaults to en-US. Future locale picker would require a re-design of both helpers (R2 F2.6).
+- **NG11.** No changes to depart-maneuver speech (`maneuvers[0]`'s `verbal_pre_transition_instruction`). The depart text is never read by `checkVoice` (which advances `nextIdx = currentManeuverIdx + 1` past it). The multi-cue text on depart is spoken by a different mechanism (or not at all in the current engine); out of scope here.
 
 ## 3. Architecture
 
 ```
-                                                        
-  Issue 1: frontend/navigation.js                       
-  ────────────────────────────────                      
-  VOICE_DISTANCE_FLOOR.auto    50 → 65                  
-  VOICE_DISTANCE_FLOOR.bicycle 30 → 40                  
-  VOICE_DISTANCE_FLOOR.pedestrian 15 (unchanged)        
-                                                        
-  Issue 2: frontend/navigation.js                       
-  ────────────────────────────────                      
-  new: formatDistancePrefix(meters, useImperial)        
-  new: stripBakedDistance(text)                         
-  amended: checkVoice() prepends on all 3 output paths  
-           (far, near, chain-append)                    
-                                                        
-  Issue 3: frontend/app.js                              
-  ──────────────────────                                
-  new: window.addEventListener('pageshow', ...)         
-       in DOMContentLoaded block, guarded by            
-       e.persisted                                      
-                                                        
+                                                         
+   GPS service       │  updateGPS(data)      │  onVoiceCb(text)
+   (services/gps)    │  ──────────────▶      │  ──────────────▶
+                     │                       │
+                     │  ┌─────────────────┐  │
+                     │  │ navigation.js   │  │
+                     │  │                 │  │
+                     │  │  pushSpeedSamp  │  │
+                     │  │  snapToRoute    │  │
+                     │  │  checkVoice ────┼──┼────▶ onVoiceCb
+                     │  │   ├─ NEW: GPS-  │  │       │
+                     │  │   │   recovery  │  │       │
+                     │  │   │   guard     │  │       │
+                     │  │   ├─ stripBaked │  │       │
+                     │  │   │   Distance  │  │       │
+                     │  │   ├─ mark       │  │       │
+                     │  │   │   announced │  │       │
+                     │  │   │   Set       │  │       │
+                     │  │   ├─ formatDist │  │       │
+                     │  │   │   Prefix    │  │       │
+                     │  │   └─ prepend +  │  │       │
+                     │  │       fire      │  │       │
+                     │  │                 │  │       │
+                     │  │  drActive       │  │       │
+                     │  │  recoveryFlag   │  │       │
+                     │  │   (one-shot)    │  │       │
+                     │  └─────────────────┘  │
+                                                         
 ```
 
-No cross-file wiring. Each issue is localized.
+Pure in-engine change. External boundary preserved: voice-picker still consumes `onVoiceCb(text)`; nav-ui still speaks via SpeechSynthesis with selected voice.
 
 ## 4. Issue 1 — near-tier floor lift
 
 ### 4.1 Constants
 
-Current constants in [navigation.js:52-56](../../../frontend/navigation.js#L52-L56):
+Current at [navigation.js:52-56](../../../frontend/navigation.js#L52-L56):
 
 ```js
 var VOICE_DISTANCE_FLOOR = {
@@ -105,374 +118,389 @@ New:
 
 ```js
 var VOICE_DISTANCE_FLOOR = {
-  auto:       65,  // +15 m, ≈ +1.3 s post-speech buffer at 25 mph surface-street symptom
-  bicycle:    40,  // +10 m, mirror of auto delta
-  pedestrian: 15   // unchanged (ample buffer at walking pace)
+  auto:       75,  // +25 m. ~+2.2 s warning at 25 mph after Issue-2 prefix TTS.
+  bicycle:    45,  // +15 m. Mirror scaling — 50% lift, same as auto's 50→75 ratio.
+  pedestrian: 15   // unchanged. Walking-pace buffer ample.
 };
 ```
 
-### 4.2 Buffer table (auto profile, for reviewers)
+### 4.2 Buffer math (auto, with Issue-2 prefix)
 
-Fire distance = `max(3 × speed, floor)`. Post-speech buffer = fire_distance / speed − 3 s TTS (~3 s typical utterance, ~0.5 s init latency folded in via the speech window).
+Effective TTS time at the symptom speed includes the prefix. Speech rates: fast-voice (Samantha) ≈ 2.5 wps; slow-voice (eSpeak / iOS Daniel) ≈ 1.8 wps. Init latency ~0.5 s.
 
-| speed | current (50 m floor) | new (65 m floor) | delta |
-|---|---|---|---|
-| 15 mph / 6.7 m/s | 50 m / 7.5 s / 4.5 s buffer | 65 m / 9.7 s / 6.7 s buffer | +2.2 s |
-| 20 mph / 8.9 m/s | 50 m / 5.6 s / 2.6 s buffer | 65 m / 7.3 s / 4.3 s buffer | +1.7 s |
-| **25 mph / 11.2 m/s** (symptom) | **50 m / 4.5 s / 1.5 s buffer** | **65 m / 5.8 s / 2.8 s buffer** | **+1.3 s** |
-| 30 mph / 13.4 m/s | 50 m / 3.7 s / 0.7 s | 65 m / 4.9 s / 1.9 s | +1.2 s |
-| 37 mph / 16.7 m/s (floor boundary, new) | 50 m / 3.0 s / 0 s | 65 m / 3.9 s / 0.9 s | +0.9 s |
-| 45 mph / 20.1 m/s (TTM regime) | 60 m / 3.0 s / 0 s | 65 m / 3.2 s / 0.2 s | +0.2 s |
-| ≥ 48 mph (TTM fully governs) | `3 × speed` | `3 × speed` (no change) | 0 |
+| speed | fire dist (75 m floor) | warning time | sample utterance | TTS fast | TTS slow | buffer fast | buffer slow |
+|---|---|---|---|---|---|---|---|
+| 15 mph / 6.7 m/s | 75 m | 11.2 s | "In 200 feet, turn left onto X" (9 words) | 3.6+0.5 = 4.1 s | 5.0+0.5 = 5.5 s | 7.1 s | 5.7 s |
+| 20 mph / 8.9 m/s | 75 m | 8.4 s | same | 4.1 s | 5.5 s | 4.3 s | 2.9 s |
+| **25 mph / 11.2 m/s** | **75 m** | **6.7 s** | same | 4.1 s | 5.5 s | **2.6 s** | **1.2 s** |
+| 30 mph / 13.4 m/s | 75 m | 5.6 s | same | 4.1 s | 5.5 s | 1.5 s | 0.1 s |
+| 35 mph / 15.6 m/s | 75 m | 4.8 s | same | 4.1 s | 5.5 s | 0.7 s | -0.7 s ⚠ |
+| 37 mph / 16.7 m/s | 75 m (boundary) | 4.5 s | same | 4.1 s | 5.5 s | 0.4 s | -1.0 s ⚠ |
+| ≥48 mph (TTM regime) | `3 × speed` | 3.0 s | same | 4.1 s | 5.5 s | -1.1 s ⚠ | -2.5 s ⚠ |
 
-### 4.3 Invariant amendments to TTM v3 spec
+**Key observations:**
 
-- **I3** (unchanged shape, new value): "zero announcements when the driver is stationary beyond the distance floor" — floor for auto is now 65 m, bicycle 40 m, pedestrian 15 m.
-- **I4** (unchanged shape, new value): "near-tier fires when the driver is stationary ≤ floor from the maneuver" — same value update.
-- New **I12**: "raising the floor from 50 → 65 m preserves exactly-2-prompts-per-maneuver (G1 in TTM v3) when the driver enters from outside the far-tier threshold." Far-tier is TTM-governed and independent of the floor; near-tier still fires exactly once per maneuver regardless of floor. Formal check: on any route with maneuver spacing > 65 m, near-tier fires at distance = 65 m for low-speed approach; spacing > 195 m guarantees no interference between consecutive maneuvers' near-tiers.
+- Surface streets (15-30 mph) hold a positive buffer even at slow voice. **The symptom speed (25 mph) gets +1.2 s slow-voice buffer** — material improvement vs current ~0 s.
+- Above ~30 mph at slow voice the buffer goes negative — but this matches the **pre-existing** TTM v3 behavior at high speeds. The current TTM model's "3 s near tier" was always a "fires-3 s-out" not "completes-3 s-out" semantic. This spec doesn't fix that (out of scope per NG1); the floor lift only addresses the floor-governed regime where Cameron's symptom landed.
+- **Negative buffer at high speed is pre-existing**, not introduced by this spec. R4 F4.1 flagged this risk; we accept it as out of scope and document it.
 
-### 4.4 Tests (engine)
+### 4.3 Invariant amendments
 
-New tests in `frontend/tests/engine/navigation.test.mjs`:
+- **I3** (preserved shape, new value): zero announcements when stationary > 75 m / 45 m / 15 m.
+- **I4** (preserved shape, new value): near-tier fires when stationary ≤ floor.
+- **I12 (new)**: floor lift 50 → 75 m preserves exactly-2-prompts-per-maneuver invariant (TTM v3 G1) when entering from outside far-tier. Floor only governs near-tier; far-tier is TTM-only and floor-independent.
 
-- `TTM I12: floor 65 auto fires near-tier at 65 m at 11.2 m/s` — parameterize existing floor-governs-below-TTM test over the new value.
-- `TTM I12: floor 40 bicycle fires near-tier at 40 m at 5 m/s` — bicycle mirror.
-- `TTM I12: floor change does not affect prompt count on Villa Rita synthetic fixture` — run `fixtureVillaRitaCluster`, assert count is still 3 prompts. Keeps G11 (invariant count) honest.
-- `TTM I12: floor change does not affect mixed-spacing cluster prompt count` — run `fixtureMixedSpacingCluster`, assert count is still 4 prompts (per TTM v3 I11 chain extension).
+### 4.4 Tests
 
-Existing tests at `TTM G1: fires exactly 2 prompts per maneuver at highway speed` must continue to pass with no modification (high-speed is floor-independent).
+Add to `frontend/tests/engine/navigation.test.mjs`:
+
+- `TTM I12: floor 75 auto fires near-tier at 75 m at 11.2 m/s` — parameterize existing floor-governs test over new value.
+- `TTM I12: floor 45 bicycle fires near-tier at 45 m at 5 m/s`.
+- `TTM I12: floor change does not affect prompt count on Villa Rita synthetic fixture` (G9 regression guard) — run `fixtureVillaRitaCluster`, assert count unchanged.
+- `TTM I12: floor change does not affect mixed-spacing cluster prompt count` — run `fixtureMixedSpacingCluster`, assert count unchanged.
+- Existing `TTM G1: fires exactly 2 prompts per maneuver at highway speed` continues to pass (TTM regime is floor-independent).
 
 ## 5. Issue 2 — live-distance prefix
 
 ### 5.1 New helpers
 
-Both helpers live in `navigation.js` as private functions (module-scope), exported via `_geographicaNavEngineInternals` for test access.
+Both helpers live in `navigation.js` as module-private functions, exported via `_geographicaNavEngineInternals` for test access.
 
 ```js
-// Small-distance cutoff — below this, prompts read as imminent ("turn right").
+// Small-distance cutoff — below this, prompts read as imminent.
 var DISTANCE_PREFIX_CUTOFF_METERS = 30; // ≈ 100 ft
 
 /**
- * Format a live distance in meters as a human-readable prefix, matching
- * Google Maps conventions. Empty string means "below the cutoff, no prefix".
+ * Format a live distance in meters as a Google-Maps-style prefix.
+ * Returns "" if below cutoff (caller speaks the maneuver alone).
+ *
  * Imperial (useImperial=true):
  *   <100 ft: ""
- *   [100, 1000) ft: "In N00 feet, " (rounded to nearest 100)
- *   [1000, 5/16 mi) ft: "In 1/4 mile, "     (1000–1650 ft)
- *   [5/16, 7/16) mi:  "In 1/3 mile, "       (1650–2310 ft)
- *   [7/16, 5/8) mi:   "In 1/2 mile, "       (2310–3300 ft)
- *   [5/8, 7/8) mi:    "In 3/4 mile, "       (3300–4620 ft)
- *   [7/8, 3/2) mi:    "In 1 mile, "         (4620–7920 ft)
- *   >= 3/2 mi:        "In N miles, " (rounded to nearest whole mile; smallest
- *                                    possible N is 2 since 3/2 rounds to 2)
+ *   [100, 999] ft: "In N00 feet, " (Math.round(feet/100)*100)
+ *   [1000, 1980) ft: "In a quarter mile, "          (~ 1320 ft midpoint)
+ *   [1980, 3300) ft: "In half a mile, "             (~ 2640 ft midpoint)
+ *   [3300, 4620) ft: "In three quarters of a mile, " (~ 3960 ft midpoint)
+ *   [4620, 7920) ft: "In one mile, "                (~ 5280 ft midpoint)
+ *   >= 7920 ft: "In N miles, " (Math.round(miles); smallest possible N is 2)
+ *
  * Metric (useImperial=false):
  *   <30 m: ""
- *   [30, 100) m: "In N0 meters, " (rounded to nearest 10)
- *   [100, 900) m: "In NN0 meters, " (rounded to nearest 50)
- *   >= 900 m: "In N.N kilometers, " (rounded to 1 decimal)
+ *   [30, 99] m: "In N0 meters, " (Math.round(m/10)*10)
+ *   [100, 999] m: "In NN0 meters, " (Math.round(m/50)*50)
+ *   [1000, 1499] m: "In one kilometer, "
+ *   >= 1500 m: "In N.N kilometers, " (Math.round(m/100)/10; smallest output is 1.5)
+ *
+ * NOTE on band boundaries: rounding can push a value into the next band's
+ * absolute range, but bands are checked BEFORE rounding (band classification
+ * uses the raw meters value, not the rounded output). E.g., 290 m = 951 ft is
+ * in [100, 999] band → rounds to 1000 → output "In 1000 feet, ". 305 m = 1001 ft
+ * is in [1000, 1980) band → "In a quarter mile, ". The "1000 feet" output is
+ * a deliberate edge-case label (driver hears it for the upper few meters of
+ * the feet band before crossing to fractional miles).
  */
-function formatDistancePrefix(meters, useImperial) { ... }
+function formatDistancePrefix(meters, useImperial) {
+  if (meters < DISTANCE_PREFIX_CUTOFF_METERS) return "";
+  if (useImperial) {
+    var feet = meters * 3.28084;
+    if (feet < 1000) return "In " + (Math.round(feet / 100) * 100) + " feet, ";
+    var miles = feet / 5280;
+    if (miles < 1980/5280) return "In a quarter mile, ";
+    if (miles < 3300/5280) return "In half a mile, ";
+    if (miles < 4620/5280) return "In three quarters of a mile, ";
+    if (miles < 7920/5280) return "In one mile, ";
+    return "In " + Math.round(miles) + " miles, ";
+  } else {
+    if (meters < 100) return "In " + (Math.round(meters / 10) * 10) + " meters, ";
+    if (meters < 1000) return "In " + (Math.round(meters / 50) * 50) + " meters, ";
+    if (meters < 1500) return "In one kilometer, ";
+    return "In " + (Math.round(meters / 100) / 10).toFixed(1) + " kilometers, ";
+  }
+}
 
 /**
- * Strip a leading distance-prefix from Valhalla-supplied text, if any.
- * Handles both numeric ("In 400 feet, ") and fractional ("In a quarter mile, ")
- * forms. Conservative: only strips when followed by a capital letter starting
- * the real instruction. Returns text unchanged if no prefix matched.
+ * Strip Valhalla's mid-string baked distance from a verbal_pre_transition or
+ * verbal_transition_alert string. Valhalla emits the multi-cue chain in the
+ * shape "<Verb phrase>. Then, in <dist> <unit>, <Imperative>" — the trailing
+ * "Then, in N feet, X" is removed entirely, since the engine will prepend its
+ * own live distance via formatDistancePrefix on the resulting head clause.
+ *
+ * Two regexes applied in sequence:
+ *   1. Strip ". Then, in <dist>, <rest>" (mid-string distance chain) entirely
+ *   2. Strip ". Then <rest>" (chain without distance) — pre-existing pattern,
+ *      generalized to accept "Then," (comma form) per the latent bug found in
+ *      adversarial review (the existing /\.\s*Then\s+/ regex requires whitespace
+ *      after Then, fails on the comma form Valhalla actually emits).
+ *
+ * Returns text unchanged if neither pattern matched.
  */
-function stripBakedDistance(text) { ... }
+function stripBakedDistance(text) {
+  if (!text) return text;
+  // Pattern 1: mid-string ". Then, in <dist>, <Imperative>." entirely
+  // Anchored to end-of-string (text always ends with the chain in Valhalla).
+  // (?:[^.]|\.(?=\d))* in the residual to avoid stopping at decimal point ("1.5 miles").
+  text = text.replace(
+    /\.\s*Then[\s,]+in\s+[a-zA-Z0-9.\s]+?\s(?:feet|foot|mile|miles|meters?|kilometers?|km)\s*,\s*(?:[^.]|\.(?=\d))*\.?\s*$/,
+    '.'
+  );
+  // Pattern 2: mid-string ". Then <rest>" (no distance) — broadened "Then\s+" to "Then[\s,]+"
+  text = text.replace(
+    /\.\s*Then[\s,]+(?:[^.]|\.(?=\d))*\.?\s*$/,
+    '.'
+  );
+  // Pattern 3: leading "Then " — preserved from existing engine.
+  text = text.replace(/^Then\s+/, '');
+  return text;
+}
 ```
 
-Exact regex for `stripBakedDistance`:
+**Test vectors for `formatDistancePrefix`** (verified against the reference implementation):
 
-```js
-// Matches "In <quantity> <unit>, " where <quantity> is any reasonable combo
-// of digits, decimal points, fraction words ("quarter", "half", "third"), and
-// articles ("a", "an"), and <unit> is a distance unit. The non-greedy middle
-// capture plus the mandatory `\s<unit>\s*,` terminator prevents over-matching
-// into the real instruction. The `(?=[A-Z])` lookahead ensures we only strip
-// when the residual starts with a capital — an additional guard that the
-// stripped span was in fact a prefix, not the start of the instruction.
-var BAKED_DISTANCE_RE = /^In\s+[a-zA-Z0-9.\s]+?\s(?:feet|foot|mile|miles|meters?|kilometers?|km|m)\s*,\s*(?=[A-Z])/i;
-```
+| Input | Expected output | Band reached |
+|---|---|---|
+| `(0, true)` | `""` | cutoff |
+| `(29, true)` | `""` | cutoff (29 m = 95.1 ft < 30 m cutoff in meters) |
+| `(31, true)` | `"In 100 feet, "` | feet (101.7 ft → round 100) |
+| `(91, true)` | `"In 300 feet, "` | feet (298.6 ft → round 300) |
+| `(290, true)` | `"In 1000 feet, "` | feet (951.4 ft → round 1000) |
+| `(305, true)` | `"In a quarter mile, "` | quarter (1001 ft = 0.190 mi, in [1000, 1980) ft) |
+| `(500, true)` | `"In a quarter mile, "` | quarter (1640 ft = 0.311 mi, in [1000, 1980) ft) |
+| `(700, true)` | `"In half a mile, "` | half (2297 ft, in [1980, 3300) ft) |
+| `(1100, true)` | `"In three quarters of a mile, "` | three-quarter (3609 ft, in [3300, 4620) ft) |
+| `(1500, true)` | `"In one mile, "` | one (4921 ft, in [4620, 7920) ft) |
+| `(2500, true)` | `"In 2 miles, "` | multi (8202 ft = 1.553 mi, ≥ 7920 ft, Math.round(1.553) = 2) |
+| `(8000, true)` | `"In 5 miles, "` | multi (Math.round(4.972) = 5) |
+| `(0, false)` | `""` | cutoff |
+| `(29, false)` | `""` | cutoff |
+| `(31, false)` | `"In 30 meters, "` | meters-low (round 10) |
+| `(85, false)` | `"In 90 meters, "` | meters-low (round 10) |
+| `(101, false)` | `"In 100 meters, "` | meters-mid (round 50) |
+| `(480, false)` | `"In 500 meters, "` | meters-mid (round 50) |
+| `(998, false)` | `"In 1000 meters, "` | meters-mid (round 50, edge-case label) |
+| `(1000, false)` | `"In one kilometer, "` | one-km |
+| `(1499, false)` | `"In one kilometer, "` | one-km (boundary) |
+| `(1500, false)` | `"In 1.5 kilometers, "` | km-multi (Math.round(15)/10 = 1.5) |
+| `(2345, false)` | `"In 2.3 kilometers, "` | km-multi (Math.round(23.45)/10 = 2.3) |
 
-Test vectors (all should match):
-- `"In 400 feet, Turn left."` → matches `"In 400 feet, "`, residual `"Turn left."`
-- `"In a quarter mile, Turn left."` → matches, residual `"Turn left."`
-- `"In half a mile, Turn."` → matches
-- `"In a half mile, Turn."` → matches
-- `"In 1.5 miles, Merge onto I-5."` → matches
-- `"In 500 meters, Turn."` → matches
+**Test vectors for `stripBakedDistance`** (each verified against the regex spec above on a fresh Node REPL):
 
-Non-match (regex returns unchanged):
-- `"Turn left onto Main."` (no leading "In")
-- `"In 400 feet, turn left."` (lowercase `t` after comma — deliberate guard; won't strip)
-- `"In 400 feet, you will turn."` (lowercase `y`)
-- `"Interesting observation. Turn left."` (no distance unit)
+| Input | Expected output | Why |
+|---|---|---|
+| `"Turn left onto Main."` | `"Turn left onto Main."` | no chain to strip |
+| `"Drive east on West Villa Rita Drive. Then, in 900 feet, Turn left onto North 21st Avenue."` | `"Drive east on West Villa Rita Drive."` | mid-string distance chain stripped (real Valhalla shape) |
+| `"Turn right onto 24th Drive. Then Turn left onto West Union Hills Drive."` | `"Turn right onto 24th Drive."` | mid-string non-distance chain stripped (Pattern 2) |
+| `"Turn right. Then, Turn right."` | `"Turn right."` | comma-form Then (Pattern 2 broadened) |
+| `"Then turn left onto Union Hills Drive."` | `"turn left onto Union Hills Drive."` | leading Then stripped (Pattern 3 — existing) |
+| `"In 1.5 miles, Merge onto I-5. Then, in 0.3 miles, Take exit 42."` | `"In 1.5 miles, Merge onto I-5."` | decimal-distance chain stripped (decimal-aware `\.(?=\d)`) |
+| `"Drive north. Then, in a quarter mile, Keep left to stay on North Central Avenue."` | `"Drive north."` | fractional-words chain stripped |
+| `"In 400 feet, Turn left."` | `"In 400 feet, Turn left."` | NOT a chain (single clause); leading "In" not stripped — caller's prefix logic handles it |
+
+Note: the regex deliberately does NOT strip a *leading* "In <dist>, <Imperative>" pattern. Live Valhalla doesn't emit that shape on `verbal_pre_transition_instruction` or `verbal_transition_alert_instruction` for non-depart maneuvers (verified across 5 routes — auto, truck, bicycle, pedestrian, fr-FR — in adversarial R2). If a future Valhalla version starts emitting it, add a Pattern 4: `^In\s+[a-zA-Z0-9.\s]+?\s(?:feet|...)\s*,\s*(?=[A-Z])/` (no `/i` flag — guard intact). Until observed, avoid speculative stripping that could over-match.
 
 ### 5.2 `checkVoice` changes
 
-Three output paths inside `checkVoice` are amended:
+Three output paths in `checkVoice` are amended. **Critical ordering:** for each tier, mark `announcedSet` BEFORE constructing prefixed text. An exception in `formatDistancePrefix` or `stripBakedDistance` then leaves the maneuver "marked but never spoken" instead of "mute forever, will refire on every tick" (R1 F1.2).
 
 **Far-tier path** (currently at [navigation.js:462-481](../../../frontend/navigation.js#L462-L481)):
 
 ```js
-// NEW: strip any baked-in distance from Valhalla, then prepend live distance.
-var farText = stripBakedDistance(
-  m.verbal_transition_alert_instruction || m.instruction || ""
-);
-var farPrefix = formatDistancePrefix(distToNext, _geographicaUseImperial());
-if (farPrefix && farText.length > 0) {
-  // Prefix ends with ", " so lowercase the first letter of farText for flow.
-  farText = farPrefix + farText.charAt(0).toLowerCase() + farText.slice(1);
+// existing: var farText = m.verbal_transition_alert_instruction || m.instruction || "";
+// existing: announcedSet[farKey] = true;  ← mark FIRST (existing position is fine)
+// existing: if (!muted && farText && onVoiceCb) onVoiceCb(farText);
+//
+// NEW: between mark-announced and onVoiceCb, transform farText:
+var farText = m.verbal_transition_alert_instruction || m.instruction || "";
+announcedSet[farKey] = true;
+// NEW: GPS-recovery guard — skip prefix on first tick after DR/stale clear (G10).
+var skipPrefix = consumeGPSRecoveryFlag();
+if (!skipPrefix) {
+  farText = stripBakedDistance(farText);
+  var farPrefix = formatDistancePrefix(distToNext, _geographicaUseImperial());
+  if (farPrefix && farText.length > 0) {
+    farText = farPrefix + farText.charAt(0).toLowerCase() + farText.slice(1);
+  }
 }
+if (!muted && farText && onVoiceCb) onVoiceCb(farText);
 ```
 
-**Near-tier base text** (currently at [navigation.js:399-417](../../../frontend/navigation.js#L399-L417), prior to the existing Valhalla "Then" strip).
-
-Edit the existing block so that `stripBakedDistance` runs BEFORE the uppercase normalization (the strip's `(?=[A-Z])` guard requires the remaining text to start with a capital already, so order is load-bearing), and the live-distance prefix prepend happens AFTER uppercase is applied. That preserves existing capitalization semantics when no prefix is used.
+**Near-tier base text** (currently at [navigation.js:399-417](../../../frontend/navigation.js#L399-L417)):
 
 ```js
 var text = m.verbal_pre_transition_instruction || m.instruction || "";
-// Existing "Then" strips are preserved (load-bearing — they remove Valhalla's
-// baked chain so I11 suppression is semantically correct).
-text = text.replace(/\.\s*Then\s+[^.]*\.?\s*$/i, '.');
-text = text.replace(/^Then\s+/i, '');
-// NEW: strip baked distance BEFORE uppercase (strip guard checks [A-Z] on residual).
+// NEW: stripBakedDistance handles BOTH the trailing ". Then, in <dist>, <rest>" chain
+// AND the existing leading-"Then" pattern. Replaces the prior two-line strip block.
 text = stripBakedDistance(text);
 if (text.length > 0) {
   text = text.charAt(0).toUpperCase() + text.slice(1);
 }
-// NEW: prepend live-distance prefix when above cutoff.
-var nearPrefix = formatDistancePrefix(distToNext, _geographicaUseImperial());
-if (nearPrefix && text.length > 0) {
-  text = nearPrefix + text.charAt(0).toLowerCase() + text.slice(1);
+// existing: announcedSet[nearKey] = true; announcedSet[farKey] = true;  ← mark FIRST
+//
+// NEW: GPS-recovery guard, then prefix prepend.
+var skipPrefix = consumeGPSRecoveryFlag();
+if (!skipPrefix) {
+  var nearPrefix = formatDistancePrefix(distToNext, _geographicaUseImperial());
+  if (nearPrefix && text.length > 0) {
+    text = nearPrefix + text.charAt(0).toLowerCase() + text.slice(1);
+  }
 }
+// chain-append (see below) runs AFTER prefix is added to base text
 ```
 
-**Near-tier chain-append** (currently at [navigation.js:431-440](../../../frontend/navigation.js#L431-L440)):
+**Chain-append path** (currently at [navigation.js:431-440](../../../frontend/navigation.js#L431-L440)):
 
 ```js
-if (distBetween <= NEXT_AFTER_NEXT_DISTANCE) {
-  var afterText = stripBakedDistance(route.maneuvers[afterIdx].instruction || "");
-  if (afterText) {
-    // NEW: prepend live distance to the chain-append. Lowercase BOTH the
-    // prefix's "In" and the instruction's first letter so the sentence reads
-    // naturally: "Turn left onto 21st, then in 1/4 mile, turn left onto Union".
-    // When no prefix applies, preserve the existing capital-first behavior
-    // ("Turn left onto 21st, then Turn left onto Union") — capitalized second
-    // clause matches the current ship.
-    var afterPrefix = formatDistancePrefix(distBetween, _geographicaUseImperial());
-    var chainJoin;
-    if (afterPrefix) {
-      var lcPrefix = afterPrefix.charAt(0).toLowerCase() + afterPrefix.slice(1);
-      var lcAfter  = afterText.charAt(0).toLowerCase()  + afterText.slice(1);
-      chainJoin = ", then " + lcPrefix + lcAfter;
-    } else {
-      chainJoin = ", then " + afterText;
+if (afterIdx < route.maneuvers.length) {
+  var distBetween = distanceToManeuver(
+    { segmentIndex: m.begin_shape_index, t: 0 }, afterIdx
+  );
+  if (distBetween <= NEXT_AFTER_NEXT_DISTANCE) {
+    var afterText = stripBakedDistance(route.maneuvers[afterIdx].instruction || "");
+    if (afterText) {
+      // Mark announcedSet BEFORE prefix construction (G11 exception safety).
+      announcedSet[afterIdx + "-far"] = true;
+      // GPS-recovery guard: same skipPrefix consumed by base text above already.
+      // Don't consume again — single tick = single guard. Use the same value.
+      var chainJoin;
+      if (!skipPrefix) {
+        var afterPrefix = formatDistancePrefix(distBetween, _geographicaUseImperial());
+        if (afterPrefix) {
+          var lcPrefix = afterPrefix.charAt(0).toLowerCase() + afterPrefix.slice(1);
+          var lcAfter  = afterText.charAt(0).toLowerCase()  + afterText.slice(1);
+          chainJoin = ", then " + lcPrefix + lcAfter;
+        } else {
+          chainJoin = ", then " + afterText;
+        }
+      } else {
+        chainJoin = ", then " + afterText;
+      }
+      text = text.replace(/\.\s*$/, '') + chainJoin;
     }
-    text = text.replace(/\.\s*$/, '') + chainJoin;
-    announcedSet[afterIdx + "-far"] = true;
   }
 }
 ```
 
-### 5.3 `_geographicaUseImperial()` helper
+Note: `skipPrefix` is consumed exactly once per tick (in the near-tier or far-tier branch — whichever fires first), and the chain-append re-uses the same boolean rather than re-consuming. This way a single GPS recovery suppresses prefix on both base text and chain in the same tick.
 
-The engine reads the global at call time (never cached), matching the existing pattern in `distMeters` computation at [nav-ui.js:290](../../../frontend/nav-ui.js#L290):
+### 5.3 Helpers
 
 ```js
+// Module-scope state for GPS-recovery guard
+var prevTickWasStaleOrDR = false;
+
+function consumeGPSRecoveryFlag() {
+  var nowFresh = !drActive && (Date.now() - lastGPSTime <= GPS_STALE_TIMEOUT);
+  if (prevTickWasStaleOrDR && nowFresh) {
+    prevTickWasStaleOrDR = false;
+    return true;  // suppress prefix this tick
+  }
+  prevTickWasStaleOrDR = drActive || (Date.now() - lastGPSTime > GPS_STALE_TIMEOUT);
+  return false;
+}
+
 function _geographicaUseImperial() {
   return typeof window !== 'undefined' && window._geographicaUseImperial !== false;
 }
 ```
 
-Default true (imperial) when the global is undefined, matching `app.js:123` default.
+The `prevTickWasStaleOrDR` is updated on **every** call to `consumeGPSRecoveryFlag` so it reflects the most recent observation. A normal-flow tick (always fresh) sees `prevTickWasStaleOrDR = false`, sets it to `false`, returns `false`. A post-DR-recovery tick sees `prevTickWasStaleOrDR = true`, sets it to `false`, returns `true` (suppress). Subsequent ticks see `false` → `false` (normal flow).
 
-### 5.4 Expected prompts on Villa Rita → Costco
+`consumeGPSRecoveryFlag()` is called at most once per `checkVoice` invocation. If checkVoice returns early (e.g., past-maneuver guard), the flag is NOT consumed and stays armed for the next tick — which is correct (the recovery guard should fire on the first tick that *actually announces*, not the first tick that *runs checkVoice*).
 
-Comparing current vs spec-compliant output:
+### 5.4 Expected prompts on Villa Rita → Costco (re-derived from live Valhalla)
 
-| segment / tier / fire distance | current | spec-compliant |
+Pulled from the live `/valhalla/route` response on the dev stack at the time of v2 writing. All distances and prefixes are computed from the actual maneuver geometry:
+
+| segment / tier / fire distance | current text | spec-v2 text |
 |---|---|---|
-| Seg 0 near+chain · fire @ 65 m, M2 @ 459 m | Turn left onto North 21st Avenue, then turn left onto West Union Hills Drive | **In 200 feet**, turn left onto North 21st Avenue, **then in 1/4 mile**, turn left onto West Union Hills Drive |
-| Seg 2 far · fire @ 486 m @ 36 mph | Turn right onto North Black Canyon Highway | **In 1/4 mile**, turn right onto North Black Canyon Highway |
-| Seg 3 far · fire @ 477 m @ 36 mph | Turn left onto West Utopia Road | **In 1/4 mile**, turn left onto West Utopia Road |
-| Seg 4 near+chain · fire @ 65 m, M6 @ 117 m | Turn left onto North Black Canyon Highway, then turn left onto West Wescott Drive | **In 200 feet**, turn left onto North Black Canyon Highway, **then in 400 feet**, turn left onto West Wescott Drive |
-| Seg 7 near+chain · fire @ 35 m (seg length), M8 @ 35 m | Turn right, then turn right | **In 100 feet**, turn right, **then in 100 feet**, turn right |
+| Seg 0 near+chain · 75 m, M[2] @ 459 m | "Turn left onto North 21st Avenue, then turn left onto West Union Hills Drive" | **"In 200 feet, turn left onto North 21st Avenue, then in a quarter mile, turn left onto West Union Hills Drive"** |
+| Seg 1 near · 75 m | "Turn left onto West Union Hills Drive" (m[2] far I11-suppressed by Seg 0 chain) | **"In 200 feet, turn left onto West Union Hills Drive"** |
+| Seg 2 far · 486 m @ 36 mph | "Turn right onto North Black Canyon Highway" | **"In a quarter mile, turn right onto North Black Canyon Highway"** |
+| Seg 2 near · 75 m | "Turn right onto North Black Canyon Highway" | **"In 200 feet, turn right onto North Black Canyon Highway"** |
+| Seg 3 far · 477 m @ 36 mph | "Turn left onto West Utopia Road" | **"In a quarter mile, turn left onto West Utopia Road"** |
+| Seg 3 near+chain · 75 m, M[5] @ 117 m | "Turn left onto West Utopia Road, then turn left onto North Black Canyon Highway" | **"In 200 feet, turn left onto West Utopia Road, then in 400 feet, turn left onto North Black Canyon Highway"** |
+| Seg 4 near+chain · 75 m, M[6] @ 404 m (m[5] far I11-suppressed) | "Turn left onto North Black Canyon Highway, then turn right onto West Wescott Drive" | **"In 200 feet, turn left onto North Black Canyon Highway, then in a quarter mile, turn right onto West Wescott Drive"** (404 m = 1325 ft = quarter-mile band) |
+| Seg 5 near+chain · 75 m, M[7] @ 145 m (m[6] far I11-suppressed) | "Turn right onto West Wescott Drive, then turn right" | **"In 200 feet, turn right onto West Wescott Drive, then in 500 feet, turn right"** (145 m = 476 ft → round 500) |
+| Seg 6 near+chain · 75 m fire (75 < 145 m seg length, near-tier fires when dist crosses 75 m), M[8] @ 35 m (m[7] far I11-suppressed) | "Turn right, then turn right" | **"In 200 feet, turn right, then in 100 feet, turn right"** (75 m fire = 246 ft → round 200; chain 35 m = 115 ft → round 100, just above 30 m cutoff) |
+| Seg 7 near+chain · entire seg (35 m seg length < 75 m floor, near-tier fires on first in-seg tick at ~35 m), M[9] arrival @ 227 m (m[8] far I11-suppressed) | "Turn right, then your destination is on the left" | **"In 100 feet, turn right, then in 700 feet, your destination is on the left"** (35 m fire ≈ 115 ft → round 100; chain 227 m = 745 ft → round 700) |
 
-Observations: (a) prompt count unchanged (11); (b) prompt ordering unchanged; (c) distances on chain-append are the between-maneuver distances (not accumulated from the driver), matching the engine's existing `distBetween` variable.
+**Total prompts: 11.** Order unchanged. Text content amended per spec. Identical structural counts as TTM v3 ship.
 
-### 5.5 Tests (engine)
+**Speech-time check on the longest utterance** (Seg 3 chain at 25 mph):
+- Text: "In 200 feet, turn left onto West Utopia Road, then in 400 feet, turn left onto North Black Canyon Highway."
+- Word count: 18 words.
+- Fast voice (2.5 wps): 7.2 s + 0.5 s init = 7.7 s.
+- Slow voice (1.8 wps): 10.0 s + 0.5 s = 10.5 s.
+- Driver reaches Utopia at 75/9.2 = 8.2 s after fire (segment speed 9.2 m/s).
+- **Outcome:** Fast voice completes the WHOLE compound at 7.7 s, before the 8.2 s turn arrival — actionable AND informational both heard. Slow voice completes only the first clause ("In 200 feet, turn left onto West Utopia Road" ≈ 5.5 s) before the turn at 8.2 s — actionable info heard in time, the chain trailing info ("then in 400 feet, turn left onto Black Canyon") spoken during/after the turn (acceptable — it's pre-announcing the next turn, not action-required for the current one).
 
-New tests in `navigation.test.mjs`:
+### 5.5 Tests
 
-- **Unit tests for `formatDistancePrefix`** (imperial). All computed: feet = meters × 3.28084; miles = feet / 5280. Boundary comments give the matching band.
-  - `formatDistancePrefix(0, true) === ""` (below cutoff)
-  - `formatDistancePrefix(29, true) === ""` (95.1 ft, below 100 ft cutoff)
-  - `formatDistancePrefix(31, true) === "In 100 feet, "` (101.7 ft, rounds to 100)
-  - `formatDistancePrefix(91, true) === "In 300 feet, "` (298.6 ft)
-  - `formatDistancePrefix(290, true) === "In 1000 feet, "` (951.4 ft, still in feet band since &lt; 1000 ft, rounds to 1000). **Note**: the feet-band max of 999.9 ft never rounds to 1000 because anything &ge; 950 ft but &lt; 1000 ft rounds to 1000 — so feet-band's output can legitimately say "1000 feet". This is correct Google-Maps-like behavior.
-  - `formatDistancePrefix(305, true) === "In 1/4 mile, "` (1000.66 ft = 0.1895 mi, just into the [0.19, 5/16) band)
-  - `formatDistancePrefix(500, true) === "In 1/4 mile, "` (1640.4 ft = 0.3107 mi, still in [0.19, 5/16=0.3125) band)
-  - `formatDistancePrefix(504, true) === "In 1/3 mile, "` (1653.6 ft = 0.3132 mi, crosses into [5/16, 7/16) band)
-  - `formatDistancePrefix(700, true) === "In 1/3 mile, "` (2296.6 ft = 0.4349 mi, in [5/16, 7/16=0.4375) band)
-  - `formatDistancePrefix(800, true) === "In 1/2 mile, "` (2624.7 ft = 0.4971 mi, in [7/16, 5/8) band)
-  - `formatDistancePrefix(1100, true) === "In 3/4 mile, "` (3608.9 ft = 0.6835 mi, in [5/8, 7/8) band)
-  - `formatDistancePrefix(1500, true) === "In 1 mile, "` (4921.3 ft = 0.9321 mi, in [7/8, 5/4) band)
-  - `formatDistancePrefix(2100, true) === "In 1 mile, "` (6889.8 ft = 1.305 mi, just crosses 5/4 — rounds to 1, so 1 mile. Edge-case check: is "round to nearest whole" = `Math.round(miles)`? 1.305 rounds to 1. ✓)
-  - `formatDistancePrefix(3200, true) === "In 2 miles, "` (10498.7 ft = 1.988 mi, rounds to 2)
-  - `formatDistancePrefix(8000, true) === "In 5 miles, "` (26247 ft = 4.972 mi, rounds to 5)
-- **Unit tests for `formatDistancePrefix`** (metric, useImperial=false):
-  - `formatDistancePrefix(29, false) === ""`
-  - `formatDistancePrefix(31, false) === "In 30 meters, "`
-  - `formatDistancePrefix(85, false) === "In 90 meters, "` (rounds to 10)
-  - `formatDistancePrefix(480, false) === "In 500 meters, "` (rounds to 50)
-  - `formatDistancePrefix(950, false) === "In 1.0 kilometers, "`
-  - `formatDistancePrefix(2345, false) === "In 2.3 kilometers, "`
-- **Unit tests for `stripBakedDistance`**:
-  - `stripBakedDistance("Turn left onto Main.") === "Turn left onto Main."` (no-op)
-  - `stripBakedDistance("In 400 feet, Turn left onto Main.") === "Turn left onto Main."`
-  - `stripBakedDistance("In a quarter mile, Turn left.") === "Turn left."`
-  - `stripBakedDistance("In 1.5 miles, Merge onto I-5.") === "Merge onto I-5."`
-  - `stripBakedDistance("In 500 meters, Turn.") === "Turn."`
-  - **Negative case**: `stripBakedDistance("In 400 feet, you will turn.") === "In 400 feet, you will turn."` (no capital-letter boundary; strip guard prevents eating real instruction)
-- **Integration tests**:
-  - `TTM I13: near-tier fires "In 200 feet, " prefix at 65 m floor` — run existing fixtureVillaRitaCluster at 11 m/s, assert first voice text starts with "In 200 feet, " (imperial default).
-  - `TTM I13: far-tier fires "In 1/4 mile, " prefix at 486 m` — synthesize a route with a long segment, run at 16 m/s, assert far-tier text starts with "In 1/4 mile, ".
-  - `TTM I13: chain-append carries its own distance prefix` — run fixtureVillaRitaCluster (30 m spacing), assert near-tier text contains ", then in 100 feet, " (30 m * 3.28 = 98 ft → rounds to 100).
-  - `TTM I13: imperial vs metric dispatch` — toggle `_geographicaUseImperial`, run same fixture, assert text switches "feet"/"meters".
-  - `TTM I13: cutoff suppresses prefix on short final hop` — use fixtureShortHop (<30 m seg), assert near-tier fires without a distance prefix.
-  - `TTM I13: prompt count invariant on Villa Rita fixture with prefixes enabled` — run fixtureVillaRitaCluster, assert count is still 3. (G7 regression guard.)
+Add to `frontend/tests/engine/navigation.test.mjs`:
 
-### 5.6 Invariant additions
+**Unit tests for `formatDistancePrefix`** (use the table in §5.1).
 
-- **I13 (new)**: "Every voice prompt fired by `checkVoice` that represents a distance ≥ cutoff carries a live-distance prefix. Prefixes are computed from TTM-snapshot distances (`distToNext` for the current maneuver, `distBetween` for the chain-append), never from Valhalla's route-planning distances."
-- **I14 (new)**: "Prompt count on any route is independent of whether prefixes are enabled. The prefix is a pure text transform; it neither adds nor removes firings."
+**Unit tests for `stripBakedDistance`** (use the table in §5.1).
 
-## 6. Issue 3 — sidebar BFCache restore
+**Integration tests** (using the existing test_runner.mjs fixtures):
 
-### 6.1 Root cause recap
+- `TTM I13: imperial near-tier fires "In N feet, " prefix at 75 m floor` — run `fixtureVillaRitaCluster` at 11 m/s (note: fixture uses 30 m maneuver spacing = 98 ft, BELOW the 100 ft cutoff). Assert near-tier text starts with NO prefix (cutoff suppresses) and matches "Turn left onto Mulberry, then turn right onto Oak" (chain-append also below cutoff for the 30 m M[2]-M[3] gap).
+- `TTM I13b: above-cutoff near-tier fires prefix` — synthesize a route with 200 m maneuver spacing and 75 m floor, run at 11 m/s. Assert near-tier text starts with `"In 200 feet, "` (75 m floor → 75 m × 3.28 = 246 ft → round 200) and chain-append contains `", then in 700 feet, "` (200 m between maneuvers → 656 ft → round 700).
+- `TTM I13c: far-tier above-cutoff fires prefix at TTM distance` — synthesize a route with a long segment (1500 m), drive at 16 m/s, expect far-tier at ~480 m (TTM = 30 s). Assert far-tier text starts with `"In a quarter mile, "` (480 m = 1575 ft → in [1000, 1980) band).
+- `TTM I13d: imperial vs metric dispatch` — toggle `_geographicaUseImperial`, run same fixture, assert text switches "feet/meters" / "mile/kilometer".
+- `TTM I13e: cutoff suppresses prefix on short final hop` — fixtureVillaRitaCluster with 30 m spacing, assert near-tier text has no prefix.
+- `TTM I13f: prompt count invariant on Villa Rita fixture with prefixes enabled` — assert count is unchanged from TTM v3 baseline (G9 regression guard).
+- `TTM I14: GPS-recovery guard suppresses prefix on first post-DR tick` — set `drActive = true`, run a tick (no voice), set `drActive = false`, run another tick that triggers a near-tier fire. Assert the near-tier text has NO prefix (recovery suppression). Run a third tick; near-tier doesn't fire (announced), far-tier doesn't fire (announced). Run a fourth tick that fires far-tier on the next maneuver — assert prefix is present.
+- `TTM I14b: GPS-stale recovery suppresses prefix on first fresh tick` — same as I14 but using `lastGPSTime` instead of `drActive`.
+- `TTM I15: announcedSet marked before prefix construction (exception safety)` — mock `formatDistancePrefix` to throw. Run a tick that should fire near-tier. Assert: (a) `announcedSet[nearKey] === true` (mark happened before throw), (b) no `onVoiceCb` was called (text construction failed), (c) next tick does NOT re-fire (mark prevents replay).
 
-iOS Safari restores backgrounded pages from the back/forward cache (BFCache). BFCache restores fire `pageshow` with `event.persisted === true` and **do not fire `DOMContentLoaded`**. The `f1687df` restore is wired only to `DOMContentLoaded`, so on a BFCache restore the hardcoded `class="tab-btn active"` on the Layers button ([index.html:46](../../../frontend/index.html#L46)) + `class="panel active"` on `#layers-panel` ([index.html:53](../../../frontend/index.html#L53)) remain visually active, while localStorage still contains the user's last-chosen tab.
-
-### 6.2 Change
-
-Add a single `pageshow` listener in the DOMContentLoaded block in [app.js:4120-4132](../../../frontend/app.js#L4120-L4132):
+**Integration test for the full pipeline (Codex F5.5):**
 
 ```js
-document.addEventListener('DOMContentLoaded', function () {
-  initMap();
-  initSidebarTabs();
-  initLayerControls();
-  initSearch();
-  initRouting();
-  initImport();
-  initGPS();
-  initAdmin();
-  restoreLastSidebarTab();
-  if (window.VoicePicker && typeof window.VoicePicker.init === 'function') {
-    window.VoicePicker.init();
-  }
-  // ... (rest unchanged)
-});
-
-// NEW: iOS Safari restores backgrounded pages from BFCache without firing
-// DOMContentLoaded. Re-run tab restoration so persisted selection survives
-// iOS memory-kill / app-switch cycles during active navigation.
-// restoreLastSidebarTab() is idempotent — early-returns when the target
-// tab is already active, so non-BFCache pageshow events are no-ops.
-window.addEventListener('pageshow', function (e) {
-  if (e.persisted) restoreLastSidebarTab();
+test('TTM I13g: full pipeline strips Then-chain + applies live prefix', async (t) => {
+  // Maneuver with mid-string baked-distance chain (real Valhalla shape).
+  var input = "Drive east on West Villa Rita Drive. Then, in 900 feet, Turn left onto North 21st Avenue.";
+  // Engine processes via stripBakedDistance → uppercase → formatDistancePrefix
+  // with distToNext = 75 m (≈ 246 ft → "In 200 feet, ").
+  var result = simulateNearTier(input, 75 /* m */, true /* imperial */);
+  assert.equal(result, "In 200 feet, drive east on West Villa Rita Drive.");
+  // Note: the Then-clause is stripped entirely; live-prefix replaces baked.
 });
 ```
 
-The listener is placed at module scope, outside DOMContentLoaded, so it wires up immediately during script parsing — not dependent on DOMContentLoaded having fired.
+### 5.6 Invariants
 
-### 6.3 Tests (structural)
+- **I13 (new)**: Every voice prompt fired by `checkVoice` carries a live-distance prefix when `distToNext ≥ 30 m`. Prefix uses the TTM-snapshot distance, never Valhalla's baked distance.
+- **I14 (new)**: On the first `checkVoice` invocation after `drActive` clears OR `gpsStale` clears, the prefix is suppressed for that tick. Prevents jarringly-precise distance prompts computed from a single recovered GPS sample.
+- **I15 (new)**: `announcedSet` mutations happen BEFORE prefix construction. Exception in `formatDistancePrefix` or `stripBakedDistance` leaves the maneuver "marked but mute" (graceful degrade), never "fires repeatedly on every tick" (mute forever) or "fires twice."
+- **I16 (new)**: `formatDistancePrefix` is monotone non-decreasing on the `meters` argument across band boundaries. The spoken value strictly never goes down as live distance increases. (Verified by the test table in §5.1; a property test asserting monotonicity over `[0, 10000]` in 10 m steps is recommended.)
+- **G9 (preserved)**: prompt count, ordering, chain eligibility unchanged by Issue 2.
 
-Extend `tests/test_frontend_voice_picker.py` (the nearest-adjacent structural-test home) with:
+## 6. Ship gate (field-test acceptance)
 
-```python
-def test_sidebar_tab_restore_covers_bfcache():
-    """f1687df closed the DOMContentLoaded path; this test closes the BFCache
-    path. iOS Safari restores backgrounded pages via BFCache, which fires
-    pageshow(e.persisted=true) but NOT DOMContentLoaded.
-    """
-    src = (REPO_ROOT / "frontend/app.js").read_text()
-    # Original DOMContentLoaded restoration path must still exist
-    assert "DOMContentLoaded" in src
-    assert "restoreLastSidebarTab()" in src
-    # BFCache path — pageshow listener that calls restoreLastSidebarTab when e.persisted
-    m = re.search(
-        r"addEventListener\s*\(\s*['\"]pageshow['\"]\s*,\s*function\s*\([^)]*\)\s*\{[^}]{0,400}"
-        r"e\.persisted[^}]{0,200}?restoreLastSidebarTab\s*\(",
-        src,
-    )
-    assert m is not None, (
-        "Expected a window.addEventListener('pageshow', fn) listener that invokes "
-        "restoreLastSidebarTab() when e.persisted is true. Without this, iOS Safari "
-        "BFCache restores drop the user back to the default Layers tab."
-    )
-```
+Cameron re-drives the canonical Villa Rita → Costco route. Accept merge if:
 
-No unit test is practical here — jsdom does not simulate BFCache. A structural regex test is the right rigor given the project's existing test posture (see [test_frontend_voice_picker.py::test_sidebar_tab_persistence_wired](../../../tests/test_frontend_voice_picker.py) as precedent).
+1. **Issue 1 acceptance**: near-tier prompts fire noticeably earlier at surface speeds (~+1 s of post-speech buffer at 25 mph). "Broaches the intersection" symptom not observed.
+2. **Issue 2 acceptance**: every appropriate prompt carries a distance prefix. Specifically:
+   - Far-tier on Union Hills (~36 mph segment) speaks "In a quarter mile, turn right onto North Black Canyon Highway" instead of bare "Turn right onto North Black Canyon Highway."
+   - Near-tier on surface streets (≥75 m fire distance) speaks "In 200 feet, turn left onto X" — provides the disambiguation Cameron flagged.
+   - Chain-append carries its own distance: "..., then in 400 feet, turn left onto Y" not "..., then turn left onto Y."
+   - Parking-lot turns at <30 m fire bare "Turn right" (cutoff suppression — preserves imminent-turn semantics).
+3. **Regression**: total prompt count on the drive is 11 (TTM v3 baseline). No new class of unexpected announcements.
+4. **GPS-recovery sanity**: if the drive includes a tunnel / overpass / multipath GPS dropout, the first post-recovery prompt (if any) speaks the maneuver text alone (no prefix). Easy to verify via the `_geographicaTTMDebugLog` instrumentation existing from TTM v3.
 
-### 6.4 Invariants
+Unit/integration tests on `dev` before any field test:
 
-- **Sidebar persistence across full page reloads** (existing, preserved): `f1687df`'s DOMContentLoaded-triggered `restoreLastSidebarTab()` continues to fire on parse-from-network loads.
-- **Sidebar persistence across BFCache restores** (new): `pageshow` with `e.persisted === true` also fires `restoreLastSidebarTab()`. Composes with the DOMContentLoaded path for a full cover over all page-lifecycle events that can drop the user back to the default tab.
-- **Idempotency**: calling `restoreLastSidebarTab()` when the target tab is already active is a no-op (existing early-return at [app.js:4113](../../../frontend/app.js#L4113)). Non-BFCache `pageshow` events (e.g., normal first loads where DOMContentLoaded already restored, subsequent `pageshow` with `e.persisted === false`) therefore cost nothing.
+- `node --test --test-force-exit frontend/tests/engine/` — all TTM + new I12/I13/I14/I15/I16 tests pass.
+- Broader `python -m pytest tests/` — no regressions beyond the known `test_wake_lock_static.py` pre-existing failure.
 
-## 7. Ship gate (field-test acceptance)
+## 7. Rollback
 
-Cameron re-drives the Villa Rita → Costco route (canonical TTM v3 regression route). Accept the merge if:
+Both issues independently revertible. No persistent storage / backend / release-please impact. Issues 1 + 2 ship in the same PR but as separate commits so a partial revert is possible (revert Issue 2's ~200-line addition; keep Issue 1's 3-line floor change).
 
-1. **Issue 1 acceptance**: near-tier prompts fire noticeably earlier at surface-street speeds (≈ 1 second more advance notice than the current ship). "Broaches the intersection" symptom no longer observed.
-2. **Issue 2 acceptance**: every prompt carries a distance prefix when appropriate. Specifically, far-tier "Turn right onto North Black Canyon Highway" is now heard as "In 1/4 mile, turn right onto North Black Canyon Highway." Chain-appends include their own distance. Parking-lot turns (<30 m) remain unprefixed ("turn right").
-3. **Issue 3 acceptance**: initiate navigation, switch to Route tab, close sidebar, let phone sleep/app switch for ≥ 2 minutes, reopen Geographica, reopen sidebar → Route tab is still active. Also: hard-reload → sidebar opens to Route tab (existing behavior preserved).
-4. **Regression**: total prompt count on the drive is 11 (same as TTM v3). No new class of unexpected announcements.
+## 8. Open questions for plan-review
 
-Unit/integration tests green on `dev` branch before any field test:
+The plan-writing review should pin:
 
-- `node --test --test-force-exit frontend/tests/engine/` — all TTM + new I12/I13/I14 tests pass
-- `python -m pytest tests/test_frontend_voice_picker.py` — sidebar BFCache structural test passes
-- Broader `python -m pytest tests/` — no regressions beyond the known `test_wake_lock_static.py::test_wake_lock_js_exists_and_exports_api` pre-existing failure
-
-## 8. Rollback plan
-
-Each issue is independently revertible:
-
-- **Issue 1** rollback: revert the `VOICE_DISTANCE_FLOOR` constant change (single-commit, pure value change).
-- **Issue 2** rollback: revert the `checkVoice` text-forming blocks and delete `formatDistancePrefix` + `stripBakedDistance`. Engine behavior returns to TTM v3 text shape.
-- **Issue 3** rollback: delete the `pageshow` listener. BFCache restores go back to dropping users on Layers tab.
-
-None of the three changes affect persistent storage schema, backend contracts, or release-please versioning triggers. All three are additive/scalar frontend changes; release type is `fix(nav)` for Issues 1 + 3 and `feat(nav)` for Issue 2 (new distance-prefix presentation is user-observable).
-
-## 9. Open questions for adversarial review
-
-The 5-round adversarial review should stress-test:
-
-- **Issue 1**: does the new 65 m floor for auto interact badly with TTM v3 I11 chain-extension in mixed-spacing clusters (40–90 m spacing)? Spec §4 of TTM v3 claimed I11 already bounds prompt count there; verify with the new floor.
-- **Issue 2 (G8)**: are there Valhalla output shapes not covered by the regex — e.g., "In about half a mile, ..." or "In three quarters of a mile, ..."? Partial strips could produce "In 200 feet, three quarters of a mile, Turn left..." nonsense.
-- **Issue 2 (G6)**: does the fractional-miles band produce reasonable output when the live distance is right at a band boundary (e.g., 1649 ft: 1/4 mile vs 1650 ft: 1/3 mile)? One-foot rounding should not produce jarringly different announcements on adjacent ticks.
-- **Issue 2 (G7)**: are there edge-case Valhalla texts where the baked-distance strip plus prefix-prepend produces ungrammatical output (e.g., "In 200 feet, t" if the instruction was just one letter post-strip)?
-- **Issue 2 (G8)**: chain-append with empty `afterText` (Valhalla omits instruction on some maneuvers) — does the existing guard (`if (afterText)`) still suppress the chain appropriately under the new branch?
-- **Issue 3**: the spec asserts BFCache is the primary cause. What other page-lifecycle events could cause the observed symptom? `pagehide` triggering a tab reset? Iframe lifecycle? Audio/media session interruption with partial re-render? Rule these in or out with a Codex cross-validation round.
-- **Issue 3**: on Android Chrome, does BFCache ever engage for this PWA? If so, the same listener handles it; if not, this fix is iOS-specific. Either way the fix is correct; clarify the claim.
-- **Cross-issue**: does adding the distance-prefix text make the near-tier utterance noticeably longer, eating into the +1.3 s post-speech buffer we just bought? Speech timing math: "In 1/4 mile, turn right onto Black Canyon Highway" vs "Turn right onto Black Canyon Highway" — the prefix adds ~0.7 s of speech. At the symptom speed (25 mph), post-speech buffer drops from 2.8 s to 2.1 s. Still better than baseline (1.5 s), but not by the full +1.3 s I claimed in §4.2. Verify the net effect is still a material improvement, and flag in the adversarial review if reviewers think further floor lift is warranted.
-
-## 10. Dependencies and sequencing
-
-- Issue 1 + Issue 2 touch the same function (`checkVoice`) and the same file. They MUST be sequenced: Issue 1 first (pure constant change), Issue 2 second (new helpers + text-forming amendments). Same PR.
-- Issue 3 is orthogonal. Same PR for delivery cohesion, but commits sequentially after Issues 1 + 2 so a partial revert of the voice work doesn't drag in unrelated sidebar edits.
-- Adversarial review runs on this v1 spec, surfaces MUST-FIX / SHOULD-FIX findings, produces v2. Writing-plans runs against v2.
-
-## 11. Success criteria
-
-Merge-to-main gate:
-
-- All 4 field-test acceptance criteria pass on Cameron's Villa Rita → Costco re-drive.
-- No regressions in the existing TTM v3 test suite.
-- New tests (I12, I13, I14, BFCache structural) all green.
-- Adversarial review landed (≥ 5 rounds, at least 1 Codex) with all MUST-FIX findings incorporated into spec v2.
-- Plan review cycle (≥ 3 rounds) completed with no ambiguity or pitfall flags open.
+- **Slow-voice highway regression at ≥35 mph** (per §4.2 table): pre-existing TTM v3 behavior, but the prefix amplifies it. If field-tested as a problem, deferred fix is to lift TTM near tier from 3 s to 5 s in a future spec — out of scope here.
+- **Chain-append speech overrun at slow voice** (Seg 3, §5.4): chain trailing-clause spoken during/after the FIRST turn at slow voice. Acceptable per analysis (informational not action-required), but flag for field observation.
+- **Codex F5.3 (same-maneuver far/near distance ambiguity)**: deferred to NG9. If beta testers report this as confusing, a future spec adds an "imminent" form when the same maneuver's far-tier already fired.
+- **`fixtureVillaRitaCluster` spacing (30 m) is below the new 100 ft cutoff**, so the existing fixture-based prompt-count test exercises a NO-PREFIX scenario, not the prefix logic itself. Add a new fixture `fixtureWiderCluster` with 200 m spacing for prefix-firing assertions (per §5.5 I13b).
