@@ -1657,7 +1657,12 @@ test('sparklinePath: empty samples returns empty string', () => {
 test('sparklinePath: single sample returns one point', () => {
   const t = loadRuler();
   const r = t.sparklinePath([{ distance_m: 0, elevation_m: 100 }], 250, 80);
-  assert.match(r, /^\d+,\d+(\.\d+)?$/);
+  // Each coord is `.toFixed(1)` so both x and y always have a fractional
+  // part (e.g. '0.0,76.0'). Optional `(\.\d+)?` MUST be on BOTH coords —
+  // a regex like `/^\d+,\d+(\.\d+)?$/` (no fractional on x) fails because
+  // `\d+` matches '0', then expects ',' but sees '.'. See impl-log
+  // 2026-04-25 Task 1.6.
+  assert.match(r, /^\d+(\.\d+)?,\d+(\.\d+)?$/);
 });
 
 test('sparklinePath: monotonic increase produces monotonic SVG y', () => {
