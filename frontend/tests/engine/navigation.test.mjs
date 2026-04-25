@@ -1469,10 +1469,10 @@ test('I14: GPS-recovery guard suppresses prefix on first post-stale tick', async
   // 50 m west of M1 (-111.62800): -111.62800 - 50/90862 ≈ -111.62855.
   internals._setGPSRecoveryFlag(true);
   nav.updateGPS({ latitude: 35.20, longitude: -111.62855, speed: 16 }); // ~50 m from M1, near tier
+  // Second fire after another recovery arm: also suppressed (flag was re-armed).
+  // Loosely confirms a second fire occurred; tighter assertion deferred — I14b
+  // verifies the resume invariant (spec §5.6 I14) more rigorously.
   if (fires.length >= 2) {
-    // Second fire after another recovery arm: also suppressed (flag was re-armed).
-    // Verify we got something fired (loose-assert; tighter assertion would require
-    // a deterministic time-source for the prefix distance calculation).
     assert.ok(typeof fires[1] === 'string' && fires[1].length > 0, 'second fire is non-empty');
   }
 });
@@ -1504,10 +1504,13 @@ test('I14b: GPS-stale recovery composes with normal-flow prefix on second tick',
     nav.updateGPS({ latitude: 35.20, longitude: -111.64478, speed: 11 });
   }
   // At this point M2's near-tier should have fired with a prefix (normal flow, no recovery).
-  if (fires.length >= 2) {
-    assert.match(fires[fires.length - 1], /^In \d+ feet,/,
-      `expected prefix on subsequent (non-recovery) tick, got: ${JSON.stringify(fires[fires.length - 1])}`);
-  }
+  // Resume: M2 fires WITH prefix because the recovery flag was consumed
+  // on the M1 tick above. If M2 fails to fire (floor-constant change?),
+  // this assertion fails loudly rather than silently skipping.
+  assert.ok(fires.length >= 2,
+    `expected M2 near-tier to fire after recovery, got ${fires.length} fire(s): ${JSON.stringify(fires)}`);
+  assert.match(fires[fires.length - 1], /^In \d+ feet,/,
+    `expected prefix on subsequent (non-recovery) tick, got: ${JSON.stringify(fires[fires.length - 1])}`);
 });
 
 // NOTE: I15 (exception-safety G11) is not testable via mock due to IIFE
