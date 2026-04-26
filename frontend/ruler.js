@@ -762,18 +762,25 @@
     // Phase 4.5+ adds renderElevation().
     updateCursor();
 
-    // Body class for active-mode CSS hooks. While ANY measurement is in
-    // progress (drawing / inserting / editing), the sidebar overlay's
-    // pointer-events are suppressed so map clicks and drag-mouseups reach
-    // the MapLibre canvas / window listeners instead of the overlay's
-    // close-sidebar handler. Phase 3's drag-to-reposition surfaced the
-    // need to extend coverage to editing — releasing a vertex drag over
-    // the sidebar/overlay area would otherwise be eaten before the
-    // window-level mouseup listener could commit the new position.
+    // Body class for active-mode CSS hooks. Set ONLY during states where
+    // sustained map-canvas interaction is the user's active intent: drawing
+    // (placing vertices) and inserting (one map-tap commits). Editing is
+    // intentionally NOT covered here — its empty-map taps fall through to
+    // reverse-geocode (per spec §B), and tap-outside-the-sidebar should
+    // dismiss the sidebar so the user has a clean non-destructive exit.
+    //
+    // Editing-state DRAG mouseup (which may release over the sidebar/overlay)
+    // is handled separately: handleVertexMouseDown / handleTouchStart add the
+    // class for the duration of the drag; cancelActiveDrag removes it. This
+    // narrow scope preserves tap-outside-to-close in editing-no-drag while
+    // still letting drag-mouseup reach the window-level listener.
     if (typeof document !== 'undefined' && document.body && document.body.classList) {
-      if (state.status !== 'idle') {
+      if (state.status === 'drawing' || state.status === 'inserting') {
         document.body.classList.add('ruler-active');
-      } else {
+      } else if (!view.dragging) {
+        // Don't strip the class while a drag is in progress — handleVertex-
+        // MouseDown / handleTouchStart added it and cancelActiveDrag will
+        // remove it on drag end.
         document.body.classList.remove('ruler-active');
       }
     }
@@ -861,6 +868,13 @@
     // mousemove + mouseup on window (not canvas) so off-canvas release still fires.
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+
+    // Suppress sidebar overlay pointer-events for the duration of the drag
+    // so a mouseup released over the sidebar/overlay area still reaches our
+    // window-level listener. cancelActiveDrag removes the class on drag end.
+    if (typeof document !== 'undefined' && document.body && document.body.classList) {
+      document.body.classList.add('ruler-active');
+    }
   }
 
   function handleMouseMoveDrag(ev) {
@@ -911,6 +925,16 @@
     // bound; they no-op when view.dragging is null.
     if (map && map.dragPan) map.dragPan.enable();
     view.dragging = null;
+    // Drag-only body.ruler-active toggle — symmetric removal counterpart to
+    // the add in handleVertexMouseDown / handleTouchStart. In editing state
+    // this restores the sidebar overlay's pointer-events, so tap-outside-
+    // to-close becomes available again. In drawing/inserting, renderPanel
+    // immediately re-adds the class on its next call (no flicker risk
+    // because no DOM repaint between cancelActiveDrag and renderPanel).
+    if (state.status === 'editing' && typeof document !== 'undefined' &&
+        document.body && document.body.classList) {
+      document.body.classList.remove('ruler-active');
+    }
   }
 
   // ─── Touch drag (spec §D.5 / §D.6) ─────────────────────────────────────
@@ -935,6 +959,12 @@
       mode: 'touch',
     };
     map.dragPan.disable();
+
+    // Suppress sidebar overlay pointer-events for the drag duration (mirror
+    // of handleVertexMouseDown). cancelActiveDrag removes the class on end.
+    if (typeof document !== 'undefined' && document.body && document.body.classList) {
+      document.body.classList.add('ruler-active');
+    }
   }
 
   function handleTouchMove(e) {
