@@ -110,6 +110,14 @@
       refreshMapData();
       renderPanel();
     });
+    var insBefore = document.getElementById('ruler-insert-before');
+    var insAfter  = document.getElementById('ruler-insert-after');
+    if (insBefore) insBefore.addEventListener('click', function () {
+      startInsertBefore(); refreshMapData(); renderPanel();
+    });
+    if (insAfter) insAfter.addEventListener('click', function () {
+      startInsertAfter(); refreshMapData(); renderPanel();
+    });
     var inlineCancel = document.getElementById('ruler-banner-inline-cancel');
     var floatCancel = document.getElementById('ruler-mode-banner-cancel');
     function cancelBannerHandler() {
@@ -432,6 +440,25 @@
     };
   }
 
+  // ─── Insert commit (spec §B + §E.5) ────────────────────────────────
+  function commitInsert(rawLng, rawLat) {
+    if (state.status !== 'inserting' || state.insertSlot == null) return;
+    var slot = state.insertSlot.before;
+    var n = state.vertices.length;
+    var projected = [rawLng, rawLat];   // default: extend the path
+    if (slot >= 1 && slot <= n - 1) {
+      var a = [state.vertices[slot - 1].lng, state.vertices[slot - 1].lat];
+      var b = [state.vertices[slot    ].lng, state.vertices[slot    ].lat];
+      projected = projectPointToSegment([rawLng, rawLat], a, b);
+    }
+    state.vertices.splice(slot, 0, { lng: projected[0], lat: projected[1], label: '' });
+    relabel();
+    recompute();
+    state.status = 'editing';
+    state.selectedVertex = slot;
+    state.insertSlot = null;
+  }
+
   // ─── Click handler (drawing state only) ────────────────────────────
   function handleMapClick(e) {
     var oe = e.originalEvent || {};
@@ -439,7 +466,10 @@
     if (oe.ctrlKey || oe.shiftKey || oe.altKey || oe.metaKey) return;
 
     if (state.status === 'inserting') {
-      // Phase 3.5 wires this branch to commitInsert(). Stub for now.
+      commitInsert(e.lngLat.lng, e.lngLat.lat);
+      refreshMapData();
+      renderPanel();
+      // Phase 4.7: re-trigger sampling.
       return;
     }
     // Idle is no longer a click-receiving state — the user must explicitly
@@ -1071,6 +1101,7 @@
     startInsertBefore: startInsertBefore,
     startInsertAfter: startInsertAfter,
     cancelInsert: cancelInsert,
+    commitInsert: commitInsert,
     getState: getStateSnapshot,
     relabel: relabel,
     recompute: recompute,
