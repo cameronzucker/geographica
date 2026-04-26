@@ -1345,7 +1345,7 @@ test('I13: far-tier fires "In a quarter mile, " prefix when above cutoff', async
     `expected full transformed far-tier text "In a quarter mile, turn left onto Test Avenue", got: ${JSON.stringify(fires[0])}`);
 });
 
-test('I13: near-tier fires "In 200 feet, " prefix at 75 m floor', async (t) => {
+test('I13: near-tier floor-fire produces bare base + chain prefix', async (t) => {
   const { nav, window: win } = await loadEngine();
   t.after(() => { try { nav.stop(); } catch (_) {} });
   const { fixtureWiderCluster } = await import('./test_runner.mjs');
@@ -1357,15 +1357,44 @@ test('I13: near-tier fires "In 200 feet, " prefix at 75 m floor', async (t) => {
   // Position car ~74 m WEST of M1 (within 75 m near-tier floor). M1 at -111.64780.
   // haversine([-111.64861, 35.20], M1) ≈ 73.6 m → distToNext <= 75 floor → near-tier fires.
   // (Note: -111.64863 gives 75.4 m which is above floor, so use -111.64861.)
+  // At 11 m/s: ttm = 73.6/11 = 6.7s > 3s → nearTTMFire = false → nearFloorFire = true.
+  // Strategy B: nearFloorFire suppresses base prefix; chain prefix preserved.
   for (let i = 0; i < 3; i++) {
     nav.updateGPS({ latitude: 35.20, longitude: -111.64861, speed: 11 });
   }
   assert.ok(fires.length >= 1, 'expected near-tier to fire');
-  // ~73.6 m fire = 241 ft → round(241/100)*100 = 200 → "In 200 feet, " prefix
+  // Floor-fire path (nearFloorFire = true): base prefix suppressed; bare maneuver text.
   // Chain to M2 (200 m after M1) → 656 ft → round(656/100)*100 = 700 → "then in 700 feet, ..."
   assert.match(fires[0],
-    /^In 200 feet, turn left onto First Street, then in 700 feet, turn right onto Second Road/,
-    `expected near+chain prefix structure, got: ${JSON.stringify(fires[0])}`);
+    /^Turn left onto First Street, then in 700 feet, turn right onto Second Road/,
+    `expected floor-fire bare base + chain prefix, got: ${JSON.stringify(fires[0])}`);
+});
+
+test('I13: near-tier TTM-fire applies prefix (close-start scenario)', async (t) => {
+  const { nav, window: win } = await loadEngine();
+  t.after(() => { try { nav.stop(); } catch (_) {} });
+  const { fixtureWiderCluster } = await import('./test_runner.mjs');
+  win._geographicaUseImperial = true;
+  win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 11 };
+  const fires = [];
+  nav.onVoice((t) => fires.push(t));
+  nav.start(fixtureWiderCluster());
+  // Drive to ~31 m before M1 (M1 at -111.64780). 31 m at 11 m/s = TTM 2.8 s
+  // -> ttm <= 3 s -> nearTTMFire wins, prefix applied.
+  // Driver approaches from west (route start at -111.65000, M1 at -111.64780).
+  // 31 m west of M1: 31 / (cos(35.2°) × 111000) ≈ 31 / 90671 ≈ 0.000342 deg.
+  // longitude = -111.64780 - 0.000342 ≈ -111.64814 (more negative = further west).
+  // Note: -111.64813 gives ~29.99 m (below the 30 m cutoff → empty prefix);
+  // -111.64814 gives ~30.89 m (above cutoff → "In 100 feet, "). Use -111.64814.
+  for (let i = 0; i < 3; i++) {
+    nav.updateGPS({ latitude: 35.20, longitude: -111.64814, speed: 11 });
+  }
+  assert.ok(fires.length >= 1, 'expected near-tier to fire');
+  // ~31 m → 101 ft → bucket 100 → "In 100 feet, "
+  // Chain to M2 (200 m) → 656 ft → bucket 700 → "then in 700 feet, "
+  assert.match(fires[fires.length - 1],
+    /^In 100 feet, turn left onto First Street, then in 700 feet, turn right onto Second Road/,
+    `expected TTM-fire prefix path, got: ${JSON.stringify(fires[fires.length - 1])}`);
 });
 
 test('I13: cutoff suppresses near-tier prefix for very-short-spacing fixture', async (t) => {
@@ -1388,7 +1417,7 @@ test('I13: cutoff suppresses near-tier prefix for very-short-spacing fixture', a
     `expected no prefix at sub-cutoff distance, got: ${JSON.stringify(fires[0])}`);
 });
 
-test('I13: imperial vs metric dispatch — same fixture switches units', async (t) => {
+test('I13: floor-fire metric/imperial dispatch produces bare base + chain prefix', async (t) => {
   const { nav, window: win } = await loadEngine();
   t.after(() => { try { nav.stop(); } catch (_) {} });
   const { fixtureWiderCluster } = await import('./test_runner.mjs');
@@ -1398,16 +1427,19 @@ test('I13: imperial vs metric dispatch — same fixture switches units', async (
   // Run as metric.
   win._geographicaUseImperial = false;
   nav.start(fixtureWiderCluster());
-  // Same position as test 74: ~74 m WEST of M1 (-111.64861, ~73.6 m from M1).
+  // Same position as floor-fire test: ~74 m WEST of M1 (-111.64861, ~73.6 m from M1).
+  // At 11 m/s: ttm = 73.6/11 = 6.7s > 3s → nearTTMFire = false → nearFloorFire = true.
+  // Strategy B: floor-fire suppresses base prefix regardless of unit mode.
+  // Chain prefix still applied (chain distance meaningful regardless of fire mode).
   for (let i = 0; i < 3; i++) {
     nav.updateGPS({ latitude: 35.20, longitude: -111.64861, speed: 11 });
   }
   assert.ok(fires.length >= 1, 'expected near-tier to fire');
-  // ~73.6 m → metric: 73.6 < 100 → round(73.6/10)*10 = 70 → "In 70 meters, "
+  // Floor-fire path: base prefix suppressed (no "In 70 meters, " preamble).
   // Chain 200 m → metric: 200 < 1000 → round(200/50)*50 = 200 → "In 200 meters, "
   assert.match(fires[0],
-    /^In 70 meters, turn left onto First Street, then in 200 meters, turn right onto Second Road/,
-    `metric dispatch failed, got: ${JSON.stringify(fires[0])}`);
+    /^Turn left onto First Street, then in 200 meters, turn right onto Second Road/,
+    `floor-fire metric dispatch failed, got: ${JSON.stringify(fires[0])}`);
 });
 
 test('I13: prompt count invariant on Villa Rita fixture (G9 regression guard)', async (t) => {
@@ -1433,7 +1465,7 @@ test('I13: prompt count invariant on Villa Rita fixture (G9 regression guard)', 
     `expected 3 prompts (TTM v3 baseline preserved), got ${fires.length}: ${JSON.stringify(fires)}`);
 });
 
-test('I13g: full pipeline — multi-cue depart strips chain + applies live prefix', async (t) => {
+test('I13g: full pipeline — strip Valhalla chain + bare base on floor-fire', async (t) => {
   // Synthesize a fixture with the real Valhalla multi-cue shape on the depart-leading maneuver.
   // The mid-string ". Then, in 900 feet, X." is the actual Villa Rita depart pattern.
   const { nav, window: win } = await loadEngine();
@@ -1476,16 +1508,19 @@ test('I13g: full pipeline — multi-cue depart strips chain + applies live prefi
   };
   win._geographicaGPSData = { lat: 35.20, lon: -111.65, speed: 11 };
   nav.start(route);
-  // Drive to ~74 m before M1 to fire near-tier (74 m → 241 ft → bucket 200).
+  // Drive to ~74 m before M1 to fire near-tier (74 m → floor-fire, not TTM-fire).
+  // At 11 m/s: ttm = 73.6/11 = 6.7s > 3s → nearTTMFire = false → nearFloorFire = true.
+  // Strategy B: floor-fire suppresses base prefix. Chain: route has only 2 maneuvers so
+  // no chain append applies.
   for (let i = 0; i < 3; i++) {
     nav.updateGPS({ latitude: 35.20, longitude: -111.64861, speed: 11 });
   }
   assert.ok(fires.length >= 1, 'expected near-tier to fire');
-  // Expected: stripBakedDistance removes ". Then, in 900 feet, Continue on Test Avenue.";
-  // residual is "Turn left onto Test Avenue."; uppercase preserved; live prefix "In 200 feet, "
-  // prepended with first letter lowercased: "In 200 feet, turn left onto Test Avenue."
-  assert.equal(fires[fires.length - 1], 'In 200 feet, turn left onto Test Avenue.',
-    `pipeline order broken — expected clean strip + prefix, got: ${JSON.stringify(fires[fires.length - 1])}`);
+  // Pipeline trace: stripBakedDistance removes ". Then, in 900 feet, Continue on Test Avenue.";
+  // residual is "Turn left onto Test Avenue."; uppercase preserved; nearFloorFire = true so
+  // base prefix suppressed — bare maneuver text "Turn left onto Test Avenue." is the output.
+  assert.equal(fires[fires.length - 1], 'Turn left onto Test Avenue.',
+    `pipeline order broken — expected bare floor-fire output, got: ${JSON.stringify(fires[fires.length - 1])}`);
 });
 
 test('I14: GPS-recovery guard suppresses prefix on first post-stale tick', async (t) => {
