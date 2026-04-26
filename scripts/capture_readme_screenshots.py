@@ -248,6 +248,14 @@ async def shot_imagery_before_after(page, url):
     # the checkbox directly using a chained locator.
     noaa_row = page.locator("#imagery-toggles div", has_text="NOAA NAIP").first
     await noaa_row.locator("input[type='checkbox']").check()
+    # Close the sidebar before the 'after' shot so the imagery comparison is
+    # symmetric with the 'before' shot (both panes show the full map).
+    await page.evaluate(
+        """() => {
+            const s = document.getElementById('sidebar');
+            if (s) s.classList.remove('open');
+        }"""
+    )
     # Wait for tiles to load — NAIP at z14 is heavy.
     await page.wait_for_timeout(5000)
     after = await page.screenshot(
