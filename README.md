@@ -58,7 +58,7 @@ Built for [AREDN](https://www.arednmesh.org/) mesh networks and field teams oper
 
 ### Navigation & GPS
 
-<img src="docs/screenshots/mobile-nav.png" alt="In-vehicle navigation on phone, GPS following, maneuver banner active" width="280" align="right" />
+<img src="docs/screenshots/mobile-nav.png" alt="In-vehicle navigation on phone, GPS following, maneuver banner active" width="400" align="right" />
 
 - **Turn-by-turn navigation** — voice guidance, off-route detection, dead reckoning.
 - **Multi-stop waypoint routing** — map-click point selection for car, bicycle, and pedestrian profiles.
