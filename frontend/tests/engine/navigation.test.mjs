@@ -1387,7 +1387,7 @@ test('I13: near-tier TTM-fire applies prefix (close-start scenario)', async (t) 
   // Driver approaches from west (route start at -111.65000, M1 at -111.64780).
   // 31 m west of M1: 31 / (cos(35.2°) × 111000) ≈ 31 / 90671 ≈ 0.000342 deg.
   // longitude = -111.64780 - 0.000342 ≈ -111.64814 (more negative = further west).
-  // Note: -111.64813 gives ~29.99 m (below the 30 m cutoff → empty prefix);
+  // Note: -111.64813 gives ~29.93 m (below the 30 m cutoff → empty prefix);
   // -111.64814 gives ~30.89 m (above cutoff → "In 100 feet, "). Use -111.64814.
   for (let i = 0; i < 3; i++) {
     nav.updateGPS({ latitude: 35.20, longitude: -111.64814, speed: 11 });

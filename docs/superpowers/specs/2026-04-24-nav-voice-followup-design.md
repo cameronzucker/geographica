@@ -427,11 +427,11 @@ Pulled from the live `/valhalla/route` response on the dev stack at the time of 
 
 **Speech-time check on the longest utterance** (Seg 3 chain at 25 mph):
 - Text: "Turn left onto West Utopia Road, then in 400 feet, turn left onto North Black Canyon Highway."
-- Word count: 15 words (vs. 18 in spec-v2 — base prefix dropped saves 3 words: "In 200 feet,").
-- Fast voice (2.5 wps): 6.0 s + 0.5 s init = 6.5 s.
-- Slow voice (1.8 wps): 8.3 s + 0.5 s = 8.8 s.
+- Word count: 17 words (vs. 20 in spec-v2 — base prefix dropped saves 3 words: "In 200 feet,"). Spec-v2 claimed 18 / spec-v3-as-originally-edited claimed 15; both were off by 2 (the same arithmetic error inherited; corrected here).
+- Fast voice (2.5 wps): 6.8 s + 0.5 s init = 7.3 s.
+- Slow voice (1.8 wps): 9.4 s + 0.5 s = 9.9 s.
 - Driver reaches Utopia at 75/9.2 = 8.2 s after fire (segment speed 9.2 m/s).
-- **Outcome:** Fast voice completes the WHOLE compound at 6.5 s, well before the 8.2 s turn arrival — both clauses heard before the turn. Slow voice completes at 8.8 s, finishing the chain clause ~0.6 s after turn arrival (acceptable — chain is pre-announcing the next turn). The 1.5 s improvement over spec-v2 (saved by dropping "In 200 feet, " from base) tightens the actionable window without sacrificing the chain heads-up.
+- **Outcome:** Fast voice completes the WHOLE compound at 7.3 s, before the 8.2 s turn arrival — both clauses heard in time. Slow voice completes at 9.9 s, finishing the chain clause ~1.7 s after turn arrival (acceptable per spec — chain is pre-announcing the next turn, not action-required for the current one). The ~0.5 s improvement over spec-v2 (saved by dropping "In 200 feet, " from base) is smaller than the originally-claimed 1.5 s, but the *actionable* portion ("Turn left onto West Utopia Road") completes at ~3 s for fast voice / ~3.8 s for slow voice — well before the turn either way.
 
 ### 5.5 Tests
 

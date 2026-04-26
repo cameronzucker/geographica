@@ -33,7 +33,7 @@ The existing test suite at navigation.test.mjs (I11, I13a, I13c, I13g) explicitl
 ```
 e43f437  test(nav): expect bare base text on near-tier floor-fire (Strategy B)
 e831803  fix(nav): suppress distance prefix on near-tier floor-fires (B1)
-[Task 3 SHA]  docs(nav): spec v3 + impl-log + testing pitfall — floor-fire suppression
+916fb1f       docs(nav): spec v3 + impl-log + testing pitfall — floor-fire suppression
 ```
 
 ### Outcome
