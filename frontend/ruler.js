@@ -125,6 +125,26 @@
     if (inlineCancel) inlineCancel.addEventListener('click', cancelBannerHandler);
     if (floatCancel)  floatCancel.addEventListener('click', cancelBannerHandler);
 
+    // ── Touch listeners (spec §D.5 / §D.6) ──
+    // passive: false so preventDefault() can suppress the synthetic mouse
+    // events that iOS fires after touchend (prevents double-handling).
+    var canvas = map.getCanvas();
+    canvas.addEventListener('touchstart',  handleTouchStart,  { passive: false });
+    canvas.addEventListener('touchmove',   handleTouchMove,   { passive: false });
+    canvas.addEventListener('touchend',    handleTouchEnd,    { passive: false });
+    canvas.addEventListener('touchcancel', cancelActiveDrag,  { passive: false });
+
+    // ── visibilitychange — abort active drag on alt-tab / iOS app-switch ──
+    // (CQ-3.3 #1 fix) Prevents window mousemove/mouseup listeners from
+    // being orphaned and dragPan from being permanently disabled.
+    if (typeof document !== 'undefined' && document.addEventListener) {
+      document.addEventListener('visibilitychange', function () {
+        if (document.hidden && view.dragging) {
+          cancelActiveDrag();
+        }
+      });
+    }
+
     // Initial render.
     renderPanel();
     updateCursor();
@@ -351,10 +371,7 @@
     // user clicks [+ New measurement] mid-drag), re-enable dragPan and
     // clear the sub-state. Without this, dragPan stays disabled and the
     // map is unpannable until the next drag completes.
-    if (view.dragging) {
-      if (map) map.dragPan.enable();
-      view.dragging = null;
-    }
+    cancelActiveDrag();   // idempotent — safe even when no drag is active
     view.samplingGen++;
     view.lastClick = null;
     state.status = 'idle';
@@ -795,17 +812,22 @@
     if (e.originalEvent && e.originalEvent.preventDefault) e.originalEvent.preventDefault();
 
     map.dragPan.disable();
+
+    // Store onMove/onUp on view.dragging so cancelActiveDrag() can remove
+    // them by reference (CQ-3.3 #1 fix — visibilitychange-driven abort).
+    var onMove = function (ev) { handleMouseMoveDrag(ev); };
+    var onUp   = function (ev) { handleMouseUpDrag(ev, onMove, onUp); };
     view.dragging = {
       index: idx,
       startX: e.point ? e.point.x : 0,
       startY: e.point ? e.point.y : 0,
       startT: Date.now(),
       mode: 'mouse',
+      onMove: onMove,
+      onUp: onUp,
     };
 
     // mousemove + mouseup on window (not canvas) so off-canvas release still fires.
-    var onMove = function (ev) { handleMouseMoveDrag(ev); };
-    var onUp   = function (ev) { handleMouseUpDrag(ev, onMove, onUp); };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   }
@@ -823,6 +845,9 @@
 
   function handleMouseUpDrag(ev, onMove, onUp) {
     if (!view.dragging) {
+      // Stale mouseup after cancelActiveDrag already ran (e.g., visibilitychange
+      // fired first). The listeners are already removed; calling removeEventListener
+      // on already-removed listeners is a safe no-op.
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       return;
@@ -838,12 +863,86 @@
       recompute();
       // Phase 4.7: re-trigger sampling after drag commits a new layout.
     }
-    map.dragPan.enable();
-    view.dragging = null;
+    cancelActiveDrag();   // unbinds listeners, re-enables dragPan, clears view.dragging
     refreshMapData();
     renderPanel();
-    window.removeEventListener('mousemove', onMove);
-    window.removeEventListener('mouseup', onUp);
+  }
+
+  // ─── Unified drag canceller (CQ-3.3 #1: visibilitychange / multitouch) ─
+  // Idempotent — safe to call when no drag is active.
+  function cancelActiveDrag() {
+    if (!view.dragging) return;
+    if (view.dragging.mode === 'mouse') {
+      if (view.dragging.onMove) window.removeEventListener('mousemove', view.dragging.onMove);
+      if (view.dragging.onUp)   window.removeEventListener('mouseup',   view.dragging.onUp);
+    }
+    // Touch listeners are bound to the canvas (not window) — they stay
+    // bound; they no-op when view.dragging is null.
+    if (map && map.dragPan) map.dragPan.enable();
+    view.dragging = null;
+  }
+
+  // ─── Touch drag (spec §D.5 / §D.6) ─────────────────────────────────────
+  function mapTouchPoint(touch, canvas) {
+    var rect = canvas.getBoundingClientRect();
+    return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+  }
+
+  function handleTouchStart(e) {
+    if (state.status !== 'editing') return;
+    if (!e.touches || e.touches.length !== 1) return;
+    var canvas = map.getCanvas();
+    var pt = mapTouchPoint(e.touches[0], canvas);
+    var hits = map.queryRenderedFeatures(pt, { layers: [LAYER_VERTEX_HIT_CIRCLES] });
+    if (!hits || hits.length === 0) return;
+    e.preventDefault();
+    view.dragging = {
+      index: hits[0].properties.index,
+      startX: pt.x, startY: pt.y, startT: Date.now(),
+      mode: 'touch',
+    };
+    map.dragPan.disable();
+  }
+
+  function handleTouchMove(e) {
+    if (!view.dragging) return;
+    if (!e.touches) return;
+    if (e.touches.length > 1) {
+      cancelActiveDrag();    // multitouch → cancel drag, let pinch-zoom proceed
+      return;
+    }
+    e.preventDefault();
+    var canvas = map.getCanvas();
+    var pt = mapTouchPoint(e.touches[0], canvas);
+    var ll = map.unproject([pt.x, pt.y]);
+    state.vertices[view.dragging.index].lng = ll.lng;
+    state.vertices[view.dragging.index].lat = ll.lat;
+    scheduleSourceUpdate();
+  }
+
+  function handleTouchEnd(e) {
+    if (!view.dragging) return;
+    var canvas = map.getCanvas();
+    var ct = e.changedTouches && e.changedTouches[0];
+    if (!ct) { cancelActiveDrag(); return; }
+    var rect = canvas.getBoundingClientRect();
+    var x = ct.clientX - rect.left;
+    var y = ct.clientY - rect.top;
+    var moved = !isTap(
+      { x: view.dragging.startX, y: view.dragging.startY, t: view.dragging.startT },
+      { x: x, y: y, t: Date.now() }, 'touch');
+    if (!moved) {
+      var idx = view.dragging.index;
+      if (state.selectedVertex === idx) deselectVertex();
+      else selectVertex(idx);
+    } else {
+      relabel();
+      recompute();
+      // Phase 4.7: re-trigger sampling.
+    }
+    cancelActiveDrag();
+    refreshMapData();
+    renderPanel();
   }
 
   function ensureSources() {
@@ -975,5 +1074,12 @@
     isTap: isTap,
     handleVertexLayerClick: handleVertexLayerClick,
     scheduleSourceUpdate: scheduleSourceUpdate,
+    // Touch drag + unified cancel seams (Task 3.4 / CQ-3.3 #1):
+    handleTouchStart: handleTouchStart,
+    handleTouchMove:  handleTouchMove,
+    handleTouchEnd:   handleTouchEnd,
+    cancelActiveDrag: cancelActiveDrag,
+    peekDragging: function () { return view.dragging; },
+    installTestMap: function (m) { map = m; },
   };
 })();
