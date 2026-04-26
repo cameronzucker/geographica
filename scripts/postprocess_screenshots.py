@@ -18,6 +18,7 @@ Usage:
   python3 scripts/postprocess_screenshots.py --force                # re-frame
 """
 import argparse
+import sys
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, PngImagePlugin
 
@@ -129,7 +130,10 @@ def _resolve_shot(name: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--shots",
         default="all",
@@ -139,7 +143,11 @@ def main():
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Re-frame even if the framed-marker is already present.",
+        help="Force-frame an unframed PNG even if it would otherwise be "
+             "skipped. Refuses to act on PNGs that already carry the "
+             "'geographica-framed' sentinel — re-framing those would "
+             "double-frame the canvas. To re-process a framed PNG, "
+             "`git checkout` it to restore the un-framed source first.",
     )
     args = parser.parse_args()
 
@@ -147,6 +155,11 @@ def main():
         targets = _all_targets()
     else:
         names = [s.strip() for s in args.shots.split(",") if s.strip()]
+        if not names:
+            parser.error(
+                "--shots must be 'all' or a non-empty comma-separated "
+                "list of shot names"
+            )
         targets = []
         for name in names:
             tup = _resolve_shot(name)
@@ -159,6 +172,26 @@ def main():
         if not inpath.exists():
             print(f"  ⚠ skipping (missing): {inpath.name}")
             continue
+        # I1 guard: --force on an already-framed PNG would double-frame
+        # (each pass adds another 2*PADDING + shadow envelope). Hard-fail
+        # with a recovery path instead of silently corrupting the file.
+        if args.force:
+            try:
+                with Image.open(inpath) as probe:
+                    if _is_already_framed(probe):
+                        print(
+                            f"ERROR: refusing to re-frame already-framed PNG: {inpath}\n"
+                            f"       The image carries the `{FRAMED_MARKER_KEY}={FRAMED_MARKER_VAL}` sentinel,\n"
+                            f"       meaning a previous run already framed it. Re-running --force\n"
+                            f"       would double-frame.\n"
+                            f"       To re-process: `git checkout {inpath}` to restore the un-framed\n"
+                            f"       source, then re-run without --force (or with --force on the\n"
+                            f"       un-framed version).",
+                            file=sys.stderr,
+                        )
+                        sys.exit(1)
+            except (OSError, SyntaxError) as exc:
+                print(f"  ⚠ could not probe {inpath.name} for sentinel: {exc}")
         if kind == "desktop":
             status = desktop_frame(inpath, outpath, force=args.force)
         elif kind == "phone":
