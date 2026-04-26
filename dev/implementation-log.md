@@ -1,5 +1,49 @@
 # Implementation Log
 
+## 2026-04-25 — Nav voice floor-fire prefix suppression (B1 from field-test bug hunt)
+
+**Released as:** not yet released (shipped on `dev`; ship gate is Cameron's re-drive of Villa Rita → Costco).
+**Plan / spec:** [dev/plans/2026-04-25-nav-distance-floor-fire-suppression-plan.md](plans/2026-04-25-nav-distance-floor-fire-suppression-plan.md) · spec v3 update at [docs/superpowers/specs/2026-04-24-nav-voice-followup-design.md](../docs/superpowers/specs/2026-04-24-nav-voice-followup-design.md).
+**Bug hunt:** [dev/bug-hunts/2026-04-24-nav-distance-post-m1-consolidated.md](bug-hunts/2026-04-24-nav-distance-post-m1-consolidated.md) — 3-hunter bug-hunt-cycle, all hunters HIGH-confidence convergence on the floor-bucket interaction.
+**Execution protocol:** `superpowers:subagent-driven-development` — single implementer dispatch executing 3 sequential commits, then one final code-quality review.
+**Agent moniker:** manzanita.
+
+### Summary
+
+Cameron's Villa Rita → 24th drive surfaced that the just-shipped (2026-04-24) live-distance prefix feature was announcing "In 200 feet" for every near-tier fire after M1, even when he was as close as 35 ft from the turn. Mechanism: VOICE_DISTANCE_FLOOR.auto = 75m × 3.28084 = 246.1 ft → bucket 200; the 75m floor sits at the top of the "In 200 feet" bucket; below 56 mph the floor always wins over TTM=3s, so every city/surface-street near-tier fire deterministically said "In 200 feet". The first turn was correct ("In 100 feet" via TTM-fire path) only because Cameron started ~27m from M1 — TTM threshold beat floor for that one case.
+
+Strategy B (Cameron's call): suppress the live-distance prefix on floor-fires; preserve it on TTM-fires. The 30 m / 100 ft "imminent" intent from spec §5.1 is now re-grounded via fire-mode rather than the never-reachable distance threshold. Chain prefix is preserved on floor-fires (the chain's distBetween is precomputed from cumulativeDistances; floor-fire status doesn't affect chain accuracy). VOICE_DISTANCE_FLOOR values unchanged — Issue 1's buffer preserved.
+
+### Key decisions
+
+- **Strategy B over A**: Cameron rejected lowering the floor (would undo Issue 1's buffer that the previous cycle just shipped). Strategy B preserves the buffer, eliminates the implausible-distance failure mode, and aligns with the spec's "imminent" intent.
+- **D2 chain anchor: keep Reading A** (current code, M_(n+1)→M_(n+2) leg length). Cameron validated against Google Earth on his actual drive — secondary turn distances are dead-on. The hunters' Reading B suggestion is treated as a false positive.
+- **Defer O1 (NaN guard) and O2 (far-tier strip-on-recovery)** to a future cleanup commit. Both pre-existing minor improvements, orthogonal to B1.
+
+### Notable bugs caught
+
+- **B1**: VOICE_DISTANCE_FLOOR + 100-ft bucket interaction → all auto floor-fires "In 200 feet". Identified by the 3-hunter bug-hunt-cycle (HIGH consensus); Cameron's support-engineer intuition ("a decision table, formula, or lookup is hitting some kind of minimum") pointed directly at the mechanism class.
+
+### Notable test gap
+
+The existing test suite at navigation.test.mjs (I11, I13a, I13c, I13g) explicitly *encoded* "In 200 feet" / "In N feet" as the expected output for 75m floor-fires. The tests passed but were pinning the bug. Added a new entry to [docs/pitfalls/testing-pitfalls.md](../docs/pitfalls/testing-pitfalls.md) (#14): **"Don't pin numeric output mappings without auditing the input source."** Generalizable to any feature that uses tunable constants + bucketing.
+
+### Commits
+
+```
+e43f437  test(nav): expect bare base text on near-tier floor-fire (Strategy B)
+e831803  fix(nav): suppress distance prefix on near-tier floor-fires (B1)
+[Task 3 SHA]  docs(nav): spec v3 + impl-log + testing pitfall — floor-fire suppression
+```
+
+### Outcome
+
+`node --test --test-force-exit frontend/tests/engine/` → **81 / 81 pass** at HEAD. Four tests updated (I11, I13a, I13c, I13g) to reflect bare base + chain prefix output on floor-fires. One new I13 TTM-fire test confirms the prefix path still works for fast/close approaches.
+
+**Ship gate:** Cameron re-drives Villa Rita → 19001 N 27th Ave Costco. Acceptance: voice no longer says "In 200 feet" for near turns (floor-fires are bare); near-tier prefix only on TTM-fires (which happen at higher speed or close-start scenarios). Buffer at 25 mph preserved (still firing at 75m / 6.7s).
+
+---
+
 ## 2026-04-25 — README overhaul Phase 5 partial — capture script + 7 framed screenshots + link audit
 
 **Released as:** not yet released (Phase 5 still has Cameron-coordinated manual captures; Phase 6 + 7 remain).

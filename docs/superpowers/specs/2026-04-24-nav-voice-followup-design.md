@@ -10,6 +10,7 @@
 
 ## Revision history
 
+- **v3 (2026-04-25)** — Field-test from Cameron (Villa Rita → 24th drive) surfaced B1: every auto floor-triggered near-tier fire produced "In 200 feet" deterministically because `VOICE_DISTANCE_FLOOR.auto = 75m` × 3.28084 = 246 ft maps to the "200 feet" bucket. Strategy B fix lands: distinguish TTM-fire (prefix applied) from floor-fire (bare maneuver text, chain prefix preserved). The 30 m / 100 ft cutoff intent ("read as imminent below this") is now re-grounded via fire-mode rather than the never-reachable distance threshold. Floor values unchanged; Issue 1 buffer preserved. See [bug-hunt](../../dev/bug-hunts/2026-04-24-nav-distance-post-m1-consolidated.md) and [plan](../../dev/plans/2026-04-25-nav-distance-floor-fire-suppression-plan.md).
 - **v2 (2026-04-24)** — Substantial rewrite after 5-round adversarial review (4× Claude lenses + 1× Codex cross-validation). Findings live at [dev/adversarial/2026-04-24-nav-voice-followup-r{1..5}-*.md](../../../dev/adversarial/). 8 MUST-FIX, 18 SHOULD-FIX (deduped) addressed:
   - **Floor raised 65 → 75 m** (auto), 40 → 45 m (bicycle). Original 65 m left slow-voice users net-worse-than-baseline once prefix TTS was accounted for (R4 F4.1, R3 F3.N-8, R1 F1.3). 75 m holds positive buffer for slow voices; Cameron's call ("we can adjust later in testing"), prioritizing pragmatic deployability over over-fitting.
   - **`stripBakedDistance` regex fundamentally rewritten.** Original `^In <dist> <unit>,` anchor never matched real Valhalla emissions, which use mid-string `". Then, in <dist>, <Imperative>"` form (R2 F2.1, R3 F3.N-4). New regex strips the trailing `". Then, in <dist>, <rest>"` chain entirely (since the new live-prefix replaces it). Also fixes the existing `". Then "` strip to accept `". Then, "` (comma form), which was a pre-existing latent bug.
@@ -409,28 +410,28 @@ The `prevTickWasStaleOrDR` is updated on **every** call to `consumeGPSRecoveryFl
 
 Pulled from the live `/valhalla/route` response on the dev stack at the time of v2 writing. All distances and prefixes are computed from the actual maneuver geometry:
 
-| segment / tier / fire distance | current text | spec-v2 text |
+| segment / tier / fire distance | current text | spec-v3 text |
 |---|---|---|
-| Seg 0 near+chain · 75 m, M[2] @ 459 m | "Turn left onto North 21st Avenue, then turn left onto West Union Hills Drive" | **"In 200 feet, turn left onto North 21st Avenue, then in a quarter mile, turn left onto West Union Hills Drive"** |
-| Seg 1 near · 75 m | "Turn left onto West Union Hills Drive" (m[2] far I11-suppressed by Seg 0 chain) | **"In 200 feet, turn left onto West Union Hills Drive"** |
-| Seg 2 far · 486 m @ 36 mph | "Turn right onto North Black Canyon Highway" | **"In a quarter mile, turn right onto North Black Canyon Highway"** |
-| Seg 2 near · 75 m | "Turn right onto North Black Canyon Highway" | **"In 200 feet, turn right onto North Black Canyon Highway"** |
-| Seg 3 far · 477 m @ 36 mph | "Turn left onto West Utopia Road" | **"In a quarter mile, turn left onto West Utopia Road"** |
-| Seg 3 near+chain · 75 m, M[5] @ 117 m | "Turn left onto West Utopia Road, then turn left onto North Black Canyon Highway" | **"In 200 feet, turn left onto West Utopia Road, then in 400 feet, turn left onto North Black Canyon Highway"** |
-| Seg 4 near+chain · 75 m, M[6] @ 404 m (m[5] far I11-suppressed) | "Turn left onto North Black Canyon Highway, then turn right onto West Wescott Drive" | **"In 200 feet, turn left onto North Black Canyon Highway, then in a quarter mile, turn right onto West Wescott Drive"** (404 m = 1325 ft = quarter-mile band) |
-| Seg 5 near+chain · 75 m, M[7] @ 145 m (m[6] far I11-suppressed) | "Turn right onto West Wescott Drive, then turn right" | **"In 200 feet, turn right onto West Wescott Drive, then in 500 feet, turn right"** (145 m = 476 ft → round 500) |
-| Seg 6 near+chain · 75 m fire (75 < 145 m seg length, near-tier fires when dist crosses 75 m), M[8] @ 35 m (m[7] far I11-suppressed) | "Turn right, then turn right" | **"In 200 feet, turn right, then in 100 feet, turn right"** (75 m fire = 246 ft → round 200; chain 35 m = 115 ft → round 100, just above 30 m cutoff) |
-| Seg 7 near+chain · entire seg (35 m seg length < 75 m floor, near-tier fires on first in-seg tick at ~35 m), M[9] arrival @ 227 m (m[8] far I11-suppressed) | "Turn right, then your destination is on the left" | **"In 100 feet, turn right, then in 700 feet, your destination is on the left"** (35 m fire ≈ 115 ft → round 100; chain 227 m = 745 ft → round 700) |
+| Seg 0 near+chain · 75 m, M[2] @ 459 m | "Turn left onto North 21st Avenue, then turn left onto West Union Hills Drive" | **"Turn left onto North 21st Avenue, then in a quarter mile, turn left onto West Union Hills Drive"** (floor-fire: base prefix suppressed; chain prefix preserved) |
+| Seg 1 near · 75 m | "Turn left onto West Union Hills Drive" (m[2] far I11-suppressed by Seg 0 chain) | **"Turn left onto West Union Hills Drive"** (floor-fire: bare maneuver text) |
+| Seg 2 far · 486 m @ 36 mph | "Turn right onto North Black Canyon Highway" | **"In a quarter mile, turn right onto North Black Canyon Highway"** (far-tier TTM-fire: prefix unchanged) |
+| Seg 2 near · 75 m | "Turn right onto North Black Canyon Highway" | **"Turn right onto North Black Canyon Highway"** (floor-fire: bare maneuver text) |
+| Seg 3 far · 477 m @ 36 mph | "Turn left onto West Utopia Road" | **"In a quarter mile, turn left onto West Utopia Road"** (far-tier TTM-fire: prefix unchanged) |
+| Seg 3 near+chain · 75 m, M[5] @ 117 m | "Turn left onto West Utopia Road, then turn left onto North Black Canyon Highway" | **"Turn left onto West Utopia Road, then in 400 feet, turn left onto North Black Canyon Highway"** (floor-fire: base prefix suppressed; chain prefix preserved; 117 m = 384 ft → round 400) |
+| Seg 4 near+chain · 75 m, M[6] @ 404 m (m[5] far I11-suppressed) | "Turn left onto North Black Canyon Highway, then turn right onto West Wescott Drive" | **"Turn left onto North Black Canyon Highway, then in a quarter mile, turn right onto West Wescott Drive"** (floor-fire: base suppressed; chain 404 m = 1325 ft = quarter-mile band) |
+| Seg 5 near+chain · 75 m, M[7] @ 145 m (m[6] far I11-suppressed) | "Turn right onto West Wescott Drive, then turn right" | **"Turn right onto West Wescott Drive, then in 500 feet, turn right"** (floor-fire: base suppressed; chain 145 m = 476 ft → round 500) |
+| Seg 6 near+chain · 75 m fire (75 < 145 m seg length, near-tier fires when dist crosses 75 m), M[8] @ 35 m (m[7] far I11-suppressed) | "Turn right, then turn right" | **"Turn right, then in 100 feet, turn right"** (floor-fire: base suppressed; chain 35 m = 115 ft → round 100, just above 30 m cutoff) |
+| Seg 7 near+chain · entire seg (35 m seg length < 75 m floor, near-tier fires on first in-seg tick at ~35 m), M[9] arrival @ 227 m (m[8] far I11-suppressed) | "Turn right, then your destination is on the left" | **"Turn right, then in 700 feet, your destination is on the left"** (floor-fire: 35 m fire, base suppressed; chain 227 m = 745 ft → round 700) |
 
-**Total prompts: 11.** Order unchanged. Text content amended per spec. Identical structural counts as TTM v3 ship.
+**Total prompts: 11.** Order unchanged. Text content amended per spec v3. Identical structural counts as TTM v3 ship.
 
 **Speech-time check on the longest utterance** (Seg 3 chain at 25 mph):
-- Text: "In 200 feet, turn left onto West Utopia Road, then in 400 feet, turn left onto North Black Canyon Highway."
-- Word count: 18 words.
-- Fast voice (2.5 wps): 7.2 s + 0.5 s init = 7.7 s.
-- Slow voice (1.8 wps): 10.0 s + 0.5 s = 10.5 s.
+- Text: "Turn left onto West Utopia Road, then in 400 feet, turn left onto North Black Canyon Highway."
+- Word count: 15 words (vs. 18 in spec-v2 — base prefix dropped saves 3 words: "In 200 feet,").
+- Fast voice (2.5 wps): 6.0 s + 0.5 s init = 6.5 s.
+- Slow voice (1.8 wps): 8.3 s + 0.5 s = 8.8 s.
 - Driver reaches Utopia at 75/9.2 = 8.2 s after fire (segment speed 9.2 m/s).
-- **Outcome:** Fast voice completes the WHOLE compound at 7.7 s, before the 8.2 s turn arrival — actionable AND informational both heard. Slow voice completes only the first clause ("In 200 feet, turn left onto West Utopia Road" ≈ 5.5 s) before the turn at 8.2 s — actionable info heard in time, the chain trailing info ("then in 400 feet, turn left onto Black Canyon") spoken during/after the turn (acceptable — it's pre-announcing the next turn, not action-required for the current one).
+- **Outcome:** Fast voice completes the WHOLE compound at 6.5 s, well before the 8.2 s turn arrival — both clauses heard before the turn. Slow voice completes at 8.8 s, finishing the chain clause ~0.6 s after turn arrival (acceptable — chain is pre-announcing the next turn). The 1.5 s improvement over spec-v2 (saved by dropping "In 200 feet, " from base) tightens the actionable window without sacrificing the chain heads-up.
 
 ### 5.5 Tests
 
