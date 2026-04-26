@@ -459,7 +459,7 @@
     state.insertSlot = null;
   }
 
-  // ─── Click handler (drawing state only) ────────────────────────────
+  // ─── Click handler (drawing + inserting states) ────────────────────
   function handleMapClick(e) {
     var oe = e.originalEvent || {};
     // Modifier keys → pass-through (map-pan/select gesture).

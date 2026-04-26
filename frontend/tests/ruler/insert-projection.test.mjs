@@ -16,9 +16,12 @@ test('commitInsert mid-path projects onto adjacent segment', () => {
   const s = t.getState();
   assert.strictEqual(s.vertices.length, 3);
   assert.strictEqual(s.status, 'editing');
-  // Inserted vertex should be on the segment (lat ≈ 33.45)
-  assert.ok(Math.abs(s.vertices[1].lat - 33.45) < 0.001);
-  assert.ok(Math.abs(s.vertices[1].lng - (-112.05)) < 0.01);
+  // Inserted vertex should be on the segment (lat ≈ 33.45) at the midpoint
+  // longitude. Both axes are tight: the segment is east-west, so projection
+  // returns exact lat=a[1]+t*0=33.45, and lng=a[0]+t*dx with t=0.5 → exact
+  // -112.05 (operands are clean half-multiples, no fp drift).
+  assert.ok(Math.abs(s.vertices[1].lat - 33.45) < 1e-9);
+  assert.ok(Math.abs(s.vertices[1].lng - (-112.05)) < 1e-9);
 });
 
 test('commitInsert at path endpoint (Insert After Vlast) places at raw tap', () => {

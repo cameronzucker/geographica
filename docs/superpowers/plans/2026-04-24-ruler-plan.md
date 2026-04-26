@@ -4347,6 +4347,7 @@ import { loadRuler } from './_fixtures.js';
 
 test('commitInsert mid-path projects onto adjacent segment', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();   // explicit-activation model — addVertex is no-op without this
   // Two vertices along latitude 33.45 (east-west segment)
   t.addVertex(-112.10, 33.45);
   t.addVertex(-112.00, 33.45);
@@ -4358,13 +4359,15 @@ test('commitInsert mid-path projects onto adjacent segment', () => {
   const s = t.getState();
   assert.strictEqual(s.vertices.length, 3);
   assert.strictEqual(s.status, 'editing');
-  // Inserted vertex should be on the segment (lat ≈ 33.45)
-  assert.ok(Math.abs(s.vertices[1].lat - 33.45) < 0.001);
-  assert.ok(Math.abs(s.vertices[1].lng - (-112.05)) < 0.01);
+  // Both axes are tight: segment is east-west, so projection returns exact
+  // lat = a[1] + t*0 = 33.45, and lng = a[0] + t*dx with t=0.5 → exact -112.05.
+  assert.ok(Math.abs(s.vertices[1].lat - 33.45) < 1e-9);
+  assert.ok(Math.abs(s.vertices[1].lng - (-112.05)) < 1e-9);
 });
 
 test('commitInsert at path endpoint (Insert After Vlast) places at raw tap', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.10, 33.45);
   t.addVertex(-112.00, 33.45);
   t.finishDrawing();
@@ -4380,6 +4383,7 @@ test('commitInsert at path endpoint (Insert After Vlast) places at raw tap', () 
 
 test('commitInsert at path start (Insert Before V1) places at raw tap', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.10, 33.45);
   t.addVertex(-112.00, 33.45);
   t.finishDrawing();
@@ -4394,6 +4398,7 @@ test('commitInsert at path start (Insert Before V1) places at raw tap', () => {
 
 test('commitInsert relabels V1..Vn contiguously after splice', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.10, 33.45);
   t.addVertex(-112.00, 33.45);
   t.finishDrawing();
@@ -4408,6 +4413,7 @@ test('commitInsert relabels V1..Vn contiguously after splice', () => {
 
 test('commitInsert leaves selection on the new vertex', () => {
   const { test: t } = loadRuler();
+  t.startNewMeasurement();
   t.addVertex(-112.10, 33.45);
   t.addVertex(-112.00, 33.45);
   t.finishDrawing();
@@ -4452,8 +4458,6 @@ Wire `commitInsert` into `handleMapClick`'s `inserting` branch — replace the s
 
 ```javascript
     if (state.status === 'inserting') {
-      var oe = e.originalEvent || {};
-      if (oe.ctrlKey || oe.shiftKey || oe.altKey || oe.metaKey) return;
       commitInsert(e.lngLat.lng, e.lngLat.lat);
       refreshMapData();
       renderPanel();
@@ -4461,6 +4465,8 @@ Wire `commitInsert` into `handleMapClick`'s `inserting` branch — replace the s
       return;
     }
 ```
+
+(The modifier-key check is already done globally at the top of `handleMapClick`, so the `inserting` branch does NOT need to repeat it.)
 
 Wire the `[Insert Before]` / `[Insert After]` buttons in `init`:
 
