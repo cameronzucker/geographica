@@ -19,7 +19,7 @@ Built for [AREDN](https://www.arednmesh.org/) mesh networks and field teams oper
 
 <!-- HERO SCREENSHOT -->
 <p align="center">
-<img src="docs/screenshots/hero-everything.png" alt="Live map with NAIP imagery, GPS pin, and active turn-by-turn navigation route" width="640" />
+<img src="docs/screenshots/hero-everything.png" alt="Live map with NAIP imagery, GPS pin, and active turn-by-turn navigation route" width="100%" />
 </p>
 
 <!-- HOW IT WAS BUILT CALLOUT -->
