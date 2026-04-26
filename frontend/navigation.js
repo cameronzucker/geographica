@@ -487,8 +487,17 @@
     var farKey = nextIdx + "-far";
     var nearKey = nextIdx + "-near";
 
-    var nearWouldFire = !announcedSet[nearKey] &&
-      (ttm <= ttmPair[1] || distToNext <= floor);
+    // Distinguish TTM-fire from floor-fire (spec §5.2 + B1 floor-fire suppression).
+    // TTM-fire = user is approaching at speed; distance prefix is meaningful.
+    // Floor-fire = floor caught it (slow/stationary); engine fires at ~75 m
+    // which always lands in the "200 feet" bucket regardless of how close the
+    // user actually is by TTS-completion time. Bare maneuver text reads as
+    // imminent — re-grounds the spec's 30 m / 100 ft cutoff intent via fire-
+    // mode rather than a distance threshold (the cutoff was dead code because
+    // near-tier never fires below 30 m in practice).
+    var nearTTMFire   = ttm <= ttmPair[1];
+    var nearFloorFire = !nearTTMFire && distToNext <= floor;
+    var nearWouldFire = !announcedSet[nearKey] && (nearTTMFire || nearFloorFire);
     var farWouldFire = !announcedSet[farKey] && ttm <= ttmPair[0];
 
     if (nearWouldFire) {
@@ -506,10 +515,19 @@
       // spoken" instead of refiring on every subsequent tick.
       announcedSet[nearKey] = true;
       announcedSet[farKey] = true;
-      // GPS-recovery guard — single consume per tick, shared with chain-append below.
-      var skipPrefix = consumeGPSRecoveryFlag();
+      // Single consume per tick (spec §5.3); used by both base and chain.
+      var gpsRecovery = consumeGPSRecoveryFlag();
+      // Base prefix suppressed on floor-fire OR GPS-recovery. Floor-fire
+      // suppression matches the spec's "imminent prompt" intent for close-up
+      // fires (B1 fix); GPS-recovery suppression preserves spec §5.3 semantics.
+      var skipBasePrefix = nearFloorFire || gpsRecovery;
+      // Chain prefix only suppressed on GPS-recovery — distBetween is precomputed
+      // from cumulativeDistances, independent of live snap, so floor-fire status
+      // doesn't affect chain accuracy. The chain heads-up about M_(n+1)→M_(n+2)
+      // is genuinely informational regardless of how this fire was triggered.
+      var skipChainPrefix = gpsRecovery;
       // Prepend live-distance prefix to base text (spec v2 §5.2).
-      if (!skipPrefix) {
+      if (!skipBasePrefix) {
         var nearPrefix = formatDistancePrefix(distToNext, _geographicaUseImperial());
         if (nearPrefix && text && text.length > 0) {
           text = nearPrefix + text.charAt(0).toLowerCase() + text.slice(1);
@@ -525,9 +543,10 @@
           if (afterText) {
             // Mark afterIdx-far suppression BEFORE chain text construction (G11).
             announcedSet[afterIdx + "-far"] = true;  // I11 chain extension
-            // Reuse skipPrefix from above — single consume per tick.
+            // Use skipChainPrefix — chain ignores floor-fire (heads-up about M2 is
+            // valuable regardless), responds only to GPS-recovery.
             var chainJoin;
-            if (!skipPrefix) {
+            if (!skipChainPrefix) {
               var afterPrefix = formatDistancePrefix(distBetween, _geographicaUseImperial());
               if (afterPrefix) {
                 var lcPrefix = afterPrefix.charAt(0).toLowerCase() + afterPrefix.slice(1);
@@ -549,6 +568,7 @@
             timestamp: Date.now(),
             maneuverIdx: nextIdx,
             tier: 'near',
+            fireMode: nearTTMFire ? 'ttm' : 'floor',
             distToNext: distToNext,
             ttm: ttm,
             // Always false: re-tick suppression early-returns at the top of

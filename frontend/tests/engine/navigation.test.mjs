@@ -933,23 +933,26 @@ test('TTM I11: chain-extension suppresses far-tier for chain-pre-announced maneu
   // Expected: exactly 3 callbacks with chain-extension.
   // The 75m near-tier floor (TTM I12) fires near-tier immediately at the
   // start position (~80m from M1), suppressing M1's far-tier before it
-  // can fire (near returns early, blocking the far branch):
-  //   CB 1: M1 near+chain "In X feet, turn left onto First, then in Y feet, right onto Second"
+  // can fire (near returns early, blocking the far branch).
+  // Strategy B (B1 fix): these are floor-fires (10 m/s at 80m → TTM=8s > 3s),
+  // so base prefix is SUPPRESSED; chain prefix is PRESERVED (chain heads-up
+  // is still informational regardless of floor-fire):
+  //   CB 1: M1 near+chain "Turn left onto First, then in Y feet, turn right onto Second"
   //         (M1 far suppressed by floor-triggered near; chain marks M2-far → I11)
-  //   CB 2: M2 near+chain "In X feet, turn right onto Second, then in Y feet, left onto Third"
+  //   CB 2: M2 near+chain "Turn right onto Second, then in Y feet, turn left onto Third"
   //         (M2 far suppressed by I11; chain marks M3-far → I11)
-  //   CB 3: M3 near "In X feet, turn left onto Third Avenue"
+  //   CB 3: M3 near "Turn left onto Third Avenue"
   //         (M3 far suppressed by I11; no chain because afterIdx out of bounds)
-  // Per spec v2 §5.2 (Task 6): near-tier now includes distance prefix.
   assert.equal(voiceFires.length, 3,
     `I11: expected 3 callbacks under chain-extension (TTM I12 floor), got ${voiceFires.length}: ${JSON.stringify(voiceFires)}`);
 
-  // ALL 3 prompts now start with "In N feet," — near-tier has distance prefix
-  // per spec v2 §5.2. No far-tier fired: M1 far suppressed by floor; M2/M3
-  // far suppressed by I11 chain marks.
-  const allHavePrefix = voiceFires.every(t => /^In \d+/.test(t));
-  assert.ok(allHavePrefix,
-    `I11: all 3 near-tier prompts must have "In N" prefix (spec v2 §5.2); got ${JSON.stringify(voiceFires)}`);
+  // Strategy B: floor-fires produce bare base text (no "In N feet," prefix on the
+  // base). Chain prefix is still present on chained prompts. Far-tier fires were
+  // suppressed by floor and I11 — so if any "In N" prefix appears, it comes from
+  // a chain clause ("then in N feet,"), not the base. We verify NO base prefix.
+  const noneHaveBasePrefix = voiceFires.every(t => !/^In \d+/.test(t));
+  assert.ok(noneHaveBasePrefix,
+    `I11: Strategy B floor-fires must NOT have base "In N" prefix; got ${JSON.stringify(voiceFires)}`);
 
   // Three near-tier prompts — all contain "turn" (case-insensitive) after the prefix.
   const nears = voiceFires.filter(t => /turn /i.test(t));
