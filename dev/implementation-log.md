@@ -1,5 +1,86 @@
 # Implementation Log
 
+## 2026-04-25 — README overhaul Phase 5 partial — capture script + 7 framed screenshots + link audit
+
+**Released as:** not yet released (Phase 5 still has Cameron-coordinated manual captures; Phase 6 + 7 remain).
+**Spec / plan:** [docs/superpowers/plans/2026-04-25-readme-overhaul-plan.md](../docs/superpowers/plans/2026-04-25-readme-overhaul-plan.md) — Tasks 5.1, 5.2-5.6, 5.8, 6.3 closed this session.
+**Agent moniker:** sotol (Opus 4.7, 1M context). 4 implementer subagents (arroyo / caldera / granite / bajada) + 8 review subagents (mix of general-purpose spec reviewers + `superpowers:code-reviewer`-typed quality reviewers).
+**Handoff:** [memory/handoff_20260425_readme_overhaul_phase5_session2_partial.md](../../.claude/projects/-home-administrator-Code-geographica/memory/handoff_20260425_readme_overhaul_phase5_session2_partial.md)
+
+### Summary
+
+Continuation of tinaja's same-day session that shipped README overhaul Phases 0-4. Picked up at "Path 1: sotol-driven prep work" — the subset of Phase 5/6 work that does not require Cameron's coordination (live-stack-only, no phone, no GPS-pinned hero shot). Closed 4 of 7 remaining Phase 5/6 tasks; the 3 deferred tasks (T5.7 manual captures, T5.9 phone-frame composite, T5.10 hero embed) plus all of T6.1/T6.2/T6.4/T7.x require Cameron.
+
+The capture work surfaced two factual bugs in the plan-body's hardcoded URLs that were not caught during tinaja's plan-writing pass — the implementer subagent had to investigate live-stack reality:
+
+1. **`ADMIN_URL = http://localhost:8097` is wrong.** Port 8097 is bound but routes to a separate nginx vhost in the frontend container (port 8094 internal). The actual admin app is reached at `http://localhost:8097/config/`, not `/`. granite explored and corrected.
+2. **The setup wizard's `showStep(3)` is inside an IIFE** at `setup/static/setup.js:134`, not exposed on `window`. `await page.evaluate(() => showStep(3))` failed; granite worked around by replicating the DOM mutation directly. A fragility-pointer comment was added per code review feedback so a future maintainer who edits `showStep` finds this caller via grep.
+
+### Production assets shipped
+
+| File | Commit | Lines/Bytes | Author |
+|---|---|---|---|
+| `scripts/capture_readme_screenshots.py` (new + 7 fix iterations) | `f500250` → `50545d1` | 355 lines | arroyo + granite |
+| `scripts/audit_doc_links.sh` (new, executable) | `a0b2aa4` | 67 lines | caldera |
+| `scripts/postprocess_screenshots.py` (new + 1 fix iteration) | `7bba715` → `6e4d7a0` | ~190 lines | bajada |
+| `scripts/requirements.txt` (added `playwright>=1.40` + `Pillow>=10`) | `a809ac5` | +3 lines | arroyo |
+| `docs/screenshots/3d-terrain.png` (captured + framed) | `9490f25` → `7bba715` | 727 KB | granite + bajada |
+| `docs/screenshots/voice-search.png` | same range | 508 KB | same |
+| `docs/screenshots/public-lands.png` | same range | 406 KB | same |
+| `docs/screenshots/admin-pipeline.png` | same range | 150 KB | same |
+| `docs/screenshots/gallery/setup-wizard.png` | same range | 45 KB | same |
+| `docs/screenshots/gallery/kmz-overlay.png` | same range | 101 KB | same |
+| `docs/screenshots/gallery/imagery-before-after.png` | same range | 3.3 MB | same |
+
+### Key implementation patterns established
+
+These generalize beyond the screenshot work and deserve carry-forward attention:
+
+1. **`pip install --user --break-system-packages` for `scripts/*.py` deps; never the wizard's `setup/.venv`.** Per `feedback_wizard_venv_isolation.md`: the wizard's venv can be wiped by the wizard launcher; coupling dev tooling to it is fragile. The fix arroyo landed (`a809ac5`) decouples the capture script from `setup/.venv` and makes `/usr/bin/python3 scripts/capture_readme_screenshots.py` work from a fresh shell.
+
+2. **Idempotency via PNG `tEXt` chunk sentinel.** bajada's post-processor writes `geographica-framed=1` on save and checks before re-framing on load. PNG text chunks survive PIL save/load, are transparent to image viewers, and don't risk visual corruption. The plan body claimed sentinel-based idempotency in the docstring but didn't implement it; bajada made the docstring true.
+
+3. **`--force` on a sentinel-tagged PNG must hard-fail, not silently double-frame.** Empirically reproduced: 3 successive `--force` runs grew `voice-search.png` from `(1328, 856) → (1376, 912) → (1424, 968) → (1472, 1024)`. Caught by code review (vetiver), fix landed (`6e4d7a0`) with a clear error message guiding `git checkout` recovery.
+
+4. **Event-driven waits over `wait_for_timeout` magic numbers.** granite's follow-up (`50545d1`) replaced two timeouts with concrete signals: NAIP tiles wait on `_geographicaMap.once('idle', ...)`; KMZ load waits on `#import-status.success` / `.warning` (the completion signal at `frontend/app.js:3425`). Defensive ceilings preserved as escape hatches.
+
+5. **`device_scale_factor=1` (1280px source) is the right trade-off for this Pi 5.** 2x source exceeded the 30s screenshot timeout on tile-heavy views (3D terrain, NAIP). README displays at <600px so 2x source provides no visible benefit. The path forward to 2x (per-shot DPR override via SHOTS-tuple extension) is documented in the script's module docstring so future maintainers don't "fix" it back.
+
+### Two-stage review discipline
+
+Every implementer pass went through superpowers:subagent-driven-development's two-stage review (spec compliance first, then code quality, with re-review on fix iterations):
+
+- **T5.1**: arroyo → spec ✅ → larkspur (code) flagged 3 Important → arroyo fixed → re-review ✅
+- **T6.3**: caldera → spec ✅ → lupine (code) approved with 4 Minor (deferred)
+- **T5.2-5.6 batch**: granite → spec ✅ (7 PNGs visually verified) → tamarisk (code) flagged 3 Important → granite fixed (event waits + IIFE pointer + DPR docstring)
+- **T5.8**: bajada → spec ✅ → vetiver (code) flagged 3 Important (--force footgun + --help wall-of-text + empty --shots silent) → bajada fixed all three
+
+### What did NOT ship — Phase 5/6/7 remainder
+
+| Task | Blocker |
+|---|---|
+| T5.7 (hero + mobile manual) | Cameron's GPS state for hero "everything shot"; Cameron's phone for in-vehicle nav shot |
+| T5.9 (phone-frame composite) | Mobile shot from T5.7; phone-frame template asset |
+| T5.10 (embed hero in README) | Hero shot from T5.7 |
+| T6.1 (OG image) | Hero shot from T5.7 |
+| T6.2 (GitHub social preview) | Cameron does this in repo Settings UI |
+| T6.4 (Mermaid render verification) | Push to GitHub, view README on github.com — quick once T5.10 lands |
+| T7.1-7.2 (final review + impl-log) | All Phase 5/6 must complete first |
+
+Until Phase 5 lands fully, the README still has 6 broken `<img>` refs visible on github.com (5 inline + 1 hero TODO marker at line 21).
+
+### Numbers
+
+26 commits pushed to `origin/dev` (15 from this session + 11 from the parallel ruler stream that interleaved). Session-attributable: 4 implementer commits + 4 fix-iteration commits + 7 PNG commits = 15 commits, all carrying `Agent: sotol` (controller) or one of the 4 implementer monikers (arroyo/caldera/granite/bajada).
+
+Tests: no new tests added or modified this session — capture/post-process scripts are operator tools, not library code (per code review consensus). Existing test suite untouched.
+
+### Moniker collision learning
+
+Pre-flight `grep -rci "sotol" .` showed zero hits, but a parallel `dev`-branch session also picked `sotol` for the ruler work. Their commits (`5818146`, `fa3bdab`, `0d25293`, `1b885f6`, `5219546`, `2b07c57`, `681485f`) carry `Agent: sotol` or `Agent: sotol-impl-3.4`. File-path disambiguation is still possible (this session: `scripts/`, `docs/screenshots/`; parallel: `frontend/ruler.js`, `frontend/style.css`), but `git log --grep="^Agent: sotol"` will return both streams undifferentiated. Future moniker pre-flight should run `git log --all --grep="^Agent: <name>"` AND `grep -ri` to catch active concurrent sessions, not just stale codebase mentions. Captured as a feedback memory.
+
+---
+
 ## 2026-04-25 — README overhaul Phases 0-4 + cost-methodology adversarial cycle + ROI pitch document
 
 **Released as:** not yet released (Phase 5-7 remain — screenshots + OG image + final review).
