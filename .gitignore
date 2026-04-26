@@ -4,6 +4,7 @@ data/
 __pycache__/
 *.pyc
 .env
+*.log
 node_modules/
 
 tileserver/fonts-served/
