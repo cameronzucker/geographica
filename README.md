@@ -18,7 +18,9 @@
 Built for [AREDN](https://www.arednmesh.org/) mesh networks and field teams operating without cloud connectivity. Acquire data once on a connected workstation, then deploy anywhere — wilderness, disaster recovery, off-grid bases, or mesh-network coverage areas. After initial data acquisition, no internet connection is required.
 
 <!-- HERO SCREENSHOT -->
-<!-- TODO: Phase 5 Task 5.10 — hero image embed -->
+<p align="center">
+<img src="docs/screenshots/hero-everything.png" alt="Live map with NAIP imagery, GPS pin, and active turn-by-turn navigation route" width="640" />
+</p>
 
 <!-- HOW IT WAS BUILT CALLOUT -->
 > **How it was built:** 19 days. One engineer plus a team of Claude agents working under structured agent-orchestration patterns — brainstorm, adversarial review, TDD execution by parallel sub-agents. Inference cost: **~$300 of API-equivalent model output**, paid as a Claude Max subscription (~$200/mo). [Read the process →](docs/PROCESS.md) · [Cost methodology →](docs/COST_METHODOLOGY.md)
