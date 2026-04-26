@@ -165,9 +165,11 @@ async def shot_admin_pipeline(page, url):
         # Cards may not render if no sources are configured yet — capture anyway.
         pass
     await page.wait_for_timeout(2000)
+    # full_page=True so all 7 source cards are captured below the fold;
+    # the config panel is a long single-page layout, not a fixed viewport.
     await page.screenshot(
         path=str(OUT_DIR / "admin-pipeline.png"),
-        full_page=False,
+        full_page=True,
         animations="disabled",
         timeout=60000,
     )
