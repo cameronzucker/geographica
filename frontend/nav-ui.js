@@ -31,6 +31,8 @@
   var PADDING_RECALC_THRESHOLD = 5; // px -- ignore changes smaller than this
   var rerouteRetries = 0;
   var MAX_REROUTE_RETRIES = 3;
+  var pendingRerouteTimeouts = [];
+  var rerouteAbortController = null;
   var lastNavState = null;  // latest state from engine callback
   var lastGPSSignature = null;
 
@@ -156,9 +158,14 @@
     nav.onArrival(onArrival);
     nav.onReroute(onReroute);
     nav.start(routeData);
+    nav.setMuted(muted);  // B14: sync UI mute preference into engine
 
     active = true;
     document.body.classList.add('nav-active');
+
+    // DO NOT insert awaited work between classList.add and primeSpeech — breaks
+    // the user-gesture context required by Screen Wake Lock + SpeechSynthesis.
+    WakeLock.acquire();
 
     // Prime speech audio on user gesture
     primeSpeech();
@@ -198,6 +205,8 @@
     active = false;
     document.body.classList.remove('nav-active');
 
+    WakeLock.release();
+
     // Cancel any pending speech
     if (speechAvailable) speechSynthesis.cancel();
 
@@ -228,6 +237,15 @@
     lastNavPaddingTop = 0;
     lastNavState = null;
     lastGPSSignature = null;
+
+    // B12: cancel in-flight reroute fetches and clear pending retries.
+    if (rerouteAbortController) {
+      rerouteAbortController.abort();
+      rerouteAbortController = null;
+    }
+    pendingRerouteTimeouts.forEach(function (id) { clearTimeout(id); });
+    pendingRerouteTimeouts = [];
+    rerouteRetries = 0;
   }
 
   // =====================================================================
@@ -252,8 +270,14 @@
       if (leg.maneuvers) {
         leg.maneuvers.forEach(function (m) {
           var mc = Object.assign({}, m);
-          mc.begin_shape_index = (mc.begin_shape_index || 0) - indexAdjust + shapeOffset;
-          mc.end_shape_index = (mc.end_shape_index || 0) - indexAdjust + shapeOffset;
+          // Clamp at zero before offsetting: a leg-start maneuver has
+          // begin_shape_index=0 and we slice off the first coord for
+          // legs after the first (indexAdjust=1). Without clamp, the
+          // index would land in the previous leg's last segment.
+          var beginRaw = Math.max(0, (mc.begin_shape_index || 0) - indexAdjust);
+          var endRaw = Math.max(0, (mc.end_shape_index || 0) - indexAdjust);
+          mc.begin_shape_index = beginRaw + shapeOffset;
+          mc.end_shape_index = endRaw + shapeOffset;
           allManeuvers.push(mc);
         });
       }
@@ -265,6 +289,19 @@
     // Convert distance from display units to meters for the engine
     var distMeters = (summary.length || 0) * (window._geographicaUseImperial ? 1609.344 : 1000);
 
+    // Extract intermediate waypoints from trip.locations.
+    // Valhalla returns: [start, ...throughs, end].
+    // Reroute will re-plan from current GPS → throughs → end.
+    var locs = trip.locations || [];
+    var intermediates = locs.length > 2 ? locs.slice(1, -1) : [];
+    var remainingWaypoints = intermediates.map(function (loc) {
+      return {
+        lat: loc.lat,
+        lon: loc.lon,
+        type: loc.type || 'through',
+      };
+    });
+
     return {
       coords: allCoords,
       maneuvers: allManeuvers,
@@ -272,7 +309,8 @@
       totalDistance: distMeters,
       totalTime: summary.time || 0,
       costing: trip._costing || 'auto',
-      remainingWaypoints: []
+      costingOptions: trip._costingOptions || null,
+      remainingWaypoints: remainingWaypoints,
     };
   }
 
@@ -459,6 +497,11 @@
     var utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1.0;
     utterance.lang = 'en-US';
+    var chosenVoice = window.VoicePicker && window.VoicePicker.getUtteranceVoice();
+    if (chosenVoice) {
+      utterance.voice = chosenVoice;
+      utterance.lang = chosenVoice.lang || utterance.lang;
+    }
     speechSynthesis.speak(utterance);
   }
 
@@ -490,22 +533,42 @@
       costing: info.costing || 'auto',
       directions_options: { units: window._geographicaUseImperial ? 'miles' : 'kilometers' }
     };
+    if (info.costingOptions) {
+      body.costing_options = info.costingOptions;
+    }
 
     var seq = info._seq;
 
     rerouteRetries = 0;
-    attemptReroute(body, seq);
+    attemptReroute(body, seq, info);
   }
 
-  function attemptReroute(body, seq) {
+  function attemptReroute(body, seq, info) {
+    if (rerouteAbortController) rerouteAbortController.abort();
+    rerouteAbortController = new AbortController();
+    var signal = rerouteAbortController.signal;
+
     fetch('/valhalla/route', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: signal
     })
     .then(function (res) { return res.json(); })
     .then(function (data) {
+      if (signal.aborted) return;
+      if (data && data.error) {
+        // Valhalla returned 200 with {error: "..."} — no trip field.
+        // Treat as a retryable failure, not a silent no-op. (B11)
+        throw new Error('Valhalla error: ' + data.error);
+      }
       if (data.trip && nav) {
+        // Update all four state slots via the unified owner (B2).
+        window._geographicaSetActiveRoute(data.trip, {
+          refitBounds: false,          // keep camera locked during nav
+          costing: info.costing,
+          costingOptions: info.costingOptions || null,
+        });
         var newRouteData = buildRouteData(data.trip);
         if (newRouteData) {
           rerouteRetries = 0;
@@ -515,13 +578,15 @@
       }
     })
     .catch(function (err) {
+      if (err.name === 'AbortError') return;  // silent on user-initiated abort
       console.error('Reroute failed:', err);
       rerouteRetries++;
       if (rerouteRetries <= MAX_REROUTE_RETRIES) {
         var delay = Math.pow(2, rerouteRetries) * 1000; // 2s, 4s, 8s
-        setTimeout(function () {
-          attemptReroute(body, seq);
+        var timeoutId = setTimeout(function () {
+          attemptReroute(body, seq, info);
         }, delay);
+        pendingRerouteTimeouts.push(timeoutId);
       } else {
         rerouteRetries = 0;
         showBanner('Reroute failed \u2014 using current route', 'reroute-failed');
@@ -553,7 +618,10 @@
       zoom: savedMapState.zoom,
       pitch: savedMapState.pitch,
       bearing: savedMapState.bearing,
-      duration: 800
+      duration: 800,
+      // B8: clear the nav-era padding so post-nav fitBounds/flyTo
+      // aren't offset into the bottom of the screen.
+      padding: { top: 0, bottom: 0, left: 0, right: 0 },
     });
     savedMapState = null;
   }
@@ -765,13 +833,43 @@
     return Math.max(min, Math.min(max, val));
   }
 
+  /**
+   * Returns MapLibre `padding` suitable for placing the GPS marker at ~78%
+   * from the top of the map container — below the nav overlay and well
+   * into the bottom third so the user can see ahead of their direction of
+   * travel.
+   *
+   * MapLibre `padding` is an *inset*: effective center is
+   *   ((top + (H - bottom)) / 2, ...)
+   * For a target y = f * H:
+   *   f = (top + H - bottom) / (2*H)
+   *   top - bottom = H * (2f - 1)
+   * With bottom=0 and f=0.78: top = H * 0.56. Add overlayH so the overlay
+   * itself doesn't cover the marker at extreme aspect ratios.
+   */
   function getNavPadding() {
-    if (!overlay || overlay.classList.contains('hidden')) return {};
-    var measured = overlay.offsetHeight + 20;
-    if (Math.abs(measured - lastNavPaddingTop) > PADDING_RECALC_THRESHOLD) {
-      lastNavPaddingTop = measured;
+    if (!overlay || overlay.classList.contains('hidden')) {
+      return { top: 0, bottom: 0, left: 0, right: 0 };
     }
-    return { top: lastNavPaddingTop };
+    var overlayH = overlay.offsetHeight;
+    var mapH = (map && map.getContainer) ? map.getContainer().clientHeight : window.innerHeight;
+    if (!mapH || mapH < 100) mapH = window.innerHeight; // degenerate container
+    // Target: marker at y = 0.78 * mapH
+    //   top = mapH * (2 * 0.78 - 1) = mapH * 0.56
+    //
+    // Formula: max(overlayH + 20, 0.56 * mapH)
+    //   Proportional term dominates on tall viewports and lands the marker
+    //   at exactly 78% from top:
+    //     mapH=900 → top=504, center=(504+900)/2=702 → 78%
+    //     mapH=720 → top=403, center=(403+720)/2=562 → 78%
+    //   Overlay floor applies on short landscape viewports so the marker
+    //   is never hidden under the overlay:
+    //     mapH=400, overlayH=120 → top=max(140, 224)=224 → 56%
+    var desiredTop = Math.max(overlayH + 20, Math.round(mapH * 0.56));
+    if (Math.abs(desiredTop - lastNavPaddingTop) > PADDING_RECALC_THRESHOLD) {
+      lastNavPaddingTop = desiredTop;
+    }
+    return { top: lastNavPaddingTop, bottom: 0, left: 0, right: 0 };
   }
 
   // =====================================================================
@@ -939,6 +1037,13 @@
     while (iconEl.firstChild) iconEl.removeChild(iconEl.firstChild);
     iconEl.appendChild(buildManeuverSVG(type));
   }
+
+  // Test hook: expose internal helpers for unit tests. Must sit before
+  // BOOTSTRAP so the assignment happens even if init() throws in a
+  // degenerate (e.g. Node vm) environment.
+  window._geographicaNavUIInternals = {
+    buildRouteData: buildRouteData,
+  };
 
   // =====================================================================
   //  BOOTSTRAP

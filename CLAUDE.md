@@ -91,6 +91,31 @@ Key routing rules:
 
 ## Extended capabilities available on this dev Pi
 
+### OpenAI Codex CLI — for `build-robust-features`' "at least one adversarial round via Codex" requirement
+
+**Codex IS installed on this Pi. It is NOT on `$PATH`.** `which codex` returns nothing, which is why assistants keep missing it. Invoke via `npx`:
+
+```bash
+# Non-interactive agent call
+npx --yes @openai/codex exec "<prompt>"        # alias: codex e
+
+# Purpose-built code review (what adversarial rounds typically want)
+npx --yes @openai/codex review --commit <SHA> "<attack-angle prompt>"
+npx --yes @openai/codex review --uncommitted "<prompt>"      # staged + unstaged + untracked
+npx --yes @openai/codex review --base main    "<prompt>"     # current branch vs base
+
+# Optional: stdin-piped prompt
+cat spec.md | npx --yes @openai/codex exec -
+```
+
+- **Version on this Pi:** v0.118.0 (check: `npx --yes @openai/codex --version`).
+- **Authentication:** ChatGPT-mode, cached at `~/.codex/auth.json`. Already authenticated — no setup needed.
+- **Cached at:** `~/.npm/_npx/c8ab89660c602c20/node_modules/@openai/codex/`. Stays cached across runs; the `npx --yes` prefix won't redownload.
+- **When to use:** when a workflow (notably `superpowers:build-robust-features`) explicitly calls for "at least one round via Codex." Substitute Claude agents only when this is genuinely unavailable — it isn't unavailable here.
+- **MCP-server mode:** `npx --yes @openai/codex mcp-server` — expose Codex as an MCP server if you want the main loop to call it like a tool.
+
+Write adversarial-review output to `dev/adversarial/<date>-<topic>-codex.md` to match the existing naming pattern.
+
 ### `url-to-markdown` skill — fetch FULL webpages, not summaries
 
 Installed at `/home/administrator/.claude/skills/url-to-markdown/`. Invoke via the `Skill` tool (name: `url-to-markdown`) or directly:
@@ -143,6 +168,33 @@ Implications:
   of the repo (commits, CHANGELOG, versioning, CI) teaches Cameron what
   "good" looks like and builds habits that transfer.
 
+## Agent identity — pick a moniker at session start
+
+**At the very start of every session** (after reading START.md and the most-recent handoff, before taking any action on the repo), pick a short moniker for yourself and state it in your first user-facing message. The moniker:
+
+- Must be a single word, lowercase, no spaces, no punctuation.
+- Must be **ctrl+F-friendly** — avoid words that already appear in the codebase/docs (run `grep -rci <name> .` mentally; if there are many hits, pick something else). Plant/animal/geographic nouns work well (`juniper`, `hemlock`, `sparrow`, `flint`).
+- Avoid human first names to prevent confusion with Cameron, beta testers, or co-authors.
+- Persists for the entire session — do not change it mid-session.
+- Passes through to every subagent you dispatch: include `"You are agent <moniker>; use this in your commit trailers."` in each Agent tool prompt so subagent-authored commits are grep-discoverable too.
+
+**Include the moniker in every git action as a commit trailer:** `Agent: <moniker>` on its own line in the commit message, alongside the existing `Co-Authored-By:` trailer.
+
+```
+<subject>
+
+<body paragraphs>
+
+Agent: juniper
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+```
+
+**Also include in:** branch names when creating them (`agent-<moniker>/<topic>` for throwaway branches; regular `feat/` / `fix/` prefixes are fine for shared feature branches but still add the trailer inside commits), and PR titles if you open one (`[juniper] <subject>`).
+
+**Why:** triage + forensics. When a session goes sideways — a mysterious `git reset --hard`, a stale regression, an unclear commit authorship — Cameron needs to grep the commit graph for "which agent did this" without reconstructing it from timestamps. `git log --grep="^Agent: juniper"` returns the full trail for this session. `git log --all --grep="^Agent:"` enumerates every agent that has ever touched the repo.
+
+**If you forget to set a moniker early in the session:** pick one now and apply it to all forward commits. Do not retroactively amend earlier commits (amending shared/recent commits is banned — see below).
+
 ## Git workflow — worktrees are BANNED
 
 Do NOT use `git worktree` in this project. All branch work happens via `git checkout` in the main repo at `/home/administrator/Code/geographica`.
@@ -152,6 +204,25 @@ Do NOT use `git worktree` in this project. All branch work happens via `git chec
 **If you encounter an existing worktree** (e.g., `.claude/worktrees/<name>/`): do NOT use it. Check out the same branch in the main repo instead, and suggest that the user remove the worktree with `git worktree remove`.
 
 **If a session handoff tells you to "work in the worktree at X"**: override that instruction. Check out the branch in the main repo, and flag the deviation to the user.
+
+## Git workflow — destructive commands are BANNED
+
+Do NOT run destructive git commands. There is never a legitimate reason for an agent to run these unprompted. If you think you need one, **stop and ask the user**.
+
+**Banned commands (no exceptions without explicit user authorization for this specific call):**
+- `git reset --hard <ref>` — destroys uncommitted work AND rewinds the branch tip. Use `git revert <commit>` for an additive undo, or ask the user which specific file to restore with `git checkout -- <path>`.
+- `git push --force` / `git push -f` / `git push --force-with-lease` — rewrites remote history. If you need to replace a pushed commit, open a new PR or ask.
+- `git checkout -- .` / `git restore .` / `git clean -f` / `git clean -fd` — wipes entire working-tree state. If you want to discard one file, name it explicitly after checking with the user.
+- `git branch -D <branch>` / `git branch --delete --force` — force-deletes a branch even if unmerged. Use `git branch -d`, which refuses to delete unmerged branches.
+- `git rebase -i` with squash/fixup/drop on shared commits — rewrites history. (`--no-edit` is not a valid `git rebase` flag and should never be passed.)
+- `git commit --amend` on any commit that has been pushed OR that was authored by someone else. Always create a **new** commit to correct earlier work.
+- `git reflog expire --expire=now` / `git gc --prune=now` — strips the safety net that would let us recover from the commands above.
+- `git filter-branch` / `git filter-repo` — mass history rewrite.
+- `--no-verify` (skips hooks) / `--no-gpg-sign` / `-c commit.gpgsign=false` — bypasses the project's commit gates. The hooks exist for a reason; if one fails, fix the root cause instead of skipping.
+
+**Rationale:** On 2026-04-20, a subagent ran `git reset --hard feat/noaa-conus` on the main checkout's `dev` branch, wiping 7 commits — including a runtime-validated bug fix that had been shipped to the live stack. Recovery took one `git merge` with manual conflict resolution, but only because all commits were still reachable via reflog; two weeks later and `git gc` would have pruned them permanently. Agents have no legitimate workflow that requires destructive operations; the pattern is always "something went wrong, let me start over" — which is a cue to **ask the user**, not reset.
+
+**If you think you need one of these:** the correct action is to surface the situation to the user with a proposed non-destructive alternative. See [docs/pitfalls/implementation-pitfalls.md](docs/pitfalls/implementation-pitfalls.md) §15 for the recovery posture and non-destructive alternatives for common scenarios.
 
 ## Commit and release discipline
 

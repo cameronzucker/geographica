@@ -3,3 +3,6 @@ uvicorn[standard]>=0.29,<1
 httpx>=0.27,<1
 aiosqlite>=0.20,<1
 docker>=7.0,<8
+# refresh_noaa_catalog.py (bind-mounted at /scripts) uses aiohttp for Azure blob
+# listing; needed by the NOAA admin endpoints (Tasks 22-25).
+aiohttp>=3.9,<4

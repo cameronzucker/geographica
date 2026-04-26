@@ -67,3 +67,15 @@ Before pushing, run the test suite:
 ```bash
 python -m pytest tests/ services/search/tests/ -v
 ```
+
+## Regression gates
+
+### Nav keep-awake
+
+Changes to any of these files require re-running the manual field acceptance checklist in [docs/superpowers/specs/2026-04-20-nav-keep-awake-design.md](docs/superpowers/specs/2026-04-20-nav-keep-awake-design.md) §6.3 on a real phone, with screenshot/video evidence attached to the PR body:
+
+- `frontend/wake-lock.js`
+- `frontend/silent-video-lock.js`
+- `frontend/vendor/silent.mp4`
+- The hook lines in `frontend/nav-ui.js` (`WakeLock.acquire()` / `WakeLock.release()`)
+- `nginx/nginx.conf` when adding `Content-Security-Policy` or `Permissions-Policy` headers (per spec §13)

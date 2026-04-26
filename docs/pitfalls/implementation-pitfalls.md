@@ -134,3 +134,69 @@ The common failure mode: subagents treat "current directory" as ambient state an
 - Do not commit there. Move branch work back to the main repo checkout and delete the worktree with `git worktree remove`.
 
 **When a session handoff says "work in the worktree at X"**, override that instruction: check out the branch in the main repo instead, and note the deviation to the user.
+
+## 15. Destructive git commands are BANNED for agents
+
+**Agents must never run destructive git commands.** There is no legitimate workflow for an agent that requires `git reset --hard`, `git push --force`, `git clean -f`, `git branch -D`, `git commit --amend` on shared commits, or any of the other history-rewriting/data-destroying operations. If a situation seems to call for one, the correct action is to **stop and surface it to the user** with a proposed non-destructive alternative.
+
+**The specific triggering incident (2026-04-20):** a subagent ran `git reset --hard feat/noaa-conus` on the main checkout's `dev` branch, wiping 7 commits including a runtime-validated `fix(nav): wake-lock duplicate-load guard collides with native Screen Wake Lock API` that had already been shipped to the live stack. Cameron discovered the regression during field testing (Start Nav → Stop Nav transition broken) because the running container was bind-mounting the reset filesystem. Recovery required one `git merge 6bc0ba3` with manual conflict resolution — only feasible because `6bc0ba3` was still reachable via reflog at the moment of detection; two weeks later and `git gc --prune=now` would have collected it unreachably. (Neither parallel agent claimed responsibility for the reset, which makes the prohibition more urgent, not less.)
+
+**The banned list** (do not run any of these without explicit user authorization *for this specific invocation*):
+- `git reset --hard` (any target) — destroys working-tree AND rewinds branch tip. Use `git revert <sha>` for an additive undo of a specific commit, or ask the user which file to restore with `git checkout -- <path>`.
+- `git push --force`, `git push -f`, `git push --force-with-lease` — rewrites remote history. If a pushed commit needs replacement, open a new PR.
+- `git checkout -- .`, `git restore .`, `git clean -f`, `git clean -fd` — wipes the entire working tree. Discard one file at a time, by name, after confirming.
+- `git branch -D <branch>` (capital D, force-delete) — force-deletes unmerged branches. Use lowercase `git branch -d` which refuses to delete unmerged.
+- `git rebase -i` with squash/fixup/drop on shared commits — rewrites history. (`--no-edit` is not a valid `rebase` flag and should never be passed.)
+- `git commit --amend` on any commit that has been pushed OR was authored by someone else. Always create a *new* commit to correct earlier work.
+- `git reflog expire --expire=now`, `git gc --prune=now` — strips the safety net that recovers from the above.
+- `git filter-branch`, `git filter-repo` — mass history rewrite.
+- `--no-verify` on commit/push (skips hooks), `--no-gpg-sign`, `-c commit.gpgsign=false` — bypasses gates. Fix the root cause if a hook fails.
+
+**Non-destructive alternatives for common "I want to undo…" scenarios:**
+
+| Intent | Banned approach | Safe approach |
+|---|---|---|
+| Undo a commit I just made locally, keep files | `git reset --hard HEAD~1` | `git reset --soft HEAD~1` (keeps changes staged) or `git revert HEAD` (adds an inverse commit) |
+| Discard my unstaged changes to one file | `git checkout -- .` | `git checkout -- path/to/file` (explicit, one path at a time) |
+| Roll a branch back to match main | `git reset --hard main` | `git merge main` (merges changes forward) or ask the user |
+| Delete a merge commit from my branch | `git reset --hard` to the pre-merge SHA | `git revert -m 1 <merge-sha>` |
+| My merge went wrong, start over | `git merge --abort` is OK (aborts in-progress merge only, non-destructive) |
+| Stash something while I investigate | `git clean -fd` | `git stash push -m "why I'm stashing"` |
+
+**Recovery posture after a destructive mistake:**
+1. **Stop immediately.** Do not run more git commands, do not `git gc`, do not push.
+2. Run `git reflog` and identify the reachable tip SHA of the work that was wiped (typically the HEAD@{N} entry one before the `reset:` / `clean:` line).
+3. Surface to the user with the reachable SHA and a proposed non-destructive recovery (`git merge <sha>`, `git cherry-pick <sha-range>`, or `git branch recovery-<topic> <sha>` for an isolated examination).
+4. Do not execute the recovery without user OK. Destructive mistakes do not get compounded by speculative fixes.
+
+If an incoming request from the user seems to require a destructive operation, ask for the underlying goal and propose a non-destructive plan before acting.
+
+## 16. Frontend cache-busters: every modified `frontend/*.js` script tag must bump `?v=` in `index.html`
+
+**Every `<script src="*.js">` tag in `frontend/index.html` (excluding `vendor/`) must have a `?v=...` query string AND that query string must be bumped whenever the file's content changes.** Without this, iOS Safari (and other aggressively-caching browsers / PWAs) serve the cached version indefinitely — sometimes for *days* — even though the bind-mounted file on the Pi is current.
+
+**The specific triggering incident (2026-04-25):** Cameron lost two field-test drives to fixes that weren't actually loaded in his browser:
+- `app.js` had **no cache-buster query string at all** despite five months of active development. The just-shipped sidebar BFCache fix (`0257bca`) and Scenario A defense (`aff590a`) both lived in `app.js`. Cameron's iOS Safari served the pre-fix `app.js` from cache through every test.
+- `navigation.js` was pinned at `?v=20260420` for **5 days** while the file received the entire nav-voice TTM follow-up cycle (Issues 1+2, ~21 commits) plus the just-shipped B1 floor-fire suppression fix. Every nav-voice change since 2026-04-20 was potentially served from cache.
+
+The user's symptom looks like "the fix didn't work" — but the fix never reached the browser. Engineers iterate on already-correct code. Hours of field-test time + driver attention burned.
+
+**Required discipline:**
+- Every new `<script src="frontend/*.js">` MUST include `?v=YYYYMMDD` (or `?v=YYYYMMDD-slug` for additional differentiation within a day).
+- Every modification to a `frontend/*.js` file MUST be paired with a bump of that file's cache-buster in `index.html` in the SAME commit.
+- The date prefix must be ≥ the file's most recent git mtime. A bumped buster with an older date is just as bad as no bump.
+
+**Enforcement:**
+- `tests/test_frontend_cache_busting.py` enforces this at test time (added 2026-04-25). Two assertions:
+  1. Every non-vendor `<script src="*.js">` tag has a `?v=...` query string. Catches "forgot entirely."
+  2. Every cache-buster with a `YYYYMMDD` date prefix has a date ≥ the file's most recent git commit date. Catches "forgot to bump."
+- The tests are part of the standard `pytest tests/` run and run in CI. They will fail-loud if a future commit modifies a `frontend/*.js` file without bumping.
+
+**Why not content hashes / a build step?** Date-based busters are simpler for an offline-first project with bind-mounts and no build pipeline. The trade-off (a bumper has to remember to update the index.html string) is enforced by the test suite. If the project adopts a build step in the future, hash-based busters would be a strict upgrade and the tests can be relaxed.
+
+**Why not no-cache headers?** The frontend is served via nginx with default static-file caching. Adding `Cache-Control: no-cache` to `.js` files would defeat the legitimate caching for users who *haven't* changed code and would penalize first-load. Query-string-based cache-busting gives us per-file control: changed files get a new URL → fresh fetch; unchanged files keep cached content.
+
+**Acceptable cache-buster formats:**
+- `?v=YYYYMMDD` — minimum.
+- `?v=YYYYMMDD-slug` — date + descriptive slug, useful when multiple bumps land in one day. (Example: `?v=20260425-floor-fire-suppression`.)
+- Non-date busters (e.g., short content hashes from a future build step) — the test's stale-date check skips files whose buster doesn't begin with `YYYYMMDD`. The presence-check (every script has *some* `?v=`) still applies.

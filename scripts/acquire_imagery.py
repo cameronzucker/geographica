@@ -32,6 +32,8 @@ import aiosqlite
 from tqdm import tqdm
 from pipeline_progress import update_progress as _generic_progress
 
+from common.state_bboxes import states_intersecting, SLUG_BY_USPS, USPS_BY_SLUG
+
 # ---------------------------------------------------------------------------
 # Secrets
 # ---------------------------------------------------------------------------
@@ -93,6 +95,24 @@ NOAA_NAIP_CATALOG = {
 NOAA_TILE_SIZE_MB = 486  # approximate size of each NAIP quad GeoTIFF
 
 
+def _normalize_state_arg(value: str) -> str:
+    """argparse type= for --state. Accepts slug or USPS; warns on USPS.
+
+    Returns the canonical slug. Raises argparse.ArgumentTypeError on unknown values.
+    """
+    if value in USPS_BY_SLUG:
+        # Already a valid slug (e.g. "arizona")
+        return value
+    upper = value.upper()
+    if upper in SLUG_BY_USPS:
+        slug = SLUG_BY_USPS[upper]
+        if slug is None:
+            raise argparse.ArgumentTypeError(f"state {value!r} (USPS {upper}) is not supported by Geographica")
+        log.warning("--state %s is a USPS code; translated to slug %s (prefer slugs in new scripts)", value, slug)
+        return slug
+    raise argparse.ArgumentTypeError(f"unknown state {value!r}; expected slug (e.g. arizona) or USPS (e.g. AZ)")
+
+
 def noaa_blob_base_url(state: str, year: int) -> str:
     """Return the Azure blob base URL for a state/year NAIP dataset."""
     dir_name = NOAA_NAIP_CATALOG[(state, year)]
@@ -104,9 +124,103 @@ def noaa_cache_dir(data_dir: Path, state: str, year: int) -> Path:
     return data_dir / "noaa_cache" / f"{state}_{year}"
 
 
+def resolve_noaa_candidates(catalog: dict, *, state: str | None, bbox: str | None):
+    """Return (candidates: list[entry], missing: list[slug]).
+
+    Maps a state slug or bounding box to catalog entries.
+
+    In state mode: returns the single catalog entry for that state,
+    or raises ValueError if uncataloged.
+
+    In bbox mode: returns all catalog entries whose states intersect
+    the bbox, plus a list of missing state slugs (states that intersect
+    but are not in the catalog).
+
+    Args:
+        catalog: dict with "entries" key mapping state slugs to entry dicts
+        state: state slug (e.g. "arizona"), or None for bbox mode
+        bbox: bbox string "west,south,east,north", or None for state mode
+
+    Returns:
+        (candidates: list of catalog entries, missing: list of uncataloged state slugs)
+    """
+    if state is not None:
+        if state not in catalog["entries"]:
+            raise ValueError(f"state {state} not in catalog")
+        return ([catalog["entries"][state]], [])
+    if bbox is None:
+        raise ValueError("either state or bbox required")
+    slugs = states_intersecting(bbox)
+    if not slugs:
+        return ([], [])
+    candidates = []
+    missing = []
+    for slug in slugs:
+        if slug in catalog["entries"]:
+            candidates.append(catalog["entries"][slug])
+        else:
+            missing.append(slug)
+    return (candidates, missing)
+
+
+def build_state_queue(entry: dict, bbox_or_none: str | None, shapefile_path: Path) -> list[str]:
+    """Build the list of tile filenames for a state, optionally filtered by bbox.
+
+    In whole-state mode (bbox_or_none is None), returns all tiles from the shapefile.
+    In bbox mode, spatially filters to the bounding box with a 300s timeout.
+
+    Args:
+        entry: NOAA catalog entry dict (contains state metadata)
+        bbox_or_none: bbox string "west,south,east,north", or None for whole-state
+        shapefile_path: Path to the tile index shapefile
+
+    Returns:
+        List of GeoTIFF filenames
+    """
+    if bbox_or_none is None:
+        # Whole-state mode: list all tiles in the shapefile
+        result = subprocess.run(
+            [
+                "ogr2ogr", "-f", "CSV", "/dev/stdout",
+                str(shapefile_path),
+                "-select", "filename",
+            ],
+            capture_output=True, text=True, timeout=300,
+        )
+    else:
+        # Bbox mode: spatially filter with -spat
+        west, south, east, north = [float(x) for x in bbox_or_none.split(",")]
+        result = subprocess.run(
+            [
+                "ogr2ogr", "-f", "CSV", "/dev/stdout",
+                str(shapefile_path),
+                "-spat", str(west), str(south), str(east), str(north),
+                "-select", "filename",
+            ],
+            capture_output=True, text=True, timeout=300,
+        )
+
+    if result.returncode != 0:
+        log.error("ogr2ogr tile list failed: %s", result.stderr)
+        return []
+
+    lines = result.stdout.strip().split("\n")
+    if len(lines) <= 1:
+        return []
+
+    # With -select filename, output is: "filename\nfile1.tif\nfile2.tif\n..."
+    filenames = []
+    for line in lines[1:]:
+        fname = line.strip().strip('"')
+        if fname.endswith(".tif"):
+            filenames.append(fname)
+    return filenames
+
+
 def filter_tiles_by_bbox(
     shapefile_path: Path,
     west: float, south: float, east: float, north: float,
+    timeout: int = 300,
 ) -> list[str]:
     """Use ogr2ogr to spatially filter a tile index shapefile.
 
@@ -119,7 +233,7 @@ def filter_tiles_by_bbox(
             "-spat", str(west), str(south), str(east), str(north),
             "-select", "filename",
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, timeout=timeout,
     )
     if result.returncode != 0:
         log.error("ogr2ogr spatial filter failed: %s", result.stderr)
@@ -136,6 +250,39 @@ def filter_tiles_by_bbox(
         if fname.endswith(".tif"):
             filenames.append(fname)
     return filenames
+
+
+# Type alias: (catalog_snapshot_path, state_usps, tile_filename, blob_url)
+QueueItem = tuple[Path, str, str, str]
+
+
+def _noaa_tile_index_shapefile_path(entry: dict, snapshot_path: Path) -> Path:
+    """Convention-based shapefile path for a catalog entry.
+
+    Phase 5's integration test validates that refresh_catalog() lays down
+    shapefiles at snapshot_path.parent.parent/tile-indexes/<dir>/tileindex_<dir>.shp.
+    """
+    return snapshot_path.parent.parent / "tile-indexes" / entry["dir"] / f"tileindex_{entry['dir']}.shp"
+
+
+def build_unified_queue(
+    candidates: list[dict],
+    bbox_or_none: str | None,
+    snapshot_path: Path,
+) -> list[QueueItem]:
+    """Compose the per-tile download queue from resolver candidates.
+
+    Each QueueItem carries the pinned snapshot path (so a concurrent catalog
+    refresh cannot poison an in-flight run) and the Azure blob URL built from
+    the entry's directory.
+    """
+    queue: list[QueueItem] = []
+    for entry in candidates:
+        shp_path = _noaa_tile_index_shapefile_path(entry, snapshot_path)
+        for filename in build_state_queue(entry, bbox_or_none, shp_path):
+            blob_url = f"{NOAA_BLOB_BASE}/{entry['dir']}/{filename}"
+            queue.append((snapshot_path, entry["usps"], filename, blob_url))
+    return queue
 
 
 def nationalmap_tile_url(z: int, x: int, y: int) -> str:
@@ -210,6 +357,95 @@ def write_pipeline_state(output_path: Path, state: dict):
         os.replace(str(tmp_path), str(state_path))
     except Exception as exc:
         log.warning("Failed to write pipeline state: %s", exc)
+
+
+def _finalize_noaa_status(
+    output: Path,
+    per_state: dict,
+    skip_to_postprocess: bool,
+) -> None:
+    """Write the final multi-state status fields to the pipeline state file.
+
+    Inspects *per_state* to determine whether any state failed entirely (as
+    opposed to per-tile failures within an otherwise successful run, which are
+    tracked by the existing completed_partial / error / completed taxonomy).
+
+    Status written:
+      partial_failed — at least one state's value starts with "failed:"
+      completed      — all states succeeded (value == "complete")
+
+    The call uses write_pipeline_state() so it merges atomically with existing
+    state fields; no previously-written keys are lost.
+
+    This helper intentionally supports N states in per_state even though today's
+    single-state pipeline always passes a one-entry dict. Task 26 (Phase 3) will
+    call this with a fully-populated per_state after the multi-state loop.
+    """
+    any_failed = any(v.startswith("failed:") for v in per_state.values())
+    new_status = "partial_failed" if any_failed else "completed"
+    write_pipeline_state(output, {"status": new_status, "per_state": per_state})
+
+
+class SnapshotPrunedError(RuntimeError):
+    """Raised when a resume tries to use a catalog snapshot that was pruned."""
+
+
+def pin_catalog_snapshot(data_dir: Path) -> Path:
+    """Resolve the noaa_naip_catalog.json symlink to an absolute snapshot path.
+
+    Called once at pipeline Start so the run-lifetime snapshot is pinned.
+    Refresh/rollback can freely change the current symlink without affecting
+    a running job.
+
+    Returns the absolute, canonical path of the target snapshot file.
+    Raises FileNotFoundError if the symlink is absent or dangling.
+    """
+    symlink = Path(data_dir) / "noaa_naip_catalog.json"
+    return symlink.resolve(strict=True)
+
+
+def _resolve_or_pin_snapshot(output: Path, data_dir: Path) -> Path:
+    """Return the catalog snapshot path for this run.
+
+    Resume semantics (Task 16):
+    - If .pipeline-state.json records a ``catalog_snapshot`` path and that
+      file still exists on disk: return that path unchanged.  Do NOT re-pin.
+    - If the recorded path no longer exists: raise ``SnapshotPrunedError``
+      so the caller aborts cleanly rather than silently downgrading to a
+      mismatched catalog.
+    - If there is no prior state (fresh run) or the state file is corrupt:
+      call ``pin_catalog_snapshot``, persist the result, and return it.
+
+    Raises SnapshotPrunedError if the prior pin was pruned.
+    Raises FileNotFoundError (from pin_catalog_snapshot) if fresh run but
+    the catalog symlink is absent or dangling.
+    """
+    state_path = Path(output).parent / ".pipeline-state.json"
+    prior_snapshot_str: str | None = None
+    if state_path.exists():
+        try:
+            prior_state = json.loads(state_path.read_text())
+            prior_snapshot_str = prior_state.get("catalog_snapshot")
+        except (json.JSONDecodeError, OSError) as exc:
+            log.warning(
+                "Could not read prior pipeline state: %s — treating as fresh run", exc
+            )
+
+    if prior_snapshot_str:
+        pinned = Path(prior_snapshot_str)
+        if not pinned.exists():
+            raise SnapshotPrunedError(
+                f"Cannot resume: pinned snapshot {pinned} was pruned. "
+                "Restart from scratch or rollback the catalog."
+            )
+        log.info("Resuming with pinned catalog snapshot: %s", pinned)
+        return pinned
+
+    # Fresh run: pin a new snapshot and persist it.
+    snapshot_path = pin_catalog_snapshot(data_dir)
+    write_pipeline_state(output, {"catalog_snapshot": str(snapshot_path)})
+    log.info("Catalog snapshot pinned: %s", snapshot_path)
+    return snapshot_path
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
@@ -644,6 +880,7 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
     import rasterio
     from rasterio.io import MemoryFile
     import numpy as np
+    from rasterio_ops import _init_journal, _mutate_base_tile
 
     dst = sqlite3.connect(str(dst_path))
     try:
@@ -656,10 +893,34 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
         dst.execute("""CREATE TABLE IF NOT EXISTS metadata (
             name TEXT PRIMARY KEY, value TEXT)""")
 
+        _init_journal(dst)
+
+        # Determine src's max_zoom BEFORE the merge — dictates the ancestor
+        # cascade depth. Empty source: skip everything below, no journal ops.
+        src_max_zoom_row = dst.execute("SELECT MAX(zoom_level) FROM src.tiles").fetchone()
+        if not src_max_zoom_row or src_max_zoom_row[0] is None:
+            dst.execute("DETACH DATABASE src")
+            return
+        src_max_zoom = src_max_zoom_row[0]
+
+        dst.execute("BEGIN")
+
         # Insert non-overlapping tiles directly (fast path)
         dst.execute("""INSERT OR IGNORE INTO tiles
             SELECT zoom_level, tile_column, tile_row, tile_data
             FROM src.tiles""")
+
+        # R5 C1: bulk enqueue — one INSERT per zoom-level shift. Each is a
+        # SELECT over src.tiles; INSERT OR IGNORE collapses duplicates via
+        # the queue's PK.
+        for dz in range(1, src_max_zoom + 1):
+            dst.execute(
+                """INSERT OR IGNORE INTO _overview_work_queue
+                   (zoom_level, tile_column, tile_row)
+                   SELECT zoom_level - ?, tile_column >> ?, tile_row >> ?
+                   FROM src.tiles WHERE zoom_level = ?""",
+                (dz, dz, dz, src_max_zoom),
+            )
 
         # Composite overlapping tiles (slow path — only for edge tiles).
         # Use cursor iteration instead of fetchall() to avoid loading all
@@ -685,10 +946,7 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
                 black_mask = np.all(dst_arr[:3] <= 20, axis=0)
                 dst_arr[:, black_mask] = src_arr[:, black_mask]
                 merged = _encode_jpeg(dst_arr)
-                dst.execute(
-                    "UPDATE tiles SET tile_data = ? WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?",
-                    (merged, z, x, y),
-                )
+                _mutate_base_tile(dst, "upsert", z, x, y, tile_data=merged)
                 composited += 1
             except Exception as exc:
                 # B7 fix: count and log composite failures instead of silently
@@ -708,8 +966,18 @@ def merge_mbtiles(src_path: Path, dst_path: Path) -> None:
         # Copy metadata from first batch only
         dst.execute("""INSERT OR IGNORE INTO metadata
             SELECT name, value FROM src.metadata""")
-        dst.commit()
+        dst.execute("COMMIT")
         dst.execute("DETACH DATABASE src")
+    except Exception:
+        try:
+            dst.execute("ROLLBACK")
+        except Exception:
+            pass
+        try:
+            dst.execute("DETACH DATABASE src")
+        except Exception:
+            pass
+        raise
     finally:
         dst.close()
 
@@ -787,40 +1055,6 @@ def run_gdal_subprocess(cmd: list[str], timeout: int = 7200,
         cmd, timeout=timeout, cancel_check=cancel_check,
         on_child_started=_set_pid, on_child_ended=_clear_pid,
     )
-
-
-def _run_gdaladdo_with_metadata_fixup(output: Path) -> None:
-    """Build overview pyramids on MBTiles output, then fix metadata.
-
-    Delegates to rasterio_ops.build_overviews which already updates
-    minzoom/maxzoom metadata. The post-fixup SQL ensures consistency
-    even if build_overviews is interrupted.
-    """
-    from rasterio_ops import build_overviews as rio_build_overviews
-
-    if _cancel_requested:
-        return
-
-    rio_build_overviews(output, cancel_check=lambda: _cancel_requested)
-
-    # Cancel guard: don't fixup metadata on partial overviews
-    if _cancel_requested:
-        return
-
-    # Fix metadata to reflect actual tile zoom range
-    conn = sqlite3.connect(str(output))
-    try:
-        conn.execute(
-            "UPDATE metadata SET value = (SELECT MIN(zoom_level) FROM tiles) "
-            "WHERE name = 'minzoom'"
-        )
-        conn.execute(
-            "UPDATE metadata SET value = (SELECT MAX(zoom_level) FROM tiles) "
-            "WHERE name = 'maxzoom'"
-        )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def convert_batch_to_mbtiles(tif_paths: list[Path], output: Path,
@@ -1763,6 +1997,63 @@ async def _noaa_fetch_tile_index(
     return shp_files[0]
 
 
+def _init_noaa_checkpoint(db_path: Path) -> None:
+    """Create or migrate the _noaa_checkpoint table to the composite-PK schema.
+
+    Migration logic: if the table already exists with the OLD single-column PK
+    (tile_filename only), DROP it and recreate.  Checkpoint rows are transient
+    staging data — they can always be reconstructed via _repair_noaa_checkpoint
+    — so discarding them is safe.
+
+    New schema:
+        PRIMARY KEY (catalog_snapshot, state_usps, tile_filename)
+    with empty-string defaults on catalog_snapshot and state_usps so that
+    legacy callsites that only write tile_filename continue to work during the
+    progressive migration (Tasks 15/18 will plumb real values through).
+    """
+    con = sqlite3.connect(str(db_path))
+    try:
+        rows = con.execute("PRAGMA table_info(_noaa_checkpoint)").fetchall()
+        if rows:
+            # Table exists — check whether it has the new columns
+            col_names = {r[1] for r in rows}
+            if "catalog_snapshot" not in col_names or "state_usps" not in col_names:
+                # Old schema: DROP and recreate (transient data, safe to discard)
+                con.execute("DROP TABLE _noaa_checkpoint")
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS _noaa_checkpoint ("
+            "  catalog_snapshot TEXT NOT NULL DEFAULT '',"
+            "  state_usps       TEXT NOT NULL DEFAULT '',"
+            "  tile_filename    TEXT NOT NULL,"
+            "  PRIMARY KEY (catalog_snapshot, state_usps, tile_filename)"
+            ")"
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def _record_tile_complete(
+    db_path: Path, catalog_snapshot: str, state_usps: str, tile_filename: str
+) -> None:
+    """Record a NAIP quad as successfully merged into the output MBTiles.
+
+    Uses INSERT OR IGNORE so duplicate calls are idempotent.  The composite
+    PK (catalog_snapshot, state_usps, tile_filename) lets border quads that
+    appear in two states' directories each get their own row.
+    """
+    con = sqlite3.connect(str(db_path))
+    try:
+        con.execute(
+            "INSERT OR IGNORE INTO _noaa_checkpoint "
+            "(catalog_snapshot, state_usps, tile_filename) VALUES (?, ?, ?)",
+            (catalog_snapshot, state_usps, tile_filename),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
 def _repair_noaa_checkpoint(output_path: Path, tile_coord_map: dict) -> int:
     """Detect and warn on _noaa_checkpoint/tiles divergence from a prior crash.
 
@@ -1798,10 +2089,11 @@ def _repair_noaa_checkpoint(output_path: Path, tile_coord_map: dict) -> int:
         ).fetchone()
         if row is None:
             return 0
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS _noaa_checkpoint "
-            "(tile_filename TEXT PRIMARY KEY)"
-        )
+        # Ensure checkpoint table uses composite PK schema (migration included)
+        _init_noaa_checkpoint(output_path)
+        # Re-open connection after _init_noaa_checkpoint closed its own connection
+        conn.close()
+        conn = sqlite3.connect(str(output_path))
 
         tile_count = conn.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
         ckpt_count = conn.execute("SELECT COUNT(*) FROM _noaa_checkpoint").fetchone()[0]
@@ -1864,12 +2156,16 @@ async def run_noaa(args):
 
     pipeline_start = time.monotonic()
 
-    state = args.state
-    year = args.year
     bbox = parse_bbox(args.bbox)
     west, south, east, north = bbox
     output = Path(args.output)
     data_dir = output.parent
+
+    # Tasks 15+16: pin (fresh run) or reuse (resume) the catalog snapshot.
+    # Refresh/rollback can freely change the current symlink without affecting
+    # this run. Raises FileNotFoundError if the catalog is missing (fresh run).
+    # Raises SnapshotPrunedError if a prior run's snapshot has since been pruned.
+    snapshot_path = _resolve_or_pin_snapshot(output, data_dir)
 
     # B13 fix: detect (and where possible repair) checkpoint divergence
     # from a prior crash between tile commit and checkpoint commit.
@@ -1890,20 +2186,84 @@ async def run_noaa(args):
     # unregister/re-register here (and doing so was dangerous: crashes left
     # the source permanently unregistered).
 
-    # Validate catalog entry
-    if (state, year) not in NOAA_NAIP_CATALOG:
-        log.error("No NOAA catalog entry for state=%s year=%d", state, year)
+    # Resolve which catalog entry to process.
+    #
+    # Historical context (2026-04-21 bug fix): this block previously consulted
+    # the legacy NOAA_NAIP_CATALOG hardcoded dict (which only contained
+    # ("AZ", 2021)), making every custom-bbox dispatch fail with
+    # "No NOAA catalog entry for None 2021". Task 17 of the CONUS expansion
+    # removed --year and switched the CLI to slug-mode, but the transitional
+    # comment flagged that Task 26 was supposed to retire this legacy lookup
+    # in favor of the dynamic catalog. Task 26 did the HTTP-endpoint side
+    # only; the pipeline-container side was left broken for custom-bbox AND
+    # any slug-based state dispatch.
+    #
+    # Now: load the pinned snapshot and resolve via resolve_noaa_candidates()
+    # — the same resolver the HTTP estimate + /start endpoints use, so UI
+    # and pipeline agree on which states are in scope.
+    with open(snapshot_path) as f:
+        catalog = json.load(f)
+
+    try:
+        candidates, missing = resolve_noaa_candidates(
+            catalog, state=args.state, bbox=args.bbox,
+        )
+    except ValueError as _exc:
+        log.error("Catalog resolution failed: %s", _exc)
         update_progress(output, "noaa", args.bbox, "n/a",
                         0, 0, status="error", phase="error",
-                        error=f"No NOAA catalog entry for {state} {year}")
+                        error=f"Catalog resolution failed: {_exc}")
         sys.exit(1)
 
-    blob_base = noaa_blob_base_url(state, year)
+    if not candidates:
+        miss_txt = f" (uncataloged: {', '.join(missing)})" if missing else ""
+        msg = (
+            f"bbox {args.bbox} intersects no cataloged states{miss_txt}"
+            if args.bbox else f"state {args.state} not in catalog"
+        )
+        log.error(msg)
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        0, 0, status="error", phase="error", error=msg)
+        sys.exit(1)
+
+    if len(candidates) > 1:
+        # Multi-state bbox dispatch isn't wired through run_noaa yet — the
+        # downstream loop owns a single blob_base/cache_dir/shp_path triple.
+        # build_unified_queue() in this module is the intended multi-state
+        # primitive; hooking it up is a follow-up. For now, surface the
+        # situation so the user can dispatch a single state instead.
+        multi_states = ", ".join(e["usps"] for e in candidates)
+        msg = (
+            f"bbox intersects {len(candidates)} states ({multi_states}); "
+            "multi-state dispatch is not yet implemented. Pick a single "
+            "state from the 'Whole state' tab, or narrow the bbox."
+        )
+        log.error(msg)
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        0, 0, status="error", phase="error", error=msg)
+        sys.exit(1)
+
+    if missing:
+        log.warning("Ignoring uncataloged states that intersect the bbox: %s",
+                    ", ".join(missing))
+
+    entry = candidates[0]
+    # Downstream code uses `state` in logging and `noaa_cache_dir`. Pass the
+    # slug (not USPS) so cache_dir matches refresh_noaa_catalog.py's
+    # convention of f"{slug}_{year}" — the shapefile the refresh already
+    # cached there satisfies _noaa_fetch_tile_index's local-cache check.
+    usps = entry["usps"]
+    state = SLUG_BY_USPS[usps]  # e.g. "CA" -> "california"
+    year = entry["year"]
+    # Build blob_base directly from the entry (bypassing the legacy
+    # NOAA_NAIP_CATALOG lookup in noaa_blob_base_url).
+    blob_base = f"{NOAA_BLOB_BASE}/{entry['dir']}"
     cache_dir = noaa_cache_dir(data_dir, state, year)
     staging = cache_dir / "staging"
     staging.mkdir(parents=True, exist_ok=True)
 
-    log.info("NOAA NAIP pipeline: state=%s year=%d blob=%s", state, year, blob_base)
+    log.info("NOAA NAIP pipeline: state=%s (USPS=%s) year=%d blob=%s",
+             state, usps, year, blob_base)
 
     # Phase 1: Validate blob URL with HEAD request
     update_progress(output, "noaa", args.bbox, "n/a",
@@ -2299,13 +2659,17 @@ async def run_noaa(args):
                         log.info("[%d/%d] Tile %s done (%d/%d complete)",
                                  idx + 1, total_tiles, tile_fname,
                                  tiles_done, total_tiles)
-                        # Checkpoint: record this quad as merged so re-runs skip it
+                        # Checkpoint: record this quad as merged so re-runs skip it.
+                        # _init_noaa_checkpoint ensures the composite-PK schema is in
+                        # place (and migrates from the old tile_filename-only schema
+                        # if this MBTiles was created before Task 14).
+                        _init_noaa_checkpoint(output)
                         import sqlite3 as stdlib_sqlite3
                         with stdlib_sqlite3.connect(str(output)) as ckpt_conn:
-                            ckpt_conn.execute(
-                                "CREATE TABLE IF NOT EXISTS _noaa_checkpoint "
-                                "(tile_filename TEXT PRIMARY KEY)"
-                            )
+                            # TRANSITIONAL: catalog_snapshot and state_usps default to
+                            # '' until Task 15 plumbs real values through and replaces
+                            # this callsite with _record_tile_complete(output, snapshot,
+                            # usps, tile_fname).
                             ckpt_conn.execute(
                                 "INSERT OR IGNORE INTO _noaa_checkpoint (tile_filename) VALUES (?)",
                                 (tile_fname,)
@@ -2353,33 +2717,6 @@ async def run_noaa(args):
         import sqlite3 as stdlib_sqlite3
         with stdlib_sqlite3.connect(str(output)) as conn:
             conn.execute("INSERT OR REPLACE INTO metadata (name, value) VALUES ('name', 'imagery_noaa')")
-        log.info("Building overview pyramids for %s", output)
-        update_progress(output, "noaa", args.bbox, "n/a",
-                        tiles_done, total_tiles, phase="overviews",
-                        geotiffs_downloaded=tiles_done,
-                        geotiffs_total=total_tiles)
-        try:
-            _run_gdaladdo_with_metadata_fixup(output)
-        except Exception as exc:
-            log.warning("Overview generation failed: %s — output is still usable", exc)
-
-        # B1 fix: cancel guard AFTER overview generation, before erode/inpaint
-        if _cancel_requested:
-            update_progress(output, "noaa", args.bbox, "n/a",
-                            tiles_done, total_tiles, status="cancelled",
-                            phase="cancelled",
-                            geotiffs_downloaded=tiles_done,
-                            geotiffs_total=total_tiles)
-            log.info("NOAA pipeline cancelled after overview build")
-            return
-
-        # Checkpoint WAL after overviews before erosion/inpaint
-        import sqlite3 as _pp_sql
-        try:
-            with _pp_sql.connect(str(output)) as _pc:
-                _pc.execute("PRAGMA wal_checkpoint(PASSIVE)")
-        except Exception:
-            pass
 
         # Post-process: clean up JPEG nodata artifacts
         # 1. Erode boundary tiles with heavy nodata (black rectangles over basemap)
@@ -2393,6 +2730,7 @@ async def run_noaa(args):
         # Users who want to re-erode after an expansion can delete the
         # checkpoint and re-run. This matches the "resume = incremental add"
         # mental model.
+        import sqlite3 as _pp_sql
         try:
             from rasterio_ops import erode_nodata_edges as rio_erode_nodata_edges
             from rasterio_ops import inpaint_nodata_pixels as rio_inpaint_nodata_pixels
@@ -2402,7 +2740,7 @@ async def run_noaa(args):
                     output, cancel_check=lambda: _cancel_requested
                 )
                 if eroded:
-                    log.info("Eroded %d nodata-edge tiles for clean basemap transition", eroded)
+                    log.info("Eroded %d nodata-edge tiles for clean basemap transition", len(eroded))
             else:
                 log.info("Skipping erosion on resume run (D1 gate: not idempotent across bbox expansion)")
 
@@ -2426,11 +2764,48 @@ async def run_noaa(args):
                 output, cancel_check=lambda: _cancel_requested
             )
             if inpainted:
-                log.info("Inpainted %d tiles to remove black seams", inpainted)
+                log.info("Inpainted %d tiles to remove black seams", len(inpainted))
         except Exception as exc:
             log.warning("Nodata cleanup failed: %s — output is still usable", exc)
 
-        # B1 fix: cancel guard AFTER inpaint, before final status write
+        # Overviews run LAST (reordered 2026-04-22 per spec 2026-04-22-overview-incremental-design.md §3):
+        # sees post-erosion + post-inpaint base tiles; drains _overview_work_queue
+        # populated by merge_mbtiles, erode, inpaint. mode="auto" picks journal or
+        # nuclear based on queue size / base count ratio.
+        log.info("Building overview pyramids for %s", output)
+        update_progress(output, "noaa", args.bbox, "n/a",
+                        tiles_done, total_tiles, phase="overviews",
+                        geotiffs_downloaded=tiles_done,
+                        geotiffs_total=total_tiles)
+        try:
+            from rasterio_ops import build_overviews as rio_build_overviews
+            rio_build_overviews(
+                output, mode="auto", cancel_check=lambda: _cancel_requested
+            )
+        except Exception as exc:
+            log.warning("Overview generation failed: %s — output is still usable", exc)
+
+        # Fix metadata to reflect actual tile zoom range. Inlined from the
+        # removed _run_gdaladdo_with_metadata_fixup wrapper. Runs regardless
+        # of overview-build outcome (matches the wrapper's original
+        # try/finally pattern) so minzoom/maxzoom reflect whatever tiles
+        # actually exist, even on partial/cancelled overview runs.
+        try:
+            import sqlite3 as _ov_sql
+            with _ov_sql.connect(str(output)) as _oc:
+                _oc.execute(
+                    "UPDATE metadata SET value = (SELECT MIN(zoom_level) FROM tiles) "
+                    "WHERE name = 'minzoom'"
+                )
+                _oc.execute(
+                    "UPDATE metadata SET value = (SELECT MAX(zoom_level) FROM tiles) "
+                    "WHERE name = 'maxzoom'"
+                )
+                _oc.commit()
+        except Exception as exc:
+            log.warning("minzoom/maxzoom metadata fixup failed: %s", exc)
+
+        # B1 fix: cancel guard AFTER inpaint + overviews, before final status write
         if _cancel_requested:
             update_progress(output, "noaa", args.bbox, "n/a",
                             tiles_done, total_tiles, status="cancelled",
@@ -2464,8 +2839,13 @@ async def run_noaa(args):
     # Final status
     # D2: status taxonomy
     #   error            — 0 tiles succeeded (and not a resume run)
-    #   completed_partial — tiles_done > 0 AND tiles_failed > 0
+    #   completed_partial — tiles_done > 0 AND tiles_failed > 0 (per-tile failures)
     #   completed        — clean completion (no failures, or resume run)
+    #   partial_failed   — at least one state's download failed entirely (per-state
+    #                      failure; orthogonal to per-tile completed_partial).
+    #                      TileServer registration is suppressed by the search
+    #                      service's pipeline_status reconciler (Task 26, Phase 3).
+    #                      Written by _finalize_noaa_status() AFTER this block.
     # Search service reconciliation treats completed_partial the same as
     # completed for TileServer restart purposes (see services/search/main.py
     # pipeline_status). Frontend can render a warning badge for partial.
@@ -2500,6 +2880,22 @@ async def run_noaa(args):
         log.info("Total time: %.1f min | Output: %.1f MB | Throughput: %.1f tiles/min",
                  total_elapsed / 60, output_size,
                  tiles_done / (total_elapsed / 60) if total_elapsed > 0 else 0)
+
+    # Task 18: per-state results for Phase 3 multi-state orchestration.
+    # Today the pipeline processes one state at a time, so per_state reflects
+    # just args.state's outcome. Task 26 will populate this dict from the
+    # multi-state loop around run_noaa.
+    # Guard: on total-failure single-state runs, preserve the status=error
+    # signal from the block above — partial_failed is only meaningful when
+    # the run made per-tile progress. Task 26's multi-state loop will lift
+    # this guard since a multi-state run where one state failed but others
+    # succeeded IS partial_failed regardless of any single state's tiles_done.
+    if args.state and (tiles_done > 0 or skip_to_postprocess):
+        per_state_result = "complete"
+        _finalize_noaa_status(
+            output, per_state={args.state: per_state_result},
+            skip_to_postprocess=skip_to_postprocess,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2551,20 +2947,42 @@ def main():
     )
     parser.add_argument(
         "--state",
-        help="State abbreviation for NOAA mode (e.g. AZ, CA)",
-    )
-    parser.add_argument(
-        "--year", type=int, default=2021,
-        help="NAIP year for NOAA mode (default: %(default)s)",
+        type=_normalize_state_arg,
+        help="State slug (e.g. arizona) or USPS code (e.g. AZ — deprecated). Required for NOAA mode unless --bbox is given.",
     )
 
     args = parser.parse_args()
 
     if args.mode == "noaa":
-        if not args.state:
-            log.error("NOAA mode requires --state (e.g. --state AZ)")
+        # --bbox has a module-level default, so we distinguish "user passed --bbox"
+        # from "default" by checking against DEFAULT_BBOX explicitly. This matches
+        # the existing pattern elsewhere in the CLI.
+        bbox_explicit = args.bbox != DEFAULT_BBOX
+        state_explicit = args.state is not None
+        if not state_explicit and not bbox_explicit:
+            log.error("NOAA mode requires --state (e.g. --state arizona) or --bbox")
             sys.exit(1)
-        asyncio.run(run_noaa(args))
+        if state_explicit and bbox_explicit:
+            log.error("--state and --bbox are mutually exclusive for NOAA mode; pick one")
+            sys.exit(1)
+        try:
+            asyncio.run(run_noaa(args))
+        except FileNotFoundError as exc:
+            log.error(
+                "NOAA catalog symlink missing or dangling: %s\n"
+                "Run `python scripts/refresh_noaa_catalog.py` to fetch the catalog, "
+                "then retry.",
+                exc,
+            )
+            sys.exit(1)
+        except SnapshotPrunedError as exc:
+            log.error(
+                "%s\n"
+                "Either restart from scratch (delete %s) or rollback the catalog "
+                "via POST /admin/pipeline/noaa/rollback.",
+                exc, args.output,
+            )
+            sys.exit(1)
     elif args.mode == "tnmaccess":
         asyncio.run(run_tnmaccess(args))
     elif args.mode == "m2m":

@@ -1,0 +1,115 @@
+# NOAA NAIP CONUS — pre-merge real-Azure integration check
+#
+# Manual-dispatch only for now (weekly cron deliberately disabled until
+# Cameron confirms the lane has stable runtime budget). Exercises
+# scripts/refresh_noaa_catalog.py against the real Azure blob container,
+# then spot-checks a Four Corners bbox resolver pass against the
+# resulting catalog.
+#
+# Does NOT actually download GeoTIFFs — that would consume hours of
+# runner time and gigabytes of bandwidth for a CI check. The pipeline's
+# full 3-stage integration happens on the Pi in production.
+
+name: noaa-real-azure
+
+on:
+  workflow_dispatch:
+    inputs:
+      bbox:
+        description: "Bbox to resolve after refresh (default: Four Corners 0.1°)"
+        required: false
+        default: "-109.1,36.9,-108.9,37.1"
+  # schedule:
+  #   - cron: "0 6 * * 1"  # Monday 6 AM UTC — ENABLE AFTER runtime-budget confirmation
+
+concurrency:
+  group: noaa-real-azure
+  cancel-in-progress: false
+
+jobs:
+  refresh-and-resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system GDAL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdal-bin
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install aiohttp aiosqlite pytest pytest-asyncio
+
+      - name: Refresh catalog against real Azure
+        run: |
+          mkdir -p /tmp/geographica-noaa-ci
+          python scripts/refresh_noaa_catalog.py \
+            --output /tmp/geographica-noaa-ci/catalog.json \
+            --ci-baseline
+
+      - name: Inspect catalog
+        run: |
+          python - <<'PY'
+          import json, sys
+          with open("/tmp/geographica-noaa-ci/catalog.json") as f:
+              catalog = json.load(f)
+          entries = catalog.get("entries", {})
+          print(f"snapshot_version: {catalog.get('snapshot_version')}")
+          print(f"parser_version:   {catalog.get('parser_version')}")
+          print(f"total entries:    {len(entries)}")
+          print(f"sample slugs:     {list(entries)[:10]}")
+          if len(entries) == 0:
+              print("ERROR: zero entries in refreshed catalog — possible URL-pattern drift",
+                    file=sys.stderr)
+              sys.exit(2)
+          assert "arizona" in entries, "arizona missing from refreshed catalog"
+          az = entries["arizona"]
+          assert az["tile_index_url"].endswith(".zip"), az["tile_index_url"]
+          print(f"arizona tile_index_url: {az['tile_index_url']}")
+          print(f"arizona tile_count:     {az.get('tile_count', 'n/a')}")
+          PY
+
+      - name: Resolve Four Corners bbox against refreshed catalog
+        env:
+          BBOX_INPUT: ${{ inputs.bbox }}
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          sys.path.insert(0, "scripts")
+          with open("/tmp/geographica-noaa-ci/catalog.json") as f:
+              catalog = json.load(f)
+          from acquire_imagery import resolve_noaa_candidates
+          bbox = os.environ["BBOX_INPUT"]
+          candidates, missing = resolve_noaa_candidates(
+              catalog, state=None, bbox=bbox,
+          )
+          print(f"candidates: {[c['usps'] for c in candidates]}")
+          print(f"missing:    {missing}")
+          four_corners = {"arizona", "utah", "colorado", "new-mexico"}
+          seen = set(c["usps"].lower() for c in candidates) | set(missing)
+          usps_to_slug = {"az": "arizona", "ut": "utah", "co": "colorado", "nm": "new-mexico"}
+          seen_slugs = {usps_to_slug.get(s, s) for s in seen}
+          unaccounted = four_corners - seen_slugs
+          if unaccounted:
+              print(f"ERROR: Four Corners states unaccounted: {unaccounted}",
+                    file=sys.stderr)
+              sys.exit(2)
+          PY
+
+      - name: Upload catalog artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: noaa-catalog-${{ github.run_number }}
+          path: /tmp/geographica-noaa-ci/catalog.json
+          retention-days: 7

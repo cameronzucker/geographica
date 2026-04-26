@@ -1137,6 +1137,14 @@ h4 {
   display: block;
 }
 
+/* While ruler is in drawing/inserting mode, let map clicks fall through
+   the sidebar overlay so vertices can be placed without auto-closing the
+   sidebar (which would hide the live vertex list, banner, and Finish/Clear
+   actions). Mirrors the bbox-drawing flag pattern at app.js:1206. */
+body.ruler-active #sidebar-overlay {
+  pointer-events: none;
+}
+
 /* ----- About Dialog ----- */
 #about-overlay {
   position: fixed; inset: 0; z-index: 100;
@@ -1432,10 +1440,12 @@ h4 {
   background: #e07a95;
 }
 
-/* Re-center button (during navigation) */
+/* Nav re-center button: stacked ABOVE the compass so the
+   direction-of-travel control is the closer-to-thumb button. */
 #nav-recenter-btn {
-  bottom: 120px;
+  bottom: 170px;
   right: 12px;
+  z-index: 11;
 }
 
 /* Disabled overlays during navigation */
@@ -1669,12 +1679,15 @@ body.nav-active #search-container.nav-search-open #search-icon {
 
 /* During nav, results show as map pins only — no dropdown list */
 
-/* ----- Compass Button ----- */
+/* ----- Compass Button -----
+   Stacked below #nav-recenter-btn so both are right-hand thumb
+   accessible. 36px buttons + 14px gap = recenter at bottom:170,
+   compass at bottom:120 (ample clearance over attribution). */
 #compass-north-btn {
   position: absolute;
-  bottom: 160px; /* above zoom controls (~120px) + attribution */
+  bottom: 120px;
   right: 12px;
-  z-index: 10;
+  z-index: 11;
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -1682,7 +1695,313 @@ body.nav-active #search-container.nav-search-open #search-icon {
 }
 
 @media (max-width: 480px) {
-  #compass-north-btn {
-    bottom: 140px; /* tighter on mobile, zoom controls are smaller */
+  #nav-recenter-btn {
+    bottom: 150px;
   }
+  #compass-north-btn {
+    bottom: 100px;
+  }
+}
+
+/* ==== Voice Picker / Preferences section ==== */
+
+.pref-group {
+  margin-bottom: 18px;
+}
+
+.pref-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted, #9aa0a6);
+  margin: 8px 0 6px;
+}
+
+.pref-voice-select {
+  width: 100%;
+  padding: 8px;
+  background: #2d3138;
+  border: 1px solid #3a3f48;
+  border-radius: 4px;
+  color: #e8e8e8;
+  font-size: 13px;
+}
+
+.pref-voice-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#pref-voice-options {
+  margin-top: 8px;
+}
+
+.pref-voice-hint,
+.pref-voice-stub,
+.pref-voice-detecting {
+  display: block;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted, #9aa0a6);
+  margin-top: 8px;
+}
+
+/* Screen-reader-only utility. */
+.sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ============================================================
+   Ruler / Measurement Tool (per spec v3 §C, §D)
+   ============================================================ */
+
+:root {
+  --ruler-line: #ffd400;
+  --ruler-line-shadow: rgba(0, 0, 0, 0.55);
+  --ruler-vertex: #ffd400;
+  --ruler-vertex-selected: #ff7a00;
+  --ruler-vertex-stroke: #ffffff;
+}
+
+/* ── Inline mode banner inside the sidebar panel ─────────────── */
+.ruler-banner-inline {
+  background: rgba(249, 226, 175, 0.12);
+  color: var(--warning);
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(249, 226, 175, 0.25);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -16px -16px 12px -16px;  /* bleed to panel edges */
+}
+.ruler-banner-inline button {
+  background: transparent;
+  border: none;
+  color: var(--warning);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+/* ── Floating map-overlay banner (above #nav-banner) ─────────── */
+#ruler-mode-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.7);
+  color: var(--warning);
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  z-index: 19;  /* above #nav-banner (18), below sidebar (20) */
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  backdrop-filter: blur(4px);
+  pointer-events: auto;
+}
+#ruler-mode-banner.hidden { display: none; }
+#ruler-mode-banner button {
+  background: transparent;
+  border: none;
+  color: var(--warning);
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0;
+  line-height: 1;
+}
+
+/* ── Headline ─────────────────────────────────────────────────── */
+.ruler-headline-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+  margin-bottom: 2px;
+}
+.ruler-headline {
+  font-size: 22px;
+  font-weight: 300;
+  color: var(--sidebar-heading);
+  margin-bottom: 12px;
+}
+
+/* ── Vertex list ──────────────────────────────────────────────── */
+.ruler-section { margin-bottom: 16px; }
+#ruler-vertex-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.ruler-vertex-row {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 8px;
+  min-height: 44px;  /* WCAG 2.5.5 — touch target */
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  margin-left: -8px;
+  padding-left: 8px;
+}
+.ruler-vertex-row:hover { background: rgba(137, 180, 250, 0.06); }
+.ruler-vertex-row.selected {
+  background: rgba(255, 122, 0, 0.1);
+  border-left-color: var(--ruler-vertex-selected);
+}
+.ruler-vertex-row:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.ruler-vertex-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+.ruler-vertex-row-label {
+  color: var(--sidebar-heading);
+  font-weight: 600;
+  min-width: 28px;
+}
+.ruler-vertex-row-coords {
+  color: var(--sidebar-text);
+  font-family: 'SF Mono', 'Monaco', monospace;
+  font-size: 11px;
+}
+.ruler-vertex-row-seg {
+  font-size: 11px;
+  color: #888;
+  margin-top: 2px;
+  margin-left: 36px;
+  display: flex;
+  justify-content: space-between;
+}
+
+/* ── Action row + buttons ─────────────────────────────────────── */
+.ruler-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.ruler-actions button {
+  flex: 1;
+  min-width: 90px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--sidebar-text);
+  padding: 10px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+  min-height: 44px;
+}
+.ruler-actions button.primary {
+  background: var(--accent-muted);
+  border-color: rgba(137, 180, 250, 0.4);
+  color: var(--accent);
+}
+.ruler-actions button.danger { color: var(--danger); }
+.ruler-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+.ruler-actions button:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ruler-action-empty {
+  color: #888;
+  font-size: 12px;
+  margin-top: 12px;
+  font-style: italic;
+}
+
+/* ── Sparkline + stats ────────────────────────────────────────── */
+.ruler-sparkline {
+  background: #181825;
+  border-radius: var(--radius-sm);
+  height: 80px;
+  width: 100%;
+  display: block;
+}
+.ruler-sampling-progress {
+  background: rgba(137, 180, 250, 0.1);
+  color: var(--accent);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.ruler-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 16px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.ruler-stats .label { color: #888; }
+.ruler-stats .value { color: var(--sidebar-heading); text-align: right; font-weight: 500; }
+.ruler-coverage-warn {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: rgba(249, 226, 175, 0.1);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--warning);
+}
+
+/* ── Footer controls ──────────────────────────────────────────── */
+.ruler-footer {
+  display: flex;
+  gap: 6px;
+  padding: 12px 0;
+  border-top: 1px solid var(--sidebar-border);
+  margin-top: 16px;
+}
+.ruler-footer button {
+  flex: 1;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--sidebar-text);
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+  min-height: 44px;
+}
+.ruler-footer button.primary {
+  background: rgba(166, 227, 161, 0.18);
+  border-color: rgba(166, 227, 161, 0.45);
+  color: var(--success);
+}
+.ruler-footer button:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ── [hidden] overrides — UA stylesheet [hidden] { display: none } loses
+   to the four ruler rules above that set display: flex / grid / block.
+   Re-assert hidden=true wins. Specificity 0,2,0 (class+attribute) beats
+   the bare class 0,1,0 so no !important needed. ───────────────────── */
+.ruler-banner-inline[hidden],
+.ruler-actions[hidden],
+.ruler-stats[hidden],
+.ruler-sparkline[hidden] {
+  display: none;
+}
+
+/* ── Mobile responsive ────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .ruler-actions button { flex: 1 1 100%; }
+}
+
+/* ── iOS Safari touch contract (per spec §D.5) ────────────────── */
+.maplibregl-canvas {
+  touch-action: manipulation;
 }

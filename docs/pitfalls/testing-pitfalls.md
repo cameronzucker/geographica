@@ -67,3 +67,11 @@ Any test that sends a POST to an endpoint like `/api/pipelines/start` without mo
 ## 13. subprocess.run blocks signal handlers
 
 `subprocess.run()` blocks the Python thread. If you register a SIGTERM handler that sets a flag, the flag is set but Python never returns from `subprocess.run()` to check it. For interruptible subprocesses, use `subprocess.Popen` with process group management (`preexec_fn=os.setsid`) and forward signals via `os.killpg()`. Test the signal path: mock a long-running subprocess, send SIGTERM, assert termination within a bounded time.
+
+## 14. Don't pin numeric output mappings without auditing the input source
+
+When a test asserts `someFormatter(X) === "literal output Y"`, also audit *why X is what it is*. If X is sourced from a tunable constant elsewhere in the code (a floor, a threshold, a magic number), the test pins the bucket-rounding *and* implicitly pins the constant — every passing run rubber-stamps the constant's choice instead of validating the user-experience consequence.
+
+Symptom: tests pass but the feature feels wrong in field testing because the output is mechanically correct given the input but the input was the wrong choice. Hit this on the 2026-04-25 nav voice floor-fire bug — `formatDistancePrefix(75, true) === "In 200 feet, "` was asserted as correct, but 75m was the bug; the assertion locked it in.
+
+Defence: where a test asserts a numeric mapping, add a comment linking the input value to the originating constant + spec rationale, so a future reviewer can audit "is X still the right input?" alongside "does the function correctly map X → Y?"

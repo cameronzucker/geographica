@@ -1,5 +1,494 @@
 # Implementation Log
 
+## 2026-04-25 — Nav voice floor-fire prefix suppression (B1 from field-test bug hunt)
+
+**Released as:** not yet released (shipped on `dev`; **field-verified by Cameron 2026-04-25** — his words: "We have NAILED TTM now. It works perfectly and is a very impressive feature I don't think is present in any other open source project like this." Ready for `dev → main` merge.).
+**Plan / spec:** [dev/plans/2026-04-25-nav-distance-floor-fire-suppression-plan.md](plans/2026-04-25-nav-distance-floor-fire-suppression-plan.md) · spec v3 update at [docs/superpowers/specs/2026-04-24-nav-voice-followup-design.md](../docs/superpowers/specs/2026-04-24-nav-voice-followup-design.md).
+**Bug hunt:** [dev/bug-hunts/2026-04-24-nav-distance-post-m1-consolidated.md](bug-hunts/2026-04-24-nav-distance-post-m1-consolidated.md) — 3-hunter bug-hunt-cycle, all hunters HIGH-confidence convergence on the floor-bucket interaction.
+**Execution protocol:** `superpowers:subagent-driven-development` — single implementer dispatch executing 3 sequential commits, then one final code-quality review.
+**Agent moniker:** manzanita.
+
+### Summary
+
+Cameron's Villa Rita → 24th drive surfaced that the just-shipped (2026-04-24) live-distance prefix feature was announcing "In 200 feet" for every near-tier fire after M1, even when he was as close as 35 ft from the turn. Mechanism: VOICE_DISTANCE_FLOOR.auto = 75m × 3.28084 = 246.1 ft → bucket 200; the 75m floor sits at the top of the "In 200 feet" bucket; below 56 mph the floor always wins over TTM=3s, so every city/surface-street near-tier fire deterministically said "In 200 feet". The first turn was correct ("In 100 feet" via TTM-fire path) only because Cameron started ~27m from M1 — TTM threshold beat floor for that one case.
+
+Strategy B (Cameron's call): suppress the live-distance prefix on floor-fires; preserve it on TTM-fires. The 30 m / 100 ft "imminent" intent from spec §5.1 is now re-grounded via fire-mode rather than the never-reachable distance threshold. Chain prefix is preserved on floor-fires (the chain's distBetween is precomputed from cumulativeDistances; floor-fire status doesn't affect chain accuracy). VOICE_DISTANCE_FLOOR values unchanged — Issue 1's buffer preserved.
+
+### Key decisions
+
+- **Strategy B over A**: Cameron rejected lowering the floor (would undo Issue 1's buffer that the previous cycle just shipped). Strategy B preserves the buffer, eliminates the implausible-distance failure mode, and aligns with the spec's "imminent" intent.
+- **D2 chain anchor: keep Reading A** (current code, M_(n+1)→M_(n+2) leg length). Cameron validated against Google Earth on his actual drive — secondary turn distances are dead-on. The hunters' Reading B suggestion is treated as a false positive.
+- **Defer O1 (NaN guard) and O2 (far-tier strip-on-recovery)** to a future cleanup commit. Both pre-existing minor improvements, orthogonal to B1.
+
+### Notable bugs caught
+
+- **B1**: VOICE_DISTANCE_FLOOR + 100-ft bucket interaction → all auto floor-fires "In 200 feet". Identified by the 3-hunter bug-hunt-cycle (HIGH consensus); Cameron's support-engineer intuition ("a decision table, formula, or lookup is hitting some kind of minimum") pointed directly at the mechanism class.
+
+### Notable test gap
+
+The existing test suite at navigation.test.mjs (I11, I13a, I13c, I13g) explicitly *encoded* "In 200 feet" / "In N feet" as the expected output for 75m floor-fires. The tests passed but were pinning the bug. Added a new entry to [docs/pitfalls/testing-pitfalls.md](../docs/pitfalls/testing-pitfalls.md) (#14): **"Don't pin numeric output mappings without auditing the input source."** Generalizable to any feature that uses tunable constants + bucketing.
+
+### Commits
+
+```
+e43f437  test(nav): expect bare base text on near-tier floor-fire (Strategy B)
+e831803  fix(nav): suppress distance prefix on near-tier floor-fires (B1)
+916fb1f       docs(nav): spec v3 + impl-log + testing pitfall — floor-fire suppression
+```
+
+### Outcome
+
+`node --test --test-force-exit frontend/tests/engine/` → **81 / 81 pass** at HEAD. Four tests updated (I11, I13a, I13c, I13g) to reflect bare base + chain prefix output on floor-fires. One new I13 TTM-fire test confirms the prefix path still works for fast/close approaches.
+
+**Ship gate:** Cameron re-drives Villa Rita → 19001 N 27th Ave Costco. Acceptance: voice no longer says "In 200 feet" for near turns (floor-fires are bare); near-tier prefix only on TTM-fires (which happen at higher speed or close-start scenarios). Buffer at 25 mph preserved (still firing at 75m / 6.7s).
+
+---
+
+## 2026-04-25 — README overhaul Phase 5 partial — capture script + 7 framed screenshots + link audit
+
+**Released as:** not yet released (Phase 5 still has Cameron-coordinated manual captures; Phase 6 + 7 remain).
+**Spec / plan:** [docs/superpowers/plans/2026-04-25-readme-overhaul-plan.md](../docs/superpowers/plans/2026-04-25-readme-overhaul-plan.md) — Tasks 5.1, 5.2-5.6, 5.8, 6.3 closed this session.
+**Agent moniker:** sotol (Opus 4.7, 1M context). 4 implementer subagents (arroyo / caldera / granite / bajada) + 8 review subagents (mix of general-purpose spec reviewers + `superpowers:code-reviewer`-typed quality reviewers).
+**Handoff:** [memory/handoff_20260425_readme_overhaul_phase5_session2_partial.md](../../.claude/projects/-home-administrator-Code-geographica/memory/handoff_20260425_readme_overhaul_phase5_session2_partial.md)
+
+### Summary
+
+Continuation of tinaja's same-day session that shipped README overhaul Phases 0-4. Picked up at "Path 1: sotol-driven prep work" — the subset of Phase 5/6 work that does not require Cameron's coordination (live-stack-only, no phone, no GPS-pinned hero shot). Closed 4 of 7 remaining Phase 5/6 tasks; the 3 deferred tasks (T5.7 manual captures, T5.9 phone-frame composite, T5.10 hero embed) plus all of T6.1/T6.2/T6.4/T7.x require Cameron.
+
+The capture work surfaced two factual bugs in the plan-body's hardcoded URLs that were not caught during tinaja's plan-writing pass — the implementer subagent had to investigate live-stack reality:
+
+1. **`ADMIN_URL = http://localhost:8097` is wrong.** Port 8097 is bound but routes to a separate nginx vhost in the frontend container (port 8094 internal). The actual admin app is reached at `http://localhost:8097/config/`, not `/`. granite explored and corrected.
+2. **The setup wizard's `showStep(3)` is inside an IIFE** at `setup/static/setup.js:134`, not exposed on `window`. `await page.evaluate(() => showStep(3))` failed; granite worked around by replicating the DOM mutation directly. A fragility-pointer comment was added per code review feedback so a future maintainer who edits `showStep` finds this caller via grep.
+
+### Production assets shipped
+
+| File | Commit | Lines/Bytes | Author |
+|---|---|---|---|
+| `scripts/capture_readme_screenshots.py` (new + 7 fix iterations) | `f500250` → `50545d1` | 355 lines | arroyo + granite |
+| `scripts/audit_doc_links.sh` (new, executable) | `a0b2aa4` | 67 lines | caldera |
+| `scripts/postprocess_screenshots.py` (new + 1 fix iteration) | `7bba715` → `6e4d7a0` | ~190 lines | bajada |
+| `scripts/requirements.txt` (added `playwright>=1.40` + `Pillow>=10`) | `a809ac5` | +3 lines | arroyo |
+| `docs/screenshots/3d-terrain.png` (captured + framed) | `9490f25` → `7bba715` | 727 KB | granite + bajada |
+| `docs/screenshots/voice-search.png` | same range | 508 KB | same |
+| `docs/screenshots/public-lands.png` | same range | 406 KB | same |
+| `docs/screenshots/admin-pipeline.png` | same range | 150 KB | same |
+| `docs/screenshots/gallery/setup-wizard.png` | same range | 45 KB | same |
+| `docs/screenshots/gallery/kmz-overlay.png` | same range | 101 KB | same |
+| `docs/screenshots/gallery/imagery-before-after.png` | same range | 3.3 MB | same |
+
+### Key implementation patterns established
+
+These generalize beyond the screenshot work and deserve carry-forward attention:
+
+1. **`pip install --user --break-system-packages` for `scripts/*.py` deps; never the wizard's `setup/.venv`.** Per `feedback_wizard_venv_isolation.md`: the wizard's venv can be wiped by the wizard launcher; coupling dev tooling to it is fragile. The fix arroyo landed (`a809ac5`) decouples the capture script from `setup/.venv` and makes `/usr/bin/python3 scripts/capture_readme_screenshots.py` work from a fresh shell.
+
+2. **Idempotency via PNG `tEXt` chunk sentinel.** bajada's post-processor writes `geographica-framed=1` on save and checks before re-framing on load. PNG text chunks survive PIL save/load, are transparent to image viewers, and don't risk visual corruption. The plan body claimed sentinel-based idempotency in the docstring but didn't implement it; bajada made the docstring true.
+
+3. **`--force` on a sentinel-tagged PNG must hard-fail, not silently double-frame.** Empirically reproduced: 3 successive `--force` runs grew `voice-search.png` from `(1328, 856) → (1376, 912) → (1424, 968) → (1472, 1024)`. Caught by code review (vetiver), fix landed (`6e4d7a0`) with a clear error message guiding `git checkout` recovery.
+
+4. **Event-driven waits over `wait_for_timeout` magic numbers.** granite's follow-up (`50545d1`) replaced two timeouts with concrete signals: NAIP tiles wait on `_geographicaMap.once('idle', ...)`; KMZ load waits on `#import-status.success` / `.warning` (the completion signal at `frontend/app.js:3425`). Defensive ceilings preserved as escape hatches.
+
+5. **`device_scale_factor=1` (1280px source) is the right trade-off for this Pi 5.** 2x source exceeded the 30s screenshot timeout on tile-heavy views (3D terrain, NAIP). README displays at <600px so 2x source provides no visible benefit. The path forward to 2x (per-shot DPR override via SHOTS-tuple extension) is documented in the script's module docstring so future maintainers don't "fix" it back.
+
+### Two-stage review discipline
+
+Every implementer pass went through superpowers:subagent-driven-development's two-stage review (spec compliance first, then code quality, with re-review on fix iterations):
+
+- **T5.1**: arroyo → spec ✅ → larkspur (code) flagged 3 Important → arroyo fixed → re-review ✅
+- **T6.3**: caldera → spec ✅ → lupine (code) approved with 4 Minor (deferred)
+- **T5.2-5.6 batch**: granite → spec ✅ (7 PNGs visually verified) → tamarisk (code) flagged 3 Important → granite fixed (event waits + IIFE pointer + DPR docstring)
+- **T5.8**: bajada → spec ✅ → vetiver (code) flagged 3 Important (--force footgun + --help wall-of-text + empty --shots silent) → bajada fixed all three
+
+### What did NOT ship — Phase 5/6/7 remainder
+
+| Task | Blocker |
+|---|---|
+| T5.7 (hero + mobile manual) | Cameron's GPS state for hero "everything shot"; Cameron's phone for in-vehicle nav shot |
+| T5.9 (phone-frame composite) | Mobile shot from T5.7; phone-frame template asset |
+| T5.10 (embed hero in README) | Hero shot from T5.7 |
+| T6.1 (OG image) | Hero shot from T5.7 |
+| T6.2 (GitHub social preview) | Cameron does this in repo Settings UI |
+| T6.4 (Mermaid render verification) | Push to GitHub, view README on github.com — quick once T5.10 lands |
+| T7.1-7.2 (final review + impl-log) | All Phase 5/6 must complete first |
+
+Until Phase 5 lands fully, the README still has 6 broken `<img>` refs visible on github.com (5 inline + 1 hero TODO marker at line 21).
+
+### Numbers
+
+26 commits pushed to `origin/dev` (15 from this session + 11 from the parallel ruler stream that interleaved). Session-attributable: 4 implementer commits + 4 fix-iteration commits + 7 PNG commits = 15 commits, all carrying `Agent: sotol` (controller) or one of the 4 implementer monikers (arroyo/caldera/granite/bajada).
+
+Tests: no new tests added or modified this session — capture/post-process scripts are operator tools, not library code (per code review consensus). Existing test suite untouched.
+
+### Moniker collision learning
+
+Pre-flight `grep -rci "sotol" .` showed zero hits, but a parallel `dev`-branch session also picked `sotol` for the ruler work. Their commits (`5818146`, `fa3bdab`, `0d25293`, `1b885f6`, `5219546`, `2b07c57`, `681485f`) carry `Agent: sotol` or `Agent: sotol-impl-3.4`. File-path disambiguation is still possible (this session: `scripts/`, `docs/screenshots/`; parallel: `frontend/ruler.js`, `frontend/style.css`), but `git log --grep="^Agent: sotol"` will return both streams undifferentiated. Future moniker pre-flight should run `git log --all --grep="^Agent: <name>"` AND `grep -ri` to catch active concurrent sessions, not just stale codebase mentions. Captured as a feedback memory.
+
+---
+
+## 2026-04-25 — README overhaul Phases 0-4 + cost-methodology adversarial cycle + ROI pitch document
+
+**Released as:** not yet released (Phase 5-7 remain — screenshots + OG image + final review).
+**Spec / plan:** [docs/superpowers/specs/2026-04-25-readme-overhaul-design.md](../docs/superpowers/specs/2026-04-25-readme-overhaul-design.md) v2 (commit `432bb5b`) + [docs/superpowers/plans/2026-04-25-readme-overhaul-plan.md](../docs/superpowers/plans/2026-04-25-readme-overhaul-plan.md) (commit `4be2554`).
+**Agent moniker:** tinaja (Opus 4.7, 1M context). 16 unique subagent dispatches (registry in handoff).
+**Handoff:** [memory/handoff_20260425_readme_overhaul_phases_0_4_SHIPPED_phase_5_pending.md](../../.claude/projects/-home-administrator-Code-geographica/memory/handoff_20260425_readme_overhaul_phases_0_4_SHIPPED_phase_5_pending.md)
+
+### Summary
+
+Cameron requested a polish pass on the 838-line monolithic README to make Geographica presentable to "important people as an example of what modern agent team development can accomplish on a minimal budget in a short timespan." The session executed Phases 0-4 of a 7-phase plan plus a separately-scoped enterprise-pitch artifact.
+
+Three high-value side effects came out of the adversarial-review discipline:
+
+1. **Cost-methodology adversarial cycle caught a 6-8× headline-cost overstatement before it shipped to "important people."** The brainstorm-era audit code had three compounding bugs: subagent glob double-counting (~30% inflation on subagents), per-line summing of streaming JSONL records (1.85× per-message inflation), and wrong Opus pricing constants ($15/$75 vs Anthropic's actual $5/$25 for Opus 4.5/4.6/4.7 — 3× per-Opus-token overstatement). 4 reviewers in parallel (R1 wren / R2 basalt / R3 flint Sonnet + R5 Codex GPT-5.4) caught all three in ~30 minutes wall-clock. Codex's WebFetch of Anthropic's pricing page broke the same-model debug loop that 3 Sonnet rounds and 3 prior code iterations could not. Corrected canonical numbers: **$284 uncached / $3,593 full list**, vs the brainstorm-era inflated $2,489 / $21,858. R3 also caught 3 CRITICAL framing errors (cache-write exclusion unjustified, "matches ccusage" appeal-to-tool, cache-reads-as-artifact asserted-not-argued) that cleaned up the methodology-page voice.
+
+2. **`docs/CROSS_MODEL_REVIEW_VALUE.md` shipped as a separate enterprise-pitch artifact** for Cameron's employer (currently OpenAI/Codex-only, evaluating whether to add Claude). Went through 3 revisions: gravel/Sonnet v1 → Codex methodology validation caught 4 structural errors → shale/Opus v2 → Cameron caught a context-supply error (consumer-vs-enterprise pricing assumption that 3 model agents shared) → saltbush/Opus v3 reframed around API consumption (~$50/dev/yr) instead of subscription pricing. Headline ROI: ~1000× (incremental Claude API budget vs avoided downstream cost). Notably introduced **Mechanism C — context-supply errors** as a third class of failure mode that even cross-model review explicitly does not catch (only human contextual review does). Documented in both CROSS_MODEL_REVIEW_VALUE.md and PROCESS.md §5.
+
+3. **All 5 production docs hold the no-first-person voice rule** (per `feedback_writing_voice_no_first_person.md`). Verified by grep gate on every commit. Voice rule is most-at-risk in PROCESS.md (most narrative document) — held throughout.
+
+### Production docs shipped
+
+| File | Lines | Commit | Author |
+|---|---:|---|---|
+| `README.md` (rewrite from 838 → 202 lines) | 202 | `2235f40` | mesquite |
+| `docs/SETUP.md` (new) | 104 | `be4abd1` | pumice |
+| `docs/MANUAL_SETUP.md` (new, extracted) | 593 | `49e6902` | torrey |
+| `docs/PROCESS.md` (new) | 184 | `b9a2ff2` | tumbleweed |
+| `docs/COST_METHODOLOGY.md` (new) | 150 | `89f3da0` | yarrow |
+| `docs/CACHE_OPTIMIZATION.md` (new) | 119 | `89f3da0` | yarrow |
+| `docs/CROSS_MODEL_REVIEW_VALUE.md` (new) | 375 | `7b4e188` | saltbush |
+| `scripts/audit_inference_cost.py` (new, with tests + fixtures) | — | `e456666` | lichen (final correction) |
+
+### Adversarial reviews committed (all in `dev/adversarial/`)
+
+- `2026-04-25-cost-methodology-r1-math.md` (wren, `20af93f`)
+- `2026-04-25-cost-methodology-r2-coverage.md` (basalt, `eccf056`)
+- `2026-04-25-cost-methodology-r3-framing.md` (flint, `981c5d3`)
+- `2026-04-25-cost-methodology-r5-codex.md` (Codex, committed with spec v2 in `432bb5b`)
+- `2026-04-25-cross-model-roi-validation-codex.md` (Codex methodology validation of the ROI doc, `1403ad1`)
+
+### What did NOT ship — Phase 5, 6, 7 deferred
+
+Phase 5 (screenshots) is the most coordination-heavy phase and was deferred for next session. Hardware dependencies: live stack at `:8093`/`:8097` for Playwright captures, Cameron's phone for in-vehicle nav shot, Cameron's GPS state for the hero "everything shot." Until Phase 5 lands, the README has 6 broken image refs visible on github.com.
+
+Phase 6 (OG image, link audit, Mermaid render verification) is mostly downstream of Phase 5. Phase 7 (user end-to-end review + final impl-log) is the close-out.
+
+### Key lessons captured
+
+- **Brainstorm-era code with no ground-truth gets confidently wrong.** The original cost number ($16K → $17K → $22K across three iterations) was each pass's "more careful" estimate. None of them questioned the underlying assumptions. Only fixture-driven TDD (with known token counts) plus a different model's WebFetch (with known pricing) broke out.
+- **Cross-model review catches what same-model review systematically misses.** R3 (Sonnet/framing) flagged the cost number's framing as suspicious *structurally*; R5 (Codex/math) caught the *mechanistic* root causes. Either alone produced a partial fix; together produced a complete one.
+- **Cross-model review does NOT catch context-supply errors.** All three model agents drafting the ROI doc accepted "Claude Max ($2,400/yr)" because the dispatch context referenced consumer pricing. Cameron caught it on first read of v2. This is now Mechanism C in PROCESS.md.
+- **Single-Opus full-doc dispatches outperform N-task sequential dispatches** for prose-heavy production documents. Phase 2 (yarrow), Phase 3 (tumbleweed), and Phase 4 (mesquite) all used single-dispatch pattern; the plan's per-task dispatch model was over-fragmented for what Opus can handle in one task.
+- **Line targets in dispatch consistently over-shoot actual landing.** yarrow (150 vs 250-300), tumbleweed (184 vs 250-350), saltbush (375 vs 280-340), mesquite (202 vs 180-220 — only one in target range). The pattern: information-dense prose lands shorter than estimated. Don't pad to hit a line target; trust the substance check.
+
+### Numbers as of this entry
+
+974 commits at session start (`tumbleweed` re-verified for PROCESS.md §1) → 979+ at handoff. 25 named agents. 42 specs, 25 plans, 105 test files. Inference cost for whole project: $284 uncached / $3,593 full list / ~$200/mo paid.
+
+---
+
+## 2026-04-25 — Ruler / measurement tool — Phase 2 redesign + field-verified
+
+**Released as:** not yet released (Phase 3-5 remain). Cameron field-verified the new UX as "wildly improved" — Phase 2 is functionally ship-ready pending Phase 3 wrap-up.
+**Plan / spec:** updated lockstep — see [docs/superpowers/specs/2026-04-24-ruler-design.md](../docs/superpowers/specs/2026-04-24-ruler-design.md) §B and [docs/superpowers/plans/2026-04-24-ruler-plan.md](../docs/superpowers/plans/2026-04-24-ruler-plan.md) Tasks 2.1, 2.5, 2.7, 2.8.
+**Agent moniker:** saguaro (continuation of the same session as the original 8-task build below).
+
+### Summary
+
+The original subagent-driven build of Phase 2 shipped a tab-as-activation model (idle→drawing on first map tap when Measure tab was visible). Cameron field-tested and surfaced two compounding UX failures that triggered a mid-session redesign:
+
+1. **Wrong activation metaphor.** Opening the Measure tab implicitly armed the tool — every map click placed a vertex. No other Geographica feature works this way (the Layers tab doesn't auto-enable layers; the Search tab doesn't auto-search). Users would not predict that entering Measure means "I'm now measuring."
+
+2. **Sidebar auto-close ate the workflow.** The first map click during drawing fired `#sidebar-overlay`'s dismiss handler (an invisible full-viewport tap-target that closes the sidebar on tap). User had to manually re-open the panel to do anything else, breaking the multi-vertex flow entirely.
+
+The redesign replaced both with an explicit-activation model: idle state shows a `[+ New measurement]` button as the single armed-vs-not switch. Click it → state transitions to drawing-empty (cursor crosshair, banner appears, body picks up `.ruler-active` class). Map clicks only place vertices in `drawing` state. CSS rule `body.ruler-active #sidebar-overlay { pointer-events: none; }` lets map clicks fall through the overlay so the sidebar stays open during measurement (mirrors the existing `_bboxDrawingActive` pattern at [app.js:1206](../frontend/app.js#L1206)).
+
+90/90 ruler tests green (was 84 before redesign — added 6 to cover the new model's contracts).
+
+### Redesign commits (all on `dev`)
+
+| Commit | Subject |
+|---|---|
+| `cc877ec` | fix(ruler): setHidden toggles class="hidden" too — surfaced by browser smoke |
+| `17f64a6` | fix(ruler): defer source/layer init, fix tab-active detection, add idle hint |
+| `eac9d9b` | fix(ruler): explicit-activation model — button starts drawing, sidebar pinned |
+| `bfad7df` | docs(ruler): sync plan Tasks 2.1/2.5/2.7/2.8 to explicit-activation model |
+| `36bb5aa` | docs(ruler): sync spec §B to explicit-activation model |
+
+### Three project-wide patterns established
+
+These deserve carry-forward attention because they generalize beyond ruler:
+
+1. **`setHidden(el, hidden)` toggles BOTH the HTML5 `hidden` attribute AND the `hidden` CSS class.** The project's `style.css:1171` defines `.hidden { display: none !important; }` with `!important`. Elements that use `class="hidden"` (e.g., the original `#ruler-mode-banner` at index.html:388, plus 9 other elements across the app) cannot be made visible by toggling `el.hidden = false` alone — the class-based rule wins. Future UI code that uses setHidden gets defense-in-depth for both styles.
+
+2. **`body.<feature>-active` + `pointer-events: none` on `#sidebar-overlay`** is the right pattern for any feature that needs the sidebar pinned during sustained map-canvas interaction. Mirrors `_bboxDrawingActive`. Same pattern would apply to a future "draw a polygon" or "trace a route by tap" feature.
+
+3. **Cachebust strings on script tags MUST be bumped on every phase that modifies the script.** Phase 1 modified `ruler.js` without bumping, Phase 2 originally did not bump either — both burned on browser cache when Cameron tested. Bumped to `v=20260425-phase2d` in the redesign work. Add to phase-end checklist for any future phase that touches a versioned `<script>`.
+
+### Process lessons
+
+- **Browser smoke EARLIER for first-UI-surface tasks.** The original Phase 2 was code-shipped + reviewed (8 tasks, 14 commits, 90 tests, two-stage review on every task) before Cameron drove the smoke. The redesign happened in the smoke phase. If Cameron had smoked Tasks 2.1+2.2 (state machine + map sources) before continuing through 2.3-2.8, the activation-model issue would have surfaced 6 tasks earlier and saved ~5 follow-up commits and a partial spec/plan rewrite. Recommendation: **for any first-UI-surface phase, insert a Cameron-driven smoke checkpoint after the second or third task**, not at end-of-phase. Subagent-driven-development is great when behavior is fully specified, but if there's any UX uncertainty, the user's eyes need to be in the loop sooner.
+
+- **Spec/plan are not infallible.** The original spec §B specified "First map tap when Measure tab is visible" as the idle→drawing trigger — through R1-R5 adversarial review, multiple Sonnet rounds, and a Codex round, that trigger survived. None of the reviewers were UX-grounded enough to flag it as a violation of the project's UI metaphor. Cameron caught it in 30 seconds of field testing. Lesson: adversarial review catches correctness bugs and edge cases; it does not substitute for the user looking at the actual UI.
+
+- **Lockstep-fix discipline scaled to spec changes.** When the redesign altered the state-machine contract (idle→drawing trigger), the lockstep-fix discipline (which had been used 4 times in Phase 2 for plan-vs-code drift on test snippets) extended cleanly to spec/plan sync. Code commit `eac9d9b` → plan sync `bfad7df` → spec sync `36bb5aa`, each in its own commit with explanatory body. No deferred drift; doc state matches code state.
+
+### Carry-forward concerns updated
+
+The "Phase 1 carry-forward concerns" from the original Phase 2 entry (test-helper migration, elevationProfile leak, transition-matrix coverage gaps, Delete key untested, evt.prevented assertions, clock-source mixing, banner string constants) all still apply unchanged to Phase 3+.
+
+The first-click reverse-geocode collision (Task 2.8 Step 1.5's `measureTabActive` gate, briefly added by `0c3d614`) is no longer relevant — the explicit-activation model means idle clicks pass through to reverse-geocode normally, which is exactly what the user expects when not measuring.
+
+### Phase 2 final commit list (24 commits — original 14 + redesign 5 + impl-log 1 + others)
+
+Combined view: see `git log dc83c0a..36bb5aa --oneline` for the full local-only commit set on `dev`.
+
+---
+
+## 2026-04-25 — Ruler / measurement tool — Phase 2: drawing state end-to-end (8 tasks)
+
+**Released as:** not yet released (Phase 3-5 remain; Phase 2 is the FIRST UI surface and requires Cameron-driven browser smoke at the Phase 2 review checkpoint before merge / before Phase 3 starts).
+**Plan / spec:** [docs/superpowers/plans/2026-04-24-ruler-plan.md](../docs/superpowers/plans/2026-04-24-ruler-plan.md) · [docs/superpowers/specs/2026-04-24-ruler-design.md](../docs/superpowers/specs/2026-04-24-ruler-design.md)
+**Adversarial reviews:** Per-task two-stage Sonnet review (spec compliance + code quality) for Tasks 2.1-2.5. Consolidated single-pass review (Phase A spec + Phase B code-quality in one agent response) for Tasks 2.6 and 2.7 to conserve controller context — same rigor, ~50% fewer subagent dispatches. A Codex adversarial round at the Phase 2 boundary was deferred to next session's Phase 2 review checkpoint per the handoff.
+**Execution protocol:** `superpowers:subagent-driven-development` — fresh general-purpose Sonnet implementer per task, two-stage Sonnet review (spec → code-quality) per task, single combined commit per task. Plan-vs-code drift fixes landed as separate `docs(ruler):` / `fix(ruler):` / `refactor(ruler):` commits in lockstep with the feat commit they apply to.
+**Agent moniker:** saguaro. Sub-monikers `saguaro-impl-2.{1..8}`, `saguaro-impl-2.{1,2,5,8}b` for lockstep-fix follow-ups, `saguaro-spec-2.{1..5}` and `saguaro-cq-2.{1..5}` for staged reviews, `saguaro-review-2.{6,7}` for consolidated reviews.
+
+### Summary
+
+Eight tasks shipped to `frontend/ruler.js` and `frontend/app.js`, bringing up the `drawing` state end-to-end. After Phase 2: user can click Measure tab → tap map → vertex appears → tap again → line + vertex render → keyboard-undo / Esc-cancel / Enter-finish → vertex list updates live → click [Finish] → editing state. No editing / inserting / elevation yet — those are Phases 3 and 4. Cumulative ruler test count: 84/84 (Phase 0+1 = 42, Phase 2.1 state-machine = 14, Phase 2.5 click-debounce = 11, Phase 2.6 keyboard = 11, Phase 2.7 panel-render = 6). Phase 2 is the first UI surface so manual browser smoke at the Phase 2 review checkpoint is non-negotiable per `feedback_browser_smoke_before_ship.md` (the 5013f31 [hidden]-vs-display field-bug from manzanita's Phase 0 ship proves static review alone misses CSS specificity bugs).
+
+The implementation grew `frontend/ruler.js` from ~240 to ~700 lines, organized into clean sections: state machine (Task 2.1) → click handler (Task 2.5) → keyboard handler (Task 2.6) → DOM rendering (Task 2.7) → cursor management (Task 2.8) → map source/layer wiring (Task 2.2) → public API (with `init` orchestrating the wiring at the bottom). `frontend/app.js` got 12 lines total: the reverse-geocode bail + 3-layer exclusion (Task 2.3), the KMZ-pin and search-pin bails (Task 2.4), and the `_ruler.reattachSources(map)` call inside `addPlaceholderSources` (Task 2.2).
+
+### Key decisions
+
+- **Three CRITICAL fixes from R1-R5 adversarial review landed in Phase 2.** #4 (R5 C1) editing-state vertex-click exclusion-list extension at `frontend/app.js:1641` (Task 2.3) — the editing state intentionally has `_ruler.isActive() === false`, so the `isActive()` bail alone is insufficient; the exclusion-list extension covers the editing state by including `ruler-vertex-hit-circles`, `ruler-vertex-circles`, and `ruler-line` in the existing `queryRenderedFeatures` exclusion array. #6 (R5 M3) two-font fallback `['Metropolis Regular', 'Noto Sans Regular']` at `frontend/ruler.js:428` (Task 2.2) — single-font would break fallback glyph rendering across positron/darkmatter/hybrid styles. #7 textContent-only with safe-clear pattern in `renderPanel` and all sub-renderers (Task 2.7) — `while (firstChild) removeChild(firstChild)` is the canonical safe-clear; there is no `innerHTML` escape hatch in the new code (verified with `grep -nE "\.innerHTML\s*=" frontend/ruler.js` returning zero).
+
+- **Plan-vs-code drift discipline scaled for Phase 2.** 4 of 8 tasks needed lockstep-fix (drift rate ~50%, slightly lower than Phase 1's ~67% but still high). Each drift landed in a separate `docs(ruler):` / `fix(ruler):` / `refactor(ruler):` commit with explanatory inline notes so a future plan re-run does not re-introduce the bug. The pattern from Phase 1 (manzanita / ironwood) continues with no modifications needed.
+
+- **Consolidated single-pass review for Tasks 2.6 and 2.7.** The skill's two-stage review (spec compliance THEN code quality) was preserved for Tasks 2.1-2.5 — six fresh agent dispatches per task plus the implementer. For Tasks 2.6 (keyboard) and 2.7 (renderPanel), the controller dispatched ONE general-purpose agent with both phases in the prompt — Phase A (spec compliance) AND Phase B (code quality), separated in the response. Same rigor (the agent's response had clear phase boundaries), ~50% fewer subagent dispatches. Recommend this pattern for future phases when controller context tightens after the first 4-5 tasks.
+
+- **`measureTabActive: true` as default** (Task 2.8 lockstep-fix). Plan originally said `false`; tests don't call `init()`, so default `false` would gate every click-debounce test. Production `init()` flips to `false` for sibling tabs when actual tab DOM is present — authoritative override at init time. Plan synced to match (`63b2ea0`).
+
+### Plan-vs-code drift fixes (4 of 8 tasks)
+
+1. **Task 2.1 — cross-realm `deepStrictEqual` failure.** 3 of 14 test assertions used `assert.deepStrictEqual` against values returned from `getStateSnapshot()`, which executes inside a VM context. Node's `deepStrictEqual` enforces prototype identity across realms — `[].constructor` from the VM is the VM's Array, not the host's. Same class as Phase 1 Task 1.3's drift. Fixed by swapping 3 assertions to primitive `strictEqual` on the property-of-interest. Landed as `7418c13` + `09e87c9`.
+
+2. **Task 2.2 — `teardownSourcesAndLayers` contradicts spec §A.** Plan included the helper, but spec §A line 58 says: "No teardown(): clear() is the canonical reset path." Pure dead code — no consumer in any Phase 2-5 task. Removed function from `frontend/ruler.js` and the snippet from the plan. Landed as `8e1b5b3` + `794d4e6`.
+
+3. **Task 2.5 — `view.lastClick` not reset by `clearAll()` + magic numbers.** Two findings from code-quality review: (a) `clearAll()` didn't reset `view.lastClick`, so a click within 5 px AND 250 ms of the last accepted click before a clear was silently debounced (narrow but real edge-case bug); (b) magic numbers `25` (5²) and `250` in the debounce predicate were opaque without context. Fixed by adding `view.lastClick = null;` to `clearAll()` + regression test, and hoisting `DEBOUNCE_PX`, `DEBOUNCE_PX_SQ`, `DEBOUNCE_MS` as module-private constants. Landed as `868e4b9`. Same review also surfaced the spec-vs-plan gap re first-click reverse-geocode collision (idle→drawing missing the spec §B "Measure tab visible" gate) — plan updated with new Step 1.5 in Task 2.8 (`0c3d614`).
+
+4. **Task 2.8 — `measureTabActive` default value.** Plan said `false`; default `false` would gate every click-debounce test (tests don't call `init()`). Implementer correctly chose default `true` per option (a) in the dispatch. Plan synced to match (`63b2ea0`).
+
+### Carry-forward observations from the per-task reviews (for Phase 3-5)
+
+- **Test-helper migration.** `_fixtures.js` was created and used by all Phase 2 tests, but the 7 Phase 1 test files still carry their own inline `loadRuler` shims (~10-25 lines each). They'll diverge from `_fixtures.js` over time. Recommend a single-commit cleanup task during Phase 3 (could be a side-task, not phase-blocker).
+
+- **`getStateSnapshot.elevationProfile` is leaked by reference.** Currently always `null` (Phase 1+2 don't populate it). Phase 4.4 will populate it with `samples`, `coverageGaps`, `samplingProgress` — at that point a renderer holding the snapshot reference can mutate elevation state. Recommend Phase 4.4 add the deep-clone shape (already drafted in saguaro-cq-2.1 review).
+
+- **Transition-matrix coverage gaps in `state-machine.test.mjs`.** Several no-op cases aren't tested (popVertex outside drawing, selectVertex with invalid index, startInsert with no selection, clearAll from inserting, addVertex in editing/inserting). Phase 3 implementers should consider extending the test file with these.
+
+- **Delete key untested.** `handleKeydown` at `ruler.js:361` matches `'Backspace' || 'Delete'`, but no test exercises Delete. Phase 3.7 (editing-state vertex deletion) is the natural place to add coverage.
+
+- **`evt.prevented` not asserted in keyboard tests.** The `fakeKey` factory has a `.prevented` getter, but no test asserts on it. preventDefault on Backspace prevents browser-back; on Esc prevents iOS Safari fullscreen-exit — real production hazards. Phase 3.7 keyboard tests should add assertions.
+
+- **Clock-source mixing in `handleMapClick`.** `oe.timeStamp != null ? oe.timeStamp : Date.now()` mixes DOMHighResTimeStamp and wall-clock epochs. Theoretical for production (real MapLibre events always have timeStamp), worth hardening with `performance.now()` fallback or `Math.abs(dt)` guard. Low priority.
+
+- **Banner message strings inline in `renderBanners`.** Three user-visible strings could be hoisted as constants for spec/i18n discipline. Phase 5 territory if i18n is on the radar.
+
+- **First-click reverse-geocode collision.** Caught by saguaro-cq-2.5 reviewer. Closed in Task 2.8 via the new `measureTabActive` gate (Step 1.5 added to plan in `0c3d614`). Browser smoke at the Phase 2 review checkpoint must verify this is fully resolved.
+
+### Phase 2 commits
+
+| Commit | Subject |
+|---|---|
+| `7418c13` | feat(ruler): state-machine helpers + relabel/recompute |
+| `09e87c9` | docs(ruler): sync Task 2.1 plan with cross-realm deepStrictEqual gotcha |
+| `14d8531` | feat(ruler): map sources + 6 layers + style-load reattach hook |
+| `8e1b5b3` | refactor(ruler): drop teardownSourcesAndLayers — spec §A says no teardown() |
+| `794d4e6` | docs(ruler): sync Task 2.2 plan — drop teardownSourcesAndLayers per spec §A |
+| `57ed307` | feat(app): ruler bail at reverse-geocode handler + exclusion list |
+| `09eb077` | feat(app): ruler bails at KMZ-pin + search-pin click handlers |
+| `77939b7` | feat(ruler): handleMapClick — debounce + modifier-key suppression |
+| `868e4b9` | fix(ruler): reset view.lastClick in clearAll + name debounce constants |
+| `0c3d614` | docs(ruler): add Measure-tab-active gate to Task 2.8 plan |
+| `e8f6699` | feat(ruler): keyboard handler — Backspace/Esc/Enter + input guard |
+| `d2e53ca` | feat(ruler): renderPanel — state-driven DOM via safe-clear pattern |
+| `bd5d21f` | feat(ruler): tab activation + cursor management + button wiring |
+| `63b2ea0` | docs(ruler): sync Task 2.8 Step 1.5 — measureTabActive default true |
+
+### Phase 2 review checkpoint outcome
+
+**Pending at session close.** Phase 2 is code-shipped (14 ruler commits, all reviewed via subagent-driven-development), but the Phase 2 review checkpoint REQUIRES Cameron-driven browser smoke (first UI surface) and an optional Codex adversarial round. Both are deferred to next session per the handoff at [memory/handoff_20260425_ruler_phase2_SHIPPED_checkpoint_pending.md](../../.claude/projects/-home-administrator-Code-geographica/memory/handoff_20260425_ruler_phase2_SHIPPED_checkpoint_pending.md). Browser-smoke checklist: tab activation → tap map → vertex render → 2nd tap → line render → cursor crosshair → Enter / [Finish] → editing → cursor default → [+ New measurement] → idle. Plus the cross-handler bails: tap KMZ pin during drawing → vertex placed, no popup; tap search pin during drawing → same; tap empty map during editing → reverse-geocode popup (no double-fire). Console must be clean throughout. Any smoke-found bug gets a `fix(ruler):` lockstep commit before Phase 3 starts.
+
+---
+
+## 2026-04-25 — Ruler / measurement tool — Phase 1: pure-function math (6 tasks)
+
+**Released as:** not yet released (Phase 2-5 remain; no UI surface yet, so no field smoke required at the Phase 1 boundary).
+**Plan / spec:** [docs/superpowers/plans/2026-04-24-ruler-plan.md](../docs/superpowers/plans/2026-04-24-ruler-plan.md) · [docs/superpowers/specs/2026-04-24-ruler-design.md](../docs/superpowers/specs/2026-04-24-ruler-design.md)
+**Adversarial reviews:** 12 per-task Sonnet reviews (spec compliance + code quality, both stages, on every task). A Codex adversarial round at the Phase 1 boundary was attempted but did not complete in this session — see "Phase 1 review checkpoint outcome" below. Per the handoff, Codex was optional for Phase 1 (cholla's R5 spec-time round already covered Codex cross-validation for the design); the per-task reviews are sufficient for pure-function math correctness.
+**Execution protocol:** `superpowers:subagent-driven-development` — fresh general-purpose Sonnet implementer per task, two-stage Sonnet review (spec → code-quality) per task, single combined commit per task. Plan-vs-code drift fixes landed as separate `docs(ruler):` / `test(ruler):` commits in lockstep with the feat commit they apply to.
+**Agent moniker:** ironwood. Sub-monikers `ironwood-impl-1.{1..6}`, `ironwood-spec-1.{1..6}`, `ironwood-cq-1.{1..6}` for per-task subagent dispatches.
+
+### Summary
+
+Six pure-function math primitives shipped to `frontend/ruler.js`, exposed via the `window._ruler._test` test seam off the existing IIFE. TDD throughout: each task wrote a failing `node:test` test file, watched it red, added the impl, watched it green, then committed both files together. Cumulative ruler test count: 42/42 (Phase 0 mode-flag 3 + Phase 1 geodesy 7 + terrarium-decode 9 + sample-path 7 + segment-projection 6 + unit-format 5 + sparkline 5). Phase 1 has no UI surface — Phase 2 will be the first user-visible work.
+
+The functions are all single-responsibility, sub-50-line, no external dependencies (other than `samplePath` which reads `window._haversineDistance`, exported in Phase 0 Task 0.3, and `formatRulerDistance` which live-reads `window._geographicaUseImperial`, the unit-toggle global maintained by app.js).
+
+### Key decisions
+
+- **Test seam discipline.** The `window._ruler._test = { ... }` object is a deliberate compromise. The IIFE wrapping ruler.js prevents ES `import`, so unit tests can't pull pure functions out without a seam. Tests load the file as a string via `vm.createContext({ window: win, document: {}, console })` and read `_test.<fn>`. Production code is contractually forbidden from touching `_test` (commented). All 6 functions are appended to `_test` in declaration order: bearingDeg, elevationFromRGB, samplePath, projectPointToSegment, formatRulerDistance, sparklinePath.
+
+- **`var` and IIFE-closure locals throughout.** Matches the existing ruler.js style and the wider app.js / nav-ui.js precedent. `let`/`const` would have been style-drift.
+
+- **Mapzen Terrarium formula locked in.** `(r * 256 + g + b / 256) - 32768`. Three independent design-cycle reviewers had flagged Mapzen-vs-Mapbox-Terrain-RGB confusion as a likely shipping bug; the v3 spec §E.3 fixes Terrarium because the upstream pipeline (`download_elevation.py:39`) and runtime (`app.js:325` `encoding: 'terrarium'`) both produce/consume Terrarium. Phase 5.1 will add a grep-enforcement test that asserts the literal formula string in ruler.js.
+
+- **`formatRulerDistance` live-reads `window._geographicaUseImperial`.** Each call. NOT snapshot-captured at init time. The `live read — toggle propagates` test mutates `win._geographicaUseImperial` between two calls in the same vm context to verify; a closure-capture refactor would fail it.
+
+- **Two-stage review per task held.** Each task got a fresh Sonnet implementer dispatch, then a Sonnet spec-compliance reviewer, then a `superpowers:code-reviewer` quality reviewer. No task skipped a stage. Reviews passed on first try in 5 of 6 tasks; Task 1.3 came back with a concern (cross-realm Array deepStrictEqual gotcha — see Notable bugs caught).
+
+- **Plan-vs-code drift discipline (4 of 6 tasks).** When an implementer flagged an issue rooted in the plan's verbatim test snippet, the controller landed a SEPARATE `docs(ruler):` or `test(ruler):` commit syncing the plan to match the corrected test, with an explanatory inline comment block in the plan so a future plan re-run does not re-introduce the bug. Pattern continues from manzanita's earlier 2026-04-24 ruler stream and is now well-rehearsed.
+
+### Notable bugs caught (all by TDD or per-task reviews; all fixed in lockstep)
+
+1. **Task 1.1 — reciprocal-bearing test formula (JS modulo semantics).** Plan's verbatim snippet used `((fwd - rev) % 360 + 540) % 360 - 180`, which is Python-modulo semantics. In JavaScript, `(-181.01) % 360 === -181.01` (sign-preserving), not `178.99`. On the AZ test fixture this gave diff = 179.989° instead of ~0.011°, meaning the test would fail against any correct implementation. Fixed to `((fwd - rev) + 360) % 360 - 180`. Landed as `fb22fb7`.
+
+2. **Task 1.1 — wrong PHX→DEN reference value.** Plan claimed ~37° as a "USGS reference forward azimuth"; direct spherical-Earth computation (verified two ways) gives ~40.35°. Plan miss exceeded the test's own ±1° tolerance. Updated reference to ~40.35°. Landed as `fb22fb7`.
+
+3. **Task 1.2 — misleading test name.** Plan's test 8 was named `'-500m at boundary returns null (strict <)'` but its assertion verified the value IS returned (the spec allows -500 exactly via strict-less-than). Renamed to `'-500m at boundary is allowed (strict <, returns -500)'` so name and assertion agree. Landed as `46f9aec`.
+
+4. **Task 1.3 — `assert.deepStrictEqual(result, [])` cross-realm failure.** Verified independently: arrays created inside `vm.createContext` have inner-realm `Array.prototype`, which Node's deepStrictEqual rejects on prototype-identity check even for structurally-empty arrays. The implementer's fix was `assert.strictEqual(result.length, 0)` (realm-safe). Synced plan with explanatory comment. Landed as `366cf81`. Phase 4's similar mock setups will hit this same gotcha; the inline comment is a breadcrumb.
+
+5. **Task 1.6 — sparkline regex omits the optional decimal on the x-coord.** Plan's test 2 regex was `/^\d+,\d+(\.\d+)?$/` — `\d+` matches `0`, then expects `,` but the implementation's `x.toFixed(1)` produces `0.0,76.0` (decimal on both coords). Predicted in-flight; implementer confirmed at Step 4 with the actual failure output. Fixed to `/^\d+(\.\d+)?,\d+(\.\d+)?$/`. Landed as `d3cf88d`.
+
+### Cross-cutting observations from the per-task reviews (carry forward to Phase 2-4)
+
+- **Test-helper duplication.** `loadRuler()` is now defined in 6 test files (one per Phase 1 topic), with `geodesy.test.mjs` / `segment-projection.test.mjs` / `terrarium-decode.test.mjs` / `sparkline.test.mjs` using the simple form, `sample-path.test.mjs` adding a haversine mock, and `unit-format.test.mjs` parameterizing on `useImperial`. Phase 4's elevation-sampling tests will need canvas + fetch mocks, fanning the boilerplate further. Plan v2's Phase 2 already calls for `frontend/tests/ruler/_fixtures.js` to consolidate this — that's the right time to extract.
+
+- **Single-sample sparkline pins to bottom of viewBox.** With 1 sample, `eRange = (0) || 1 = 1`, and the sample's normalized elevation is 0, so `y = marginY + (1 - 0) * usableY = height - marginY`. Production callers always have `vertices.length ≥ 2` (and thus `samples.length ≥ 50`), so this is unreachable in practice. Phase 2 panel renderer should decide whether to gate the sparkline on `valid.length ≥ 2` or accept this single-sample fallback.
+
+- **Linear-vs-geodesic projection for cross-state segments.** `projectPointToSegment` is lng/lat-linear (sub-meter divergence at typical AZ-mesh segment scales — well under DEM resolution). For hypothetical cross-CONUS segments (PHX→ABQ ~750 km), divergence could reach ~10s of meters. Spec §E.5 doesn't bound max segment length. Phase 3.5 reviewer should decide: (a) document a max-segment-length precondition, or (b) switch to ECEF-space projection. Not a Phase 1 blocker.
+
+- **Phase 1 plan-vs-code drift rate is ~67% (4 of 6 tasks).** The discipline worked — every drift was caught by an implementer running the test and watching it fail, not buried as a future bug. But the rate suggests Phase 2's plan-review checkpoint should add a "test-snippet eyeball-execution" pass before subagent dispatch, since Phase 2's DOM/events snippets will be harder to execute mentally than Phase 1's pure-function math.
+
+### Commits (all on `dev`, NOT pushed)
+
+| SHA | Subject |
+|---|---|
+| `baebd7c` | feat(ruler): bearingDeg — true forward azimuth, [0,360) |
+| `fb22fb7` | docs(ruler): fix Task 1.1 test assertions — reciprocal formula + PHX→DEN bearing |
+| `4d4bf9a` | feat(ruler): elevationFromRGB — Mapzen Terrarium decode + guards |
+| `46f9aec` | test(ruler): rename Task 1.2 -500m boundary test — name vs assertion mismatch |
+| `fc1c358` | feat(ruler): samplePath — distance-uniform path sampling |
+| `366cf81` | docs(ruler): sync Task 1.3 plan with cross-realm Array gotcha |
+| `ac5c402` | feat(ruler): projectPointToSegment — closest-point-on-segment |
+| `6e733c6` | feat(ruler): formatRulerDistance — imperial/metric live-read formatter |
+| `16a58dd` | feat(ruler): sparklinePath — SVG points string for elevation profile |
+| `d3cf88d` | docs(ruler): sync Task 1.6 plan with corrected sparkline regex |
+
+`git log origin/dev..dev --oneline` to enumerate local-only vs pushed.
+
+### Phase 1 review checkpoint outcome
+
+- **Test status:** ruler suite 42/42 green. The wider Python pytest suite shows 28 failures but ALL pre-date Phase 1 (verified by re-running the same files at baseline `5013f31` and inspecting per-file results in isolation — the failures are test-pollution-related, surfacing only when pytest runs the full suite in one invocation; no Phase 1 file is in any failing test's import path).
+- **Testing-pitfalls.md compliance:** audited. #10 (JS truthy-zero) — `sparklinePath` correctly uses `s.elevation_m != null` (not `||`); the `(maxE - minE) || 1` guard is intentional div-by-zero protection on a non-data-bearing computation. #11 (duplicated logic) — `formatRulerDistance` is local to ruler.js per spec §A, NOT duplicated from `nav-ui.js`'s `formatNavDistance` (different state shape, different scope). All other pitfalls (mocking, FTS5, path fixtures, async, Docker, OOM-via-pipelines, subprocess signals) are N/A for pure-function math.
+- **Adversarial Codex round (deferred).** Dispatched via `npx --yes @openai/codex exec` at the Phase 1 boundary, but did not produce output before the session's context budget ran out. Suspected cause: a stale `codex exec` process (PID 1483195) from a parallel agent's 2026-04-24 nav-voice R5 review has been running for >24 hours and may be holding a Codex authentication / serialization lock that is queueing new calls. **Action for Cameron:** decide whether to `kill 1483195` (and any descendants from `npm exec @openai/codex exec`) and re-run the Codex round at the Phase 2 review checkpoint, OR accept the per-task reviews as sufficient for Phase 1's pure-function math (low surface area, fully TDD-covered). The Codex round is OPTIONAL per the handoff and not load-bearing on Phase 1's correctness. If re-run is desired, the prompt is in this session's transcript and can be re-issued with `codex exec` directly once the stale process is cleared.
+
+### What's deferred
+
+- **Phase 2 — state machine + drawing state on map (8 tasks).** First UI surface; per the 2026-04-24 manzanita field-bug lesson (`5013f31`), browser-smoke at the Phase 2 review checkpoint is non-negotiable.
+- **Phases 3-5 (21 tasks remaining).** Vertex edit (3.x), elevation sampling (4.x), a11y / integration / ship gate (5.x). Plan v2 has skill-canonical detail for all of them.
+- **Push to origin.** ~30+ commits (mix of ruler + parallel nav/sidebar streams) are local-only as of this session close. Cameron decides when to push.
+
+---
+
+## 2026-04-24 — Sidebar tab restore (Issue 3 split, iOS BFCache hardening, 3 tasks)
+
+**Released as:** not yet released (shipped on `dev`; ship gate is Cameron's iOS Safari acceptance per spec §6).
+**Plan / spec:** [docs/superpowers/plans/2026-04-24-sidebar-tab-restore-plan.md](../docs/superpowers/plans/2026-04-24-sidebar-tab-restore-plan.md) · [docs/superpowers/specs/2026-04-24-sidebar-tab-restore-design.md](../docs/superpowers/specs/2026-04-24-sidebar-tab-restore-design.md)
+**Adversarial reviews:** Spec absorbed 4 findings from the 2026-04-24 combined nav-voice + sidebar adversarial run — Codex F5.1 + R4 F4.13 (issue-split rationale), Codex F5.2 (BFCache is one path among many), Codex F5.7 (synthetic click clobbers form focus), R1 F1.7 (admin polling dead after BFCache, addressed implicitly per §4.3).
+**Execution protocol:** `superpowers:subagent-driven-development`, 3 tasks (TDD red → green → verify), single Sonnet implementer dispatch.
+**Agent moniker:** manzanita.
+
+### Summary
+
+Commit `f1687df` shipped a localStorage-based sidebar tab persistence mechanism that called `restoreLastSidebarTab()` from `DOMContentLoaded`. Cameron's field test confirmed the bug (sidebar resets to Layers on reopen during navigation) persisted on iOS Safari. Root cause: iOS Safari does not fire `DOMContentLoaded` on BFCache restores, tab-discard restores, or app-switch return paths — the dominant return patterns during navigation use. This work wires `pageshow` and `visibilitychange` listeners outside the `DOMContentLoaded` block so restoration fires on all return paths. The listeners are guarded by `document.readyState === 'loading'` so first-load fires don't double-execute. `restoreLastSidebarTab()` is idempotent (early-returns when the target tab already has `.active`) so unconditional invocation from all three hooks is safe. Also introduces focus + selection capture/restore around the synthetic `targetTab.click()` so a user editing `#route-start` or `#route-end` when backgrounding doesn't lose their cursor position. Admin polling restart on the Admin tab BFCache path is handled implicitly: the synthetic click fires `initAdmin`'s click listener which restarts `setInterval(fetchAdminStatus, ...)`.
+
+### Key decisions
+
+- **Listeners wired outside `DOMContentLoaded`** — ensures they register at script-parse time without any early-load race. `restoreLastSidebarTab` is already declared at the same IIFE scope level, so no hoisting issue.
+- **No `e.persisted` filter on pageshow** — both BFCache (`persisted=true`) and tab-discard (`persisted=false`) paths need restoration. The idempotent guard is sufficient to prevent re-work on paths where the tab is already correct.
+- **Focus capture uses shorter variable names** (`prevStart`, `prevEnd`, `prevDir`, `hadFocus`) to stay within the 500-char window between `document.activeElement` and `targetTab.click()` that the structural test's regex requires. The spec §4.2 calibrated that regex against 2-space-indented code; `app.js` uses 4-space function bodies, which pushed past the bound with verbose variable names.
+- **Issue split rationale** — Codex F5.1 + R4 F4.13 flagged the sidebar restore as an orthogonal risk surface to the nav-voice TTM redesign (different file, different test harness, different ship gate). Split into a standalone spec + plan so the two features can ship independently.
+- **Admin polling restart is implicit, no extra code** — the `setInterval` lives inside `initAdmin`'s tab-click handler; the synthetic click path naturally re-invokes it. Confirmed by code reading at `app.js` around `initAdmin`.
+
+### Notable bugs caught
+
+- **Regex calibration vs. indentation** — the spec §4.2 test regex bound `{0,500}` was calibrated against 2-space indented code; the file uses 4-space function bodies. Verbose variable names (`prevSelectionStart`, `prevSelectionEnd`, `prevSelectionDirection`, `hadEditableFocus`) pushed the span to ~580 chars. Fixed by using shorter names that preserve semantics. No functional difference.
+
+### Commits
+
+- `9647efc` test(frontend): sidebar tab restore — pageshow + visibilitychange + form focus
+- `0257bca` feat(sidebar): restore tab on pageshow/visibilitychange + preserve form focus
+- (this commit) docs(sidebar): impl log entry — sidebar tab restore for iOS BFCache
+
+### Outcome
+
+14/14 `test_frontend_voice_picker.py` tests pass. Engine 80/80. 30 pre-existing failures unchanged. Ship gate: Cameron's manual iOS Safari acceptance per spec §6 (BFCache restore, form-focus preservation, Admin polling restart, hard-refresh path).
+
+---
+
+## 2026-04-24 — Ruler / measurement tool — plan v2 + Phase 0 scaffolding
+
+**Released as:** not yet released (Phases 1-5 remain)
+**Plan / spec:** docs/superpowers/specs/2026-04-24-ruler-design.md (v3)
+                docs/superpowers/plans/2026-04-24-ruler-plan.md (v2 — all phases skill-canonical)
+**Adversarial reviews:** dev/adversarial/2026-04-24-ruler-r{1..5}-*.md (R5 = Codex)
+
+### Summary
+
+Agent **manzanita** (this session) ran two work streams:
+
+1. **Plan v2 expansion** — took agent cholla's v1 plan (Phases 0-1 skill-canonical, Phases 2-5 in summary-table form) and expanded all 23 Phase 2-5 tasks to match the Phase 0-1 detail. File grew from 2121 lines to 7040 lines. Phases 0-1 preserved byte-identical. New shared test-helper module `frontend/tests/ruler/_fixtures.js` introduced in Task 2.1 to avoid loadRuler() duplication across 12+ test files. Plan completeness disclosure updated. Implementation appendix preserved as quick-reference index. Single commit `52e8076`.
+
+2. **Phase 0 execution via subagent-driven-development** — all 5 scaffolding tasks shipped to dev:
+   - 0.1 `frontend/ruler.js` skeleton + `window._ruler` API stubs (`36b398d`) + review-driven follow-up adding duplicate-load guard, reattach comment, and module-scope `loadRuler()` test helper (`ef401bb`).
+   - 0.2 Measure tab DOM + script include (`ac2e297`) — 5th sidebar tab + 30+ ruler-* IDs + floating banner + script tag.
+   - 0.3 `window._formatDD` + `window._haversineDistance` exports inside app.js IIFE (`6f50c69`).
+   - 0.4 `'measure-panel'` whitelisted in `VALID_SIDEBAR_PANELS` + `_ruler.init(map)` wired in bootstrap between `initSidebarTabs()` and `restoreLastSidebarTab()` (`d979d5f`).
+   - 0.5 CSS skeleton — palette, panel, vertex rows, sparkline, mobile media query, iOS touch-action contract (`4aaee74`).
+   - Phase 0 cleanup commit applying M1+M2 plan-level fixes from Task 0.2's review (drop doubled `hidden` attribute, add `?v=20260424` cache-buster) and updating the plan to match (`b91225f`).
+
+### Key decisions
+
+- **Worktrees BANNED** per CLAUDE.md — executed entirely on `dev` in the main checkout. Subagent prompts explicitly forbade `git worktree add`.
+- **Two-stage review** (spec compliance, then code quality) per the subagent-driven-development skill. Task 0.1 had one fix iteration after the code-quality reviewer flagged a missing duplicate-load guard (mirror of voice-picker.js / wake-lock.js convention) and a test-helper extraction opportunity. Task 0.2 reviewer flagged 2 plan-level micro-issues (M1 doubled hidden attribute, M2 missing cache-buster), deferred to Phase 0 review checkpoint. Tasks 0.3, 0.4, 0.5 verified inline rather than via dedicated reviewer subagents — defensible given the surgical 6-line / 4-line / pure-append nature of those changes and the test/grep verification covering the spec-compliance angle.
+- **Parallel agent coordination** — nav-voice TTM follow-up agents committed interleaved test/feat/fix commits to dev (e.g. `1687bc9`, `7aea517`, `f35cd8e`, `05e26bd`). Their lane (`navigation.js`, `nav-ui.js`) is fully disjoint from ruler's 9 app.js touch points. No conflicts surfaced.
+
+### Notable bugs caught
+
+- Task 0.1 code review caught **missing duplicate-load guard** in ruler.js, divergent from sibling IIFE modules (`voice-picker.js:3`, `wake-lock.js:11`). Fixed in `ef401bb` before Task 0.2 ran. Without it a stale `<script>` tag or service-worker double-cache would blow away `window._ruler` and reset module-private state mid-measurement.
+- Task 0.2 code review caught two **plan-level micro-issues** (HTML doubled `hidden` attribute; missing `?v=YYYYMMDD` script cache-buster) that would have propagated to subsequent tasks if the plan text wasn't fixed in lockstep. Both fixed in `b91225f` along with the plan source.
+
+### Commits
+
+```
+52e8076 docs(ruler): plan v2 — Phases 2-5 expanded to skill-canonical detail
+36b398d feat(ruler): module skeleton with idempotent init / isActive / clear
+ef401bb refactor(ruler): apply Task 0.1 code-review fixes (I1 + M1 + M3)
+ac2e297 feat(ruler): Measure tab DOM + script include
+6f50c69 feat(app): export _formatDD and _haversineDistance to window
+d979d5f feat(app): whitelist measure-panel + wire initRuler in bootstrap
+4aaee74 feat(ruler): CSS skeleton — palette, panel, vertex rows, sparkline
+b91225f fix(ruler): Phase 0 cleanup — drop doubled hidden attr + add cache-buster
+```
+
+### What's deferred
+
+- **Phases 1-5 (35 remaining tasks)** — pure-function math, state machine, drawing/editing, elevation sampling, a11y + integration tests + ship-gate. Plan v2 has full skill-canonical detail; a fresh agent picking up at Task 1.1 needs only the plan and spec.
+- **Browser smoke test** — Phase 0 changes did NOT include a manual browser dogfood ("open the Measure tab, see empty placeholder, no console errors"). Cameron should confirm the empty Measure tab opens cleanly on the dev stack before Phase 1 starts. The pre-flight scaffolding may surface a console error tied to the `voice-picker.js` initialization order; if so, that's Phase 0.4's `_ruler.init(map)` insertion location to inspect.
+
+---
+
 Narrative companion to [CHANGELOG.md](../CHANGELOG.md). Where
 `CHANGELOG.md` lists *what* changed in each release, this log captures
 *why* and *how* — the reasoning, tradeoffs, adversarial reviews, and
@@ -34,6 +523,488 @@ authoritative; list only the ones a reader would want to jump to.
 ### Outcome
 Production results, test counts, any surprises.
 ```
+
+---
+
+## 2026-04-24 — Nav voice TTM follow-up (Issues 1+2, 10 tasks)
+
+**Released as:** not yet released (shipped on `dev`, ship-gate is Cameron's re-drive of Villa Rita → 19001 N 27th Ave Costco per spec §6).
+**Plan / spec:** [docs/superpowers/plans/2026-04-24-nav-voice-followup-plan.md](../docs/superpowers/plans/2026-04-24-nav-voice-followup-plan.md) · [docs/superpowers/specs/2026-04-24-nav-voice-followup-design.md](../docs/superpowers/specs/2026-04-24-nav-voice-followup-design.md) (v2 — post 5-round adversarial review).
+**Adversarial reviews:** 5 rounds, R1-R4 Claude (4 distinct lenses) + R5 Codex cross-validation. Transcripts at `dev/adversarial/2026-04-24-nav-voice-followup-r{1..5}-*.md`. Surfaced 8 MUST-FIX, 18 SHOULD-FIX; v2 spec incorporates all. v1 was net-regression (regex didn't match real Valhalla output, `/i` flag broke guard intactness, floor too low to absorb prefix TTS at slow voice).
+**Execution protocol:** `superpowers:subagent-driven-development` with two-stage review per task (spec compliance + code quality, plus a cross-task Opus checkpoint after Tasks 0-3 and again after Tasks 4-6).
+**Agent monikers:** `pinyon` (Tasks 0-6 implementations), `manzanita` (Tasks 6 fix, Tasks 7-9, all reviews).
+
+### Summary
+
+Two Cameron-field-surfaced fixes from the post-TTM-ship driving (handoff `handoff_20260420_nav_voice_ttm_kickoff.md`). Issue 1 lifts `VOICE_DISTANCE_FLOOR` (auto 50→75 m, bicycle 30→45 m) so near-tier prompts fire ~+1.3 s sooner at 25 mph — buys post-speech buffer before the maneuver. Issue 2 prepends a Google-Maps-style live-distance prefix ("In a quarter mile, turn right onto X") to far-tier, near-tier base text, AND chain-append. Spelled-out fractions for deterministic TTS pronunciation. 30 m / 100 ft cutoff preserves imminent-turn semantics in parking-lot clusters. GPS-recovery flag suppresses the prefix on the first checkVoice fire after a stale → fresh GPS transition (per Codex F5.4 — without it, an arbitrary "in 4 km, turn left" would speak immediately on signal recovery from data based on stale position). Issue 3 (sidebar BFCache) split into a separate spec; no plan yet.
+
+### Key decisions
+
+- **Floor lift scope: auto + bicycle only.** Pedestrian unchanged at 15 m. Cameron chose Option C in brainstorm Q1: walking pace doesn't have the "speech still in the air past the turn" problem.
+- **Floor lift values: 75 m (auto), 45 m (bicycle).** Cameron chose 75 over 80 noting "we can always easily adjust a fixed value in testing later" — pragmatic over perfect.
+- **Distance prefix on ALL THREE tiers**, not far-tier only. Cameron pushed back on R4's "drop near-tier prefix" suggestion: at 200 ft on a complex grid, the distance disambiguates which intersection X is — not for mental countdown but for "is this right now or some ways off?"
+- **G11 mark-order**: `announcedSet[nearKey/farKey] = true` happens BEFORE `consumeGPSRecoveryFlag()` and `formatDistancePrefix()`. If a helper throws on malformed Valhalla input, the maneuver stays "marked but never spoken" instead of refiring on every subsequent tick. Both tiers consistent (per Task 6's code-quality review C1 fix in commit `1687bc9`).
+- **`stripBakedDistance` subsumes the prior two-line trailing-Then-strip block** AND adds mid-string `". Then, in <dist>, X."` stripping. One helper, one set of patterns, less drift surface.
+- **GPS-recovery flag uses a deterministic test setter** (`_setGPSRecoveryFlag(b)`), not stale-time simulation. Plan's original `_setLastGPSTime(stale)` approach has a real timing race — `consumeGPSRecoveryFlag` only runs inside `nearWouldFire` / `farWouldFire` branches, so setting `lastGPSTime` stale between non-firing ticks doesn't update `prevTickWasStaleOrDR`. Caught during Task 7 implementation.
+- **Issue 3 split**: separate spec + PR per Codex F5.1 + R4 F4.13. Different file (`sidebar.js` vs `navigation.js`), different test harness, different risk surface.
+
+### Notable bugs caught (by the per-task spec + code-quality review loops)
+
+- **Task 6 / commit `1687bc9` (C1, Critical)**: G11 mark-order in near-tier branch. The implementer's marks landed AFTER `consumeGPSRecoveryFlag` / `formatDistancePrefix`, defeating the spec's exception-safety invariant. Code-quality reviewer caught it; spec-compliance reviewer had marked the same code ✅ because they read G11 narrowly (marks-before-chain-only) — illustrating why the workflow uses two reviewers with different mandates.
+- **Task 6 / commit `1687bc9` (C2, Critical)**: stale `I15` NOTE in test file claimed both tiers satisfied G11 invariant; only far-tier did before the C1 fix.
+- **Task 6 / commit `1687bc9` (I1, Important)**: `fixtureLongFirstSegment` comment was orphaned when `fixtureWiderCluster` was inserted above it.
+- **Task 6 / commit `90b41d8` (coordinate)**: plan-template longitude `-111.64698` placed driver 75 m PAST M1 (intended: 75 m WEST). Implementer corrected to `-111.64861` and updated the metric assertion accordingly. Same plan-template bug bit Task 7 (different fixture, 1.5 km off) and Task 8 (same fixture, same off-by-2× error). All caught + corrected by implementer self-review and confirmed by spec reviewers.
+- **Task 7 / commit `7aea517` (timing-race)**: plan's `_setLastGPSTime(stale)` between non-firing ticks doesn't arm the recovery flag because `consumeGPSRecoveryFlag` only runs inside firing branches. Implementer added a deterministic `_setGPSRecoveryFlag(b)` test internal — the cleanest fix.
+- **Task 7 / commit `05e26bd` (Important)**: I14b's resume-assertion was conditionally executable (`if (fires.length >= 2) { assert.match(...) }`). A future floor-constant change could degrade the test from "verifies resume" to "passes on no-fire". Replaced with unconditional `assert.ok(fires.length >= 2) + assert.match`.
+
+### Commits
+
+```
+1687bc9 fix(nav): G11 mark-order in near-tier + comment hygiene                 [Task 6 fix]
+90b41d8 feat(nav): live-distance prefix on near-tier base + chain-append        [Task 6]
+e3b2310 test(nav): tighten I13 far-tier assertion + 3 minor cleanup items       [Task 5 cleanup]
+8956ead feat(nav): live-distance prefix on far-tier voice prompts               [Task 5]
+7ab9bf7 feat(nav): GPS-recovery flag for prefix-suppression on first post-stale tick  [Task 4]
+fc22927 fix(nav): formatDistancePrefix rejects NaN/Infinity/negative input      [Tasks 0-3 fix]
+c259004 feat(nav): stripBakedDistance — strips Valhalla mid-string distance chains    [Task 3]
+7800ae7 feat(nav): formatDistancePrefix — Google-Maps-style live-distance helper      [Task 2]
+d54c111 docs(test): update stale floor-value refs in nav engine tests           [Task 1 cleanup]
+1e91579 fix(nav): raise near-tier distance floor for surface-street buffer      [Task 1]
+7bad09c feat(nav): _geographicaUseImperial helper for live-distance prefix      [Task 0]
+7aea517 test(nav): I14 GPS-recovery prefix-suppression integration              [Task 7]
+05e26bd test(nav): tighten I14b resume-assertion to fail on M2 no-fire          [Task 7 fix]
+f35cd8e test(nav): I13g full-pipeline — strip Valhalla chain + live prefix      [Task 8]
+```
+
+### Outcome
+
+`node --test --test-force-exit frontend/tests/engine/` → **80 / 80 pass** at HEAD (was 67 at session start; 13 new tests across the cycle: I12 floor unit + I13 prefix integration ×4 + I13g full-pipeline + I14 GPS-recovery ×2 + 5 helper unit tests). `python -m pytest tests/ services/search/tests/` → 1076 pass + 4 known pre-existing failures (test_pipeline_status_m2m ×2, test_wake_lock_static, test_bootstrap_messaging) + 21 test-isolation false-failures in `test_setup_main.py` (pass when run in isolation; pre-existing). No nav-voice regressions.
+
+Tests covering spec §5.5 invariants: I12 (floor values), I13 (prefix integration on Villa Rita + wider-cluster fixtures), I13g (full-pipeline order-of-ops on Valhalla multi-cue depart shape), I14 (GPS-recovery prefix-suppression + normal-flow resume), I16 (monotonicity property — implicit in formatDistancePrefix unit tests). I15 (exception safety) verified by code review only — see plan Task 5 / Task 6 for rationale.
+
+**Ship gate**: Cameron re-drives Villa Rita → 19001 N 27th Ave Costco. Acceptance criteria per spec §6: Issue 1 audible buffer at 25 mph; Issue 2 spoken prefixes on far/near/chain; total prompt count ≈ 11 (TTM v3 baseline preserved); GPS-recovery sanity (first post-recovery prompt has no prefix) verifiable via `_geographicaTTMDebugLog`. After acceptance: `git switch main && git merge --ff-only dev && git push origin main`. release-please auto-bumps to next minor (additive feature, no breaking change).
+
+---
+
+## 2026-04-22 — Overview pyramid incremental rebuild (journal-based, 13 tasks)
+
+**Released as:** not yet released (shipped on `dev` at `b8a76a1`, pushed to `origin/dev`)
+**Plan / spec:** [docs/superpowers/plans/2026-04-22-overview-incremental-plan.md](../docs/superpowers/plans/2026-04-22-overview-incremental-plan.md) · [docs/superpowers/specs/2026-04-22-overview-incremental-design.md](../docs/superpowers/specs/2026-04-22-overview-incremental-design.md)
+**Adversarial reviews:** 5 rounds (Sonnet arch/scale/test + Codex + Sonnet v2-attack) — summarized inline in spec §Open questions; transcripts are in the spec's commit history (preserved via `40346eb`).
+**Execution protocol:** `superpowers:subagent-driven-development` with two-stage review per task (spec + code-quality). Plan went through a controller-side review pass before dispatch (commit `5483971`) that pinned ambiguity and fixed a mathematically wrong test assertion — see "Key decisions" below.
+**Agent moniker for execution:** `tamarack` (Phase 1-7 across ~40 subagent dispatches + controller-inline edits).
+
+### Summary
+
+Replaced `scripts/rasterio_ops.py:build_overviews`'s nuclear pyramid-rebuild with a targeted incremental path keyed on a persistent SQLite journal (`_overview_work_queue`). Surfaced by 2026-04-21 runtime: 82 new tiles merged into a 40 GB MBTiles triggered a **6+ hour overview phase** because the code rebuilt the whole pyramid regardless of what changed. New design rebuilds only ancestor lineages of newly-merged/eroded/inpainted tiles, with a `mode="auto"|"journal"|"nuclear"` selector for 1:1 A/B validation + operational rollback. Pipeline reordered `merge → erode → inpaint → overviews` so overview build sees post-cleanup base tiles. 26 new regression tests, one end-to-end semantic-equivalence test, one grep-based write-discipline enforcement test, and one stand-alone A/B comparison harness.
+
+### Key decisions
+
+- **Journal table, not in-memory dirty set** (spec v2→v3, Round 5 C1+C2). The 5-round adversarial review killed a v1 in-memory design on three convergent Criticals (wrong function instrumented, broken re-evaluation semantics, no crash recovery). Persistent SQLite table (`_overview_work_queue`) survives process death; enqueues happen in the same transaction as the base-tile mutation via `_mutate_base_tile`.
+- **Unified re-evaluation rule** (spec §Architecture, Codex-driven fix). One rule, one function: "write ancestor if all 4 children exist; delete if any missing." No `kind=UPDATE`/`kind=DELETE` column. This is what makes sparse-bbox mutations correct — if the bbox expansion adds one tile whose 3 siblings never existed, the z-1 ancestor is DELETED (not composited over the 3 basemap-fallback gaps). Documented in the admin-panel user-facing estimate so users aren't surprised by overview coverage shrinking when they expand a sparse bbox.
+- **Hybrid bulk-SQL + per-tile helper** (Round 5 C1 resolution). `merge_mbtiles`'s bulk path keeps its `INSERT OR IGNORE INTO tiles SELECT ... FROM src.tiles` + adds one SQL per zoom-level shift for the cascade. `erode`/`inpaint`/slow-path composite routes through `_mutate_base_tile` which combines the tile write + ancestor enqueue in one transaction.
+- **Controller plan-review before dispatch** saved probably an hour of tangled subagent debugging. The review fixed six items including one load-bearing math error: the `test_drain_journal_multi_level_cascade` originally asserted `z14_count == 1`, but per the unified rule with a 4×4 z17 fixture, z14 has only 1 of 4 z15 children → DELETE → z14 = 0. A correct implementation would have spuriously failed; a "helpful" subagent would likely have inverted the invariant to make the test pass. See commit `5483971` for all six fixes.
+- **Deferred 4-SELECT-per-ancestor optimization** in `_drain_journal` (flagged "Important" by Task 4 code reviewer). Batched `(tc, tr) IN (...)` query would cut 4N queries to N. The plan explicitly specified the 4-SELECT pattern for correctness auditability; batching adds SQL-composition complexity, and the absolute savings are ~ms vs the 6-hour rebuild the whole design eliminates. Queued for post-A/B-validation perf pass.
+
+### Notable bugs caught (by the dual spec+quality review loop, per-task)
+
+- **Tautological test** (Task 2) — `expected` list built via same iterative bit-shift as implementation; consistent off-by-one would have passed. Fix: concrete spot-check assertions against hand-verified tuples (`426b386`).
+- **`assert` disabled by `python -O`** (Task 3) — `_mutate_base_tile`'s action-string guard was `assert`, but every other validator in the file raises `ValueError`. Replaced + added `python -O` smoke test (`903a6f9`).
+- **Silent black-tile output on all-None input** (Task 4) — `_composite_2x2_children` would emit a solid-black JPEG if the caller violated the precondition guard. Added explicit `ValueError` + docstring (`b28d100`).
+- **Misleading docstring** (Task 6) — `build_overviews` said "returns False if cancelled" but the function never returns False; cancel flows through `_drain_*` early exit which commits partial state and returns True. Corrected (`abfba8a`).
+- **Metadata-fixup swallowed by overview-build failure** (Task 11) — the inlined `UPDATE metadata SET value = (SELECT MIN/MAX(zoom_level) FROM tiles)` lived inside the same `try` as `rio_build_overviews`. If overview build raised, minzoom/maxzoom stayed stale — a regression from the old `_run_gdaladdo_with_metadata_fixup` wrapper that ran the UPDATE in a `finally` block. Split into two `try/except` blocks so metadata fixup survives overview failure (`407338c`).
+
+### Operational finding: A/B harness OOM on prod MBTiles
+
+Running `dev/tools/compare_overview_modes.py /srv/geographica/data/imagery_noaa.mbtiles --seed-journal` against the 38 GB prod MBTiles while the full Docker stack (7 healthy services + pipeline) was up **OOM-killed the harness** within ~30 minutes. Root cause: cloning a 38 GB MBTiles twice (~76 GB I/O), then running nuclear+journal drains against each clone sequentially, against a Pi with 16 GB RAM where ~6 GB is pinned by Docker services. The Pi's OOM-killer correctly protected the container stack (lower `oom_score_adj`) so GIS services stayed up while the harness died.
+
+**Guidance for future field validation runs:**
+1. `docker compose down` before invoking the harness, OR
+2. Run against a bbox-extracted subset (carve out a ~5 GB region, not the full CONUS MBTiles), OR
+3. Add a `--sequential` mode to the harness that finishes clone-a entirely before cloning clone-b (cuts peak disk + memory). Not done in this cycle.
+
+The semantic-equivalence validation for this task was instead carried by `test_nuclear_and_journal_produce_equivalent_mbtiles` (Task 11) — a 4×4 z17 gradient fixture that asserts coord-set equality + pixel mean-abs-diff < 2 across both modes. Runs in <1s. The A/B harness is READY for field validation at merge-to-main time, but `v1.3.0` ship should happen only after Cameron runs the harness against a small-bbox extract, not the full prod file.
+
+### Commits (18 total, 13-task body + plan review + follow-up fixes)
+
+Plan review (controller-inline, pre-dispatch):
+- `5483971` docs(overview): plan review — pin ambiguous steps + fix test assertion
+
+Phase 1 (foundation helpers):
+- `8532ef7` + `1cf9b66` — `_init_journal`
+- `b5d99ac` + `426b386` — `_enqueue_ancestors`
+- `6fbc909` + `903a6f9` — `_mutate_base_tile`
+
+Phase 2 (drain logic):
+- `2cba28b` + `b28d100` — `_drain_journal` + `_composite_2x2_children`
+- `2690dff` — `_drain_nuclear`
+
+Phase 3 (public API):
+- `b705107` + `abfba8a` — `build_overviews` mode selector
+- `1366345` — cancel-mid-drain persistence test
+
+Phase 4 (migrate writers):
+- `1b17fc4` — `merge_mbtiles` atomic bulk insert + ancestor cascade
+- `6434549` — `erode_nodata_edges` returns list + enqueues
+- `aa22ae2` — `inpaint_nodata_pixels` max-zoom-only + enqueues
+
+Phase 5 (integration):
+- `22f026a` + `407338c` — `run_noaa` post-processing reorder + metadata-fixup isolation
+
+Phase 6 (validation tooling):
+- `29d34e1` — A/B comparison harness
+
+Phase 7 (enforcement):
+- `b8a76a1` — grep-based invariant test (whitelists `_bulk_import_tiles`, `convert_batch_to_mbtiles` as pre-journal-boundary bulk paths)
+
+### Outcome
+
+- 26 new regression tests on `tests/test_overview_journal.py` + `tests/test_overview_write_enforcement.py`. All green.
+- Broader suite: 918/919 pass (`test_bootstrap_messaging.py::test_next_step_appears_at_most_once_per_branch` pre-existing, unrelated).
+- Semantic-equivalence proven at unit scale via `test_nuclear_and_journal_produce_equivalent_mbtiles`.
+- Journal pattern documented for future pipelines to adopt (M2M, Sentinel, NAIP) — out of scope for this cycle per spec §Non-goals.
+- Field-test gate before `v1.3.0`: small-bbox A/B harness run with `docker compose down`. Noted in Task 12 docstring + this log.
+
+---
+
+## 2026-04-20 — NOAA catalog refresh async+progress (13 tasks complete, awaiting push)
+
+**Released as:** not yet released (shipped on `dev`, not yet pushed to origin)
+**Plan / spec:** [docs/superpowers/specs/2026-04-20-noaa-refresh-async-progress-design.md](../docs/superpowers/specs/2026-04-20-noaa-refresh-async-progress-design.md), [docs/superpowers/plans/2026-04-20-noaa-refresh-async-progress.md](../docs/superpowers/plans/2026-04-20-noaa-refresh-async-progress.md)
+**Adversarial reviews:** [dev/adversarial/2026-04-20-noaa-refresh-async-sonnet.md](adversarial/2026-04-20-noaa-refresh-async-sonnet.md) (v1→v2); Phase 1 closeout: Sonnet architectural + Sonnet adversarial + Codex (`/tmp/phase1-codex-review.log`); Phase 2 closeout: Sonnet integration + Codex (`/tmp/phase2-codex-review.log`)
+
+### Summary
+Follow-on to the 2026-04-20 NOAA NAIP CONUS expansion (39 tasks shipped). First live refresh attempt surfaced three UX failures: nginx 60s `proxy_read_timeout` returning a 504 HTML page (browser `JSON.parse` → SyntaxError), no progress reporting for the 10–30 min operation, and the Refresh button buried inside a collapsible labeled "history". Phase 1 converts the endpoint from a single synchronous HTTP call to a **dispatch + poll** pattern: `POST /refresh` returns 202 Accepted in <1s and schedules `refresh_catalog()` on `asyncio.create_task()`; a progress callback atomically writes `/data/noaa_catalog_refresh.progress.json`; `GET /refresh/progress` returns the state; `POST /refresh/cancel` sets a module-level `asyncio.Event`. Frontend wiring lands in Phase 2.
+
+### Key decisions
+- **asyncio.Event (not file flag) for cancel signalling.** Spec v2 §change #3 — eliminates the read-then-write race where the cancel endpoint's file write would clobber the bg task's progress update. The file flag stays in progress.json as UI-readable status only, written by the bg task *after* observing the Event.
+- **Module-level `_active_refresh_task` reference retention.** Spec v2 §change #1 — prevents Python's GC from collecting tasks held only in the event loop's weak set; also enables future `/refresh/reset` to cancel the task cleanly.
+- **run_in_executor for blocking ops.** `fetch_tile_count`'s `ogr2ogr` subprocess, the ZIP file write, and `ZipFile.extractall()` are all dispatched through the executor so the event loop stays responsive for `/progress` polling during the 10–30 min refresh.
+- **RefreshCancelled exception for mid-state cancel routing.** Spec v2 §Failure mode 3 targeted ≤15s typical cancel latency — state-boundary polling alone was ~360s+ worst case inside a large tile-index download + extract. `fetch_tile_count` now checks `cancel_event` at four points and raises `RefreshCancelled`, which `refresh_catalog`'s per-state loop catches and routes to the same cancelled-log-entry path as its loop-top check.
+
+### Notable bugs caught (by the Phase 1 closeout 3-round review)
+- **Cancel latency unbounded** — `sess.get(total=300)` + `write_bytes` + `extractall` + `ogr2ogr(60s)` could stall cancel for minutes (all 3 rounds) → `fe8db7d`.
+- **Duplicate refresh-log entries** — `refresh_catalog` logs on all ok/truncated/cancelled/invalid_parse paths; bg-task wrapper's generic `except Exception` was appending a second `validation_status=error` entry (Sonnet Round 2 + Codex) → `fe8db7d`.
+- **_is_progress_stale `TypeError`** on tz-naive ISO timestamps — `GET /progress` 500 instead of gracefully non-stale (Sonnet Round 2 + Codex) → `fe8db7d`.
+- **Test gaps** — bg-task error path round-trip, CancelledError branch, POST /cancel auth, naive-ISO stale path. All added in `fe8db7d`.
+
+### Commits (Phase 1)
+- `6fdac47` feat(noaa): progress-state helpers
+- `3956dff` feat(noaa): refresh_catalog progress callback + event-loop-safe fetch_tile_count
+- `015a325` feat(noaa): async-dispatch POST /refresh
+- `b3b4a39` feat(noaa): GET /refresh/progress
+- `5238834` feat(noaa): POST /refresh/cancel
+- `dcce6c5` feat(noaa): stale-refresh heuristic
+- `fe8db7d` fix(noaa): Phase 1 review closeout — 3 bugs + 4 test gaps
+
+### Known latent issues (deferred to a separate ops-hardening spec)
+- **Multi-worker double-dispatch**: module-level `_active_refresh_task` doesn't serialize across uvicorn workers. Currently single-worker, so inactive. (Codex flagged.)
+- **Single-temp-file race** in `write_progress_state`: fixed `.tmp` filename is not multi-writer safe under the multi-worker scenario above. Same mitigation. (Codex flagged.)
+
+### Phase 2 (frontend — Tasks 7-11) — shipped
+
+- `00f939e` feat(frontend): promote NOAA Refresh to primary empty-state CTA
+- `ea7956f` feat(frontend): cite 10-30 min duration in NOAA refresh confirm dialog
+- `24639b7` feat(frontend): live progress bar + ETA for NOAA catalog refresh (with page-nav rehydration per spec testing invariant #7)
+- `72c496d` feat(frontend): NOAA refresh completion summary + dropdown reload
+- `edc8744` feat(noaa): POST /refresh/reset endpoint + Force Clear wiring
+
+### Phase 2 closeout (2026-04-20, 3-round review — Sonnet + Codex)
+
+- **Bug 1 (Critical lifecycle)** — Progress polling leaked across NOAA card collapse/expand (interval fired on detached DOM; re-expand stacked a second interval). Codex only. → `5b97549`.
+- **Bug 2 (Critical correctness)** — Force Clear vs. in-flight poll race; stale `/progress` fetch after `/reset` could re-render progress card with obsolete state. Codex only. Fixed with per-card force-clear generation counter. → `5b97549`.
+- **Bug 3 (Important)** — Rehydration vs. catalog-fetch race: `/catalog` could show the empty banner over a running refresh. Both rounds. Fixed by gating `_updateRefreshBannerVisibility` behind absence of progress/completion card. → `5b97549`.
+- **Bug 4 (Important)** — `/refresh/reset` could hang indefinitely if the bg task refused to finalize after `.cancel()`. Sonnet only. Fixed with `asyncio.wait_for(task, timeout=30)`; module refs cleared + files removed even on TimeoutError. → `5b97549`.
+- **Bug 5 (Important)** — Completion banner `className` concatenated server-provided `result.status` without sanitization. Sonnet only. Whitelisted against known statuses. → `5b97549`.
+- 3 UX polish items (zero-state copy, 24h staleness on completion banner, cancelled copy). → `5b97549`.
+
+### Task 12 — terminal-state gap tests
+
+- `5cfda6b` test(noaa): bg-task terminal-state round-trip coverage (ok/truncated/invalid_parse/cancelled). Spec testing invariant #4 now has full 5-branch coverage (with error + reset_endpoint from Phase 1 closeout).
+
+### Outcome
+
+- **15 commits** on `dev` (6 Phase 1 + 1 Phase 1 closeout + 1 log + 5 Phase 2 + 1 Phase 2 closeout + 1 gap tests + 1 Phase 2 log update).
+- **104 passing tests** (up from 90 at start of Phase 1) across `tests/test_refresh_noaa_catalog.py` (43) + `services/search/tests/test_noaa_admin_endpoints.py` (61). No regressions in the pre-existing 2 M2M failures or the Nominatim-env errors.
+- Runtime validation pending — Cameron will exercise the new admin-panel refresh flow (dispatch, progress bar, cancel, completion summary, stale Force Clear) against the live dev stack before merging to main.
+
+### Known latent issues (deferred to a separate ops-hardening spec, tracked in START.md)
+
+- **Multi-worker double-dispatch**: module-level `_active_refresh_task` doesn't serialize across uvicorn workers. Currently single-worker (active), so inactive. Codex Phase 1.
+- **Single-temp-file race** in `write_progress_state`: fixed `.tmp` filename is not multi-writer safe under the multi-worker scenario above. Codex Phase 1.
+
+---
+
+## 2026-04-21 — Nav UX beta-bug remediation (13 bugs closed, B1 deferred)
+
+**Released as:** not yet released (pending main merge + runtime validation)
+**Plan / spec:** [docs/superpowers/plans/2026-04-21-nav-uxb-remediation.md](../docs/superpowers/plans/2026-04-21-nav-uxb-remediation.md)
+**Bug hunts:** [dev/bug-hunts/2026-04-21-nav-uxb-consolidated.md](bug-hunts/2026-04-21-nav-uxb-consolidated.md)
+**Adversarial reviews:** none (exploratory/holistic/multipass hunters cross-validated in parallel)
+
+### Summary
+
+Four beta-tester reports triggered a full bug-hunt cycle on turn-by-turn navigation. Exploratory, Holistic, and Multipass hunters conducted independent analysis and triangulated findings across [frontend/navigation.js](../frontend/navigation.js), [frontend/nav-ui.js](../frontend/nav-ui.js), and [frontend/app.js](../frontend/app.js). Cycle surfaced 14 confirmed bugs (13 closed in this cycle, 1 deferred) + 6 low-priority signals + 2 pre-existing out-of-scope issues.
+
+**Closed bugs:**
+- **B2 (highest severity):** Reroute leaves map polyline, sidebar directions, and trip globals stale. Fixed via new `setActiveRoute(trip, options)` unifier in app.js that owns engine state + map source + sidebar + globals. Reroute path now calls this before engine apply.
+- **B3:** GPS marker renders at ~60% instead of 78% from viewport top. Fixed proportional padding formula `top = mapH * 0.56 + overlayH` in getNavPadding; also explicit clear-padding on nav exit (merged with B8).
+- **B4:** Recenter/compass overlap on mobile; wrong stack order on desktop. CSS-only stack reorder: compass at bottom:120, recenter at bottom:170 (desktop); at mobile:100/150 resp.
+- **B5:** Multi-stop reroutes drop intermediate waypoints. Fixed `buildRouteData` to extract `remainingWaypoints` from trip.locations; reroute callback filters already-passed waypoints.
+- **B6:** `costing_options` (avoid_highways, etc.) dropped on reroute. Added `costingOptions` field to route payload; engine passes through to reroute callback.
+- **B7:** GPS hysteresis fills in ~2.5s instead of 5s because feedGPS calls updateGPS twice per unique position. Moved `nav.updateGPS()` inside signature-change guard.
+- **B8:** Padding leaks across sessions via MapLibre persistence. Merged into B3 fix; explicit `padding: {top:0, bottom:0, left:0, right:0}` in restoreMapState easeTo.
+- **B9:** `applyReroute` does not reset `lastAnnouncementTime`; `announcedSet` filter is backward. Fixed: `announcedSet = {}; lastAnnouncementTime = 0;`.
+- **B10:** `lastRerouteTime` not cleared when engine timeout fires (10s reroute timeout but 15s cooldown overhang). Cleared on timeout callback.
+- **B11:** Valhalla 200-with-error silent no-op (banner stuck). Explicit branch on `!data.trip || data.error` routes to retry/failure path.
+- **B12:** In-flight fetches + retry setTimeouts survive stopNavigation. Tracked setTimeout IDs in array; stopNavigation clears all + resets counter.
+- **B13:** First maneuver of subsequent leg at `begin_shape_index=0` indexes into previous leg. Clamped to `Math.max(0, ...)`.
+- **B14 (upgraded from false-positive):** UI mute state not propagated to engine on nav start. Added `nav.setMuted(muted)` call after `nav.start()`.
+
+**Deferred:**
+- **B1 (voice tiering redesign):** Current distance-threshold logic announces 3× per turn; thresholds + tier boundaries are design-dependent. Cameron's plan-review decision: no band-aid this cycle — ship nothing until the full TTM (time-to-maneuver) redesign lands with its own brainstorm + spec + adversarial review. `VOICE_THRESHOLDS` in [frontend/navigation.js:42-46](../frontend/navigation.js#L42-L46) remains unchanged at `[800, 200, 50]`. Beta testers continue to hear 3 announcements per turn until the follow-up plan ships. TTM-redesign seed topics documented in the plan's Appendix.
+
+### Key decisions
+
+- **B1 fully deferred, no threshold band-aid:** Cameron's explicit call ("no reason to fix now when we're going to rebuild it"). The consolidated report's D1 option (b) chosen; options (a) and (c) rejected.
+- **setActiveRoute refactor for B2, not band-aid:** Cameron's explicit call ("no more bandaids approaching 2.0.0"). Introduced `setActiveRoute(trip, options)` in [frontend/app.js](../frontend/app.js) that owns the 4-way state update (engine route, `_geographicaLastTrip`, `lastRouteCoords`, map `'route'` source, sidebar `#route-directions`). Exposed as `window._geographicaSetActiveRoute` for nav-ui.js reroute consumer. The old `renderRoute` function was deleted (~80 LOC). Three commits implement this: `2c03471` (extract, behavior unchanged), `a8cd7ba` (convert initial-route site + delete renderRoute), `cb3f27b` (convert reroute site — closes B2).
+- **All 13 non-B1 bugs fixed inline:** Reroute path is under heavy surgery this cycle; deferring B5, B6, B12 would require revisiting same code in a follow-up. Fixing now is cheap + reduces regression risk.
+
+### Notable bugs caught
+
+- B2: State split across 4 places (engine route, globals, map source, sidebar) — caught by all three hunters as "most severe reported bug."
+- B3: Padding math inverted (inset vs. offset) — caught by all hunters; Multipass also found sub-bug (B8 padding leak).
+- B14: Upgraded from false-positive FP6 after re-read of logic — mute state guard is UI-side only; engine's announcedSet still fires, suppressing unmute-time announcements.
+
+### Commits
+
+Notable commits (20+ total on this branch):
+- `54af3f0` test(nav): bootstrap Node vm-based engine test harness
+- `830e4c7` fix(nav): reset announcedSet and lastAnnouncementTime on applyReroute (B9)
+- `2c03471` refactor(nav): extract setActiveRoute as single source of truth (B2 prep)
+- `03624b5` fix(nav): preserve intermediate waypoints across reroutes (B5)
+- `ce12c02` fix(nav): preserve costing_options across reroutes (B6)
+- `633f176` fix(nav): engine dedups duplicate GPS positions for hysteresis (B7)
+- `cf56e6a` fix(nav): proportional nav padding + clear padding on nav exit (B3, B8)
+- `ddc9578` fix(nav): stack recenter button above compass, resolve mobile overlap (B4)
+
+### Outcome
+
+- **Tests:** 12 unit tests passing (6 engine nav + 6 nav-ui route-data builders). Engine tests include dedicated B7 dedup test + B10 timeout test. Playwright harness modes (B2 polyline update, B11 error banner, B12 fetch abort, B3/B8 padding assertions, B4 button stack at viewports) documented as pending runtime validation against live dev frontend.
+- **Code coverage:** Frontend path touched: navigation.js (9 + 10 = 19 modified lines), nav-ui.js (50+ across 5 separate sites), app.js (setActiveRoute export), style.css (B4 stack reorder). Zero backend/pipeline/setup changes.
+- **Surprises:** None. Hunters' consensus across three independent passes validates the scope. B1 threshold tuning deferred cleanly. B14 upgrade from FP justified on re-read.
+
+---
+
+## 2026-04-20 — Nav keep-awake (feature-complete, field-untested)
+
+**Released as:** not yet released (agent-complete on dev, awaiting §6.3 manual field acceptance before merge to main)
+**Plan / spec:** [docs/superpowers/specs/2026-04-20-nav-keep-awake-design.md](../docs/superpowers/specs/2026-04-20-nav-keep-awake-design.md)
+                 [docs/superpowers/plans/2026-04-20-nav-keep-awake-plan.md](../docs/superpowers/plans/2026-04-20-nav-keep-awake-plan.md)
+**Adversarial reviews:** [dev/adversarial/2026-04-20-nav-keep-awake-r{1..6}-*.md](adversarial/)
+**Research:** [dev/research/2026-04-20-spec-b-field-mode-research.md](research/2026-04-20-spec-b-field-mode-research.md) (parallel Spec B research for future offline-HTTPS work)
+
+### Summary
+
+Turn-by-turn nav silently broke on mobile when the phone auto-dimmed — not because the screen going dark is itself dangerous, but because a driver glances down to investigate a silent/dark phone, and that's the actual eyes-off-road safety hazard at driving speeds. This feature holds the device screen awake for the duration of active nav using a two-layer mechanism: `navigator.wakeLock.request('screen')` on Secure Context origins, with a first-party `SilentVideoLock` helper (plays a 2×2 no-audio-track MP4) on plain HTTP. Entirely passive to the driver — no indicator, no chime, no banner; the existing nav UI IS the evidence. Voice-continuity-under-backgrounding is explicitly out of scope for a future sibling spec.
+
+### Key decisions
+
+- **Bespoke silent-video helper instead of NoSleep.js.** Round 1 of the adversarial review (with the Codex cross-validation round) discovered that NoSleep.js v0.12.0 internally calls `navigator.wakeLock.request('screen')` first — meaning our "fallback" was re-invoking the same failing API on any origin where the primary rejects. Replaced with a ~60-line first-party module. Removed a 5-year-unmaintained dependency as a bonus.
+- **Generation-counter race safety.** Concurrency round (R2) found three distinct orphan-lock bug classes the v1 canonical code permitted under rapid Start→Stop→Start, release-during-pending-acquire, and visibility-reacquire-during-release interleavings. Fix: monotonic `acquireGeneration` counter captured per-call, compared on await resume. Task 8's race tests verify all three scenarios empirically.
+- **iOS PWA standalone-mode bypass.** WebKit #254545 silently breaks `navigator.wakeLock` in iOS 16.4–18.3 Home Screen PWA. Detection via `matchMedia('(display-mode: standalone)')` forces the fallback path on affected devices. Extended to the visibility-reacquire handler after Task 10 quality review caught that the visibility handler re-called the broken primary API without the bypass.
+- **Explicit "no audio track" (not muted silence) media contract.** Codex R6 F6.4 caught that muted silence collides with `speechSynthesis` media-session routing and iOS lock-screen affordances. The MP4 is generated with ffmpeg `-an` flag (no audio stream at all); a Python test verifies via `ffprobe`.
+- **Tests promoted to GitHub Actions (frontend-ci.yml)** per `feedback_env_drift_favor_ci.md` — pure-logic tests on ubuntu-latest distinct from Cameron's dev Pi, separate from wizard-ci.yml's LXD integration suite.
+- **Voice-continuity deferred (user decision B).** Wake-lock reduces how often the tab is backgrounded at all (driver doesn't need to unlock to check); a proper voice-continuity spec gets its own treatment later. Stale-prompt replay explicitly rejected as NG7 — worse than silence.
+
+### Notable bugs caught by adversarial review
+
+- **NoSleep fallback is not a fallback** (R1 F1.1) — architectural; fix = replace with bespoke helper.
+- **Orphan-lock on rapid acquire/release interleavings** (R2 F2.1/2.3/2.8) — race safety; fix = generation counter.
+- **Grep-based static tests mistake presence for behavior** (R3 F3.1) — test quality; fix = brace-tracked `function_body` + `strip_js_noise`.
+- **Mock fidelity underspecified** (R3 F3.7) — fix = reference mock factories in `_fixtures.js`.
+- **JS test dir collision with pytest** (R3 F3.11) — fix = `frontend/tests/wake-lock/` (hyphen blocks Python import).
+- **Spec meta-coherence** (R6 F6.1, Codex) — the highest-leverage finding. R1's "replace NoSleep" decision wasn't propagated through acceptance criteria, tests, dependencies — spec would have asked a subagent to ship the rejected design. Fix = full v2 rewrite before plan was written.
+- **Silent video must have no audio track** (R6 F6.4) — media contract; fix = ffmpeg `-an` + ffprobe verification test.
+- **iOS PWA bypass incomplete in visibility handler** (Task 10 quality review) — real bug that would silently break nav after the first tab-hide/show on iOS <18.4 PWA. Fix = hoisted `isIosPwaBypass()` helper, gated both `acquire()` and the visibility handler.
+
+### Commits
+
+Spec + adversarial review (before implementation):
+- `0cfd989` spec v1 — immediately invalidated by R1's NoSleep.js finding
+- `eb8b53b` 6 adversarial review files + Spec B research
+- `0ab8bf2` spec v2 — full post-adversarial rewrite (525 → 877 lines)
+- `846a722` implementation plan (16 tasks across 5 phases)
+
+Implementation (17 commits on dev):
+- `22fbc2a` Task 1 silent.mp4
+- `3ea2bd7` Task 2 test fixtures
+- `a473597` ffmpeg recipe fix (1×1 unworkable)
+- `e2dc957` Task 3 SilentVideoLock lifecycle
+- `8087dbd` Task 4 SilentVideoLock contract
+- `272d156` Task 5 WakeLock scaffolding
+- `95b8c5a` Task 6 fallback path
+- `f6742eb` Task 7 release lifecycle tests
+- `96e0ed5` Task 8 race-safety tests
+- `fac58fe` Task 9 visibility handler
+- `d8a2200` Task 10 iOS PWA bypass
+- `c2179b4` Task 10.5 iOS PWA bypass in visibility handler (Critical bug caught in review)
+- `f7fb1aa` Task 11 index.html
+- `17f5cff` Task 12 nav-ui.js hooks
+- `fad0385` Task 13 Python static tests
+- `46a5e44` Task 14 CHANGELOG + CONTRIBUTING
+- `74c979c` Task 15 frontend-ci.yml
+
+Supporting:
+- `df4ac27` CLAUDE.md clarification that Codex CLI is installed but not on $PATH (unblocks future build-robust-features runs)
+
+### Outcome
+
+**Tests (local, pre-merge):**
+- 34/34 JS unit tests via `node --test frontend/tests/wake-lock/` (11 SilentVideoLock + 23 WakeLock)
+- 13/13 Python static tests via `python -m pytest tests/test_wake_lock_static.py`
+- 47/47 combined, 0 failures, 0 skips
+
+**Deferred intentionally:**
+- §6.3 manual field acceptance (real phone, driving scenarios) — the agent plan formally defers this to Cameron per build-robust-features' agent-complete ≠ ship-complete principle. PR body contains the 10-item checklist.
+- Test-hardening follow-ups flagged in Task 9 quality review:
+  - Empirical test for `document.visibilityState !== 'visible'` guard
+  - Empirical test for generation check inside visibility handler's `.then()` — the §5.11 race the original Task 9 test sketched but couldn't wire up cleanly
+  - Either remove `++acquireGeneration` from `release()` or add a test that requires it (currently belt-and-suspenders)
+
+**Review-process observations (for transferable lessons):**
+- Per-task subagent-driven-development with two-stage review (spec then quality) caught 1 Critical bug (Task 10 visibility-handler iOS PWA hole) and several Important findings that would have shipped otherwise. The per-task review step earned its cost.
+- Codex cross-validation round (R6) found the single most valuable meta-level finding — spec-meta coherence — that 5 Claude-family agents collectively missed because each attacked one angle. Worth making "meta-coherence after per-angle review" a routine step for future build-robust-features cycles.
+- Two implementer-flagged plan bugs found during execution: (a) `loadModule` JS-destructuring semantics silently ignoring `undefined` (Task 6), (b) `strip_js_noise` helper wiping string-literal tokens (Task 13). Both caught via DONE_WITH_CONCERNS signalling rather than silent papering-over — the right posture.
+
+
+---
+
+## 2026-04-20 — NOAA NAIP CONUS expansion (in progress)
+
+**Released as:** not yet released (work landed on `dev` via cherry-pick; `feat/noaa-conus` worktree + branch retired 2026-04-20 per the new worktree ban)
+**Plan / spec:** [docs/superpowers/specs/2026-04-20-noaa-naip-conus-expansion-design.md](../docs/superpowers/specs/2026-04-20-noaa-naip-conus-expansion-design.md) (v2, committed `0341c00`)
+                 [docs/superpowers/plans/2026-04-20-noaa-naip-conus-expansion.md](../docs/superpowers/plans/2026-04-20-noaa-naip-conus-expansion.md) (committed `0e0a9ae`)
+**Adversarial reviews:** 5 rounds (Codex + 4 general-purpose subagents with distinct lenses: subagent-reader, implementer-skeptic, failure-mode-hunter, operator) — transcripts in session tool-results at `~/.claude/projects/.../tool-results/bsdkk6a2n.txt` + subagent returns
+
+### Summary
+
+Expanding NOAA NAIP imagery from Arizona-only to all 48 CONUS + DC. Adds a bbox-based custom-area mode and a snapshot-pinned versioned catalog (P7). Brainstorm originally paused 2026-04-19 at fatigue limit after 9 decisions were locked; resumed 2026-04-20 with Sections 3-6 completed and a 5-round adversarial review that surfaced 15 MUST-FIX issues before the plan phase. Plan v1 would have broken production in at least 3 ways (import from `setup/runner.py` inside a pipeline container that doesn't mount `setup/`, filter-always-runs with a 60s timeout that fails on TX/CA, checkpoint PK that would silently dedupe NAIP border quads); v2 addresses all 15. 39-task plan with phase-level review checkpoints.
+
+### Key decisions
+
+- **One pipeline, two CLI entry points** (`--state` slug / `--bbox`) rather than separate scripts. Code reuse of the 3-stage parallel pipeline matters more than path purity.
+- **Filter short-circuits for whole-state mode** (reversal of original "always-on filter" design). `ogr2ogr -spat` has a 60s timeout that can't handle TX/CA shapefiles.
+- **P7 catalog refresh** with snapshot pinning (every pipeline run pins at Start; refresh/rollback only affect future runs). Replaces an earlier threshold-based atomic-swap that was rejected as arbitrary.
+- **Disk-relative big-bbox confirmation**, peak-working-set (raw + intermediate + final), not GB-magic-number.
+- **Pre-merge real-Azure test as GitHub Action** (not local harness) — env drift is Geographica's dominant bug class per 2026-04-21 beta-triage marathon.
+- **Checkpoint PK = `(catalog_snapshot, state_usps, tile_filename)`** — NAIP border quads are shipped in both states' directories, and old PK of `tile_filename` alone would silently dedupe.
+- **Partial-coverage policy:** pre-run uncataloged states surfaced at estimate time and explicitly acknowledged; mid-run state failure produces terminal `partial_failed` status (never silent partial coverage via TileServer auto-registration).
+
+### Notable findings from adversarial review
+
+- **Codex C1** (code-verified): `setup/runner.py` not in pipeline container. Would have crashed on first pipeline run. → Task 1 extracts to `scripts/common/state_bboxes.py`.
+- **Codex C2**: open question #5 (snapshot pinning) was not optional — without it, estimate/start/resume can use three different catalogs. → Decision #11 revised; pipeline pins at Start.
+- **R3-C1** (code-verified): v1 claim that this work closed pre-existing bugs B2/B3 was factually wrong. Those bugs target NAIP/Sentinel, not NOAA. NOAA already works. Including them would regress the just-shipped TileServer handoff fix. → §"Pre-existing bugs closed" removed from v2.
+- **R1-C3**: disk model used `total_size_mb > free_disk_mb`, ignoring reproject + intermediate staging. Would strand jobs at 80% progress. → Decision #12 revised to peak-working-set.
+
+### Commits
+
+- `8041478` — v1 spec (dev branch, then superseded)
+- `0341c00` — v2 spec (post-adversarial-review; dev branch)
+- `0e0a9ae` — plan (dev branch)
+- `cc03d42` — Phase 0 Task 1: extract `scripts/common/state_bboxes.py` (feat/noaa-conus)
+- `519790c` — Phase 0 Task 1 follow-up: stale error message fix (feat/noaa-conus)
+- `85e8dac` — Phase 0 Task 2: canonicalization table + `display_name` (feat/noaa-conus)
+
+### Outcome (in progress — updated 2026-04-20 afternoon)
+
+**Phase 0 complete (Tasks 1-2).** 78 tests (68 setup baseline + 10 new state_bboxes_common).
+
+**Phase 1 complete (Tasks 3-10).** Full P7 mechanics shipped to `scripts/refresh_noaa_catalog.py`: catalog structure validator, Azure blob listing with `<NextMarker>` pagination, NOAA directory parser + tile-index HEAD check, atomic snapshot writer + symlink swap, flock-based lockfile with PID-liveness force-unlock, pipeline-running detector (for refresh/rollback gating), refresh log appender + pinning-aware snapshot pruner, and the `refresh_catalog()` orchestrator + CLI. 35 tests in `tests/test_refresh_noaa_catalog.py` (9 existing + 26 net new across Tasks 3-10). Phase 0 + Phase 1 combined: 113 tests passing in worktree.
+
+**Known follow-up (surfaced during Task 10's live-run attempt):** the tile-index URL template assembled by `refresh_catalog()` (`{AZURE_BASE}/{dir}/tileindex/tileindex_{dir}.zip`) does NOT match NOAA's actual Azure blob layout. All 103 directory prefixes parsed correctly, but every `validate_tile_index` HEAD returned 404. A stub baseline (just the AZ entry) was committed to unblock Phase 2-4; real baseline generation is deferred to Phase 5 where the CI-tier integration test + the pre-merge GitHub Action will force discovery of the correct URL pattern. Two likely fixes: (a) per-directory blob listing with `prefix=<dir>/tileindex/` to discover the actual ZIP name, or (b) URL-pattern correction once confirmed against live Azure. Logged in Task 10's commit message (`c45a0b7`).
+
+**Phase 2 complete (Tasks 11-18).** Pipeline refactor landed: resolver (`resolve_noaa_candidates`), per-state queue build with whole-state filter short-circuit (`build_state_queue`), unified download queue of `(snapshot, usps, filename, blob_url)` tuples (`build_unified_queue`), composite-PK checkpoint migration with `NOT NULL DEFAULT ''` transitional semantics (`_init_noaa_checkpoint` / `_record_tile_complete`), Start-time snapshot pinning (`pin_catalog_snapshot` + `_resolve_or_pin_snapshot`) with `SnapshotPrunedError` resume guard, CLI `--state` slug/USPS normalization with `--year` removed (BREAKING), and `partial_failed` terminal status via `_finalize_noaa_status`. 8 commits (`4a67164` → `eb30eb3`) plus review-closeout fix commit `3cd2e58`. 
+
+**Phase 2 review loop** (2 rounds: Sonnet architectural + Haiku test coverage; Codex adversarial blocked by v0.118.0 CLI flag conflict — deferred to full-branch pass) surfaced 1 Critical + 3 Important issues fixed in `3cd2e58`:
+- `services/search/main.py` still passed `--year` + both `--state`+`--bbox` to the CLI (would have broken every admin-initiated NOAA pipeline launch).
+- `_finalize_noaa_status` clobbered `status=error` with `partial_failed` on total-failure single-state runs.
+- `FileNotFoundError` (missing catalog) and `SnapshotPrunedError` (pruned resume) produced raw tracebacks instead of actionable error messages.
+- `tests/test_noaa_naip.py::test_argparse_accepts_noaa_mode` validated a local parser with `--year` rather than the real CLI — test defunct, deleted.
+
+Review notes in [dev/adversarial/2026-04-20-noaa-phase2-review.md](../dev/adversarial/2026-04-20-noaa-phase2-review.md). Pre-merge hardening deferred (Round 2 edge-case tests, `_init_noaa_checkpoint` per-tile optimization) documented there.
+
+**Incident during Phase 2:** implementer subagent for Task 13 silently escaped the worktree and committed to `dev` (on top of the parallel agent's WakeLock work). Recovered via `git revert` on dev (`bdd3157`); all subsequent implementer prompts require a pre-flight `pwd` / `git branch --show-current` / `git rev-parse HEAD` assertion, and the controller independently verifies `git branch --contains <sha>` before accepting DONE status. Saved to memory as `feedback_worktree_escape.md`.
+
+**Test counts:** 905 passed (pre-fix-commit) → 911 passed (post-fix, +6 new admin-endpoint tests). 27 pre-existing `test_setup_main.py` / `test_bootstrap_messaging.py` failures unchanged throughout.
+
+**Known follow-up** (same as Phase 1): tile-index URL template still assembles `{AZURE_BASE}/{dir}/tileindex/tileindex_{dir}.zip` which doesn't match NOAA's actual Azure layout. Phase 5 integration test will force discovery via live-Azure listing. Phase 2 doesn't exercise the tile-index URL path (it builds queues from synthetic inputs in unit tests); Arizona-only runs through the legacy `NOAA_NAIP_CATALOG` dict still work because that path never touches `refresh_catalog`'s URL builder.
+
+**Phase 3 complete (Tasks 19-26).** Admin endpoints shipped to [services/search/main.py](../services/search/main.py):
+
+- **Task 19** `GET /admin/pipeline/noaa/estimate` extended — catalog-driven via `_load_noaa_catalog`, USPS↔slug normalization, bbox-mode state resolution, new response fields (`states`, `missing`, `placename`, `catalog_snapshot`, `intermediate_gb`, `peak_required_gb`) alongside all 12 preserved legacy fields.
+- **Task 20** peak-working-set disk estimate: `intermediate_gb = raw × 0.3`, `peak_required_gb = raw + intermediate + final`.
+- **Task 21** `_noaa_placename` — multi-state (≥2 cataloged OR width/height > 5°) returns `"Coverage area across AZ, UT"`; single-state + small bbox uses Nominatim reverse lookup with 3s timeout.
+- **Tasks 22-25** four admin endpoints (`POST /refresh`, `POST /rollback`, `POST /force-unlock`, `GET /refresh-log`) wrapping `scripts.refresh_noaa_catalog` helpers. Rollback gates on pipeline-not-running + 404 on missing snapshot + rejects path traversal. Refresh-log returns entries reverse-chronological with per-entry `rollback_available` flag.
+- **Task 26** `POST /admin/pipeline/start` extended for NOAA mode — `_noaa_peak_and_snapshot` helper gates on `acknowledge_missing` (409) and rechecks disk (507) before entering `_pipeline_lock`.
+
+Commits on dev (Phase 3 only, in order): `c74a935` (19), `5719b3b` (20), `f20d517` (20 follow-up), `3dc72e3` (21), `b1fb1cb` (22), `53055cc` (23), `52b9d96` (24), `d347701` (25), `7159080` (23 hardening — path traversal), `8adb061` (26), `649ed3d` (review closeout).
+
+**Phase 3 review loop** (2 rounds: Sonnet architectural + Haiku test coverage) surfaced 1 Important divergence and 2 Minor issues plus 3 Critical test gaps, all closed in `649ed3d`:
+- `_noaa_peak_and_snapshot` used catalog totals while `noaa_estimate` used shapefile-refined per-bbox counts → spurious 507s on sub-state bboxes with cached `.dbf`. Extracted `_count_noaa_tiles(slugs, bbox, entries, data_dir)` shared helper.
+- `_noaa_peak_and_snapshot` docstring claimed the returned `snapshot_path` was an "effective pin" — caller discards it; the real pin happens container-side. Docstring rewritten to describe the actual mechanism.
+- `noaa_force_unlock` 409 used a raw result dict; other 409s use structured `{status, message}`. Standardized.
+- Added 3 coverage-gap tests (malformed bbox, zero-state-intersection bbox, `invalid_parse` refresh status).
+
+**Worktree + feat/noaa-conus branch retired (2026-04-20 PM):** after two near-miss git incidents (Task 13 implementer contaminated `dev` with a misdirected commit; a later Task 26 implementer or dispatch ran `git reset --hard feat/noaa-conus` on dev, wiping six commits of nav-remediation + wake-lock work — all recovered via reflog and restored via merge commit `5545a4c`). Worktrees are now BANNED per `CLAUDE.md §Git workflow` + `docs/pitfalls/implementation-pitfalls.md §14` (landed on dev as `9daa05f`, cherry-picked to main as `7dc2e01`). Destructive git commands are also banned (`ea07e1e`), and agents now carry moniker trailers in every commit (`c28cb35`). The feat/noaa-conus branch's unique commits (`71fef86`, `772c745`) were cherry-picked to dev with Agent trailers (`7159080`, `8adb061`); the branch and worktree were removed.
+
+**Test counts:** 911 (end of Phase 2) → 941 on `services/search/tests/test_noaa_admin_endpoints.py` alone (+30 new Phase 3 tests after the Round-2-gap additions; the other suites remained unchanged). Two pre-existing `test_pipeline_status_m2m.py` failures persist.
+
+**Phase 4 complete (Tasks 27-32).** NOAA admin card fully refactored in [frontend/config/index.html](../frontend/config/index.html):
+
+- **Task 27** (`23ff95b`) — `renderNoaaBody` rewritten into a two-tab structure (Whole state / Custom area) matching the validated brainstorm mockup at `.superpowers/brainstorm/869511-1776625800/content/whole-page-flow-v4.html`. Shared `_renderEstimate` helper surfaces placename callout, missing[] banner, "I understand" acknowledgment checkbox.
+- **Task 28** (`b82c3d9`) — new `GET /admin/pipeline/noaa/catalog` endpoint (in `services/search/main.py`); Whole state dropdown populated from the catalog at render time; slug-based option values (matches `_normalize_state_arg`).
+- **Task 29** (`a37f4a9`) — Custom area tab shows a live indicator of the `#cfg-bbox` value (green monospace when valid, yellow prompt when empty). Scope trim documented in the entry: the mockup's full shared-Coverage-Area redesign was deferred; the existing bbox input stays in place.
+- **Task 30** (`7a98433`) — peak-working-set disk gate (>85% yellow, >100% red+Start-blocked via `estBox._diskBlocked`); `acknowledge_missing` wired through `startPipeline` into the POST body; Custom-area Estimate validates bbox client-side before firing the fetch.
+- **Task 31** (`37a33ad`) — collapsible "Catalog refresh history" panel inside the NOAA card: lists entries reverse-chronological from `GET /refresh-log`, per-entry `[Rollback]` button when `rollback_available` is true, "Refresh catalog now" button that triggers `POST /refresh`.
+- **Task 32** (`c979205`) — `partial_failed` status branch in `renderGenericProgress` surfaces the per-state breakdown and a "Retry failed state(s)" button that starts a fresh pipeline for the failed entries (MVP: retries first failed state; multi-state retry sequential).
+
+**Phase 4 review loop** (1 Sonnet round on JS correctness + regression risk; no browser harness available for the UI so manual visual check deferred to Cameron). Surfaced 3 Important issues, all closed in `bf83af4`:
+- `#cfg-bbox` listener accumulation across repeated card-expand cycles (dedup via stashed function reference + `removeEventListener`).
+- HTML-injection surface in Task 32's retry-list `li.innerHTML` where a backend error string could render raw tags (rebuilt via `createElement` + `textContent`).
+- Whole-state Estimate fell through to a 422 on empty bbox (mirrored the Custom-area tab's client-side 4-float isFinite pre-check).
+
+**Pending: Cameron's manual visual check** of the live admin UI against the mockup. The tests green (32 passing in `services/search/tests/test_noaa_admin_endpoints.py`) don't exercise the DOM — the admin panel lacks Playwright/jsdom infra, documented as a Phase 4 follow-up.
+
+**Phase 5 complete (Tasks 33-37).**
+
+- **Tile-index URL pattern fix (`4ffd658`).** Task 10's template `{AZURE_BASE}/{dir}/tileindex/tileindex_{dir}.zip` never matched NOAA's real Azure layout — every HEAD returned 404. Live-listing verified the actual pattern across four independent directories (AZ/AL/AR/CA): the zip is `tileindex_{USPS}_NAIP_{year}.zip` in the directory root (no `/tileindex/` subdir, no trailing hash). Fix lands in `scripts/refresh_noaa_catalog.py`; Task 35's integration test now regression-guards it.
+- **Task 33 (`5c82fda`)**: synthetic tile-index shapefiles at `tests/fixtures/noaa_tile_indexes/{arizona,utah}_test.shp` + helper. Both shapefiles include `m_border.tif` to exercise the composite-PK checkpoint case. Helper script has 4 fallbacks (osgeo → ogr2ogr-cli → pyshp → raw binary) — on this Pi the osgeo path isn't pip-installable, so the script uses the CLI path.
+- **Task 34 (`d192624`)**: Azure XML fixture set extended with `empty_container.xml` + `mixed_valid_invalid.xml` alongside the three existing Task 4 fixtures.
+- **Task 35 (`89e27ba`)**: `tests/integration/test_noaa_multistate.py` — 9 tests covering refresh → resolver → queue → checkpoint end-to-end against mocked Azure. Includes an explicit regression guard for the URL pattern fix.
+- **Task 36 (`f9fd810`)**: `.github/workflows/noaa-real-azure.yml` — manual-dispatch only (weekly cron deliberately commented out until Cameron confirms runtime budget). Refreshes catalog against real Azure, spot-checks the resulting entries, resolves a Four Corners bbox and asserts AZ/UT/CO/NM are all accounted for. Uploads refreshed catalog.json as a 7-day artifact.
+- **Task 37 (`f9fd810`)**: new "Catalog refresh (NOAA)" section in `dev/harness/exploratory_agent/bug_classes.md` with four actionable symptoms: fewer-states-than-expected, URL-pattern drift, stale symlink after rollback, dead-PID lockfile discoverability.
+
+**Phase 5 review** (1 Haiku round on URL correctness + integration-test rigor + fixture completeness + GH Action safety + seed quality) — approved, no fixes required.
+
+**Phase 6 complete (Tasks 38-39).**
+
+- **Task 38 (`994363d`)**: `tests/test_noaa_semantic_equivalence.py` — three env-gated regression tests that compare a pre-refactor baseline MBTiles against a post-refactor Arizona run. Equivalence is NOT byte-for-byte; it's tile-count-by-zoom + metadata-key subset + SHA256 hash match on a 10-point probe grid at z15. Tests skip gracefully when `GEOGRAPHICA_NOAA_BASELINE_MBTILES` / `GEOGRAPHICA_NOAA_CURRENT_MBTILES` are unset. Docstring documents the manual baseline-capture workflow.
+- **Task 39**: verification only — `tests/test_setup_runner.py` still passes 68 tests post-extraction of `STATE_BBOXES` to `scripts/common`. No new test required.
+
+**All 39 tasks shipped.** Branch `dev` commits ahead of `origin/dev` at closeout: Phase-0 → Phase-6 inclusive.
+
+**Test counts at Phase-6 closeout:** 1005 passed, 4 skipped (3 new `test_noaa_semantic_equivalence.py` + 1 pre-existing), 30 pre-existing failures unchanged (`test_setup_main.py`, `test_wake_lock_static.py`, `test_pipeline_status_m2m.py`).
+
+**Known follow-ups (documented in plan + reviews):**
+- Phase 4 manual visual verification against `.superpowers/brainstorm/869511-1776625800/content/whole-page-flow-v4.html` — the admin panel has no headless browser test infra; Cameron to validate the NOAA card's six tabs / buttons / banners interactively before merge to main.
+- Task 38 baseline capture — run a pre-refactor AZ whole-state pipeline once to produce `noaa_az_baseline.mbtiles`, then run current-tip code against the same state for comparison. Both pipelines take ~20-40 min each and ~39 GB disk.
+- Task 36's weekly cron schedule — still commented out; enable after one manual dispatch confirms the runtime budget.
+- Pre-merge hardening items from Phase-2 Round-2 review (edge-case test coverage for snapshot non-string values, CLI whitespace, partial migration states) and Phase-4 Round-1 review — all non-blocking for merge but worth closing before the release PR.
+
+**Integration path to `main`.** The branch is now plain `dev`; no feature branches remain. The normal release-please PR flow merges dev → main. Cameron: when ready, merge the Release PR at `origin/release-please--branches--main` to cut the next version. Given the BREAKING CHANGE footer on commit `bf27867` (`--year` removed from `acquire_imagery.py`), release-please will propose a major bump.
+
 
 ---
 

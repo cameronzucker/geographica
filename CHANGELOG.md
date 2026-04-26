@@ -7,6 +7,14 @@ project-specific rules described in [VERSIONING.md](VERSIONING.md). Entries
 from v1.1.0 onward are generated automatically by `release-please` from
 Conventional Commits.
 
+## [Unreleased]
+
+### Added
+
+- **Nav voice picker** — Preferences sidebar section with Default / Male / Female gender quick-pick and an advanced disclosure for picking a specific installed voice. Cloud voices are filtered out by default for offline-reliability; opt-in via a labeled checkbox. Per-device localStorage. Hard-refresh (Ctrl/Cmd-Shift-R) once after upgrade.
+- Screen keep-awake during active navigation — prevents phone auto-dim/auto-lock from silently stopping nav on mobile. Uses the Screen Wake Lock API on HTTPS, and a first-party silent-video fallback (`SilentVideoLock`) on plain HTTP (AREDN mesh, Pi-hotspot, LAN). No UI change; the existing nav banner is the evidence that keep-awake is active.
+  - **Known limitation:** On iOS, Low Power Mode may disable screen keep-awake. Disable Low Power Mode or keep the phone plugged in for uninterrupted navigation.
+
 ## [1.5.3](https://github.com/cameronzucker/geographica/compare/v1.5.2...v1.5.3) (2026-04-20)
 
 

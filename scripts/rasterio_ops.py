@@ -10,7 +10,8 @@ Operations provided:
   - reproject_to_mercator: gdalwarp -t_srs EPSG:3857 → rasterio.warp
   - merge_to_mbtiles: gdalbuildvrt + gdal_translate → rasterio.merge + SQLite
   - translate_to_mbtiles: gdal_translate -of MBTiles → rasterio + SQLite
-  - build_overviews: gdaladdo -r average → rasterio.build_overviews
+  - build_overviews: gdaladdo -r average → SQL-driven journal/nuclear drain
+                     (see _drain_journal, _drain_nuclear; mode="auto" selects)
   - translate_format: gdal_translate -of GTiff → rasterio copy
 """
 
@@ -27,8 +28,8 @@ import numpy as np
 import rasterio
 from rasterio.crs import CRS
 from rasterio.enums import Resampling
+from rasterio.io import MemoryFile
 from rasterio.merge import merge as rasterio_merge
-from rasterio.transform import from_bounds
 from rasterio.warp import calculate_default_transform, reproject
 
 log = logging.getLogger(__name__)
@@ -671,140 +672,389 @@ def _is_empty_tile(data: np.ndarray) -> bool:
     return not np.any(data)
 
 
+def _init_journal(conn: sqlite3.Connection) -> None:
+    """Create the _overview_work_queue dirty-ancestor journal table if missing.
+
+    Idempotent. Safe to call on any MBTiles connection, including legacy
+    files that pre-date the journal design. Part of the 2026-04-22
+    incremental-pyramid fix — see
+    docs/superpowers/specs/2026-04-22-overview-incremental-design.md §Migration.
+
+    Transaction contract: this helper issues DDL only, which auto-commits
+    in SQLite's default isolation mode. Callers own their transactions —
+    do NOT call this INSIDE a BEGIN block; call it before opening the
+    transaction. See Task 8's merge_mbtiles for the pattern.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS _overview_work_queue (
+            zoom_level   INTEGER NOT NULL,
+            tile_column  INTEGER NOT NULL,
+            tile_row     INTEGER NOT NULL,
+            PRIMARY KEY (zoom_level, tile_column, tile_row)
+        )
+        """
+    )
+
+
+def _enqueue_ancestors(
+    conn: sqlite3.Connection,
+    base_tiles: list[tuple[int, int, int]],
+) -> None:
+    """Enqueue the full ancestor lineage for each base tile into the journal.
+
+    For each (z, tc, tr) with z >= 1, inserts (z-1, tc>>1, tr>>1),
+    (z-2, tc>>2, tr>>2), ..., (0, 0, 0) into _overview_work_queue with
+    INSERT OR IGNORE (the PK on (zoom, tc, tr) collapses duplicates so
+    repeated calls are idempotent). Base tiles already at z=0 produce
+    no rows — they have no ancestors.
+
+    Caller is responsible for:
+    - Having called _init_journal(conn) first.
+    - Calling conn.commit() afterward (this function does not commit so that
+      callers can wrap mutation+enqueue in one atomic transaction — see spec
+      §Cross-statement atomicity).
+    """
+    if not base_tiles:
+        return
+    rows = []
+    for z, tc, tr in base_tiles:
+        for dz in range(1, z + 1):
+            rows.append((z - dz, tc >> dz, tr >> dz))
+    conn.executemany(
+        "INSERT OR IGNORE INTO _overview_work_queue "
+        "(zoom_level, tile_column, tile_row) VALUES (?, ?, ?)",
+        rows,
+    )
+
+
+def _mutate_base_tile(
+    conn: sqlite3.Connection,
+    action: str,  # "upsert" | "delete"
+    z: int,
+    tc: int,
+    tr: int,
+    tile_data: bytes | None = None,
+) -> None:
+    """Atomic single-tile mutation + ancestor enqueue.
+
+    Combines the tile write and the journal enqueue into the same logical
+    transaction. If the caller has an open transaction, this function does
+    NOT open a new one (so the caller's commit/rollback covers both
+    operations). If no transaction is open, the default sqlite3 auto-commit
+    still serializes the two statements within one connection — but callers
+    should prefer wrapping multiple _mutate_base_tile calls in an explicit
+    BEGIN/COMMIT for efficiency.
+
+    action='upsert' uses INSERT OR REPLACE with tile_data.
+    action='delete' removes the tile; tile_data is ignored.
+    """
+    if action not in ("upsert", "delete"):
+        raise ValueError(f"unknown action: {action!r}")
+    if action == "upsert":
+        if tile_data is None:
+            raise ValueError("tile_data is required for upsert")
+        conn.execute(
+            "INSERT OR REPLACE INTO tiles "
+            "(zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
+            (z, tc, tr, tile_data),
+        )
+    else:  # delete
+        conn.execute(
+            "DELETE FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+            (z, tc, tr),
+        )
+    _enqueue_ancestors(conn, [(z, tc, tr)])
+
+
+def _drain_journal(
+    conn: sqlite3.Connection,
+    cancel_check=None,
+) -> int:
+    """Drain _overview_work_queue by re-evaluating each enqueued ancestor.
+
+    For each ancestor (z, tc, tr), fetches the 4 children at (z+1,
+    2tc+dx, 2tr+dy). Writes the composited 2x2 average if all 4 exist;
+    deletes any existing ancestor row if any child is missing.
+
+    Processes bottom-up (max_zoom-1 down to 0), so parents see their
+    children's fresh state. Commits once per zoom level. Cancel check
+    between zoom levels; partial progress is durable (remaining queue
+    rows survive for the next run).
+
+    Returns the number of ancestor ops performed (writes + deletes).
+    """
+    max_zoom_row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
+    if not max_zoom_row or max_zoom_row[0] is None:
+        # No tiles at all; nothing to do. Clear any stale queue entries.
+        conn.execute("DELETE FROM _overview_work_queue")
+        return 0
+    max_zoom = max_zoom_row[0]
+
+    ops = 0
+    for z in range(max_zoom - 1, -1, -1):
+        if cancel_check and cancel_check():
+            return ops
+        rows = conn.execute(
+            "SELECT tile_column, tile_row FROM _overview_work_queue WHERE zoom_level=?",
+            (z,),
+        ).fetchall()
+        if not rows:
+            continue
+        for (tc, tr) in rows:
+            children = []
+            for dx in range(2):
+                for dy in range(2):
+                    row = conn.execute(
+                        "SELECT tile_data FROM tiles "
+                        "WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                        (z + 1, tc * 2 + dx, tr * 2 + dy),
+                    ).fetchone()
+                    children.append((dx, dy, row[0] if row else None))
+            if all(c[2] is not None for c in children):
+                # All 4 children exist — composite and INSERT OR REPLACE
+                tile_bytes = _composite_2x2_children(children)
+                conn.execute(
+                    "INSERT OR REPLACE INTO tiles "
+                    "(zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
+                    (z, tc, tr, tile_bytes),
+                )
+            else:
+                # Incomplete block — delete any existing ancestor
+                conn.execute(
+                    "DELETE FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                    (z, tc, tr),
+                )
+            ops += 1
+        # Clear this zoom's queue entries and commit
+        conn.execute("DELETE FROM _overview_work_queue WHERE zoom_level=?", (z,))
+        conn.commit()
+    return ops
+
+
+def _composite_2x2_children(
+    children: list[tuple[int, int, bytes | None]],
+) -> bytes:
+    """Composite a 2x2 block of child tiles into a single downsampled tile.
+
+    2x2-averaging downsample of up to 4 RGB child tiles, with TMS y-flip.
+    Shared by _drain_journal and _drain_nuclear. Returns JPEG bytes.
+
+    Precondition: at least one child must have non-None tile_data. Callers
+    apply the unified re-eval rule BEFORE calling — if all 4 children are
+    missing, they should DELETE the ancestor instead of compositing.
+    """
+    # Precondition: caller (drain_journal / drain_nuclear) guards this by
+    # checking all(c[2] is not None ...) before calling. The guard here
+    # catches direct misuse or future callers that forget the precondition.
+    if not any(tile_data is not None for _, _, tile_data in children):
+        raise ValueError(
+            "_composite_2x2_children called with all-None children — "
+            "caller should have short-circuited via the unified re-eval rule"
+        )
+
+    TILE_SIZE = 256
+    composite = np.zeros((3, TILE_SIZE, TILE_SIZE), dtype=np.uint8)
+    half = TILE_SIZE // 2
+
+    for dx, dy, tile_data in children:
+        if tile_data is None:
+            continue
+        with MemoryFile(tile_data) as memfile:
+            with memfile.open() as ds:
+                bands = min(ds.count, 3)
+                tile_arr = ds.read(list(range(1, bands + 1)))
+                h_src, w_src = tile_arr.shape[1], tile_arr.shape[2]
+                if h_src >= 2 and w_src >= 2:
+                    h2 = (h_src // 2) * 2
+                    w2 = (w_src // 2) * 2
+                    cropped = tile_arr[:, :h2, :w2].astype(np.uint16)
+                    small = cropped.reshape(
+                        bands, h2 // 2, 2, w2 // 2, 2
+                    ).mean(axis=(2, 4)).astype(np.uint8)
+                    small = small[:, :half, :half]
+                else:
+                    small = tile_arr[:, :half, :half]
+                x_off = dx * half
+                y_off = (1 - dy) * half  # TMS y-flip
+                h = min(small.shape[1], half)
+                w = min(small.shape[2], half)
+                composite[:bands, y_off:y_off + h, x_off:x_off + w] = small[:, :h, :w]
+
+    return _encode_jpeg(composite)
+
+
+def _drain_nuclear(
+    conn: sqlite3.Connection,
+    cancel_check=None,
+) -> int:
+    """Legacy nuclear-rebuild path.
+
+    DELETE FROM tiles WHERE zoom_level < max_zoom, then walk
+    SELECT DISTINCT tc/2, tr/2 FROM tiles WHERE zoom_level = parent_z
+    per zoom level, compositing + inserting. Clears the journal queue
+    at exit (even though it was not consulted).
+
+    Identical behavior to the pre-fix build_overviews function — this
+    exists so mode='nuclear' remains available as rollback + for runs
+    that fall back from journal drain on large dirty sets.
+
+    Crash-recovery note: if the process dies between the initial DELETE
+    of overview tiles (committed early, line ~912) and the final queue
+    clear at exit, the journal may retain stale entries. A subsequent
+    mode='auto' call would see queue_size > 0 and potentially route to
+    journal drain. The unified re-eval rule (write-if-all-4-children,
+    delete-otherwise) means this produces a correct sparse pyramid
+    rather than corrupt output — just potentially sparser than the
+    completed-nuclear ideal. Acceptable given crash-recovery is the
+    rare path; mode='nuclear' explicitly re-invoked will always repair.
+
+    Returns the total number of ancestor rows written.
+    """
+    max_zoom_row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
+    if not max_zoom_row or max_zoom_row[0] is None:
+        conn.execute("DELETE FROM _overview_work_queue")
+        return 0
+    max_zoom = max_zoom_row[0]
+
+    # Clear all overview tiles (below max_zoom)
+    conn.execute("DELETE FROM tiles WHERE zoom_level < ?", (max_zoom,))
+    conn.commit()
+
+    ops = 0
+    for z in range(max_zoom - 1, -1, -1):
+        if cancel_check and cancel_check():
+            break
+        parent_z = z + 1
+        rows = conn.execute(
+            "SELECT DISTINCT tile_column/2, tile_row/2 FROM tiles WHERE zoom_level=?",
+            (parent_z,),
+        ).fetchall()
+        if not rows:
+            break
+        for (tc, tr) in rows:
+            children = []
+            for dx in range(2):
+                for dy in range(2):
+                    row = conn.execute(
+                        "SELECT tile_data FROM tiles "
+                        "WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                        (parent_z, tc * 2 + dx, tr * 2 + dy),
+                    ).fetchone()
+                    children.append((dx, dy, row[0] if row else None))
+            if not all(c[2] is not None for c in children):
+                continue  # legacy behavior: skip incomplete 2x2
+            tile_bytes = _composite_2x2_children(children)
+            conn.execute(
+                "INSERT OR REPLACE INTO tiles "
+                "(zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
+                (z, tc, tr, tile_bytes),
+            )
+            ops += 1
+        conn.commit()
+
+    # Clear queue even though we ignored it — matches mode='nuclear' contract
+    conn.execute("DELETE FROM _overview_work_queue")
+    return ops
+
+
 # ---------------------------------------------------------------------------
 # 6. Build overview pyramids (replaces gdaladdo)
 # ---------------------------------------------------------------------------
 
 def build_overviews(
     mbtiles_path: Path,
-    levels: list[int] | None = None,
-    resampling: str = "average",
+    *,
+    mode: str = "auto",  # "auto" | "journal" | "nuclear"
+    levels: list[int] | None = None,  # legacy-compat, ignored
+    resampling: str = "average",      # legacy-compat, ignored
     cancel_check=None,
 ) -> bool:
-    """Build overview pyramid for an MBTiles file by downsampling existing tiles.
+    """Build overview pyramids for an MBTiles file.
 
-    Replaces: gdaladdo -r average <mbtiles> 2 4 8 16
+    mode='auto'    : journal drain if queue is populated AND queue size /
+                     base tile count < 0.5; else nuclear. Silent no-op on
+                     empty MBTiles.
+    mode='journal' : always journal-drain. Empty queue = silent no-op with
+                     info log.
+    mode='nuclear' : always nuclear rebuild. Ignores queue, clears queue
+                     at exit. Backward-compat + rollback path.
 
-    Works directly on the MBTiles SQLite database: reads tiles at the highest
-    zoom, composites 2x2 groups into the next lower zoom, repeating until
-    the minimum zoom is reached.
+    Returns True on success, partial progress (cancel mid-drain), or no-op.
+    Raises on unrecoverable error (after rollback). Cancel is NOT signaled
+    via return value — the cancel_check callback drives early exit inside
+    _drain_*, which then commits partial state and returns True. Callers
+    that need cancel-awareness should check their own cancel flag after
+    build_overviews returns.
     """
-    if levels is None:
-        levels = [2, 4, 8, 16]
+    if mode not in ("auto", "journal", "nuclear"):
+        raise ValueError(f"unknown mode: {mode!r}")
 
     conn = None
     try:
         conn = sqlite3.connect(str(mbtiles_path))
         conn.execute("PRAGMA journal_mode=WAL")
+        _init_journal(conn)
 
-        # Find current max zoom (base tiles)
-        row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
-        if not row or row[0] is None:
-            log.warning("No tiles in %s — skipping overviews", mbtiles_path)
+        # Empty-MBTiles guard (R5 I1)
+        max_zoom_row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
+        if not max_zoom_row or max_zoom_row[0] is None:
+            log.info("No tiles in %s — skipping overviews", mbtiles_path)
+            conn.execute("DELETE FROM _overview_work_queue")
+            conn.commit()
             return True
+        max_zoom = max_zoom_row[0]
 
-        max_zoom = row[0]
+        queue_size = conn.execute(
+            "SELECT COUNT(*) FROM _overview_work_queue"
+        ).fetchone()[0]
 
-        # Delete existing overview tiles so stale overviews don't persist
-        # after new quads are merged. Only delete below max_zoom (base tiles
-        # are never touched).
-        deleted = conn.execute(
-            "DELETE FROM tiles WHERE zoom_level < ?", (max_zoom,)
-        ).rowcount
-        if deleted:
-            conn.commit()
-            log.info("Cleared %d stale overview tiles before rebuild", deleted)
-
-        # Build: for each zoom from max_zoom-1 down, composite 2x2 blocks
-        for z in range(max_zoom - 1, -1, -1):
-            if cancel_check and cancel_check():
-                return False
-
-            parent_z = z + 1
-            rows = conn.execute(
-                "SELECT DISTINCT tile_column/2, tile_row/2 FROM tiles WHERE zoom_level = ?",
-                (parent_z,),
-            ).fetchall()
-
-            if not rows:
-                break
-
-            tile_count = 0
-            for (tx, ty) in rows:
-                # Gather 2x2 child tiles
-                children = []
-                for dx in range(2):
-                    for dy in range(2):
-                        child = conn.execute(
-                            "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
-                            (parent_z, tx * 2 + dx, ty * 2 + dy),
-                        ).fetchone()
-                        children.append((dx, dy, child[0] if child else None))
-
-                # Only create overview when ALL 4 children exist.
-                # Partial 2x2 blocks produce black quadrants in JPEG.
-                if not all(c[2] for c in children):
-                    continue
-
-                # Decode children, downsample with true 2x2 averaging, composite
-                composite = np.zeros((3, TILE_SIZE, TILE_SIZE), dtype=np.uint8)
-                half = TILE_SIZE // 2
-
-                for dx, dy, tile_data in children:
-                    if tile_data is None:
-                        continue
-                    try:
-                        with rasterio.MemoryFile(tile_data) as memfile:
-                            with memfile.open() as ds:
-                                bands = min(ds.count, 3)
-                                tile_arr = ds.read(list(range(1, bands + 1)))
-                                # True 2x2 box averaging (not stride-2 subsampling)
-                                h_src, w_src = tile_arr.shape[1], tile_arr.shape[2]
-                                if h_src >= 2 and w_src >= 2:
-                                    # Reshape to (bands, h/2, 2, w/2, 2) then mean over axes 2,4
-                                    h2 = (h_src // 2) * 2
-                                    w2 = (w_src // 2) * 2
-                                    cropped = tile_arr[:, :h2, :w2].astype(np.uint16)
-                                    small = cropped.reshape(bands, h2 // 2, 2, w2 // 2, 2).mean(axis=(2, 4)).astype(np.uint8)
-                                    small = small[:, :half, :half]
-                                else:
-                                    small = tile_arr[:, :half, :half]
-                                x_off = dx * half
-                                # TMS: dy=0 is south, dy=1 is north
-                                # Image: y=0 is top (north)
-                                y_off = (1 - dy) * half
-                                h = min(small.shape[1], half)
-                                w = min(small.shape[2], half)
-                                composite[:bands, y_off:y_off + h, x_off:x_off + w] = small[:, :h, :w]
-                    except Exception:
-                        continue
-
-                tile_bytes = _encode_jpeg(composite)
-                conn.execute(
-                    "INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)",
-                    (z, tx, ty, tile_bytes),
+        if mode == "nuclear":
+            _drain_nuclear(conn, cancel_check=cancel_check)
+        elif mode == "journal":
+            if queue_size == 0:
+                log.info(
+                    "build_overviews mode=journal called with empty queue — "
+                    "nothing to drain (no-op)"
                 )
-                tile_count += 1
-
-            conn.commit()
-            if tile_count > 0:
-                log.info("Built %d overview tiles at zoom %d", tile_count, z)
-
-        # Update metadata
-        min_zoom = conn.execute("SELECT MIN(zoom_level) FROM tiles").fetchone()[0]
-        max_zoom_actual = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()[0]
-        conn.execute("INSERT OR REPLACE INTO metadata (name, value) VALUES ('minzoom', ?)", (str(min_zoom),))
-        conn.execute("INSERT OR REPLACE INTO metadata (name, value) VALUES ('maxzoom', ?)", (str(max_zoom_actual),))
+                return True
+            _drain_journal(conn, cancel_check=cancel_check)
+        else:  # auto
+            if queue_size == 0:
+                # Nothing dirty; fall back to nuclear for a full rebuild.
+                # This matches legacy callers + fresh runs with empty journal.
+                _drain_nuclear(conn, cancel_check=cancel_check)
+            else:
+                base_count = conn.execute(
+                    "SELECT COUNT(*) FROM tiles WHERE zoom_level=?", (max_zoom,)
+                ).fetchone()[0]
+                # Threshold: queue/base > 0.5 → nuclear is faster.
+                # base_count > 0 guard is defensive — an empty base zoom
+                # alongside a non-empty queue is unreachable in a
+                # well-formed MBTiles (queue entries are ancestors OF
+                # base tiles), but the guard prevents ZeroDivisionError
+                # if schema-level corruption ever violates that invariant.
+                if base_count > 0 and queue_size / base_count > 0.5:
+                    log.info(
+                        "Journal queue (%d) exceeds 50%% of base tiles (%d); "
+                        "falling back to nuclear drain",
+                        queue_size, base_count,
+                    )
+                    _drain_nuclear(conn, cancel_check=cancel_check)
+                else:
+                    _drain_journal(conn, cancel_check=cancel_check)
         conn.commit()
-
-        log.info("Overviews complete for %s (zoom %d-%d)", mbtiles_path, min_zoom, max_zoom_actual)
         return True
-
     except Exception as exc:
         log.error("build_overviews failed for %s: %s", mbtiles_path, exc)
-        return False
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise
     finally:
-        if conn:
+        if conn is not None:
             conn.close()
 
 
@@ -813,7 +1063,7 @@ def inpaint_nodata_pixels(
     nodata_threshold: int = 20,
     max_nodata_ratio: float = 0.5,
     cancel_check=None,
-) -> int:
+) -> list[tuple[int, int, int]]:
     """Replace near-black (nodata) pixels with nearest valid imagery.
 
     JPEG tiles have no alpha channel, so nodata renders as opaque black —
@@ -822,30 +1072,46 @@ def inpaint_nodata_pixels(
     nearest non-black neighbor using a distance transform, eliminating
     visible seams without losing any real imagery.
 
+    Only operates on max-zoom tiles (spec §3 / R5 I4). In the reordered
+    pipeline (merge → erode → inpaint → overviews), touching lower zoom
+    levels would mutate stale overview tiles out-of-band on resume runs.
+
     Skips tiles that are fully valid (no work needed) or mostly empty
     (>max_nodata_ratio black — these are boundary tiles better handled
     by erode_nodata_edges).
 
-    Returns the number of tiles modified.
+    Returns the list of (zoom_level, tile_column, tile_row) coords modified.
     """
     from scipy.ndimage import distance_transform_edt
 
     conn = sqlite3.connect(str(mbtiles_path))
     try:
         conn.execute("PRAGMA journal_mode=WAL")
+        _init_journal(conn)
+
+        max_zoom_row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
+        if not max_zoom_row or max_zoom_row[0] is None:
+            return []
+        max_zoom = max_zoom_row[0]
 
         # Stream tiles via cursor iteration instead of fetchall() to avoid
         # loading all tile BLOBs into memory at once (OOM at scale).
         cursor = conn.execute(
-            "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles"
+            "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles "
+            "WHERE zoom_level = ?",
+            (max_zoom,),
         )
 
-        fixed = 0
+        modified: list[tuple[int, int, int]] = []
         batch = cursor.fetchmany(500)
         while batch:
             if cancel_check and cancel_check():
-                log.info("inpaint_nodata_pixels: cancellation requested, stopping after %d tiles", fixed)
+                log.info(
+                    "inpaint_nodata_pixels: cancellation requested, stopping after %d tiles",
+                    len(modified),
+                )
                 break
+            conn.execute("BEGIN")
             for z, x, y, data in batch:
                 with rasterio.MemoryFile(data) as mf:
                     with mf.open() as ds:
@@ -864,23 +1130,18 @@ def inpaint_nodata_pixels(
                 for band in range(arr.shape[0]):
                     arr[band][black] = arr[band][nearest[0][black], nearest[1][black]]
 
-                conn.execute(
-                    "UPDATE tiles SET tile_data=? "
-                    "WHERE zoom_level=? AND tile_column=? AND tile_row=?",
-                    (_encode_jpeg(arr), z, x, y),
-                )
-                fixed += 1
+                _mutate_base_tile(conn, "upsert", z, x, y, tile_data=_encode_jpeg(arr))
+                modified.append((z, x, y))
 
-                if fixed % 1000 == 0:
-                    conn.commit()
-                    log.info("Inpainted %d tiles so far", fixed)
+                if len(modified) % 1000 == 0:
+                    log.info("Inpainted %d tiles so far", len(modified))
 
+            conn.commit()
             batch = cursor.fetchmany(500)
 
-        conn.commit()
-        if fixed:
-            log.info("Inpainted %d tiles in %s", fixed, mbtiles_path)
-        return fixed
+        if modified:
+            log.info("Inpainted %d tiles in %s", len(modified), mbtiles_path)
+        return modified
     finally:
         conn.close()
 
@@ -891,7 +1152,7 @@ def erode_nodata_edges(
     min_edge_fill: float = 0.90,
     nodata_threshold: int = 20,
     cancel_check=None,
-) -> int:
+) -> list[tuple[int, int, int]]:
     """Remove boundary tiles with significant nodata (black) at edges.
 
     Iteratively strips the outer ring of tiles until all remaining boundary
@@ -900,11 +1161,12 @@ def erode_nodata_edges(
     render as black rectangles over the basemap. This function erodes those
     away so the basemap shows through cleanly.
 
-    Returns the total number of tiles removed.
+    Returns the list of (z, tc, tr) coords deleted during erosion.
     """
     conn = sqlite3.connect(str(mbtiles_path))
     try:
-        total_removed = 0
+        _init_journal(conn)
+        deleted: list[tuple[int, int, int]] = []
 
         # Only erode at the base (max) zoom level. Overviews are rebuilt
         # from post-erosion tiles, so eroding at overview zooms independently
@@ -912,15 +1174,15 @@ def erode_nodata_edges(
         # children survive → basemap at low zoom, imagery at high zoom).
         max_z_row = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()
         if not max_z_row or max_z_row[0] is None:
-            return 0
+            return []
         zoom_levels = [max_z_row[0]]
 
         for z in zoom_levels:
             removed_this_round = 1  # seed the loop
             while removed_this_round > 0:
                 if cancel_check and cancel_check():
-                    log.info("erode_nodata_edges: cancellation requested, stopping after %d tiles", total_removed)
-                    return total_removed
+                    log.info("erode_nodata_edges: cancellation requested, stopping after %d tiles", len(deleted))
+                    return deleted
                 removed_this_round = 0
                 # Get current boundary tile positions
                 bounds = conn.execute(
@@ -939,6 +1201,7 @@ def erode_nodata_edges(
                     (z, min_col, max_col, min_row, max_row),
                 ).fetchall()
 
+                conn.execute("BEGIN")
                 for col, row, data in boundary:
                     try:
                         with rasterio.MemoryFile(data) as mf:
@@ -951,19 +1214,15 @@ def erode_nodata_edges(
                         right = has_data[:, -edge_pixels:].mean()
 
                         if min(top, bot, left, right) < min_edge_fill:
-                            conn.execute(
-                                "DELETE FROM tiles WHERE zoom_level=? "
-                                "AND tile_column=? AND tile_row=?",
-                                (z, col, row),
-                            )
+                            _mutate_base_tile(conn, "delete", z, col, row)
+                            deleted.append((z, col, row))
                             removed_this_round += 1
                     except Exception:
                         pass
 
                 conn.commit()
-                total_removed += removed_this_round
 
-        if total_removed:
+        if deleted:
             min_z = conn.execute("SELECT MIN(zoom_level) FROM tiles").fetchone()[0]
             max_z = conn.execute("SELECT MAX(zoom_level) FROM tiles").fetchone()[0]
             if min_z is not None:
@@ -976,8 +1235,8 @@ def erode_nodata_edges(
                     (str(max_z),),
                 )
             conn.commit()
-            log.info("Eroded %d nodata-edge tiles from %s", total_removed, mbtiles_path)
+            log.info("Eroded %d nodata-edge tiles from %s", len(deleted), mbtiles_path)
 
-        return total_removed
+        return deleted
     finally:
         conn.close()

@@ -136,6 +136,219 @@
         .inv-disk-summary { padding: 8px; background: #181825; border-radius: 6px; margin-top: auto; }
         .inv-disk-bar { height: 6px; background: #313244; border-radius: 3px; margin-top: 6px; overflow: hidden; }
         .inv-disk-bar-fill { height: 100%; background: #89b4fa; border-radius: 3px; }
+
+        /* === NOAA NAIP TABS (Task 27) === */
+        .noaa-tabs {
+            display: flex;
+            border-bottom: 1px solid #2d3548;
+            margin-bottom: 12px;
+        }
+        .noaa-tab {
+            flex: 1;
+            padding: 8px 10px;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: #7a8299;
+            font-size: 12px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .noaa-tab.active {
+            color: #e8ecf4;
+            border-bottom-color: #4a7fbf;
+            font-weight: 500;
+        }
+        .noaa-explainer {
+            font-size: 12px;
+            color: #9aa4bf;
+            line-height: 1.5;
+            margin: 0 0 12px;
+        }
+        .noaa-placename-callout {
+            background: rgba(74, 127, 191, 0.10);
+            border: 1px solid rgba(74, 127, 191, 0.35);
+            border-radius: 5px;
+            padding: 8px 12px;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: #b0c4e8;
+        }
+        .noaa-missing-banner {
+            background: rgba(249,226,175,0.12);
+            border: 1px solid rgba(249,226,175,0.3);
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: #f9e2af;
+            margin-bottom: 10px;
+        }
+        /* === NOAA Custom-area bbox indicator (Task 29) === */
+        .noaa-bbox-indicator {
+            font-size: 11px;
+            padding: 6px 8px;
+            border-radius: 3px;
+            margin-bottom: 10px;
+            font-family: monospace;
+        }
+        .noaa-bbox-indicator.ok {
+            background: rgba(166, 227, 161, 0.10);
+            border: 1px solid rgba(166, 227, 161, 0.35);
+            color: #b8e0b0;
+        }
+        .noaa-bbox-indicator.empty {
+            background: rgba(249, 226, 175, 0.10);
+            border: 1px solid rgba(249, 226, 175, 0.35);
+            color: #e8d8a0;
+            font-family: inherit;
+        }
+        .noaa-bbox-label {
+            font-family: inherit;
+            color: #7a8299;
+            text-transform: uppercase;
+            font-size: 9px;
+            letter-spacing: 0.5px;
+            margin-right: 4px;
+        }
+        /* === NOAA catalog refresh-history panel (Task 31) === */
+        .noaa-refresh-panel { border-top: 1px solid #2d3548; padding-top: 10px; margin-top: 12px; }
+        .noaa-refresh-toggle {
+            background: transparent; border: none; color: #9aa4bf; padding: 0;
+            font-size: 12px; cursor: pointer; font-family: inherit;
+        }
+        .noaa-refresh-toggle[aria-expanded="true"] { color: #e8ecf4; }
+        .noaa-refresh-entries { font-size: 11px; max-height: 220px; overflow-y: auto; }
+        .noaa-refresh-entry {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 6px 8px; border: 1px solid #2d3548; border-radius: 3px;
+            margin-bottom: 4px; background: #0f1420;
+        }
+        .noaa-refresh-entry.status-ok { border-color: rgba(166, 227, 161, 0.35); }
+        .noaa-refresh-entry.status-truncated,
+        .noaa-refresh-entry.status-invalid_parse { border-color: rgba(249, 226, 175, 0.35); }
+        .noaa-refresh-entry.status-rollback { border-color: rgba(74, 127, 191, 0.35); }
+        .noaa-refresh-entry .meta { flex: 1; color: #b0b8cc; }
+        .noaa-refresh-entry .ts { font-family: monospace; color: #7a8299; margin-right: 8px; }
+        .noaa-refresh-entry .btn-rollback {
+            font-size: 11px; padding: 3px 8px; background: #2d3548;
+            color: #d0d6e4; border: 1px solid #3d4558; border-radius: 3px;
+            cursor: pointer;
+        }
+        .noaa-refresh-entry .btn-rollback:disabled { opacity: 0.4; cursor: not-allowed; }
+        /* === NOAA partial_failed retry block (Task 32) === */
+        .noaa-retry-block {
+            background: rgba(243, 139, 168, 0.08);
+            border: 1px solid rgba(243, 139, 168, 0.30);
+            border-radius: 4px;
+            padding: 10px;
+            margin-top: 8px;
+            font-size: 12px;
+        }
+        .noaa-retry-label { color: #f38ba8; font-weight: 600; margin-bottom: 4px; }
+        .noaa-retry-list { margin: 4px 0; padding-left: 20px; color: #b0b8cc; }
+        .noaa-retry-list li { margin: 2px 0; }
+        .noaa-retry-btn { margin-top: 6px; font-size: 12px; }
+
+        /* === NOAA empty-state banner + inline refresh (Task 7 — async refresh) === */
+        .noaa-empty-banner {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            padding: 12px;
+            background: #2b2516;
+            border: 1px solid #6e5a20;
+            border-radius: 4px;
+            margin: 0 0 12px;
+        }
+        .noaa-empty-icon { font-size: 20px; color: #d4a63a; flex-shrink: 0; }
+        .noaa-empty-text { flex: 1; }
+        .noaa-empty-title { font-weight: 600; font-size: 13px; margin-bottom: 2px; color: #f0e4b8; }
+        .noaa-empty-sub { font-size: 11px; color: #b0a680; }
+        .noaa-tabs-refresh { margin-left: auto; font-size: 11px; padding: 4px 8px; }
+
+        /* === NOAA catalog refresh progress card (Task 9) === */
+        .noaa-progress-card {
+            position: relative;
+            background: #1a1f2e;
+            border: 1px solid #3a5070;
+            border-radius: 6px;
+            padding: 14px;
+            margin: 0 0 12px;
+        }
+        .noaa-progress-header {
+            font-weight: 600;
+            font-size: 13px;
+            color: #b0c8e8;
+            margin-bottom: 10px;
+        }
+        .noaa-progress-bar-wrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .noaa-progress-bar {
+            flex: 1;
+            height: 8px;
+            border-radius: 4px;
+            appearance: none;
+            -webkit-appearance: none;
+            background: #2d3548;
+            border: none;
+        }
+        .noaa-progress-bar::-webkit-progress-bar { background: #2d3548; border-radius: 4px; }
+        .noaa-progress-bar::-webkit-progress-value { background: #4a9e7a; border-radius: 4px; }
+        .noaa-progress-bar::-moz-progress-bar { background: #4a9e7a; border-radius: 4px; }
+        .noaa-progress-pct { font-size: 11px; color: #9aa4bf; white-space: nowrap; min-width: 80px; text-align: right; }
+        .noaa-progress-meta { font-size: 11px; color: #9aa4bf; display: flex; flex-direction: column; gap: 3px; }
+        .noaa-progress-meta .label { color: #6a7490; }
+        .noaa-progress-btn-row { margin-top: 10px; }
+        /* Cancelling overlay state */
+        .noaa-progress-card.cancelling { opacity: 0.6; }
+        .noaa-progress-card.cancelling::after {
+            content: 'Cancelling\u2026';
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 600;
+            color: #f9e2af;
+            background: rgba(0,0,0,0.45);
+            border-radius: 6px;
+        }
+        /* Stale/recoverable-error overlay */
+        .noaa-stale-overlay {
+            margin-top: 10px;
+            background: rgba(249, 226, 175, 0.10);
+            border: 1px solid rgba(249, 226, 175, 0.35);
+            border-radius: 4px;
+            padding: 8px 10px;
+            font-size: 11px;
+            color: #f9e2af;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .noaa-stale-overlay .stale-msg { flex: 1; }
+        /* Completion summary banner */
+        .noaa-completion-banner {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            padding: 12px;
+            border-radius: 4px;
+            margin: 0 0 12px;
+            font-size: 13px;
+        }
+        .noaa-completion-banner .noaa-completion-msg { flex: 1; }
+        .noaa-completion-banner.ok { background: #1b2e1e; border: 1px solid #3f6a46; color: #bfe3c6; }
+        .noaa-completion-banner.cancelled { background: #1a1d22; border: 1px solid #3c434a; color: #c4c9cf; }
+        .noaa-completion-banner.truncated,
+        .noaa-completion-banner.invalid_parse { background: #2b2516; border: 1px solid #6e5a20; color: #f0e4b8; }
+        .noaa-completion-banner.error { background: #2a1a1a; border: 1px solid #6e3030; color: #f0c4c4; }
+        .noaa-completion-banner.unknown { background: #1a1d22; border: 1px solid #3c434a; color: #c4c9cf; }
     </style>
 </head>
 <body>
@@ -686,7 +899,7 @@
 
         // Re-fetch catalog once when pipeline reaches terminal state (not every poll)
         var terminalKey = '_terminal_' + sourceId;
-        if (d.status === 'completed' || d.status === 'error' || d.status === 'cancelled') {
+        if (d.status === 'completed' || d.status === 'error' || d.status === 'cancelled' || d.status === 'partial_failed') {
             if (!renderSourceProgress[terminalKey]) {
                 renderSourceProgress[terminalKey] = true;
                 fetchCatalog();
@@ -1001,7 +1214,9 @@
             body.id = 'card-' + src.id + '-body';
             card.appendChild(body);
 
-            // Progress elements (hidden)
+            // Progress elements (hidden) — pre-existing imagery-download pipeline scaffold.
+            // Its id "card-<id>-progress" must NOT be renamed: other JS paths query it.
+            // The NOAA refresh progress card uses "card-<id>-noaa-refresh-card" instead.
             var progressDiv = document.createElement('div');
             progressDiv.id = 'card-' + src.id + '-progress';
             progressDiv.style.display = 'none';
@@ -1061,7 +1276,15 @@
             if (prevCard) {
                 prevCard.classList.remove('expanded');
                 var prevBody = document.getElementById('card-' + _expandedCard + '-body');
-                if (prevBody) prevBody.textContent = '';
+                if (prevBody) {
+                    // Fix 1: stop any running NOAA progress poll before tearing down the body
+                    // so the interval doesn't keep firing on detached DOM.
+                    if (prevBody._noaaProgressPollId) {
+                        clearInterval(prevBody._noaaProgressPollId);
+                        prevBody._noaaProgressPollId = null;
+                    }
+                    prevBody.textContent = '';
+                }
             }
             allCards.forEach(function(c) { c.classList.remove('dimmed'); });
         }
@@ -1175,87 +1398,992 @@
     // NOAA NAIP panel
     // -----------------------------------------------------------------------
     function renderNoaaBody(body, src) {
-        var catEntry = _catalogData[src.id];
-        var diskInfo = 'Not downloaded yet';
-        if (catEntry) {
-            var bytes = catEntry.size_bytes || 0;
-            diskInfo = (bytes > 1e9 ? (bytes / 1e9).toFixed(1) + ' GB' : (bytes / 1e6).toFixed(0) + ' MB') + ' on disk';
-        }
-
+        // ---------------------------------------------------------------
+        // Build tabbed card structure (Task 27)
+        // ---------------------------------------------------------------
         body.innerHTML =
-            '<p style="font-size:12px;color:#7a8299;margin:0 0 8px">GeoTIFF tiles from Azure Blob Storage. No auth, no throttling.</p>' +
-            '<div class="config-row">' +
-                '<div>' +
-                    '<label>State / Year</label>' +
+            '<p style="font-size:12px;color:#7a8299;margin:0 0 10px">GeoTIFF tiles from Azure Blob Storage. No auth, no throttling.</p>' +
+            // Empty-state banner: shown when <=1 state is cataloged (visibility toggled by JS after catalog fetch)
+            '<div class="noaa-empty-banner" id="card-' + src.id + '-empty-banner" style="display:none">' +
+                '<div class="noaa-empty-icon">&#9888;</div>' +
+                '<div class="noaa-empty-text">' +
+                    '<div class="noaa-empty-title">Only <span class="noaa-empty-count">0</span> of ~49 states cataloged.</div>' +
+                    '<div class="noaa-empty-sub">Scans NOAA\'s Azure blob listing (~10\u201330\u00a0min). Runs in background.</div>' +
+                '</div>' +
+                '<button type="button" class="btn-primary" id="card-' + src.id + '-refresh-empty">Refresh catalog</button>' +
+            '</div>' +
+            // Tab strip
+            '<div class="noaa-tabs" role="tablist">' +
+                '<button class="noaa-tab active" data-tab="whole" role="tab">Whole state</button>' +
+                '<button class="noaa-tab" data-tab="custom" role="tab">Custom area</button>' +
+                '<button type="button" class="btn-secondary noaa-tabs-refresh" id="card-' + src.id + '-refresh-inline" style="display:none">Refresh</button>' +
+            '</div>' +
+            // ---- Whole state tab body ----
+            '<div class="noaa-tab-body noaa-tab-whole">' +
+                '<p class="noaa-explainer">Download every aerial photo for one US state.</p>' +
+                '<div id="card-' + src.id + '-whole-state-row" style="margin-bottom:10px">' +
+                    '<label>State</label>' +
                     '<select id="card-' + src.id + '-state">' +
-                        '<option value="AZ:2021" selected>Arizona 2021</option>' +
+                        '<option value="arizona">Arizona</option>' +
                     '</select>' +
                 '</div>' +
-                '<div>' +
-                    '<div style="font-size:11px;color:#7a8299;margin-top:24px">On Disk: ' + diskInfo + '</div>' +
+                '<div class="estimate-box" id="card-' + src.id + '-est-whole" style="display:none"></div>' +
+                '<div class="btn-row">' +
+                    '<button type="button" class="btn-secondary" id="card-' + src.id + '-est-btn-whole" style="flex:none">Estimate Download</button>' +
+                    '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start-whole">Download</button>' +
                 '</div>' +
             '</div>' +
-            '<div class="estimate-box" id="card-' + src.id + '-est" style="display:none"></div>' +
-            '<div class="btn-row">' +
-                '<button type="button" class="btn-secondary" id="card-' + src.id + '-est-btn" style="flex:none">Estimate Download</button>' +
-                '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start">Start Download</button>' +
+            // ---- Custom area tab body ----
+            '<div class="noaa-tab-body noaa-tab-custom" style="display:none">' +
+                '<p class="noaa-explainer">Download only the imagery inside the bbox drawn above (or entered in Coverage Area).</p>' +
+                '<div class="estimate-box" id="card-' + src.id + '-est-custom" style="display:none"></div>' +
+                '<div class="btn-row">' +
+                    '<button type="button" class="btn-secondary" id="card-' + src.id + '-est-btn-custom" style="flex:none">Estimate Download</button>' +
+                    '<button type="button" class="btn-primary pipeline-start-btn" id="card-' + src.id + '-start-custom">Download</button>' +
+                '</div>' +
+                '<p style="font-size:11px;color:#7a8299;margin-top:8px">Uses the bbox in the Coverage Area panel at the top of the page.</p>' +
+            '</div>' +
+            // ---- Catalog refresh-history panel (Task 31) ----
+            '<div class="noaa-refresh-panel">' +
+                '<button type="button" class="noaa-refresh-toggle" id="card-' + src.id + '-refresh-toggle" aria-expanded="false">' +
+                    '&#9658; Catalog refresh history' +
+                '</button>' +
+                '<div class="noaa-refresh-body" id="card-' + src.id + '-refresh-body" style="display:none">' +
+                    '<div style="text-align:right;margin-bottom:4px">' +
+                        '<button type="button" class="btn-secondary" id="card-' + src.id + '-refresh-reload" style="font-size:11px;padding:3px 8px" title="Reload the log">&#8635;</button>' +
+                    '</div>' +
+                    '<div class="noaa-refresh-entries" id="card-' + src.id + '-refresh-entries"></div>' +
+                '</div>' +
             '</div>';
 
-        var estBtn = document.getElementById('card-' + src.id + '-est-btn');
-        var estBox = document.getElementById('card-' + src.id + '-est');
-        var stateSel = document.getElementById('card-' + src.id + '-state');
+        // ---------------------------------------------------------------
+        // Tab switching
+        // ---------------------------------------------------------------
+        var tabs = body.querySelectorAll('.noaa-tab');
+        var tabBodies = body.querySelectorAll('.noaa-tab-body');
+        tabs.forEach(function(t) {
+            t.addEventListener('click', function() {
+                var which = t.getAttribute('data-tab');
+                tabs.forEach(function(x) { x.classList.toggle('active', x === t); });
+                tabBodies.forEach(function(b) {
+                    var match = (which === 'whole' && b.classList.contains('noaa-tab-whole')) ||
+                                (which === 'custom' && b.classList.contains('noaa-tab-custom'));
+                    b.style.display = match ? '' : 'none';
+                });
+            });
+        });
 
-        estBtn.addEventListener('click', function() {
-            estBox.style.display = '';
-            estBox.textContent = 'Estimating...';
-            estBox.style.color = '#7a8299';
-            var parts = stateSel.value.split(':');
-            var bbox = document.getElementById('cfg-bbox').value;
-            cfgFetch('/admin/pipeline/noaa/estimate?bbox=' + encodeURIComponent(bbox) + '&state=' + parts[0])
+        // ---------------------------------------------------------------
+        // Task 29 — Custom-area bbox indicator
+        // ---------------------------------------------------------------
+        var customTabBody = body.querySelector('.noaa-tab-custom');
+        var bboxIndicator = document.createElement('div');
+        bboxIndicator.className = 'noaa-bbox-indicator';
+        bboxIndicator.id = 'card-' + src.id + '-bbox-indicator';
+        // Insert before the estimate-box element in the custom tab body
+        var customEstBox = document.getElementById('card-' + src.id + '-est-custom');
+        if (customEstBox) customTabBody.insertBefore(bboxIndicator, customEstBox);
+
+        function updateBboxIndicator() {
+            var v = (document.getElementById('cfg-bbox') || {}).value || '';
+            v = v.trim();
+            var parts = v.split(',').map(function(x) { return parseFloat(x.trim()); });
+            var valid = parts.length === 4 && parts.every(function(n) { return Number.isFinite(n); });
+            if (valid) {
+                bboxIndicator.className = 'noaa-bbox-indicator ok';
+                bboxIndicator.innerHTML = '<span class="noaa-bbox-label">Using bbox:</span> ' +
+                    parts.map(function(n) { return n.toFixed(3); }).join(', ');
+            } else {
+                bboxIndicator.className = 'noaa-bbox-indicator empty';
+                bboxIndicator.textContent = 'Draw a bbox in the Coverage Area panel above, or paste one into the bbox field.';
+            }
+        }
+
+        updateBboxIndicator();
+        var bboxInput = document.getElementById('cfg-bbox');
+        if (bboxInput) {
+            // Replace any prior NOAA-card listener before attaching a new one:
+            // renderNoaaBody is called on every card expand, and the card body
+            // is torn down on collapse — but #cfg-bbox is a global element
+            // that persists, so without dedup the listeners stack forever.
+            if (bboxInput._noaaBboxListener) {
+                bboxInput.removeEventListener('input', bboxInput._noaaBboxListener);
+                bboxInput.removeEventListener('change', bboxInput._noaaBboxListener);
+            }
+            bboxInput._noaaBboxListener = updateBboxIndicator;
+            bboxInput.addEventListener('input', updateBboxIndicator);
+            bboxInput.addEventListener('change', updateBboxIndicator);
+        }
+        // Also refresh when the custom tab becomes active (user may have drawn on map before expanding the card)
+        tabs.forEach(function(t) {
+            if (t.getAttribute('data-tab') === 'custom') {
+                t.addEventListener('click', updateBboxIndicator);
+            }
+        });
+
+        // ---------------------------------------------------------------
+        // Task 28 — Populate state dropdown from live catalog
+        // ---------------------------------------------------------------
+        var stateSel = document.getElementById('card-' + src.id + '-state');
+        // Fallback: keep Arizona selected if fetch fails or catalog not loaded
+        stateSel.innerHTML = '<option value="arizona">Arizona</option>';
+        // Helper: update empty-state banner and inline refresh button visibility
+        function _updateRefreshBannerVisibility(entryCount) {
+            var emptyBanner = document.getElementById('card-' + src.id + '-empty-banner');
+            var inlineRefresh = document.getElementById('card-' + src.id + '-refresh-inline');
+            var countEl = body.querySelector('.noaa-empty-count');
+            // Fix 6: "No states cataloged yet." when count is 0; "Only N of ~49" otherwise.
+            if (countEl) {
+                var titleEl = countEl.closest('.noaa-empty-title') || countEl.parentNode;
+                if (entryCount === 0) {
+                    titleEl.textContent = 'No states cataloged yet.';
+                } else {
+                    titleEl.innerHTML = 'Only <span class="noaa-empty-count">' + entryCount + '</span> of ~49 states cataloged.';
+                }
+            }
+            if (entryCount <= 1) {
+                if (emptyBanner) emptyBanner.style.display = '';
+                if (inlineRefresh) inlineRefresh.style.display = 'none';
+            } else {
+                if (emptyBanner) emptyBanner.style.display = 'none';
+                if (inlineRefresh) inlineRefresh.style.display = '';
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Task 9 — Page-navigation rehydration (spec §Testing invariant #7)
+        // Fires BEFORE the catalog fetch so that a running refresh isn't
+        // clobbered by the empty-state banner logic inside the catalog
+        // response handler.
+        // ---------------------------------------------------------------
+        cfgFetch('/admin/pipeline/noaa/refresh/progress')
+            .then(function(r) { return r.json(); })
+            .then(function(state) {
+                if (state.status === 'running') {
+                    // A refresh was started in a previous page load and is
+                    // still going — skip the confirm dialog; jump straight to
+                    // the in-progress UI + polling.
+                    _showProgressCard(body, src);
+                    _updateProgressCard(document.getElementById('card-' + src.id + '-noaa-refresh-card'), state, body, src);
+                    _startPolling(body, src);
+                } else if (state.status === 'done') {
+                    // Fix 7: only render the completion banner if the refresh finished
+                    // within the last 24 hours; otherwise fall through to idle/empty-state.
+                    var staleThresholdMs = 24 * 60 * 60 * 1000;
+                    var endedAt = state.ended_at;
+                    var showCompletion = false;
+                    if (endedAt) {
+                        try {
+                            var endedDate = new Date(endedAt.replace(/\+00:00$/, 'Z'));
+                            showCompletion = (Date.now() - endedDate.getTime()) < staleThresholdMs;
+                        } catch (e) {
+                            showCompletion = true; // malformed date; render anyway
+                        }
+                    } else {
+                        showCompletion = true; // no timestamp; render anyway
+                    }
+                    if (showCompletion) {
+                        _renderCompletionSummary(body, src, state);
+                    }
+                    // else: fall through to idle/empty-state flow.
+                }
+                // status: 'idle' — no-op; normal render proceeds.
+            })
+            .catch(function() {
+                // Progress endpoint unavailable — ignore; catalog fetch below
+                // handles the empty-banner fallback path.
+            });
+
+        // Shared helper: (re-)fetch the NOAA catalog and repopulate the state dropdown.
+        // Used by both the initial card render and the completion summary [Reload dropdown] button.
+        function _reloadCatalogDropdown(targetBody, targetSrc) {
+            var sel = document.getElementById('card-' + targetSrc.id + '-state');
+            if (!sel) return Promise.resolve(0);
+            return cfgFetch('/admin/pipeline/noaa/catalog')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    var entries = (data.status === 'ok' && data.entries) ? data.entries : {};
+                    var slugs = Object.keys(entries).sort();
+                    if (slugs.length) {
+                        sel.innerHTML = slugs.map(function(slug) {
+                            var entry = entries[slug];
+                            var displayName = _humanizeSlug(slug);
+                            var year = entry.year || '';
+                            return '<option value="' + slug + '">' + displayName +
+                                   (year ? ' ' + year : '') + '</option>';
+                        }).join('');
+                    } else {
+                        sel.innerHTML = '<option value="arizona">Arizona</option>';
+                    }
+                    // Fix 3: if a progress card or completion banner already owns the top
+                    // of the NOAA card, don't let the catalog fetch's banner-visibility
+                    // logic overwrite it with the empty-state banner.
+                    var progressCard = document.getElementById('card-' + targetSrc.id + '-noaa-refresh-card');
+                    var completionBanner = document.getElementById('card-' + targetSrc.id + '-completion');
+                    if (!progressCard && !completionBanner) {
+                        _updateRefreshBannerVisibility(slugs.length);
+                    }
+                    return slugs.length;
+                })
+                .catch(function() {
+                    var progressCard = document.getElementById('card-' + targetSrc.id + '-noaa-refresh-card');
+                    var completionBanner = document.getElementById('card-' + targetSrc.id + '-completion');
+                    if (!progressCard && !completionBanner) {
+                        _updateRefreshBannerVisibility(0);
+                    }
+                    return 0;
+                });
+        }
+
+        // Initial catalog fetch — delegates to the shared helper
+        _reloadCatalogDropdown(body, src);
+
+        // ---------------------------------------------------------------
+        // Shared estimate renderer — populates an estBox with API response
+        // ---------------------------------------------------------------
+        function _renderEstimate(estBox, d) {
+            estBox.textContent = '';
+            estBox.style.color = '#a6e3a1';
+
+            // Placename callout
+            if (d.placename) {
+                var callout = document.createElement('div');
+                callout.className = 'noaa-placename-callout';
+                callout.textContent = 'Coverage area: ' + d.placename;
+                estBox.appendChild(callout);
+            }
+
+            // missing[] banner
+            if (d.missing && d.missing.length > 0) {
+                var banner = document.createElement('div');
+                banner.className = 'noaa-missing-banner';
+                var missingNames = d.missing.map(function(s) {
+                    return s.split('-').map(function(p) { return p.charAt(0).toUpperCase() + p.slice(1); }).join(' ');
+                });
+                var bannerText = '\u26a0 ' + d.missing.length + ' non-cataloged state(s) intersect this bbox: ' +
+                    missingNames.join(', ') + '. Start will require acknowledge_missing.';
+                banner.appendChild(document.createTextNode(bannerText));
+                var ackLabel = document.createElement('label');
+                ackLabel.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:6px;font-weight:normal;cursor:pointer';
+                var ackBox = document.createElement('input');
+                ackBox.type = 'checkbox';
+                ackBox.id = 'card-' + src.id + '-ack-missing';
+                ackBox.style.cssText = 'width:auto;margin:0';
+                ackLabel.appendChild(ackBox);
+                ackLabel.appendChild(document.createTextNode(' I understand \u2014 proceed with partial coverage'));
+                banner.appendChild(document.createElement('br'));
+                banner.appendChild(ackLabel);
+                estBox.appendChild(banner);
+            }
+
+            var linesWrap = document.createElement('span');
+            var lines = [
+                d.tile_count.toLocaleString() + ' tiles intersect your bbox',
+                'Download: ~' + d.raw_download_gb + ' GB raw',
+                'Final MBTiles: ~' + d.final_mbtiles_gb + ' GB',
+                'Estimated time: ~' + d.est_hours + ' hours',
+                'Disk free: ' + d.disk_free_gb + ' GB'
+            ];
+            if (d.disk_free_gb < d.final_mbtiles_gb * 1.2) {
+                lines.push('\u26a0 Disk space may be insufficient!');
+                estBox.style.color = '#f38ba8';
+            }
+            lines.forEach(function(line, i) {
+                if (i > 0) linesWrap.appendChild(document.createElement('br'));
+                linesWrap.appendChild(document.createTextNode(line));
+            });
+            estBox.appendChild(linesWrap);
+
+            // Peak-working-set disk warning (Spec §3.7, Task 30a)
+            var peak = d.peak_required_gb || 0;
+            var free = d.disk_free_gb || 0;
+            estBox._diskBlocked = false;
+            if (peak > 0 && free > 0) {
+                var pct = peak / free;
+                if (pct > 1.0) {
+                    estBox.appendChild(document.createElement('br'));
+                    var block = document.createElement('span');
+                    block.style.color = '#f38ba8';
+                    block.style.fontWeight = '600';
+                    block.textContent = '\u26d4 Peak working set (' + peak.toFixed(1) + ' GB) exceeds free disk (' + free.toFixed(1) + ' GB). Start is disabled.';
+                    estBox.appendChild(block);
+                    estBox._diskBlocked = true;
+                } else if (pct > 0.85) {
+                    estBox.appendChild(document.createElement('br'));
+                    var warn = document.createElement('span');
+                    warn.style.color = '#f9e2af';
+                    warn.textContent = '\u26a0 Peak working set ' + peak.toFixed(1) + ' GB is ' + Math.round(pct * 100) + '% of your ' + free.toFixed(1) + ' GB free disk. You can continue but should monitor.';
+                    estBox.appendChild(warn);
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Whole-state estimate button
+        // ---------------------------------------------------------------
+        var estBtnWhole = document.getElementById('card-' + src.id + '-est-btn-whole');
+        var estBoxWhole = document.getElementById('card-' + src.id + '-est-whole');
+
+        estBtnWhole.addEventListener('click', function() {
+            estBoxWhole.style.display = '';
+            estBoxWhole.style.color = '#7a8299';
+            var bbox = (document.getElementById('cfg-bbox').value || '').trim();
+            // Client-side bbox validation — same rules as the Custom-area tab.
+            // Whole-state mode still requires a bbox (the endpoint uses it to
+            // spatially refine tile counts within the state's extent); an
+            // empty/malformed value would surface as a 422 otherwise.
+            var parts = bbox.split(',').map(function(x) { return parseFloat(x.trim()); });
+            if (!(parts.length === 4 && parts.every(function(n) { return Number.isFinite(n); }))) {
+                estBoxWhole.textContent = 'Set a bbox in the Coverage Area panel above before estimating.';
+                estBoxWhole.style.color = '#f9e2af';
+                return;
+            }
+            estBoxWhole.textContent = 'Estimating...';
+            var stateSlug = stateSel.value;
+            cfgFetch('/admin/pipeline/noaa/estimate?bbox=' + encodeURIComponent(bbox) + '&state=' + encodeURIComponent(stateSlug))
                 .then(function(r) { return r.json(); })
                 .then(function(d) {
                     if (d.error || d.detail) {
-                        estBox.textContent = 'Error: ' + (d.error || d.detail);
-                        estBox.style.color = '#f38ba8';
+                        estBoxWhole.textContent = 'Error: ' + (d.error || d.detail);
+                        estBoxWhole.style.color = '#f38ba8';
                         return;
                     }
-                    if (d.status === 'no_index') {
-                        estBox.textContent = d.message;
-                        estBox.style.color = '#f9e2af';
+                    if (d.status === 'no_catalog' || d.status === 'no_index') {
+                        estBoxWhole.textContent = d.message || 'Catalog not loaded \u2014 run refresh.';
+                        estBoxWhole.style.color = '#f9e2af';
                         return;
                     }
-                    estBox.textContent = '';
-                    estBox.style.color = '#a6e3a1';
-                    var lines = [
-                        d.tile_count.toLocaleString() + ' tiles intersect your bbox',
-                        'Download: ~' + d.raw_download_gb + ' GB raw',
-                        'Final MBTiles: ~' + d.final_mbtiles_gb + ' GB',
-                        'Estimated time: ~' + d.est_hours + ' hours',
-                        'Disk free: ' + d.disk_free_gb + ' GB'
-                    ];
-                    if (d.disk_free_gb < d.final_mbtiles_gb * 1.2) {
-                        lines.push('\u26a0 Disk space may be insufficient!');
-                        estBox.style.color = '#f38ba8';
-                    }
-                    lines.forEach(function(line, i) {
-                        if (i > 0) estBox.appendChild(document.createElement('br'));
-                        estBox.appendChild(document.createTextNode(line));
-                    });
+                    _renderEstimate(estBoxWhole, d);
                 })
                 .catch(function() {
-                    estBox.textContent = 'Estimate failed (API offline?)';
-                    estBox.style.color = '#f38ba8';
+                    estBoxWhole.textContent = 'Estimate failed (API offline?)';
+                    estBoxWhole.style.color = '#f38ba8';
                 });
         });
 
-        document.getElementById('card-' + src.id + '-start').addEventListener('click', function() {
-            var parts = stateSel.value.split(':');
-            startPipeline(src, { state: parts[0], year: parseInt(parts[1]) });
+        document.getElementById('card-' + src.id + '-start-whole').addEventListener('click', function() {
+            // Task 30a — peak-disk gate
+            if (estBoxWhole && estBoxWhole._diskBlocked) {
+                alert('Cannot start: peak working set exceeds free disk.\nEither free space or shrink the bbox, then re-Estimate.');
+                return;
+            }
+            // Task 30b — acknowledge_missing gate
+            var ackCheckboxWhole = estBoxWhole ? estBoxWhole.querySelector('#card-' + src.id + '-ack-missing') : null;
+            if (ackCheckboxWhole && !ackCheckboxWhole.checked) {
+                alert('This bbox intersects non-cataloged state(s). Check the \u201cI understand\u201d box to proceed with partial coverage.');
+                return;
+            }
+            var ackMissingWhole = ackCheckboxWhole ? ackCheckboxWhole.checked : false;
+            startPipeline(src, { state: stateSel.value, acknowledge_missing: ackMissingWhole });
+        });
+
+        // ---------------------------------------------------------------
+        // Custom-area estimate button
+        // ---------------------------------------------------------------
+        var estBtnCustom = document.getElementById('card-' + src.id + '-est-btn-custom');
+        var estBoxCustom = document.getElementById('card-' + src.id + '-est-custom');
+
+        estBtnCustom.addEventListener('click', function() {
+            estBoxCustom.style.display = '';
+            estBoxCustom.textContent = 'Estimating...';
+            estBoxCustom.style.color = '#7a8299';
+            // Task 30c — parse-based bbox validation before hitting the API
+            var bbox = document.getElementById('cfg-bbox').value.trim();
+            var bboxParts = bbox.split(',').map(function(x) { return parseFloat(x.trim()); });
+            if (!(bboxParts.length === 4 && bboxParts.every(function(n) { return Number.isFinite(n); }))) {
+                estBoxCustom.style.display = '';
+                estBoxCustom.textContent = 'Set a bbox in the Coverage Area panel above before estimating.';
+                estBoxCustom.style.color = '#f9e2af';
+                return;
+            }
+            cfgFetch('/admin/pipeline/noaa/estimate?bbox=' + encodeURIComponent(bbox))
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (d.error || d.detail) {
+                        estBoxCustom.textContent = 'Error: ' + (d.error || d.detail);
+                        estBoxCustom.style.color = '#f38ba8';
+                        return;
+                    }
+                    if (d.status === 'no_catalog' || d.status === 'no_index') {
+                        estBoxCustom.textContent = d.message || 'Catalog not loaded \u2014 run refresh.';
+                        estBoxCustom.style.color = '#f9e2af';
+                        return;
+                    }
+                    _renderEstimate(estBoxCustom, d);
+                })
+                .catch(function() {
+                    estBoxCustom.textContent = 'Estimate failed (API offline?)';
+                    estBoxCustom.style.color = '#f38ba8';
+                });
+        });
+
+        document.getElementById('card-' + src.id + '-start-custom').addEventListener('click', function() {
+            var bbox = document.getElementById('cfg-bbox').value;
+            // Task 30a — peak-disk gate
+            if (estBoxCustom && estBoxCustom._diskBlocked) {
+                alert('Cannot start: peak working set exceeds free disk.\nEither free space or shrink the bbox, then re-Estimate.');
+                return;
+            }
+            // Task 30b — acknowledge_missing gate
+            var ackCheckboxCustom = estBoxCustom ? estBoxCustom.querySelector('#card-' + src.id + '-ack-missing') : null;
+            if (ackCheckboxCustom && !ackCheckboxCustom.checked) {
+                alert('This bbox intersects non-cataloged state(s). Check the \u201cI understand\u201d box to proceed with partial coverage.');
+                return;
+            }
+            var ackMissingCustom = ackCheckboxCustom ? ackCheckboxCustom.checked : false;
+            startPipeline(src, { bbox: bbox, acknowledge_missing: ackMissingCustom });
         });
 
         if (_anyPipelineRunning) {
-            document.getElementById('card-' + src.id + '-start').disabled = true;
+            document.getElementById('card-' + src.id + '-start-whole').disabled = true;
+            document.getElementById('card-' + src.id + '-start-custom').disabled = true;
         }
+
+        // ---------------------------------------------------------------
+        // Task 31 — Catalog refresh-history panel wiring
+        // ---------------------------------------------------------------
+        var refreshToggle = document.getElementById('card-' + src.id + '-refresh-toggle');
+        var refreshBody = document.getElementById('card-' + src.id + '-refresh-body');
+        var refreshEntries = document.getElementById('card-' + src.id + '-refresh-entries');
+
+        function renderRefreshEntries(entries) {
+            if (!entries || entries.length === 0) {
+                refreshEntries.innerHTML = '<div style="color:#7a8299;padding:8px">No refreshes yet. Click \u201cRefresh catalog now\u201d to start.</div>';
+                return;
+            }
+            refreshEntries.innerHTML = entries.map(function(e) {
+                // Derive a synthetic status from the log entry shape.
+                // refresh_catalog() writes log entries with added/removed/state_count
+                // and NO status field on successful refreshes; a dedicated
+                // "rollback" action writes status="rollback". Detect ok vs
+                // truncated vs rollback from the available fields.
+                var status = e.status
+                    || (e.to_snapshot ? 'rollback'
+                        : typeof e.state_count === 'number' ? (e.state_count > 0 ? 'ok' : 'empty')
+                        : 'unknown');
+                var statusClass = 'status-' + status.replace(/[^a-z_]/gi, '');
+                var ts = (e.ts || '').replace('T', ' ').replace('Z', '');
+                var issues = Array.isArray(e.validation_issues) ? e.validation_issues.length : 0;
+                var added = Array.isArray(e.added) ? e.added.length : 0;
+                var removed = Array.isArray(e.removed) ? e.removed.length : 0;
+                var summary;
+                if (status === 'rollback') {
+                    summary = 'rollback \u2192 ' + e.to_snapshot;
+                } else if (status === 'ok') {
+                    summary = 'refresh \u2014 ' + (e.state_count || 0) + ' states'
+                        + (added ? ', +' + added : '')
+                        + (removed ? ', \u2212' + removed : '')
+                        + (issues ? ', ' + issues + ' issues' : '');
+                } else if (status === 'empty') {
+                    summary = 'refresh \u2014 0 states'
+                        + (issues ? ' (' + issues + ' issues)' : '');
+                } else if (status === 'truncated') {
+                    summary = 'refresh truncated: ' + (e.error || 'Azure listing incomplete');
+                } else {
+                    summary = status;
+                }
+                var label = summary;
+                var filename = e.to_snapshot || (e.snapshot_path ? e.snapshot_path.split('/').pop() : '');
+                var canRollback = e.rollback_available && filename && status !== 'rollback';
+                var btn = canRollback
+                    ? '<button type="button" class="btn-rollback" data-snap="' + filename + '">Rollback</button>'
+                    : '<button type="button" class="btn-rollback" disabled>\u2014</button>';
+                return '<div class="noaa-refresh-entry ' + statusClass + '">' +
+                         '<div class="meta"><span class="ts">' + ts + '</span>' + label + '</div>' +
+                         btn +
+                       '</div>';
+            }).join('');
+
+            // Wire rollback buttons
+            refreshEntries.querySelectorAll('.btn-rollback:not([disabled])').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var snap = btn.getAttribute('data-snap');
+                    if (!confirm('Rollback catalog to ' + snap + '?\nThis overwrites the current symlink and is logged.')) return;
+                    btn.disabled = true;
+                    btn.textContent = '...';
+                    cfgFetch('/admin/pipeline/noaa/rollback', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ to_snapshot: snap }),
+                    })
+                    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d, status: r.status }; }); })
+                    .then(function(r) {
+                        if (!r.ok) {
+                            alert('Rollback failed (' + r.status + '): ' + JSON.stringify(r.data.detail || r.data));
+                            btn.disabled = false;
+                            btn.textContent = 'Rollback';
+                            return;
+                        }
+                        // Success: reload the log
+                        loadRefreshLog();
+                    })
+                    .catch(function(err) {
+                        alert('Rollback failed: ' + err);
+                        btn.disabled = false;
+                        btn.textContent = 'Rollback';
+                    });
+                });
+            });
+        }
+
+        function loadRefreshLog() {
+            refreshEntries.innerHTML = '<div style="color:#7a8299;padding:8px">Loading...</div>';
+            cfgFetch('/admin/pipeline/noaa/refresh-log')
+                .then(function(r) { return r.json(); })
+                .then(function(d) { renderRefreshEntries(d.entries || []); })
+                .catch(function() {
+                    refreshEntries.innerHTML = '<div style="color:#f38ba8;padding:8px">Failed to load refresh log.</div>';
+                });
+        }
+
+        refreshToggle.addEventListener('click', function() {
+            var expanded = refreshToggle.getAttribute('aria-expanded') === 'true';
+            refreshToggle.setAttribute('aria-expanded', !expanded);
+            refreshToggle.textContent = (expanded ? '\u25B8' : '\u25BE') + ' Catalog refresh history';
+            refreshBody.style.display = expanded ? 'none' : '';
+            if (!expanded) loadRefreshLog();
+        });
+
+        document.getElementById('card-' + src.id + '-refresh-reload').addEventListener('click', loadRefreshLog);
+
+        // ---------------------------------------------------------------
+        // Task 9 — Progress-bar polling helpers
+        // ---------------------------------------------------------------
+
+        // Humanize a state slug: strip -us suffix, title-case each word.
+        // Reuses the same transform as the dropdown-populate logic above.
+        function _humanizeSlug(slug) {
+            return (slug || '—')
+                .replace(/-us$/, '')
+                .split('-')
+                .map(function(p) { return p.charAt(0).toUpperCase() + p.slice(1); })
+                .join(' ');
+        }
+
+        // Format elapsed seconds as "Xm Ys" or "Ys".
+        function _fmtElapsed(secs) {
+            secs = Math.max(0, Math.round(secs));
+            if (secs >= 60) {
+                return Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+            }
+            return secs + 's';
+        }
+
+        // Format ETA seconds as "~X min" or "~Y s".
+        function _fmtEta(secs) {
+            if (secs == null) return '—';
+            secs = Math.max(0, Math.round(secs));
+            return secs >= 60 ? '~' + Math.ceil(secs / 60) + ' min' : '~' + secs + 's';
+        }
+
+        // Build and inject the progress-card markup; hide the empty banner and
+        // inline refresh button (they'd conflict with the card UI).
+        // Returns the card DOM element.
+        function _showProgressCard(targetBody, targetSrc) {
+            // Hide empty-state banner and inline refresh button
+            var emptyBanner = document.getElementById('card-' + targetSrc.id + '-empty-banner');
+            var inlineRefresh = document.getElementById('card-' + targetSrc.id + '-refresh-inline');
+            if (emptyBanner) emptyBanner.style.display = 'none';
+            if (inlineRefresh) inlineRefresh.style.display = 'none';
+
+            // Remove any existing progress card before inserting a fresh one
+            var existing = document.getElementById('card-' + targetSrc.id + '-noaa-refresh-card');
+            if (existing) existing.parentNode.removeChild(existing);
+
+            var card = document.createElement('div');
+            card.className = 'noaa-progress-card';
+            card.id = 'card-' + targetSrc.id + '-noaa-refresh-card';
+            card.innerHTML =
+                '<div class="noaa-progress-header">Refreshing NOAA catalog</div>' +
+                '<div class="noaa-progress-bar-wrap">' +
+                    '<progress class="noaa-progress-bar" value="0" max="100"></progress>' +
+                    '<span class="noaa-progress-pct">0% (0 of \u2014)</span>' +
+                '</div>' +
+                '<div class="noaa-progress-meta">' +
+                    '<div><span class="label">Current:</span> <span class="noaa-progress-slug">\u2014</span></div>' +
+                    '<div>' +
+                        '<span class="label">Elapsed:</span> <span class="noaa-progress-elapsed">0 s</span>' +
+                        ' \u00b7 <span class="label">ETA:</span> <span class="noaa-progress-eta">\u2014</span>' +
+                    '</div>' +
+                    '<div><span class="label">Phase:</span> <span class="noaa-progress-phase">starting</span></div>' +
+                '</div>' +
+                '<div class="noaa-progress-btn-row">' +
+                    '<button type="button" class="btn-secondary" id="card-' + targetSrc.id + '-noaa-refresh-cancel">Cancel</button>' +
+                '</div>';
+
+            // Insert the card at the top of the body, before the tabs section or as the first child
+            var firstChild = targetBody.firstChild;
+            targetBody.insertBefore(card, firstChild);
+
+            // Wire cancel button
+            var cancelBtn = document.getElementById('card-' + targetSrc.id + '-noaa-refresh-cancel');
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', function() {
+                    cancelBtn.disabled = true;
+                    cfgFetch('/admin/pipeline/noaa/refresh/cancel', { method: 'POST' })
+                        .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, status: r.status, data: d }; }); })
+                        .then(function(res) {
+                            if (res.status === 200) {
+                                // Dim the card; keep polling until terminal status
+                                card.classList.add('cancelling');
+                            } else if (res.status === 404) {
+                                // Nothing in progress — the card will get cleaned up on next poll
+                                card.classList.add('cancelling');
+                            } else {
+                                cancelBtn.disabled = false;
+                            }
+                        })
+                        .catch(function() { cancelBtn.disabled = false; });
+                });
+            }
+
+            return card;
+        }
+
+        // Apply a progress state snapshot to the card element.
+        function _updateProgressCard(card, state, body, src) {
+            var pct = (state.percent != null) ? Math.round(state.percent) : 0;
+            var proc = (state.states_processed != null) ? state.states_processed : null;
+            var total = (state.states_total != null && state.states_total > 0) ? state.states_total : null;
+
+            var bar = card.querySelector('.noaa-progress-bar');
+            var pctEl = card.querySelector('.noaa-progress-pct');
+            var slugEl = card.querySelector('.noaa-progress-slug');
+            var elapsedEl = card.querySelector('.noaa-progress-elapsed');
+            var etaEl = card.querySelector('.noaa-progress-eta');
+            var phaseEl = card.querySelector('.noaa-progress-phase');
+
+            if (bar) { bar.value = pct; bar.max = 100; }
+
+            // N of M text — honest about states_processed only (see spec §Graceful semantics)
+            var nofm = (proc != null && total != null) ? (proc + ' of ' + total) : '\u2014 of \u2014';
+            if (pctEl) pctEl.textContent = pct + '% (' + nofm + ')';
+
+            if (slugEl) slugEl.textContent = state.current_slug ? _humanizeSlug(state.current_slug) : '\u2014';
+
+            // Elapsed: client-computed from started_at
+            if (elapsedEl && state.started_at) {
+                var start = new Date(state.started_at.replace(/\+00:00$/, 'Z'));
+                var elapsed = (Date.now() - start.getTime()) / 1000;
+                elapsedEl.textContent = _fmtElapsed(elapsed);
+            }
+
+            if (etaEl) etaEl.textContent = _fmtEta(state.eta_seconds != null ? state.eta_seconds : null);
+            if (phaseEl) phaseEl.textContent = state.phase || 'running';
+
+            // Stale overlay
+            if (state.stale) {
+                var existingOverlay = card.querySelector('.noaa-stale-overlay');
+                if (!existingOverlay) {
+                    var overlay = document.createElement('div');
+                    overlay.className = 'noaa-stale-overlay';
+                    overlay.innerHTML =
+                        '<span class="stale-msg">\u26a0 Progress data may be stale. The refresh worker may have stalled.</span>' +
+                        '<button type="button" class="btn-secondary" data-testid="noaa-force-clear-btn" ' +
+                        'data-action="force-clear">[Force Clear]</button>';
+                    card.appendChild(overlay);
+                    if (body && src) _wireForceClearButton(card, body, src);
+                }
+            } else {
+                // Remove stale overlay if it was there before
+                var staleEl = card.querySelector('.noaa-stale-overlay');
+                if (staleEl) staleEl.parentNode.removeChild(staleEl);
+            }
+        }
+
+        function _wireForceClearButton(card, body, src) {
+            var btn = card.querySelector('[data-action="force-clear"]');
+            if (!btn || btn._wired) return;
+            btn._wired = true;
+            btn.disabled = false;
+            btn.addEventListener('click', function() {
+                if (!confirm('Force clear the stuck refresh state? This will abort any ' +
+                             'running refresh and return the subsystem to idle.')) return;
+                btn.disabled = true;
+                btn.textContent = 'Clearing\u2026';
+                // Fix 2: bump force-clear generation counter BEFORE the reset call so
+                // any in-flight poll fetch that resolves after /reset completes will
+                // see a mismatched generation and discard its (stale) response.
+                body._noaaForceClearGen = (body._noaaForceClearGen || 0) + 1;
+                cfgFetch('/admin/pipeline/noaa/refresh/reset', { method: 'POST' })
+                    .then(function(r) {
+                        if (!r.ok) throw new Error('Reset failed (' + r.status + ')');
+                        return r.json();
+                    })
+                    .then(function() {
+                        // Transition back to idle UI
+                        _stopPolling(body);
+                        var progressCard = document.getElementById('card-' + src.id + '-noaa-refresh-card');
+                        if (progressCard) progressCard.remove();
+                        var completionBanner = document.getElementById('card-' + src.id + '-completion');
+                        if (completionBanner) completionBanner.remove();
+                        // Reload the catalog dropdown to reflect current state
+                        _reloadCatalogDropdown(body, src);
+                        // Reload refresh log in case the reset left a log entry
+                        if (typeof loadRefreshLog === 'function') loadRefreshLog();
+                    })
+                    .catch(function(e) {
+                        btn.disabled = false;
+                        btn.textContent = '[Force Clear]';
+                        alert('Force clear failed: ' + (e.message || 'unknown error'));
+                    });
+            });
+        }
+
+        // Stop polling — clear the interval and remove the stored id.
+        function _stopPolling(targetBody) {
+            if (targetBody._noaaProgressPollId) {
+                clearInterval(targetBody._noaaProgressPollId);
+                targetBody._noaaProgressPollId = null;
+            }
+        }
+
+        // Escape user/server-provided strings before injecting into innerHTML.
+        function _escapeHtml(s) {
+            if (s == null) return '';
+            return String(s).replace(/[&<>"']/g, function(c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+        }
+
+        // Open (and scroll to) the refresh history collapsible panel.
+        function _openRefreshHistoryPanel(targetSrc) {
+            var toggle = document.getElementById('card-' + targetSrc.id + '-refresh-toggle');
+            var panel  = document.getElementById('card-' + targetSrc.id + '-refresh-body');
+            if (toggle && panel && toggle.getAttribute('aria-expanded') !== 'true') {
+                toggle.setAttribute('aria-expanded', 'true');
+                panel.style.display = '';
+                if (typeof loadRefreshLog === 'function') loadRefreshLog();
+            }
+            if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        // Full completion summary — replaces the in-progress card with a status-matched banner.
+        function _renderCompletionSummary(targetBody, targetSrc, state) {
+            var existing = document.getElementById('card-' + targetSrc.id + '-noaa-refresh-card');
+            if (existing) existing.remove();
+
+            var result      = state.result || {};
+            var resultStatus = result.status || 'unknown';
+            // Fix 5: whitelist server-provided status to prevent CSS class injection.
+            var knownStatuses = ['ok', 'cancelled', 'truncated', 'invalid_parse', 'error'];
+            var safeStatus = knownStatuses.indexOf(resultStatus) !== -1 ? resultStatus : 'unknown';
+            var banner = document.createElement('div');
+            banner.className = 'noaa-completion-banner ' + safeStatus;
+            banner.id = 'card-' + targetSrc.id + '-completion';
+
+            if (resultStatus === 'ok') {
+                var count = (result.log_entry && result.log_entry.state_count) || 0;
+                var issueCount = (result.log_entry && result.log_entry.validation_issues && result.log_entry.validation_issues.length) || 0;
+                if (count === 0 && issueCount > 0) {
+                    // "ok" structurally (listing + parse succeeded) but every candidate
+                    // state failed validation — render as a warning, not a success.
+                    // Re-classify for CSS too so the banner shows yellow/amber.
+                    banner.className = 'noaa-completion-banner truncated';
+                    banner.innerHTML =
+                        '<div class="noaa-completion-msg">Refresh completed with no states cataloged \u2014 all ' +
+                        issueCount + ' candidate state' + (issueCount === 1 ? '' : 's') +
+                        ' failed validation. Check the refresh log for details.</div>' +
+                        '<div class="btn-row">' +
+                        '<button type="button" class="btn-secondary" data-action="retry">Retry</button>' +
+                        '<button type="button" class="btn-secondary" data-action="view-log">View log</button>' +
+                        '</div>';
+                } else {
+                    banner.innerHTML =
+                        '<div class="noaa-completion-msg">Catalog refreshed \u2014 ' + count + ' state' +
+                        (count === 1 ? '' : 's') + ' now available.</div>' +
+                        '<button type="button" class="btn-primary" data-action="reload-dropdown">Reload dropdown</button>';
+                }
+            } else if (resultStatus === 'cancelled') {
+                var entry      = result.log_entry || {};
+                var stateCount = entry.state_count != null ? entry.state_count : '?';
+                // Fix 8: "after K states" is clearer than "at state K of M"; pluralize correctly.
+                var stateWord = stateCount === 1 ? 'state' : 'states';
+                banner.innerHTML =
+                    '<div class="noaa-completion-msg">Refresh cancelled after ' + stateCount +
+                    ' ' + stateWord + '. Previous catalog kept.</div>' +
+                    '<button type="button" class="btn-secondary" data-action="refresh-again">Refresh again</button>';
+            } else if (resultStatus === 'truncated' || resultStatus === 'invalid_parse') {
+                var errText = _escapeHtml(
+                    result.error || (result.log_entry && result.log_entry.error) || 'Refresh produced an invalid catalog.'
+                );
+                banner.innerHTML =
+                    '<div class="noaa-completion-msg">' +
+                    (resultStatus === 'truncated'
+                        ? 'Azure listing was truncated: '
+                        : 'Catalog failed validation: ') +
+                    errText + '</div>' +
+                    '<div class="btn-row">' +
+                    '<button type="button" class="btn-secondary" data-action="retry">Retry</button>' +
+                    '<button type="button" class="btn-secondary" data-action="view-log">View log</button>' +
+                    '</div>';
+            } else if (resultStatus === 'error') {
+                var errMsg = _escapeHtml(result.error || 'Unknown error.');
+                banner.innerHTML =
+                    '<div class="noaa-completion-msg"><strong>Refresh failed:</strong> ' + errMsg + '</div>' +
+                    '<div class="btn-row">' +
+                    '<button type="button" class="btn-secondary" data-action="retry">Retry</button>' +
+                    '<button type="button" class="btn-secondary" data-action="view-log">View log</button>' +
+                    '</div>';
+            } else {
+                banner.innerHTML =
+                    '<div class="noaa-completion-msg">Refresh done (unknown status): ' +
+                    _escapeHtml(resultStatus) + '</div>' +
+                    '<button type="button" class="btn-secondary" data-action="retry">Retry</button>';
+            }
+
+            // Insert above the tab strip (same position the progress card occupied)
+            var tabStrip = targetBody.querySelector('.noaa-tabs');
+            if (tabStrip) tabStrip.parentNode.insertBefore(banner, tabStrip);
+            else targetBody.insertBefore(banner, targetBody.firstChild);
+
+            // Wire banner action buttons
+            banner.querySelectorAll('button[data-action]').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var action = btn.getAttribute('data-action');
+                    if (action === 'reload-dropdown') {
+                        _reloadCatalogDropdown(targetBody, targetSrc);
+                        banner.remove();
+                    } else if (action === 'refresh-again') {
+                        banner.remove();
+                        _updateRefreshBannerVisibility(0);
+                        // User clicks Refresh again to trigger a new dispatch.
+                    } else if (action === 'retry') {
+                        banner.remove();
+                        triggerRefresh(btn);
+                    } else if (action === 'view-log') {
+                        _openRefreshHistoryPanel(targetSrc);
+                    }
+                });
+            });
+
+            // Always reload the refresh-log panel so the new entry is visible
+            loadRefreshLog();
+        }
+
+        // Start polling /refresh/progress every 2s. Returns the interval id.
+        // Stores the id on body._noaaProgressPollId for lifecycle management.
+        function _startPolling(targetBody, targetSrc) {
+            _stopPolling(targetBody); // clear any existing poll
+
+            // Fix 1: if the body is already detached from DOM, don't start polling.
+            if (!document.body.contains(targetBody)) {
+                return null;
+            }
+
+            // Fix 2: capture the current force-clear generation so stale in-flight
+            // fetches can be discarded if Force Clear fires before they resolve.
+            targetBody._noaaForceClearGen = targetBody._noaaForceClearGen || 0;
+            var pollGen = targetBody._noaaForceClearGen;
+
+            var pollId = setInterval(function() {
+                // Fix 1: if body was detached (card collapsed) since poll started, stop.
+                if (!document.body.contains(targetBody)) {
+                    _stopPolling(targetBody);
+                    return;
+                }
+                cfgFetch('/admin/pipeline/noaa/refresh/progress')
+                    .then(function(r) { return r.json(); })
+                    .then(function(state) {
+                        // Fix 2: discard if Force Clear has fired since this poll started.
+                        if (targetBody._noaaForceClearGen !== pollGen) {
+                            _stopPolling(targetBody);
+                            return;
+                        }
+                        var card = document.getElementById('card-' + targetSrc.id + '-noaa-refresh-card');
+                        if (state.status === 'running') {
+                            if (!card) {
+                                // Card was removed (e.g. panel collapse/expand); re-show it
+                                card = _showProgressCard(targetBody, targetSrc);
+                            }
+                            _updateProgressCard(card, state, targetBody, targetSrc);
+                        } else if (state.status === 'done') {
+                            _stopPolling(targetBody);
+                            _renderCompletionSummary(targetBody, targetSrc, state);
+                        } else {
+                            // idle or unknown — refresh is gone; stop polling, clean up card
+                            _stopPolling(targetBody);
+                            if (card) card.parentNode.removeChild(card);
+                            // Restore inline refresh button
+                            var inlineRefresh = document.getElementById('card-' + targetSrc.id + '-refresh-inline');
+                            if (inlineRefresh) inlineRefresh.style.display = '';
+                        }
+                    })
+                    .catch(function() {
+                        // Network error — keep polling; the card stays visible
+                    });
+            }, 2000);
+
+            targetBody._noaaProgressPollId = pollId;
+            return pollId;
+        }
+
+        // ---------------------------------------------------------------
+        // Shared refresh trigger — wired to both the empty-state banner
+        // button and the inline tab-strip button.
+        // ---------------------------------------------------------------
+        function triggerRefresh(btn) {
+            var proceed = confirm(
+                'Refresh NOAA catalog?\n\n' +
+                'This scans NOAA\'s Azure blob storage for every NAIP state-year ' +
+                'directory, downloading each tile index to count its features. ' +
+                'First-time runs take 10-30 minutes depending on your connection. ' +
+                'Subsequent refreshes are faster (only changed states pay the ' +
+                'download cost).\n\n' +
+                'You can cancel mid-way. The refresh runs in the background — you ' +
+                'don\'t have to keep this tab open, but the progress bar will only ' +
+                'update while it\'s visible.'
+            );
+            if (!proceed) return;
+            btn.disabled = true;
+            var orig = btn.textContent;
+            btn.textContent = 'Starting\u2026';
+            cfgFetch('/admin/pipeline/noaa/refresh', { method: 'POST' })
+                .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d, status: r.status }; }); })
+                .then(function(r) {
+                    btn.disabled = false;
+                    btn.textContent = orig;
+                    if (r.status === 202) {
+                        // Async dispatch confirmed — show progress card and start polling.
+                        _showProgressCard(body, src);
+                        // Seed the card with whatever the 202 body provides
+                        if (r.data && r.data.progress) {
+                            _updateProgressCard(document.getElementById('card-' + src.id + '-noaa-refresh-card'), r.data.progress, body, src);
+                        }
+                        _startPolling(body, src);
+                    } else if (r.status === 409) {
+                        if (r.data && r.data.detail && r.data.detail.indexOf('blocked_by_pipeline') !== -1) {
+                            alert('A pipeline is running; cancel it first.');
+                        } else if (r.data && r.data.progress) {
+                            // locked — show progress card from existing state
+                            _showProgressCard(body, src);
+                            _updateProgressCard(document.getElementById('card-' + src.id + '-noaa-refresh-card'), r.data.progress, body, src);
+                            _startPolling(body, src);
+                        } else {
+                            alert('Refresh already in progress (409). Check the progress bar.');
+                            _showProgressCard(body, src);
+                            _startPolling(body, src);
+                        }
+                    } else if (r.status === 503) {
+                        alert('Refresh subsystem unavailable. Try again shortly.');
+                    } else if (!r.ok) {
+                        alert('Refresh returned ' + r.status + ': ' + JSON.stringify(r.data.detail || r.data));
+                    } else {
+                        loadRefreshLog();
+                    }
+                })
+                .catch(function(err) {
+                    btn.disabled = false;
+                    btn.textContent = orig;
+                    alert('Refresh failed — check network connection and retry. (' + err + ')');
+                });
+        }
+
+        var refreshEmptyBtn = document.getElementById('card-' + src.id + '-refresh-empty');
+        if (refreshEmptyBtn) refreshEmptyBtn.addEventListener('click', function() { triggerRefresh(this); });
+
+        var refreshInlineBtn = document.getElementById('card-' + src.id + '-refresh-inline');
+        if (refreshInlineBtn) refreshInlineBtn.addEventListener('click', function() { triggerRefresh(this); });
     }
 
     // -----------------------------------------------------------------------
@@ -1613,6 +2741,100 @@
                 completedEl.style.display = '';
                 completedEl.className = 'status status-error';
                 completedEl.textContent = (sourceLabel || 'Download') + ' failed' + (ago ? ' ' + ago : '') + (d.error ? ' \u2014 ' + d.error : '');
+            } else if (d.status === 'partial_failed') {
+                // Task 32 — NOAA partial_failed: surface per-state breakdown + retry button
+                progressDiv.style.display = 'none';
+                completedEl.style.display = '';
+                completedEl.className = 'status status-warn';
+                var perState = d.per_state || {};
+                var failedStates = Object.keys(perState).filter(function(k) {
+                    return String(perState[k]).startsWith('failed:');
+                });
+                var completeStates = Object.keys(perState).filter(function(k) {
+                    return perState[k] === 'complete';
+                });
+                completedEl.textContent = 'NOAA NAIP: partial coverage' +
+                    (ago ? ' ' + ago : '') + ' \u2014 ' +
+                    completeStates.length + ' complete, ' + failedStates.length + ' failed';
+
+                // Inject retry block if there are failed states (idempotent — clear old block first)
+                var existingBlock = completedEl.querySelector('.noaa-retry-block');
+                if (existingBlock) existingBlock.parentNode.removeChild(existingBlock);
+
+                if (failedStates.length > 0) {
+                    var retryBlock = document.createElement('div');
+                    retryBlock.className = 'noaa-retry-block';
+                    var retryLabel = document.createElement('div');
+                    retryLabel.className = 'noaa-retry-label';
+                    retryLabel.textContent = 'Failed states:';
+                    retryBlock.appendChild(retryLabel);
+                    var retryList = document.createElement('ul');
+                    retryList.className = 'noaa-retry-list';
+                    failedStates.forEach(function(k) {
+                        var li = document.createElement('li');
+                        var reason = String(perState[k]).replace(/^failed:\s*/, '');
+                        // Build via textContent to keep arbitrary backend error
+                        // messages (which may include raw HTML or Python traceback
+                        // fragments) from becoming injection vectors.
+                        var b = document.createElement('b');
+                        b.textContent = k;
+                        li.appendChild(b);
+                        li.appendChild(document.createTextNode(': ' + reason));
+                        retryList.appendChild(li);
+                    });
+                    retryBlock.appendChild(retryList);
+                    var retryBtn = document.createElement('button');
+                    retryBtn.type = 'button';
+                    retryBtn.className = 'btn-secondary noaa-retry-btn';
+                    retryBtn.textContent = 'Retry failed state(s)';
+                    retryBtn.setAttribute('data-failed', failedStates.join(','));
+                    retryBlock.appendChild(retryBtn);
+
+                    retryBtn.addEventListener('click', function() {
+                        var failed = retryBtn.getAttribute('data-failed').split(',').filter(Boolean);
+                        if (failed.length === 0) return;
+                        if (!confirm('Retry ' + failed.length + ' failed state(s): ' + failed.join(', ') + '?\nThis starts a new pipeline for just those states.')) return;
+
+                        // MVP: retry first failed state; user re-clicks for subsequent states
+                        var first = failed[0];
+                        if (failed.length > 1) {
+                            alert('Multi-state retry not supported yet; will retry \u201c' + first + '\u201d only. Re-click after for remaining states.');
+                        }
+
+                        retryBtn.disabled = true;
+                        var origText = retryBtn.textContent;
+                        retryBtn.textContent = 'Starting\u2026';
+
+                        cfgFetch('/admin/pipeline/start', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                type: 'imagery',
+                                mode: 'noaa',
+                                state: first,
+                                acknowledge_missing: true,
+                            }),
+                        })
+                        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data, status: r.status }; }); })
+                        .then(function(r) {
+                            retryBtn.disabled = false;
+                            retryBtn.textContent = origText;
+                            if (!r.ok) {
+                                alert('Retry failed (' + r.status + '): ' + JSON.stringify(r.data.detail || r.data));
+                                return;
+                            }
+                            alert('Retry started for \u201c' + first + '\u201d. The pipeline card will update with progress.');
+                            fetchAll();
+                        })
+                        .catch(function(err) {
+                            retryBtn.disabled = false;
+                            retryBtn.textContent = origText;
+                            alert('Retry failed: ' + err);
+                        });
+                    });
+
+                    completedEl.appendChild(retryBlock);
+                }
             } else {
                 progressDiv.style.display = 'none';
                 completedEl.style.display = 'none';

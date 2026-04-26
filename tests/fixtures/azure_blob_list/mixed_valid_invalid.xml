@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<EnumerationResults ServiceEndpoint="https://coastalimagery.blob.core.windows.net/" ContainerName="digitalcoast">
+  <Prefix></Prefix>
+  <Delimiter>/</Delimiter>
+  <Blobs>
+    <!-- Valid: parseable USPS directory -->
+    <BlobPrefix><Name>AZ_NAIP_2021_9596/</Name></BlobPrefix>
+    <!-- Invalid: not a 2-letter USPS code -->
+    <BlobPrefix><Name>XX_NAIP_1999_abc/</Name></BlobPrefix>
+    <!-- Invalid: missing year segment -->
+    <BlobPrefix><Name>BADFORMAT/</Name></BlobPrefix>
+    <!-- Invalid: AK maps to None in SLUG_BY_USPS (excluded state) -->
+    <BlobPrefix><Name>AK_NAIP_2021_9999/</Name></BlobPrefix>
+    <!-- Invalid: non-directory blob (no trailing slash) -->
+    <BlobPrefix><Name>some_random_file.txt</Name></BlobPrefix>
+  </Blobs>
+  <NextMarker />
+</EnumerationResults>

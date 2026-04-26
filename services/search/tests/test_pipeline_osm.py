@@ -124,7 +124,11 @@ def test_pipeline_image_missing(client):
     )
 
     assert resp.status_code == 422
-    assert "Pipeline image not built" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert isinstance(detail, dict), f"expected structured detail, got: {detail!r}"
+    assert detail["status"] == "pipeline_image_missing"
+    assert detail["image"] == "geographica-pipeline"
+    assert "pipeline build" in detail["hint"]
 
 
 def test_invalid_type_rejected(client):

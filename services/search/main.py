@@ -14,7 +14,9 @@ import re
 import shutil
 import sqlite3
 import stat
+import struct
 import subprocess
+import sys
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -29,6 +31,32 @@ from pydantic import BaseModel
 
 import keyring_client
 
+# Make `scripts/` modules importable in BOTH:
+#   - the search container, where docker-compose bind-mounts `./scripts:/scripts:ro`
+#     (so /scripts is a directory full of .py files, NOT a Python package — `from
+#     scripts.X import ...` fails with ModuleNotFoundError).
+#   - local dev / test, where the repo root is on sys.path and scripts/ is a
+#     namespace package (Python 3.3+).
+# Insert both candidate paths so `from common.state_bboxes import ...` and
+# `from refresh_noaa_catalog import ...` resolve either way.
+for _scripts_dir in (
+    Path("/scripts"),
+    Path(__file__).resolve().parent.parent.parent / "scripts",
+):
+    if _scripts_dir.is_dir() and str(_scripts_dir) not in sys.path:
+        sys.path.insert(0, str(_scripts_dir))
+
+try:
+    from common.state_bboxes import SLUG_BY_USPS, USPS_BY_SLUG, states_intersecting
+    _STATE_BBOXES_AVAILABLE = True
+except ImportError:  # scripts/ unavailable in some minimal test environments
+    _STATE_BBOXES_AVAILABLE = False
+    SLUG_BY_USPS: dict = {}  # type: ignore[assignment]
+    USPS_BY_SLUG: dict = {}  # type: ignore[assignment]
+
+    def states_intersecting(bbox_str: str) -> list[str]:  # type: ignore[misc]
+        return []
+
 NOMINATIM_URL = os.environ.get("NOMINATIM_URL", "http://nominatim:8080")
 POI_DB_PATH = os.environ.get("POI_DB_PATH", "/data/poi.sqlite")
 DATA_DIR = Path("/data")
@@ -42,6 +70,19 @@ EARTH_RADIUS_M = 6_371_000
 
 # Lock to prevent concurrent pipeline starts
 _pipeline_lock = asyncio.Lock()
+
+# NOAA refresh bg-task + cancel signalling (spec v2 changes #1, #3, #4).
+# Module-level refs prevent Python GC from collecting bg tasks held only
+# in the event loop's weak set. _cancel_event is created fresh per refresh
+# in the dispatch handler.
+_active_refresh_task: "asyncio.Task | None" = None
+_cancel_event: "asyncio.Event | None" = None
+
+# Fix 4: maximum seconds to await task finalization after .cancel() in /reset.
+# If the task is stuck in a non-cancelable sync call the reset still proceeds
+# to clear lockfile + progress so the subsystem returns to idle. Exposed as a
+# module constant so tests can monkeypatch it to a short value.
+CANCEL_TIMEOUT_SEC: float = 30.0
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +133,7 @@ class PipelineStartBody(BaseModel):
     counties: Optional[str] = None  # comma-separated FIPS codes (for NAIP — overrides bbox county lookup)
     state: Optional[str] = None   # for NOAA mode
     year: Optional[int] = None    # for NOAA mode
+    acknowledge_missing: bool = False  # for NOAA mode: accept partial coverage when missing[] non-empty
 
 
 # ---------------------------------------------------------------------------
@@ -1151,6 +1193,79 @@ def _get_disk_free_gb() -> float:
     return usage.free / (1024 ** 3)
 
 
+def _noaa_peak_and_snapshot(
+    body: "PipelineStartBody",
+) -> "tuple[list[str], float, str | None]":
+    """Return (missing_slugs, peak_required_gb, catalog_snapshot_path).
+
+    Resolves which states intersect the requested bbox/state, splits into
+    cataloged vs. missing, and computes the peak disk requirement using the
+    same economics as noaa_estimate.
+
+    Returns ([], 0.0, None) when the catalog isn't loadable — callers must
+    handle this gracefully (treat as no-disk-constraint / no-missing-states).
+
+    Pinning mechanism (Task 26): the returned snapshot_path is informational
+    — the actual pin happens inside the pipeline container at startup via
+    `pin_catalog_snapshot()` in `scripts/acquire_imagery.py`, which resolves
+    the symlink again at that moment. What keeps the two resolutions in sync
+    is the pipeline-not-running gate on /refresh and /rollback: neither can
+    swap the symlink while a pipeline container exists. So in practice the
+    snapshot the user sees in the estimate == the snapshot the pipeline
+    pins, as long as no out-of-band process modifies the symlink.
+    """
+    NOAA_TILE_SIZE_MB = 486
+
+    catalog, snapshot_path = _load_noaa_catalog(DATA_DIR)
+    if catalog is None:
+        return ([], 0.0, None)
+
+    entries: dict = catalog.get("entries", {})
+
+    # Resolve which slugs to process — mirrors noaa_estimate logic.
+    if body.state is not None:
+        state_upper = body.state.upper()
+        if state_upper in SLUG_BY_USPS:
+            slug = SLUG_BY_USPS.get(state_upper)
+        else:
+            slug = body.state.lower()
+
+        if slug is None or slug not in entries:
+            # Unknown or uncataloged state — treat as no constraint.
+            return ([], 0.0, None)
+
+        states_list: list[str] = [slug]
+        missing_list: list[str] = []
+    else:
+        if not body.bbox:
+            return ([], 0.0, None)
+        intersecting = states_intersecting(body.bbox)
+        states_list = [s for s in intersecting if s in entries]
+        missing_list = [s for s in intersecting if s not in entries]
+
+        if not states_list:
+            return ([], 0.0, None)
+
+    # Use the SAME tile-count logic as noaa_estimate so the peak-disk check at
+    # Start doesn't disagree with the number the user saw in the estimate.
+    total_tile_count = _count_noaa_tiles(states_list, body.bbox, entries, DATA_DIR)
+
+    # Peak disk = transient staging + cumulative MBTiles growth + buffer.
+    # The pipeline streams: at any moment only ~(download_concurrency +
+    # reproject_workers) GeoTIFFs exist on disk; raw + reprojected files are
+    # unlinked after each batch is merged into the MBTiles. The MBTiles itself
+    # grows monotonically until the run completes. See scripts/acquire_imagery.py
+    # ~L2402-L2582 for the cleanup call sites. Must match noaa_estimate.
+    download_concurrency = 4
+    reproject_workers = 4
+    staging_peak_gb = (download_concurrency + reproject_workers) * NOAA_TILE_SIZE_MB / 1024
+    final_mbtiles_gb = total_tile_count * 29 / 1024
+    safety_buffer_gb = 5.0  # overviews, sqlite WAL, misc headroom
+    peak_required_gb = round(staging_peak_gb + final_mbtiles_gb + safety_buffer_gb, 1)
+
+    return (missing_list, peak_required_gb, str(snapshot_path))
+
+
 @app.post("/admin/pipeline/start", dependencies=[Depends(require_config_source)])
 async def pipeline_start(body: PipelineStartBody):
     """Start an imagery, elevation, or OSM POI pipeline."""
@@ -1218,6 +1333,57 @@ async def pipeline_start(body: PipelineStartBody):
         if not cred_status.get("m2m_configured"):
             raise HTTPException(status_code=422, detail="M2M credentials not configured. POST to /admin/credentials first.")
 
+    # Task 26: NOAA-mode snapshot pinning, missing-state ack gate, fresh disk recheck.
+    # These checks run BEFORE acquiring the pipeline lock so that we return 409/507
+    # without blocking other endpoints.  The pipeline-not-running invariant enforced
+    # by /refresh and /rollback means the catalog snapshot is stable once we enter
+    # the lock, so recording snapshot_path here is an effective pin.
+    if is_noaa:
+        missing, peak_required_gb, snapshot_path = _noaa_peak_and_snapshot(body)
+        # Final review blocker B1: reject Start if no catalog can be resolved
+        # (snapshot_path is None when _load_noaa_catalog fails OR when the
+        # user's state/bbox yields zero cataloged entries). Without this guard
+        # the pipeline container spawns and crashes inside with FileNotFoundError
+        # from pin_catalog_snapshot — the user sees a traceback, not a 409.
+        if snapshot_path is None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "status": "no_catalog",
+                    "message": (
+                        "No NOAA catalog loaded, or the requested state/bbox "
+                        "yielded zero cataloged entries. "
+                        "POST to /admin/pipeline/noaa/refresh first, or pick "
+                        "a bbox that intersects a cataloged state."
+                    ),
+                },
+            )
+        if missing and not body.acknowledge_missing:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "status": "missing_unacknowledged",
+                    "missing": missing,
+                    "message": (
+                        "Non-cataloged states intersect this bbox. "
+                        "Retry with acknowledge_missing=true to proceed with partial coverage."
+                    ),
+                },
+            )
+        fresh_free_gb = _get_disk_free_gb()
+        if peak_required_gb > 0 and fresh_free_gb < peak_required_gb:
+            raise HTTPException(
+                status_code=507,
+                detail={
+                    "status": "insufficient_disk",
+                    "disk_free_gb": round(fresh_free_gb, 1),
+                    "peak_required_gb": round(peak_required_gb, 1),
+                    "message": (
+                        "Free disk dropped below peak requirement between estimate and Start."
+                    ),
+                },
+            )
+
     async with _pipeline_lock:
         client = _get_docker_client()
         if not client:
@@ -1240,13 +1406,26 @@ async def pipeline_start(body: PipelineStartBody):
                 except json.JSONDecodeError:
                     pass
 
-            # Check pipeline image exists
+            # Check pipeline image exists. Returns a structured 422 so the frontend
+            # can render an actionable affordance instead of parsing a hint string.
+            # The image is built either by the setup wizard (setup/main.py:954) on
+            # first install or by bootstrap.sh for manual installs. It can go
+            # missing later if Docker prunes unused images; the recovery is to
+            # re-run the build command, documented in `hint`.
             try:
                 client.images.get("geographica-pipeline")
             except Exception:
                 raise HTTPException(
                     status_code=422,
-                    detail="Pipeline image not built. Run 'docker compose build pipeline' first.",
+                    detail={
+                        "status": "pipeline_image_missing",
+                        "image": "geographica-pipeline",
+                        "message": "Pipeline image not built.",
+                        "hint": (
+                            "Run 'docker compose --profile pipeline build' on the "
+                            "host once, or re-run the setup wizard."
+                        ),
+                    },
                 )
 
             # Build command based on pipeline type
@@ -1313,11 +1492,16 @@ async def pipeline_start(body: PipelineStartBody):
                     command = [
                         "python3", "/scripts/acquire_imagery.py",
                         "--mode", "noaa",
-                        f"--bbox={body.bbox}",
-                        f"--state={body.state or 'AZ'}",
-                        f"--year={body.year or 2021}",
                         "--output", "/data/imagery_noaa.mbtiles",
                     ]
+                    if body.state:
+                        # State-mode: let the CLI's argparse type= normalizer handle
+                        # USPS → slug translation (existing frontend may send "AZ";
+                        # Task 17's _normalize_state_arg emits a deprecation warning
+                        # but accepts it).
+                        command.append(f"--state={body.state}")
+                    else:
+                        command.append(f"--bbox={body.bbox}")
                 else:
                     # Build command -- imagery and elevation scripts have different args
                     script = _script_for_type(body.type)
@@ -1680,34 +1864,222 @@ async def import_scan():
     }
 
 
+def _load_noaa_catalog(data_dir: Path) -> "tuple[dict | None, Path | None]":
+    """Load the pinned catalog snapshot via the noaa_naip_catalog.json symlink.
+
+    Returns (catalog_dict, resolved_snapshot_path) on success, or (None, None)
+    when the symlink is absent or the file cannot be parsed.
+    """
+    symlink = data_dir / "noaa_naip_catalog.json"
+    if not symlink.exists():
+        return (None, None)
+    try:
+        snapshot_path = symlink.resolve(strict=True)
+        catalog = json.loads(snapshot_path.read_text())
+        return (catalog, snapshot_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"WARNING: Failed to load NOAA catalog: {exc}", flush=True)
+        return (None, None)
+
+
+def _count_noaa_tiles(
+    slugs: "list[str]",
+    bbox_str: "str | None",
+    entries: dict,
+    data_dir: Path,
+) -> int:
+    """Sum NOAA tile counts across `slugs`.
+
+    Applies per-state spatial refinement (state bbox × user bbox area ratio
+    against the cached tile-index .dbf) when bbox_str is supplied and the
+    cache exists; falls back to the catalog's `tile_count` otherwise. Called
+    from both `noaa_estimate` and `_noaa_peak_and_snapshot` so the estimate
+    card and the Start-time disk recheck never disagree on tile count.
+    """
+    parsed_bbox: "tuple[float, float, float, float] | None" = None
+    if bbox_str:
+        try:
+            parts = [float(x.strip()) for x in bbox_str.split(",")]
+            if len(parts) == 4:
+                parsed_bbox = (parts[0], parts[1], parts[2], parts[3])
+        except ValueError:
+            parsed_bbox = None  # Whole-state fallback on malformed bbox.
+
+    total = 0
+    for slug in slugs:
+        entry = entries.get(slug, {})
+        catalog_total: int = entry.get("tile_count", 0)
+
+        if parsed_bbox is None:
+            total += catalog_total
+            continue
+
+        # Cache path MUST match acquire_imagery.noaa_cache_dir + refresh_noaa_catalog:
+        # both use f"{slug}_{year}" (slug = lowercase state name). Earlier versions
+        # of this function used "{usps}_{year}" (e.g. CA_2022), which never matched
+        # anything on disk — _count_noaa_tiles silently fell back to catalog_total
+        # for every slug, so every bbox request returned the whole-state tile count
+        # (2026-04-21 bug: "peak working set exceeds free disk" even on tiny bboxes).
+        entry_year = entry.get("year", 2021)
+        cache = data_dir / "noaa_cache" / f"{slug}_{entry_year}"
+        shp_files = list(cache.glob("*.shp")) if cache.exists() else []
+
+        if not shp_files:
+            total += catalog_total
+            continue
+
+        dbf_path = shp_files[0].with_suffix(".dbf")
+        try:
+            with open(dbf_path, "rb") as f:
+                f.read(4)
+                total_records = struct.unpack("<I", f.read(4))[0]
+            from common.state_bboxes import STATE_BBOXES
+            state_bbox = STATE_BBOXES.get(slug)
+            if state_bbox is None:
+                total += total_records
+                continue
+            sw, ss, se, sn = state_bbox
+            state_area = (se - sw) * (sn - ss)
+            west, south, east, north = parsed_bbox
+            uw = min(east, se) - max(west, sw)
+            uh = min(north, sn) - max(south, ss)
+            if uw > 0 and uh > 0 and state_area > 0:
+                ratio = min(1.0, (uw * uh) / state_area)
+                total += int(total_records * ratio)
+            # else: zero overlap; contributes 0 tiles.
+        except (OSError, struct.error):
+            total += catalog_total
+
+    return total
+
+
+async def _noaa_placename(
+    states: list[str],
+    missing: list[str],
+    bbox: tuple[float, float, float, float],
+    usps_by_slug: dict[str, str],
+) -> str | None:
+    """Resolve the human-readable placename for the estimate card.
+
+    Multi-state or wide-bbox: return "Coverage area across AZ, UT" (USPS list).
+    Single-state, small bbox: Nominatim reverse lookup on centroid.
+    Returns None if Nominatim fails and no multi-state fallback applies.
+
+    Parameters:
+    - states: cataloged state slugs
+    - missing: uncataloged state slugs that intersect the bbox
+    - bbox: (west, south, east, north) tuple
+    - usps_by_slug: dict mapping slug to 2-letter USPS code
+    """
+    all_intersecting = sorted(set(states) | set(missing))
+    west, south, east, north = bbox
+    width = east - west
+    height = north - south
+    is_multi_state = len(all_intersecting) >= 2 or max(width, height) > 5.0
+
+    if is_multi_state:
+        usps_codes = [usps_by_slug.get(slug, slug.upper()) for slug in all_intersecting]
+        return f"Coverage area across {', '.join(usps_codes)}"
+
+    # Single-state, small bbox — Nominatim reverse lookup
+    lat = (south + north) / 2
+    lon = (west + east) / 2
+    try:
+        resp = await state.http_client.get(
+            f"{NOMINATIM_URL}/reverse",
+            params={"format": "jsonv2", "lat": lat, "lon": lon, "zoom": 10},
+            timeout=3.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("display_name") or None
+    except Exception as exc:
+        print(f"WARNING: Nominatim reverse lookup failed: {exc}", flush=True)
+        return None
+
+
 @app.get("/admin/pipeline/noaa/estimate", dependencies=[Depends(require_config_source)])
 async def noaa_estimate(
     bbox: str = Query(..., description="west,south,east,north"),
-    state: str = Query("AZ"),
-    year: int = Query(2021),
+    state: Optional[str] = Query(None),
+    year: Optional[int] = Query(None),
 ):
-    """Estimate NOAA NAIP download size and time for a given bbox."""
-    # NOAA catalog and helpers — inline to avoid importing acquire_imagery.py
-    # (which pulls in aiohttp, not available in the search container)
-    NOAA_NAIP_CATALOG = {
-        ("AZ", 2021): "AZ_NAIP_2021_9596",
-    }
+    """Estimate NOAA NAIP download size and time for a given bbox.
+
+    Supports two modes:
+    - State mode: ``state=AZ`` (USPS) or ``state=arizona`` (slug). ``year`` is
+      accepted but ignored — the catalog is keyed by slug only.
+    - Bbox mode: omit ``state``; the endpoint resolves all states that both
+      intersect the bbox AND appear in the catalog.
+
+    Returns all legacy fields (``tile_count``, ``raw_download_gb``, etc.) plus
+    the new Task-19 fields: ``states``, ``missing``, ``placename``,
+    ``catalog_snapshot``, ``intermediate_gb``, ``peak_required_gb``.
+    """
+    import struct
+
     NOAA_TILE_SIZE_MB = 486
 
-    if (state, year) not in NOAA_NAIP_CATALOG:
-        raise HTTPException(status_code=422, detail=f"State {state} year {year} not in NOAA catalog")
-
-    # Check for cached shapefile
-    cache = DATA_DIR / "noaa_cache" / f"{state}_{year}"
-    shp_files = list(cache.glob("*.shp")) if cache.exists() else []
-
-    if not shp_files:
+    # ------------------------------------------------------------------
+    # 1. Load catalog from snapshot (replaces the hard-coded dict)
+    # ------------------------------------------------------------------
+    catalog, snapshot_path = _load_noaa_catalog(DATA_DIR)
+    if catalog is None:
         return {
-            "status": "no_index",
-            "message": "Tile index not cached yet. Run the pipeline once to fetch it, then estimates will be available.",
+            "status": "no_catalog",
+            "message": "Run refresh_catalog to populate the NOAA catalog.",
         }
 
-    # Parse bbox
+    entries: dict[str, dict] = catalog.get("entries", {})
+
+    # ------------------------------------------------------------------
+    # 2. Resolve which slugs to use (state mode vs bbox mode)
+    # ------------------------------------------------------------------
+    # Normalise the ``state`` query param: accept USPS (AZ) or slug (arizona).
+    # ``year`` is deprecated — accepted for backward compat, silently ignored.
+    if state is not None:
+        state_upper = state.upper()
+        if state_upper in SLUG_BY_USPS:
+            slug = SLUG_BY_USPS.get(state_upper)
+        else:
+            # Assume it's already a slug
+            slug = state.lower()
+
+        if slug is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"State {state!r} is not supported (Alaska and Hawaii are excluded).",
+            )
+
+        if slug not in entries:
+            # Catalog present but this state isn't cataloged → no_index
+            return {
+                "status": "no_index",
+                "message": f"State {slug!r} is not in the current catalog snapshot. "
+                           "Run refresh_catalog to update.",
+            }
+
+        states_list: list[str] = [slug]
+        # In single-state mode, missing[] is empty — the state IS in the catalog.
+        missing_list: list[str] = []
+
+    else:
+        # Bbox mode: find all states that intersect the bbox, split into
+        # cataloged (states_list) and not-yet-cataloged (missing_list).
+        intersecting = states_intersecting(bbox)
+        states_list = [s for s in intersecting if s in entries]
+        missing_list = [s for s in intersecting if s not in entries]
+
+        if not states_list:
+            return {
+                "status": "no_index",
+                "message": "No cataloged states intersect the provided bbox. "
+                           "Run refresh_catalog to update the catalog.",
+            }
+
+    # ------------------------------------------------------------------
+    # 3. Validate bbox
+    # ------------------------------------------------------------------
     try:
         parts = [float(x.strip()) for x in bbox.split(",")]
         if len(parts) != 4:
@@ -1716,40 +2088,18 @@ async def noaa_estimate(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Invalid bbox: {e}")
 
-    # Spatial filter: read the .dbf file directly (no GDAL needed in search container).
-    # The shapefile extent is in NAD83 geographic coords (lat/lon).
-    # We count total features and estimate based on bbox area ratio.
-    # For exact counts, the user runs the pipeline (which uses ogr2ogr).
-    import struct
+    # ------------------------------------------------------------------
+    # 4. Tile count — shared helper so Start-time disk recheck
+    #    (_noaa_peak_and_snapshot) never disagrees with this estimate.
+    # ------------------------------------------------------------------
+    tile_count = _count_noaa_tiles(states_list, bbox, entries, DATA_DIR)
 
-    dbf_path = shp_files[0].with_suffix(".dbf")
-    tile_count = 0
-    try:
-        with open(dbf_path, "rb") as f:
-            # DBF header: byte 4-7 = number of records (little-endian uint32)
-            f.read(4)
-            total_records = struct.unpack("<I", f.read(4))[0]
-
-        # Estimate: ratio of user bbox area to full state extent
-        # AZ extent from shapefile: (-114.88, 31.31) to (-108.99, 37.07)
-        state_width = 114.88 - 108.99  # ~5.89 degrees
-        state_height = 37.07 - 31.31   # ~5.76 degrees
-        state_area = state_width * state_height
-
-        user_width = min(east, -108.99) - max(west, -114.88)
-        user_height = min(north, 37.07) - max(south, 31.31)
-        if user_width <= 0 or user_height <= 0:
-            tile_count = 0
-        else:
-            user_area = user_width * user_height
-            ratio = min(1.0, user_area / state_area)
-            tile_count = int(total_records * ratio)
-    except (OSError, struct.error):
-        # Fallback: use total record count
-        tile_count = 7629  # known AZ 2021 count
-
+    # ------------------------------------------------------------------
+    # 5. Derived cost estimates (same economics as before)
+    # ------------------------------------------------------------------
     raw_download_gb = tile_count * NOAA_TILE_SIZE_MB / 1024
     final_mbtiles_gb = tile_count * 29 / 1024  # empirical: ~29 MB/tile in MBTiles
+    intermediate_gb = round(raw_download_gb * 0.3, 1)  # reprojected, compressed
 
     # 3-stage parallel pipeline economics:
     # - Download stage: 4 concurrent fetches at ~3 MB/s each → ~160 s/tile raw but parallelized
@@ -1757,28 +2107,67 @@ async def noaa_estimate(
     # - Merge stage: serial, ~20 s/tile (the bottleneck once downloads catch up)
     # Steady-state per-tile cost = max(download/concurrency, reproject/workers, merge_serial)
     download_concurrency = 4
-    reproject_workers = 4  # typical Pi 5; desktops run faster, this is a conservative floor
+    reproject_workers = 4
+
+    # Peak disk: the pipeline streams — raw + reprojected GeoTIFFs are unlinked
+    # after each batch merges into MBTiles (see scripts/acquire_imagery.py ~L2402-
+    # L2582 for cleanup call sites), so intermediate_gb and raw_download_gb do NOT
+    # accumulate on disk. At steady state only ~(download_concurrency +
+    # reproject_workers) tiles exist in raw form; the MBTiles grows monotonically.
+    #
+    # intermediate_gb and raw_download_gb are kept in the response for display
+    # (users still want to know the total bandwidth they'll consume), but peak
+    # working set is dominated by MBTiles growth, not cumulative-disk.
+    staging_peak_gb = (download_concurrency + reproject_workers) * NOAA_TILE_SIZE_MB / 1024
+    safety_buffer_gb = 5.0  # overviews, sqlite WAL, misc headroom
+    peak_required_gb = round(staging_peak_gb + final_mbtiles_gb + safety_buffer_gb, 1)
     download_per_tile_s = (NOAA_TILE_SIZE_MB / 3.0) / download_concurrency  # ~40 s
     reproject_per_tile_s = 45 / reproject_workers                            # ~11 s
     merge_per_tile_s = 20                                                     # serial bottleneck
     effective_per_tile_s = max(download_per_tile_s, reproject_per_tile_s, merge_per_tile_s)
-    # Add pipeline-fill overhead: first tile must traverse all 3 stages before the meter moves
     startup_overhead_s = 120
     est_seconds = tile_count * effective_per_tile_s + startup_overhead_s
     est_hours = est_seconds / 3600
 
+    # ------------------------------------------------------------------
+    # 6. Resolve placename (Task 21)
+    # ------------------------------------------------------------------
+    placename = await _noaa_placename(states_list, missing_list, (west, south, east, north), USPS_BY_SLUG)
+
     return {
+        # ---- legacy fields (unchanged semantics) ----
         "status": "ok",
         "tile_count": tile_count,
         "raw_download_gb": round(raw_download_gb, 1),
         "final_mbtiles_gb": round(final_mbtiles_gb, 1),
-        "staging_peak_gb": round(NOAA_TILE_SIZE_MB * (download_concurrency + 1) / 1024, 1),
+        "staging_peak_gb": round(staging_peak_gb, 1),
         "est_hours": round(est_hours, 2),
         "est_days": round(est_hours / 24, 2),
         "per_tile_seconds": round(effective_per_tile_s, 1),
         "download_concurrency": download_concurrency,
         "download_speed_mbs": 3.0,
         "disk_free_gb": round(_get_disk_free_gb(), 1),
+        # ---- new fields (Task 19) ----
+        "states": states_list,
+        "missing": missing_list,
+        "placename": placename,
+        "catalog_snapshot": str(snapshot_path),
+        "intermediate_gb": intermediate_gb,
+        "peak_required_gb": peak_required_gb,
+    }
+
+
+@app.get("/admin/pipeline/noaa/catalog", dependencies=[Depends(require_config_source)])
+async def noaa_catalog():
+    """Return the current NOAA catalog snapshot entries for UI rendering."""
+    catalog, snapshot_path = _load_noaa_catalog(DATA_DIR)
+    if catalog is None:
+        return {"status": "no_catalog", "entries": {}}
+    return {
+        "status": "ok",
+        "snapshot_version": catalog.get("snapshot_version"),
+        "catalog_snapshot": str(snapshot_path),
+        "entries": catalog.get("entries", {}),
     }
 
 
@@ -1935,3 +2324,473 @@ async def naip_county_lookup(bbox: str = Query(..., description="west,south,east
         "states": states,
         "estimated_gb": round(estimated_gb, 2),
     }
+
+
+# ---------------------------------------------------------------------------
+# NOAA catalog management endpoints (Tasks 22–25)
+# ---------------------------------------------------------------------------
+
+def _read_lock_holder_pid(lock_path: Path) -> "int | None":
+    """Peek at the lockfile to extract the holder PID for 409 responses."""
+    try:
+        data = json.loads(lock_path.read_text())
+        return data.get("pid")
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+_REFRESH_STALE_THRESHOLD_SEC = 600  # 10 min — see spec §Failure mode 2.
+
+
+def _is_progress_stale(last_updated_iso: str, now_fn=None) -> tuple[bool, int]:
+    """Return (is_stale, age_seconds) for a progress.last_updated ISO 8601 ts.
+
+    A progress is stale when it claims to be running but hasn't written a
+    heartbeat in >10 min — evidence the bg task crashed without writing a
+    terminal state. The UI surfaces this as a recoverable-error state
+    with a Force Clear affordance (Task 11).
+    """
+    from datetime import datetime, timezone
+
+    if now_fn is None:
+        now_fn = lambda: datetime.now(timezone.utc)
+    try:
+        last = datetime.fromisoformat(last_updated_iso.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return (False, 0)
+    try:
+        age = (now_fn() - last).total_seconds()
+    except TypeError:
+        # last_updated was a tz-naive ISO timestamp (no Z, no offset); aware-minus-naive
+        # arithmetic raises TypeError. Treat as non-stale — caller should not 500.
+        return (False, 0)
+    return (age > _REFRESH_STALE_THRESHOLD_SEC, int(age))
+
+
+def _make_refresh_progress_cb(progress_path: Path, started_at: str, cancel_event: asyncio.Event):
+    """Return a sync progress callback that enriches the raw event dict
+    from refresh_catalog with derived fields (percent, rate_per_sec,
+    eta_seconds, cancel_requested) and atomically writes progress.json."""
+    from refresh_noaa_catalog import write_progress_state, read_progress_state
+
+    def _cb(event: dict) -> None:
+        from datetime import datetime, timezone as tz
+        state = read_progress_state(progress_path)
+        if state.get("status") != "running":
+            state = {"status": "running", "started_at": started_at}
+        state.update(event)
+        states_processed = state.get("states_processed", 0)
+        states_total = state.get("states_total", 0)
+        if states_total > 0:
+            state["percent"] = round(states_processed / states_total * 100, 1)
+        try:
+            elapsed = (
+                datetime.now(tz.utc)
+                - datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            ).total_seconds()
+        except ValueError:
+            elapsed = 0.0
+        if elapsed > 0 and states_processed > 0:
+            rate = states_processed / elapsed
+            state["rate_per_sec"] = round(rate, 3)
+            if states_total and states_processed < states_total and rate > 0:
+                state["eta_seconds"] = round((states_total - states_processed) / rate)
+        state["cancel_requested"] = cancel_event.is_set()
+        try:
+            write_progress_state(progress_path, state)
+        except Exception:
+            pass  # defensive — never raise from a progress callback
+
+    return _cb
+
+
+async def _refresh_bg_task(
+    data_dir: Path,
+    progress_path: Path,
+    started_at: str,
+    cancel_event: asyncio.Event,
+) -> None:
+    """Background task that runs refresh_catalog and writes terminal
+    progress.json + refresh-log entry on any exit path (success, error,
+    cancellation)."""
+    global _active_refresh_task, _cancel_event
+    from refresh_noaa_catalog import (
+        refresh_catalog, write_progress_state, read_progress_state, append_refresh_log,
+    )
+    log_path = data_dir / "noaa_catalog_refresh_log.jsonl"
+    try:
+        progress_cb = _make_refresh_progress_cb(progress_path, started_at, cancel_event)
+        result = await refresh_catalog(
+            data_dir=data_dir,
+            progress_cb=progress_cb,
+            cancel_event=cancel_event,
+        )
+        # Terminal progress: merge result into a done-shaped state.
+        state = read_progress_state(progress_path)
+        from datetime import datetime, timezone as tz
+        state.update({
+            "status": "done",
+            "ended_at": datetime.now(tz.utc).isoformat().replace("+00:00", "Z"),
+            "result": result,
+        })
+        write_progress_state(progress_path, state)
+    except asyncio.CancelledError:
+        # Reset-endpoint cancellation (not user-requested cancel, which flows
+        # via cancel_event + refresh_catalog returning status=cancelled).
+        from datetime import datetime, timezone as tz
+        state = read_progress_state(progress_path)
+        state.update({
+            "status": "done",
+            "ended_at": datetime.now(tz.utc).isoformat().replace("+00:00", "Z"),
+            "result": {"status": "cancelled", "reason": "reset_endpoint"},
+        })
+        write_progress_state(progress_path, state)
+        raise
+    except Exception as e:
+        import traceback as _tb
+        from datetime import datetime, timezone as tz
+        state = read_progress_state(progress_path)
+        state.update({
+            "status": "done",
+            "ended_at": datetime.now(tz.utc).isoformat().replace("+00:00", "Z"),
+            "result": {
+                "status": "error",
+                "error": str(e),
+                "traceback": _tb.format_exc()[-2000:],
+            },
+        })
+        write_progress_state(progress_path, state)
+        # NOTE: we do NOT call append_refresh_log here. refresh_catalog owns all
+        # non-exception log writes (ok, truncated, invalid_parse, cancelled). If
+        # refresh_catalog raised before reaching any of those paths, there is no
+        # valid log entry to write — the error is captured in progress.json
+        # (result.status=error, traceback). Writing a log entry here would
+        # produce a duplicate on the rare path where refresh_catalog itself
+        # succeeded but a subsequent write_progress_state call raised.
+    finally:
+        # Clear module-level refs so the next refresh can dispatch.
+        # The lockfile is released by refresh_catalog's RefreshLock __exit__.
+        _active_refresh_task = None
+        _cancel_event = None
+
+
+@app.post("/admin/pipeline/noaa/refresh", dependencies=[Depends(require_config_source)])
+async def noaa_refresh():
+    """Dispatch a NOAA catalog refresh as a background task.
+
+    Returns 202 Accepted with a progress_url; poll GET /refresh/progress
+    for status. Refresh runs until completion or cancellation.
+    """
+    global _active_refresh_task, _cancel_event
+    try:
+        from refresh_noaa_catalog import (
+            refresh_catalog,
+            find_running_pipelines,
+            append_refresh_log,
+            write_progress_state,
+            read_progress_state,
+            PROGRESS_FILENAME,
+        )
+    except ImportError:
+        raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
+
+    from datetime import datetime, timezone as tz
+
+    progress_path = DATA_DIR / PROGRESS_FILENAME
+    lock_path = DATA_DIR / "noaa_catalog_refresh.lock"
+
+    # 409 blocked_by_pipeline — same invariant as the old synchronous endpoint.
+    running = find_running_pipelines(DATA_DIR)
+    if running:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "blocked_by_pipeline",
+                "blocked_by_pipeline": str(running[0]),
+            },
+        )
+
+    # 409 locked — lockfile or module-level task already present.
+    if lock_path.exists() or (
+        _active_refresh_task is not None and not _active_refresh_task.done()
+    ):
+        existing = read_progress_state(progress_path)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "locked",
+                "lock_holder_pid": _read_lock_holder_pid(lock_path),
+                "progress_url": "/admin/pipeline/noaa/refresh/progress",
+                "progress": existing,
+            },
+        )
+
+    # Initialize progress.json + fresh cancel event before scheduling.
+    started_at = datetime.now(tz.utc).isoformat().replace("+00:00", "Z")
+    write_progress_state(progress_path, {
+        "status": "running",
+        "started_at": started_at,
+        "phase": "starting",
+        "states_processed": 0,
+        "states_total": 0,
+        "cancel_requested": False,
+    })
+    _cancel_event = asyncio.Event()
+    _active_refresh_task = asyncio.create_task(
+        _refresh_bg_task(DATA_DIR, progress_path, started_at, _cancel_event)
+    )
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "started",
+            "progress_url": "/admin/pipeline/noaa/refresh/progress",
+            "started_at": started_at,
+            "estimated_minutes": [10, 30],
+        },
+    )
+
+
+class NoaaRollbackBody(BaseModel):
+    to_snapshot: str  # filename like "2026-04-20T12:00:00Z.json"
+
+
+@app.get("/admin/pipeline/noaa/refresh/progress", dependencies=[Depends(require_config_source)])
+async def noaa_refresh_progress():
+    """Return the current NOAA catalog refresh state.
+
+    - {status: idle} when no refresh is in flight and no progress.json exists.
+    - {status: running, phase, states_processed, ...} while a bg task writes.
+    - {status: done, result: {...}} after the bg task terminates.
+    - Stamps stale: true when running state hasn't updated in >10 min (spec §Failure mode 2).
+    """
+    try:
+        from refresh_noaa_catalog import read_progress_state, PROGRESS_FILENAME
+    except ImportError:
+        raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
+    state = read_progress_state(DATA_DIR / PROGRESS_FILENAME)
+    # Stamp stale flag ONLY for running state (terminal states are never stale).
+    if state.get("status") == "running":
+        last = state.get("last_updated")
+        if last:
+            is_stale, age_s = _is_progress_stale(last)
+            if is_stale:
+                state["stale"] = True
+                state["stale_reason"] = (
+                    f"No progress update in {age_s}s; refresh task may have crashed. "
+                    "Use Force Clear to reset the refresh subsystem."
+                )
+    return state
+
+
+@app.post(
+    "/admin/pipeline/noaa/refresh/cancel",
+    dependencies=[Depends(require_config_source)],
+)
+async def noaa_refresh_cancel():
+    """Request cancellation of the running NOAA catalog refresh.
+
+    Sets the module-level _cancel_event. The bg task observes the event
+    between state boundaries (typical latency <15s, capped at the current
+    state's remaining work). Returns 404 if no refresh is in progress.
+
+    Per spec v2 §change #3: cancellation flows via asyncio.Event, NOT via
+    a file-flag write. The bg task's progress callback writes
+    cancel_requested=true into progress.json AFTER observing the event,
+    avoiding a read-then-write race with ongoing progress updates.
+    """
+    global _cancel_event
+    try:
+        from refresh_noaa_catalog import read_progress_state, PROGRESS_FILENAME
+    except ImportError:
+        raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
+
+    state = read_progress_state(DATA_DIR / PROGRESS_FILENAME)
+    if state.get("status") != "running" or _cancel_event is None:
+        raise HTTPException(status_code=404, detail="No refresh in progress")
+
+    _cancel_event.set()
+    return {
+        "status": "cancellation_requested",
+        "message": "The refresh will stop at the next state boundary (within ~15s).",
+    }
+
+
+@app.post(
+    "/admin/pipeline/noaa/refresh/reset",
+    dependencies=[Depends(require_config_source)],
+)
+async def noaa_refresh_reset():
+    """Atomically reset the NOAA catalog refresh subsystem.
+
+    Cancels the active bg task (if any), awaits finalization, then removes
+    the lockfile and progress.json. Returns 404 when there's nothing to
+    reset. Used by the frontend's Force Clear action when a stale refresh
+    is detected (progress.last_updated > 10 min while status=running).
+
+    Per spec v2 §change #4: cancellation MUST happen BEFORE lockfile +
+    progress removal to prevent a still-running old bg task from
+    corrupting the next refresh's progress.json.
+    """
+    global _active_refresh_task, _cancel_event
+    try:
+        from refresh_noaa_catalog import PROGRESS_FILENAME
+    except ImportError:
+        raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
+
+    lock_path = DATA_DIR / "noaa_catalog_refresh.lock"
+    progress_path = DATA_DIR / PROGRESS_FILENAME
+    has_task = _active_refresh_task is not None and not _active_refresh_task.done()
+    has_lock = lock_path.exists()
+    has_progress = progress_path.exists()
+
+    if not (has_task or has_lock or has_progress):
+        raise HTTPException(status_code=404, detail="Nothing to reset")
+
+    task_cancelled = False
+    if has_task:
+        _active_refresh_task.cancel()
+        try:
+            # Fix 4: bound the await with a timeout so a task stuck in a
+            # non-cancelable sync call doesn't block /reset indefinitely.
+            # We drop the module ref below regardless; the orphaned task
+            # will eventually exit (or not) on its own — the subsystem
+            # is already returning to idle from our perspective.
+            await asyncio.wait_for(_active_refresh_task, timeout=CANCEL_TIMEOUT_SEC)
+        except asyncio.CancelledError:
+            pass
+        except asyncio.TimeoutError:
+            # Task didn't finalize within CANCEL_TIMEOUT_SEC; proceed anyway.
+            pass
+        except Exception:
+            # Other exceptions are already logged in progress.json by the
+            # bg task's try/except/finally. We consumed them here so the
+            # reset can still proceed.
+            pass
+        task_cancelled = True
+    _active_refresh_task = None
+    _cancel_event = None
+
+    lockfile_removed = False
+    if has_lock:
+        try:
+            lock_path.unlink()
+            lockfile_removed = True
+        except OSError:
+            pass
+
+    progress_removed = False
+    if has_progress:
+        try:
+            progress_path.unlink()
+            progress_removed = True
+        except OSError:
+            pass
+
+    return {
+        "status": "reset",
+        "task_cancelled": task_cancelled,
+        "lockfile_removed": lockfile_removed,
+        "progress_removed": progress_removed,
+    }
+
+
+@app.post("/admin/pipeline/noaa/rollback", dependencies=[Depends(require_config_source)])
+async def noaa_rollback(body: NoaaRollbackBody):
+    """Rollback NOAA catalog to a prior snapshot. Atomic symlink swap."""
+    try:
+        from refresh_noaa_catalog import find_running_pipelines, swap_symlink, append_refresh_log
+    except ImportError:
+        raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
+
+    # Defense-in-depth: reject path traversal before any filesystem op. The
+    # snapshot filename is user-supplied; .exists() alone would silently mask
+    # attacks like "../.ssh/id_rsa".
+    if "/" in body.to_snapshot or "\\" in body.to_snapshot or ".." in body.to_snapshot:
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid snapshot filename (no path separators or '..' allowed)",
+        )
+
+    # Check pipeline
+    running = find_running_pipelines(DATA_DIR)
+    if running:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "blocked_by_pipeline",
+                "blocked_by_pipeline": str(running[0]),
+            },
+        )
+
+    # Check snapshot exists
+    snapshot_path = DATA_DIR / "noaa_catalog_snapshots" / body.to_snapshot
+    if not snapshot_path.exists():
+        raise HTTPException(status_code=404, detail=f"Snapshot not found: {body.to_snapshot}")
+
+    # Perform rollback
+    symlink_path = DATA_DIR / "noaa_naip_catalog.json"
+    swap_symlink(symlink_path, snapshot_path)
+
+    # Log rollback
+    import datetime
+    log_path = DATA_DIR / "noaa_catalog_refresh_log.jsonl"
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    log_entry = {"ts": ts, "status": "rollback", "to_snapshot": body.to_snapshot}
+    append_refresh_log(log_path, log_entry)
+
+    return {"status": "ok", "to_snapshot": body.to_snapshot, "log_entry": log_entry}
+
+
+@app.post("/admin/pipeline/noaa/force-unlock", dependencies=[Depends(require_config_source)])
+async def noaa_force_unlock():
+    """Remove a stale refresh lockfile (PID no longer alive)."""
+    try:
+        from refresh_noaa_catalog import force_unlock
+    except ImportError:
+        raise HTTPException(status_code=503, detail="refresh_noaa_catalog module unavailable")
+    lock_path = DATA_DIR / "noaa_catalog_refresh.lock"
+    result = force_unlock(lock_path)
+    if result["status"] == "lock_holder_alive":
+        # Match the structured-detail shape used by /refresh and /rollback 409s.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "lock_holder_alive",
+                "previous_holder_pid": result.get("previous_holder_pid"),
+                "message": "Refresh lock held by a live process; not force-unlocking.",
+            },
+        )
+    return result
+
+
+@app.get("/admin/pipeline/noaa/refresh-log", dependencies=[Depends(require_config_source)])
+async def noaa_refresh_log():
+    """Return refresh history with rollback_available flag per entry."""
+    log_path = DATA_DIR / "noaa_catalog_refresh_log.jsonl"
+    snapshots_dir = DATA_DIR / "noaa_catalog_snapshots"
+    entries = []
+    if log_path.exists():
+        for line in log_path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # A snapshot file is rollback-able iff it's still on disk.
+            # Entry may reference snapshot_path (absolute) or to_snapshot (filename).
+            snap_ref = entry.get("snapshot_path") or entry.get("to_snapshot")
+            if snap_ref:
+                candidate = (
+                    Path(snap_ref)
+                    if Path(snap_ref).is_absolute()
+                    else (snapshots_dir / snap_ref)
+                )
+                entry["rollback_available"] = candidate.exists()
+            else:
+                entry["rollback_available"] = False
+            entries.append(entry)
+    entries.reverse()  # Reverse chronological
+    return {"entries": entries}

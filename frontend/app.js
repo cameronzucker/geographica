@@ -658,6 +658,8 @@
 
       // Click to show popup with feature properties
       map.on('click', layerId, function (e) {
+        // Ruler measurement tool — suppress KMZ-pin popup during drawing/inserting.
+        if (window._ruler && window._ruler.isActive()) return;
         if (!e.features || !e.features.length) return;
 
         var feature = e.features[0];
@@ -763,6 +765,11 @@
     _tryAddTileJSONSource('imagery-sentinel', '/tiles/data/imagery_sentinel.json', 'raster');
     _tryAddTileJSONSource('imagery-noaa', '/tiles/data/imagery_noaa.json', 'raster');
     _tryAddTileJSONSource('imagery-custom', '/tiles/data/imagery_custom.json', 'raster');
+
+    // Ruler measurement tool — reattach on initial load + every style.load.
+    if (window._ruler && window._ruler.reattachSources) {
+      window._ruler.reattachSources(map);
+    }
   }
 
   /** Helper: empty GeoJSON FeatureCollection */
@@ -1152,10 +1159,13 @@
     tabs.forEach(function (tab) {
       tab.addEventListener('click', function () {
         var target = this.dataset.panel;
+        var panelEl = document.getElementById(target);
+        if (!panelEl) return;  // Target panel missing — skip switch (defensive)
         tabs.forEach(function (t) { t.classList.remove('active'); });
         panels.forEach(function (p) { p.classList.remove('active'); });
         this.classList.add('active');
-        document.getElementById(target).classList.add('active');
+        panelEl.classList.add('active');
+        try { localStorage.setItem('sidebar-last-tab', target); } catch (e) {}
       });
     });
 
@@ -1173,6 +1183,14 @@
         if (searchContainer) searchContainer.classList.add('sidebar-open');
         if (sidebarToggle) sidebarToggle.classList.add('hidden');
         map.setPadding({ left: 320, top: 0, right: 0, bottom: 0 });
+        // Defensive: re-assert the saved tab whenever the sidebar becomes
+        // visible. pageshow / visibilitychange / DOMContentLoaded cover the
+        // page-lifecycle paths (Scenario B). This call covers Scenario A —
+        // the in-page hamburger / overlay-tap close-and-reopen loop where no
+        // lifecycle event fires. restoreLastSidebarTab is idempotent (early-
+        // returns if target tab is already active), so unconditional invocation
+        // here is safe even when the sidebar's tab state was preserved.
+        restoreLastSidebarTab();
       } else {
         sidebar.classList.remove('open');
         overlay.classList.remove('open');
@@ -1180,6 +1198,9 @@
         if (sidebarToggle) sidebarToggle.classList.remove('hidden');
         map.setPadding({ left: 0, top: 0, right: 0, bottom: 0 });
       }
+      document.dispatchEvent(new CustomEvent('geographica:sidebar', {
+        detail: { open: open }
+      }));
     }
 
     if (sidebarToggle) {
@@ -1264,6 +1285,8 @@
     // Search pin click handler — popup with name, distance, route button
     var _searchPinClicked = false;
     map.on('click', 'search-result-circles', function (e) {
+      // Ruler measurement tool — suppress search-pin popup during drawing/inserting.
+      if (window._ruler && window._ruler.isActive()) return;
       if (!e.features || !e.features.length) return;
       _searchPinClicked = true;
       setTimeout(function () { _searchPinClicked = false; }, 200);
@@ -1593,7 +1616,18 @@
       scheduleRouteRegen();
     });
 
-    getRouteBtn.addEventListener('click', requestRoute);
+    // Dual-state primary button: "Get Route" → requestRoute, "Clear Route" → clearRoute.
+    // Text is the source of truth for which action fires; requestRoute sets it to
+    // "Clear Route" on success, clearRoute resets it to "Get Route" on exit.
+    getRouteBtn.addEventListener('click', function () {
+      if (getRouteBtn.textContent === 'Clear Route') {
+        clearRoute();
+      } else {
+        requestRoute();
+      }
+    });
+    // clearBtn is hidden in index.html but we keep the listener attached so any
+    // programmatic click (tests, legacy callers) still works.
     clearBtn.addEventListener('click', clearRoute);
 
     // Export / print directions
@@ -1607,10 +1641,16 @@
       if (e.originalEvent.ctrlKey || e.originalEvent.shiftKey) return;
       if (wasDragging) { wasDragging = false; return; }
 
+      // Ruler measurement tool — suppress popup during drawing/inserting.
+      if (window._ruler && window._ruler.isActive()) return;
+
       // Don't fire if clicking on an existing feature layer or search pin
       var features = map.queryRenderedFeatures(e.point, {
         layers: ['imported-points', 'imported-lines', 'imported-polygons',
-                 'imported-polygon-outlines', 'search-result-circles']
+                 'imported-polygon-outlines', 'search-result-circles',
+                 // Ruler measurement tool — vertex-clicks in editing state
+                 // must NOT fall through to reverse-geocode (spec R5 C1).
+                 'ruler-vertex-hit-circles', 'ruler-vertex-circles', 'ruler-line']
       });
       if (features.length > 0) return;
 
@@ -2085,17 +2125,21 @@
       .then(function (res) { return res.json(); })
       .then(function (data) {
         btn.disabled = false;
-        btn.textContent = 'Get Route';
 
         if (data.trip) {
-          lastRouteTrip = data.trip;
-          window._geographicaLastTrip = data.trip;
-          window._geographicaLastTrip._costing = costing;
-          renderRoute(data.trip);
+          setActiveRoute(data.trip, {
+            refitBounds: true,
+            costing: costing,
+            costingOptions: body.costing_options || null,
+          });
           document.getElementById('export-route-btn').classList.remove('hidden');
+          // Dual-state button: now in Clear mode (see initRouting dispatcher).
+          btn.textContent = 'Clear Route';
         } else if (data.error) {
+          btn.textContent = 'Get Route';
           alert('Routing error: ' + (data.error || 'Unknown error'));
         } else {
+          btn.textContent = 'Get Route';
           alert('No route found.');
         }
       })
@@ -2108,10 +2152,31 @@
   }
 
   /**
-   * Render a Valhalla trip response on the map and display directions.
-   * @param {Object} trip - Valhalla trip object
+   * Single source of truth for "the active route has changed."
+   * Owns: _geographicaLastTrip, lastRouteCoords, map source 'route',
+   * sidebar #route-directions. Optionally fits bounds (default: true).
+   *
+   * Does NOT drive the engine — that's the caller's responsibility
+   * because different call sites want different engine transitions
+   * (nav-ui.js startNavigation → nav.start; reroute → nav.applyReroute).
+   *
+   * @param {Object} trip Valhalla trip object
+   * @param {Object} [options]
+   * @param {boolean} [options.refitBounds=true] if false, map camera is
+   *   untouched (use during active navigation so the user isn't yanked
+   *   to an overview view).
+   * @param {string} [options.costing] optional costing to stamp on the
+   *   trip (for reroute paths where the engine has this but the trip
+   *   response doesn't).
+   * @param {Object} [options.costingOptions] optional costing_options
+   *   to stamp on the trip.
+   * @returns {{ coords: Array<[number, number]>, maneuvers: Array }}
+   *   Decoded route data for the caller to pass to the engine.
    */
-  function renderRoute(trip) {
+  function setActiveRoute(trip, options) {
+    options = options || {};
+    var refitBounds = options.refitBounds !== false;
+
     // Decode polyline from each leg and merge
     var allCoords = [];
     var allManeuvers = [];
@@ -2124,62 +2189,64 @@
       }
     });
 
-    // Store decoded coords for spatial search context
-    lastRouteCoords = allCoords.slice();
+    // Stamp costing / costingOptions on the trip so downstream readers
+    // (reroute, export) have them.
+    if (options.costing) trip._costing = options.costing;
+    if (options.costingOptions !== undefined) trip._costingOptions = options.costingOptions;
 
-    // Update route source
+    // Update module-level truths
+    lastRouteTrip = trip;
+    lastRouteCoords = allCoords.slice();
+    window._geographicaLastTrip = trip;
+
+    // Update map 'route' source
     var geojson = {
       type: 'Feature',
       geometry: {
         type: 'LineString',
-        coordinates: allCoords
-      }
+        coordinates: allCoords,
+      },
     };
-
     var source = map.getSource('route');
     if (source) {
       source.setData(geojson);
     }
 
-    // Fit map to route bounds
-    var bounds = allCoords.reduce(function (b, coord) {
-      return b.extend(coord);
-    }, new maplibregl.LngLatBounds(allCoords[0], allCoords[0]));
+    // Optionally fit bounds
+    if (refitBounds && allCoords.length > 0) {
+      var bounds = allCoords.reduce(function (b, coord) {
+        return b.extend(coord);
+      }, new maplibregl.LngLatBounds(allCoords[0], allCoords[0]));
 
-    var isMobileRoute = window.innerWidth < 768;
-    var sidebarWRoute = parseInt(getComputedStyle(document.documentElement)
-      .getPropertyValue('--sidebar-width')) || 320;
-    map.fitBounds(bounds, {
-      padding: isMobileRoute
-        ? { top: 40, bottom: 100, left: 20, right: 20 }
-        : { top: 60, bottom: 60, left: sidebarWRoute + 20, right: 60 }
-    });
+      var isMobileRoute = window.innerWidth < 768;
+      var sidebarWRoute = parseInt(getComputedStyle(document.documentElement)
+        .getPropertyValue('--sidebar-width')) || 320;
+      map.fitBounds(bounds, {
+        padding: isMobileRoute
+          ? { top: 40, bottom: 100, left: 20, right: 20 }
+          : { top: 60, bottom: 60, left: sidebarWRoute + 20, right: 60 },
+      });
+    }
 
-    // Show route summary
+    // Rebuild summary + directions sidebar
     var summary = trip.summary || {};
-    var dist    = (summary.length || 0);
+    var dist = summary.length || 0;
     var distStr = useImperial ? dist.toFixed(1) + ' mi' : dist.toFixed(1) + ' km';
     var timeSec = summary.time || 0;
-    var hours   = Math.floor(timeSec / 3600);
+    var hours = Math.floor(timeSec / 3600);
     var minutes = Math.round((timeSec % 3600) / 60);
     var timeStr = hours > 0 ? hours + 'h ' + minutes + 'min' : minutes + ' min';
 
     var summaryEl = document.getElementById('route-summary');
-    // Build summary using safe DOM methods
-    while (summaryEl.firstChild) {
-      summaryEl.removeChild(summaryEl.firstChild);
-    }
+    while (summaryEl.firstChild) summaryEl.removeChild(summaryEl.firstChild);
     var strong = document.createElement('strong');
     strong.textContent = distStr;
     summaryEl.appendChild(strong);
     summaryEl.appendChild(document.createTextNode(' \u00B7 ' + timeStr));
     summaryEl.classList.remove('hidden');
 
-    // Show turn-by-turn directions (safe DOM construction)
     var dirList = document.getElementById('route-directions');
-    while (dirList.firstChild) {
-      dirList.removeChild(dirList.firstChild);
-    }
+    while (dirList.firstChild) dirList.removeChild(dirList.firstChild);
     allManeuvers.forEach(function (m) {
       var li = document.createElement('li');
       var instruction = m.instruction || m.verbal_pre_transition_instruction || '';
@@ -2190,7 +2257,12 @@
       li.textContent = instruction;
       dirList.appendChild(li);
     });
+
+    return { coords: allCoords, maneuvers: allManeuvers };
   }
+
+  // Expose for nav-ui.js reroute path.
+  window._geographicaSetActiveRoute = setActiveRoute;
 
   function clearRoute() {
     clearTimeout(routeRegenTimer);  // cancel any pending debounced regen
@@ -2205,6 +2277,12 @@
     routeEndCoords   = null;
     lastRouteTrip    = null;
     lastRouteCoords  = null;
+    // Closes the "stale _geographicaLastTrip" landmine flagged by the
+    // 2026-04-20 integration review (Important #2): without this, a
+    // future code path that reads window._geographicaLastTrip without
+    // first checking Start-Nav-btn visibility would try to start nav
+    // against the cleared route's trip object.
+    window._geographicaLastTrip = null;
 
     document.getElementById('route-start').value = '';
     document.getElementById('route-end').value   = '';
@@ -2217,6 +2295,9 @@
     var dirList = document.getElementById('route-directions');
     while (dirList.firstChild) dirList.removeChild(dirList.firstChild);
     document.getElementById('export-route-btn').classList.add('hidden');
+    // Dual-state button: back to "Get Route" mode so the next click
+    // triggers a fresh fetch instead of calling clearRoute() again.
+    document.getElementById('get-route-btn').textContent = 'Get Route';
   }
 
   // ── Export / print directions ────────────────────────────────────────
@@ -4042,6 +4123,43 @@
   //  BOOTSTRAP
   // =====================================================================
 
+  var VALID_SIDEBAR_PANELS = ['layers-panel', 'route-panel', 'import-panel', 'admin-panel', 'measure-panel'];
+
+  function restoreLastSidebarTab() {
+    var saved;
+    try { saved = localStorage.getItem('sidebar-last-tab'); } catch (e) { return; }
+    if (!saved || VALID_SIDEBAR_PANELS.indexOf(saved) === -1) return;
+    // Whitelist prevents selector injection if an attacker writes to
+    // localStorage via devtools — though that's a same-origin trust assumption.
+    var targetTab = Array.from(document.querySelectorAll('.tab-btn'))
+      .find(function (t) { return t.dataset.panel === saved; });
+    if (!targetTab) return;
+    if (targetTab.classList.contains('active')) return;  // idempotent
+
+    // Capture form focus + selection before the synthetic click (spec §4.2).
+    var prevFocus = document.activeElement;
+    var prevStart = null, prevEnd = null, prevDir = null, hadFocus = false;
+    if (prevFocus && (prevFocus.tagName === 'INPUT' || prevFocus.tagName === 'TEXTAREA')) {
+      try {
+        hadFocus = true;
+        prevStart = prevFocus.selectionStart;
+        prevEnd = prevFocus.selectionEnd;
+        prevDir = prevFocus.selectionDirection;
+      } catch (e) {}
+    }
+    targetTab.click();  // use real click path — preserves admin-polling semantics
+
+    // Restore focus + selection if it was an editable control.
+    if (hadFocus && prevFocus && document.body.contains(prevFocus)) {
+      try {
+        prevFocus.focus();
+        if (prevStart !== null && prevEnd !== null) {
+          prevFocus.setSelectionRange(prevStart, prevEnd, prevDir || 'none');
+        }
+      } catch (e) { /* defensive — accept degradation if focus/selection fails */ }
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     initMap();
     initSidebarTabs();
@@ -4051,6 +4169,13 @@
     initImport();
     initGPS();
     initAdmin();
+    // Ruler / measurement tool — must init before restoreLastSidebarTab
+    // so a Measure-as-last-tab restore lands on a ready module.
+    if (window._ruler) window._ruler.init(map);
+    restoreLastSidebarTab();
+    if (window.VoicePicker && typeof window.VoicePicker.init === 'function') {
+      window.VoicePicker.init();
+    }
     // These need the map to be initialized first
     map.on('load', function () {
       initFreeLookCamera();
@@ -4166,5 +4291,32 @@
       _tryAddTileJSONSource('imagery-custom', '/tiles/data/imagery_custom.json', 'raster');
     }, 30000);
   });
+
+  // ─── iOS Safari lifecycle hooks for sidebar tab restore (spec §4.1) ─────
+  // DOMContentLoaded does not fire on BFCache restores (persisted=true),
+  // tab-discard restores (persisted=false after renderer eviction), or
+  // app-switch returns. Wire pageshow + visibilitychange at script-parse time
+  // so they survive any early-load race. restoreLastSidebarTab() is idempotent
+  // (early-returns when target tab already active) — unconditional invocation
+  // is safe.
+  window.addEventListener('pageshow', function (e) {
+    // Skip if DOM not yet ready (first-load fires pageshow BEFORE
+    // DOMContentLoaded; the DOMContentLoaded path will handle it).
+    if (document.readyState === 'loading') return;
+    restoreLastSidebarTab();
+  });
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) return;
+    if (document.readyState === 'loading') return;
+    restoreLastSidebarTab();
+  });
+
+  // ─── Cross-module exports for ruler.js (per spec v3 §A) ──────────
+  // Live-read pattern: ruler.js reads these at format time, not at
+  // init time. window._geographicaUseImperial is also live-read by
+  // ruler.js but is already exported elsewhere (line 123).
+  window._formatDD = formatDD;
+  window._haversineDistance = haversineDistance;
 
 })();

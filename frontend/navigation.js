@@ -38,17 +38,25 @@
   var SNAP_HEADING_RADIUS = 10;       // meters — heading disambiguation zone
   var SPEED_HISTORY_WINDOW = 60;      // seconds for rolling speed ratio
 
-  // Voice thresholds per costing [far, medium, near]
-  var VOICE_THRESHOLDS = {
-    auto:       [800, 200, 50],
-    bicycle:    [400, 100, 30],
-    pedestrian: [200,  50, 20]
-  };
-
   var NEXT_AFTER_NEXT_DISTANCE = 500; // meters
-  var VOICE_COOLDOWN = 5000;       // ms minimum between announcements
-  var VOICE_SPEED_GATE = 2;        // m/s -- suppress below this
-  var VOICE_NEAR_ANNOUNCE_DISTANCE = 50; // meters -- always announce within this distance
+
+  // ─── TTM (time-to-maneuver) voice model — spec v2 ──────────────────────
+  // Each VOICE_TTM entry is [far_seconds, near_seconds]. Announcement timing
+  // is ttm = distToNext / smoothedSpeed. The distance floor ensures near-tier
+  // still fires when stationary at a maneuver (TTM → ∞ when speed → 0).
+  var VOICE_TTM = {
+    auto:       [30, 3],
+    bicycle:    [20, 3],
+    pedestrian: [15, 2]
+  };
+  var VOICE_DISTANCE_FLOOR = {
+    auto:       75,  // +25 m. ~+2.6 s buffer at 25 mph fast voice / +1.2 s slow voice.
+    bicycle:    45,  // +15 m mirror. Same +50% relative scale.
+    pedestrian: 15   // unchanged. Walking-pace buffer ample.
+  };
+  var MIN_SPEED_FLOOR = 1.0;              // m/s — TTM denominator minimum
+  var SPEED_WINDOW_SIZE = 3;              // median-of-3 rolling window
+  var MAX_SPEED_DELTA_PER_TICK = 15;      // m/s — physically-implausible sample delta
 
   // ─── Geo math helpers ────────────────────────────────────────────────
 
@@ -151,13 +159,133 @@
   // Dead reckoning
   var drActive = false;
 
+  // GPS-recovery guard — spec v2 §5.3 + Codex F5.4. Tracks whether the previous
+  // tick was in DR / stale-GPS state so the FIRST fresh tick can suppress its
+  // prefix (prevents jarringly-precise distance from a single recovered sample).
+  // Module-scope state; consumed at most once per checkVoice fire path via the
+  // helper below.
+  var prevTickWasStaleOrDR = false;
+
   // Voice
   var muted = false;
+  var suppressVoiceOnNextTick = false;
   var announcedSet = {};      // key: "maneuverIdx-threshold" -> true
-  var lastAnnouncementTime = 0;
+
+  // Speed smoothing (spec v2 §4.2) — median-of-3 with outlier clamp.
+  // MAX_SPEED_DELTA_PER_TICK rejects samples that differ from the prior median
+  // by a physically-implausible amount. Catches GPS multipath bursts that a
+  // median alone cannot reject.
+  var speedSamples = [];
+
+  function pushSpeedSample(s) {
+    var clamped = (typeof s === 'number' && s >= 0 && isFinite(s)) ? s : 0;
+    if (speedSamples.length >= 1) {
+      var priorMedian = speedMedian();
+      if (Math.abs(clamped - priorMedian) > MAX_SPEED_DELTA_PER_TICK) {
+        return; // drop physically-implausible outlier
+      }
+    }
+    speedSamples.push(clamped);
+    if (speedSamples.length > SPEED_WINDOW_SIZE) speedSamples.shift();
+  }
+
+  function speedMedian() {
+    if (speedSamples.length === 0) return MIN_SPEED_FLOOR;
+    var sorted = speedSamples.slice().sort(function (a, b) { return a - b; });
+    return sorted[Math.floor(sorted.length / 2)];
+  }
 
   // Speed history for ETA adjustment: [{time, actual, expected}]
   var speedHistory = [];
+
+  // ─── Voice prefix helpers (spec v2 §5.1, §5.3) ─────────────────────
+
+  // Returns true when the UI should display imperial units (miles / feet).
+  // Reads window._geographicaUseImperial at call time so live changes are
+  // reflected without a page reload. Defaults to true (imperial) when unset,
+  // matching the app.js:123 initialisation default.
+  function _geographicaUseImperial() {
+    return typeof window !== 'undefined' && window._geographicaUseImperial !== false;
+  }
+
+  // Cutoff: below this, prompts read as imminent ("turn right" with no prefix).
+  var DISTANCE_PREFIX_CUTOFF_METERS = 30;  // ≈ 100 ft
+
+  // Per spec v2 §5.1. Returns "" if below cutoff. Output ends with ", ".
+  // Imperial bands: feet (round 100) up to 999 ft; then fractional miles
+  // (a quarter / half a / three quarters of a / one); then whole miles
+  // (Math.round). Metric: meters (round 10 < 100 m, round 50 from 100-999 m);
+  // then "In one kilometer" at 1000 m exactly; then N.N km via explicit
+  // Math.round(m/100)/10 (avoids JS .toFixed rounding quirks).
+  function formatDistancePrefix(meters, useImperial) {
+    // Reject NaN, Infinity, negative, and below-cutoff. The !(>=) form
+    // catches NaN (all NaN comparisons return false) where (<) does not.
+    if (!(meters >= DISTANCE_PREFIX_CUTOFF_METERS) || !isFinite(meters)) return '';
+    if (useImperial) {
+      var feet = meters * 3.28084;
+      if (feet < 1000) return 'In ' + (Math.round(feet / 100) * 100) + ' feet, ';
+      var miles = feet / 5280;
+      if (miles < 1980 / 5280) return 'In a quarter mile, ';
+      if (miles < 3300 / 5280) return 'In half a mile, ';
+      if (miles < 4620 / 5280) return 'In three quarters of a mile, ';
+      if (miles < 7920 / 5280) return 'In one mile, ';
+      return 'In ' + Math.round(miles) + ' miles, ';
+    }
+    // metric
+    if (meters < 100) return 'In ' + (Math.round(meters / 10) * 10) + ' meters, ';
+    if (meters < 1000) return 'In ' + (Math.round(meters / 50) * 50) + ' meters, ';
+    if (meters < 1500) return 'In one kilometer, ';
+    // .toFixed(1) can produce "N.0 km" (e.g., 2000 m → "In 2.0 kilometers, ").
+    // TTM/chain distances cap well below 2 km in practice, but the output is
+    // grammatically acceptable for TTS; no rounding change applied.
+    return 'In ' + (Math.round(meters / 100) / 10).toFixed(1) + ' kilometers, ';
+  }
+
+  // Per spec v2 §5.1. Strips Valhalla's mid-string baked distance from a
+  // verbal_pre_transition or verbal_transition_alert string. Three patterns
+  // applied in sequence:
+  //   1. ". Then, in <dist>, <Imperative>." (mid-string distance chain) — strip whole
+  //   2. ". Then <rest>" (chain without distance, comma-form accepted) — strip whole
+  //   3. "Then " leading — strip prefix only
+  // (?:[^.]|\.(?=\d))* allows decimal-passthrough so "1.5 miles" isn't split.
+  // No /i flag — Valhalla always title-cases. Forward-compat note: future
+  // patterns may need a (?=[A-Z]) lookahead to anchor at sentence-boundary
+  // capitals — current patterns rely on \.\s* for the same effect.
+  function stripBakedDistance(text) {
+    if (!text) return text;
+    // Pattern 1: trailing ". Then, in <dist> <unit>, <rest>"
+    text = text.replace(
+      /\.\s*Then[\s,]+in\s+[a-zA-Z0-9.\s]+?\s(?:feet|foot|mile|miles|meters?|kilometers?|km)\s*,\s*(?:[^.]|\.(?=\d))*\.?\s*$/,
+      '.'
+    );
+    // Pattern 2: trailing ". Then <rest>" (no distance) — broadened to accept "Then,"
+    text = text.replace(
+      /\.\s*Then[\s,]+(?:[^.]|\.(?=\d))*\.?\s*$/,
+      '.'
+    );
+    // Pattern 3: leading "Then "
+    text = text.replace(/^Then\s+/, '');
+    return text;
+  }
+
+  // Per spec v2 §5.3. Returns true exactly once when a tick transitions from
+  // (drActive || stale) → fresh. Subsequent fresh ticks return false until the
+  // next stale episode arms the flag again. Updates prevTickWasStaleOrDR on
+  // every call so the state tracks observation latency.
+  // Note: name says "Tick" but updates on every consumeGPSRecoveryFlag CALL.
+  // Ticks where neither tier fires don't call this helper — flag stays armed
+  // across those silent ticks.
+  function consumeGPSRecoveryFlag() {
+    var nowFresh = !drActive && (Date.now() - lastGPSTime <= GPS_STALE_TIMEOUT);
+    if (prevTickWasStaleOrDR && nowFresh) {
+      prevTickWasStaleOrDR = false;
+      return true;  // suppress prefix this tick
+    }
+    prevTickWasStaleOrDR = drActive || (Date.now() - lastGPSTime > GPS_STALE_TIMEOUT);
+    return false;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
 
   // Callbacks
   var onUpdateCb = null;
@@ -324,68 +452,166 @@
 
   // ─── Voice announcements ────────────────────────────────────────────
 
-  function announce(text, key) {
-    if (muted || !text || !onVoiceCb) return false;
-    var now = Date.now();
-    if (now - lastAnnouncementTime < VOICE_COOLDOWN) return false;
-    lastAnnouncementTime = now;
-    if (key) announcedSet[key] = true;
-    onVoiceCb(text);
-    return true;
-  }
-
   /**
    * Check if we should fire a voice announcement for the upcoming maneuver.
-   * Uses three distance thresholds (far, medium, near) based on costing.
+   * TTM algorithm (spec v2 §4.3): ttm = distToNext / speedMedian.
+   * Two tiers per maneuver: far (alert) and near (pre-transition).
+   * D1 suppression: when near fires, far is also marked to skip duplicates.
    */
   function checkVoice(snap) {
+    if (suppressVoiceOnNextTick) {
+      suppressVoiceOnNextTick = false;
+      return;
+    }
     if (!route || !route.maneuvers) return;
 
-    // Speed gate: suppress below 2 m/s UNLESS within 50m of next maneuver
-    if (lastSpeed < VOICE_SPEED_GATE) {
-      var nextCheckIdx = currentManeuverIdx + 1;
-      if (nextCheckIdx < route.maneuvers.length) {
-        var distCheck = distanceToManeuver(snap, nextCheckIdx);
-        if (distCheck > VOICE_NEAR_ANNOUNCE_DISTANCE) return;
-      } else {
-        return;
-      }
-    }
-
-    var thresholds = VOICE_THRESHOLDS[route.costing] || VOICE_THRESHOLDS.auto;
     var nextIdx = currentManeuverIdx + 1;
     if (nextIdx >= route.maneuvers.length) return;
 
-    var distToNext = distanceToManeuver(snap, nextIdx);
     var m = route.maneuvers[nextIdx];
+    var costing = route.costing || "auto";
+    var ttmPair = VOICE_TTM[costing] || VOICE_TTM.auto;
+    var floor = VOICE_DISTANCE_FLOOR[costing] || VOICE_DISTANCE_FLOOR.auto;
 
-    for (var ti = 0; ti < thresholds.length; ti++) {
-      var key = nextIdx + "-" + ti;
-      if (announcedSet[key]) continue;
+    // distanceToManeuver can return negative on overshoot / U-turn / GPS
+    // jitter at maneuver boundaries. Guard by early-returning on AT-or-past
+    // — we don't want to fire near-tier for a maneuver the driver is
+    // crossing right now; findManeuverForSegment() advances currentManeuverIdx
+    // on the next tick.
+    var distToNext = distanceToManeuver(snap, nextIdx);
+    if (distToNext <= 0) return;
 
-      if (distToNext <= thresholds[ti]) {
-        var text;
-        if (ti < 2) {
-          // Far or medium: use alert instruction
-          text = m.verbal_transition_alert_instruction || m.instruction;
-        } else {
-          // Near: use pre-transition instruction
-          text = m.verbal_pre_transition_instruction || m.instruction;
+    var speed = Math.max(speedMedian(), MIN_SPEED_FLOOR);
+    var ttm = distToNext / speed;
 
-          // Next-after-next: if maneuver[current+2] is close, append it
-          var afterIdx = nextIdx + 1;
-          if (afterIdx < route.maneuvers.length) {
-            var distBetween = distanceToManeuver(
-              { segmentIndex: m.begin_shape_index, t: 0 }, afterIdx
-            );
-            if (distBetween <= NEXT_AFTER_NEXT_DISTANCE) {
-              var afterM = route.maneuvers[afterIdx];
-              text += ", then " + (afterM.instruction || "");
+    var farKey = nextIdx + "-far";
+    var nearKey = nextIdx + "-near";
+
+    // Distinguish TTM-fire from floor-fire (spec §5.2 + B1 floor-fire suppression).
+    // TTM-fire = user is approaching at speed; distance prefix is meaningful.
+    // Floor-fire = floor caught it (slow/stationary); engine fires at ~75 m
+    // which always lands in the "200 feet" bucket regardless of how close the
+    // user actually is by TTS-completion time. Bare maneuver text reads as
+    // imminent — re-grounds the spec's 30 m / 100 ft cutoff intent via fire-
+    // mode rather than a distance threshold (the cutoff was dead code because
+    // near-tier never fires below 30 m in practice).
+    var nearTTMFire   = ttm <= ttmPair[1];
+    var nearFloorFire = !nearTTMFire && distToNext <= floor;
+    var nearWouldFire = !announcedSet[nearKey] && (nearTTMFire || nearFloorFire);
+    var farWouldFire = !announcedSet[farKey] && ttm <= ttmPair[0];
+
+    if (nearWouldFire) {
+      var text = m.verbal_pre_transition_instruction || m.instruction || "";
+      // stripBakedDistance subsumes the prior two-line Then-strip block (spec v2 §5.1).
+      // Handles leading "Then ", trailing ". Then <rest>", and mid-string
+      // ". Then, in <dist>, X" patterns in one helper.
+      text = stripBakedDistance(text);
+      if (text.length > 0) {
+        text = text.charAt(0).toUpperCase() + text.slice(1);
+      }
+      // Mark BEFORE prefix construction and chain-append (spec v2 §5.2 G11
+      // exception safety). If formatDistancePrefix or stripBakedDistance ever
+      // throw on a malformed input, the maneuver stays "marked but never
+      // spoken" instead of refiring on every subsequent tick.
+      announcedSet[nearKey] = true;
+      announcedSet[farKey] = true;
+      // Single consume per tick (spec §5.3); used by both base and chain.
+      var gpsRecovery = consumeGPSRecoveryFlag();
+      // Base prefix suppressed on floor-fire OR GPS-recovery. Floor-fire
+      // suppression matches the spec's "imminent prompt" intent for close-up
+      // fires (B1 fix); GPS-recovery suppression preserves spec §5.3 semantics.
+      var skipBasePrefix = nearFloorFire || gpsRecovery;
+      // Chain prefix only suppressed on GPS-recovery — distBetween is precomputed
+      // from cumulativeDistances, independent of live snap, so floor-fire status
+      // doesn't affect chain accuracy. The chain heads-up about M_(n+1)→M_(n+2)
+      // is genuinely informational regardless of how this fire was triggered.
+      var skipChainPrefix = gpsRecovery;
+      // Prepend live-distance prefix to base text (spec v2 §5.2).
+      if (!skipBasePrefix) {
+        var nearPrefix = formatDistancePrefix(distToNext, _geographicaUseImperial());
+        if (nearPrefix && text && text.length > 0) {
+          text = nearPrefix + text.charAt(0).toLowerCase() + text.slice(1);
+        }
+      }
+      var afterIdx = nextIdx + 1;
+      if (afterIdx < route.maneuvers.length) {
+        var distBetween = distanceToManeuver(
+          { segmentIndex: m.begin_shape_index, t: 0 }, afterIdx
+        );
+        if (distBetween <= NEXT_AFTER_NEXT_DISTANCE) {
+          var afterText = stripBakedDistance(route.maneuvers[afterIdx].instruction || "");
+          if (afterText) {
+            // Mark afterIdx-far suppression BEFORE chain text construction (G11).
+            announcedSet[afterIdx + "-far"] = true;  // I11 chain extension
+            // Use skipChainPrefix — chain ignores floor-fire (heads-up about M2 is
+            // valuable regardless), responds only to GPS-recovery.
+            var chainJoin;
+            if (!skipChainPrefix) {
+              var afterPrefix = formatDistancePrefix(distBetween, _geographicaUseImperial());
+              if (afterPrefix) {
+                var lcPrefix = afterPrefix.charAt(0).toLowerCase() + afterPrefix.slice(1);
+                var lcAfter  = afterText.charAt(0).toLowerCase()  + afterText.slice(1);
+                chainJoin = ", then " + lcPrefix + lcAfter;
+              } else {
+                chainJoin = ", then " + afterText;
+              }
+            } else {
+              chainJoin = ", then " + afterText;
             }
+            text = text.replace(/\.\s*$/, '') + chainJoin;
           }
         }
+      }
+      if (!muted && text && onVoiceCb) {
+        if (typeof window !== 'undefined' && window._geographicaTTMDebug) {
+          (window._geographicaTTMDebugLog = window._geographicaTTMDebugLog || []).push({
+            timestamp: Date.now(),
+            maneuverIdx: nextIdx,
+            tier: 'near',
+            fireMode: nearTTMFire ? 'ttm' : 'floor',
+            distToNext: distToNext,
+            ttm: ttm,
+            // Always false: re-tick suppression early-returns at the top of
+            // checkVoice before reaching this branch. If true ever appears in
+            // a field-test log, suppressVoiceOnNextTick semantics broke.
+            onRerouteRetick: false
+          });
+        }
+        onVoiceCb(text);
+      }
+      return;
+    }
 
-        if (!announce(text, key)) break;
+    if (farWouldFire) {
+      var farText = m.verbal_transition_alert_instruction || m.instruction || "";
+      announcedSet[farKey] = true;  // mark BEFORE prefix construction (spec v2 §5.2 G11)
+      // GPS-recovery guard: suppress prefix on first tick after stale/DR clears.
+      if (!consumeGPSRecoveryFlag()) {
+        var farRaw = farText;
+        farText = stripBakedDistance(farText);
+        if (typeof window !== 'undefined' && window._geographicaTTMDebug && farText.length === 0) {
+          console.warn('[nav] far-tier farText empty after stripBakedDistance — original:', farRaw);
+        }
+        var farPrefix = formatDistancePrefix(distToNext, _geographicaUseImperial());
+        if (farPrefix && farText && farText.length > 0) {
+          farText = farPrefix + farText.charAt(0).toLowerCase() + farText.slice(1);
+        }
+      }
+      if (!muted && farText && onVoiceCb) {
+        if (typeof window !== 'undefined' && window._geographicaTTMDebug) {
+          (window._geographicaTTMDebugLog = window._geographicaTTMDebugLog || []).push({
+            timestamp: Date.now(),
+            maneuverIdx: nextIdx,
+            tier: 'far',
+            distToNext: distToNext,
+            ttm: ttm,
+            // Always false: re-tick suppression early-returns at the top of
+            // checkVoice before reaching this branch. If true ever appears in
+            // a field-test log, suppressVoiceOnNextTick semantics broke.
+            onRerouteRetick: false
+          });
+        }
+        onVoiceCb(farText);
       }
     }
   }
@@ -537,6 +763,7 @@
 
     // Speed gate for heading
     lastSpeed = gpsSpeed;
+    pushSpeedSample(gpsSpeed);
     if (gpsSpeed >= HEADING_SPEED_GATE && gpsHeading !== null && gpsHeading !== undefined) {
       lastValidHeading = gpsHeading;
       headingValid = true;
@@ -637,11 +864,19 @@
     lastRerouteTime = now;
     state = "rerouting";
     rerouteSeq++;
+    var scheduledSeq = rerouteSeq; // R2 F2.1: capture at scheduling time.
     rerouteTimeoutId = setTimeout(function () {
+      rerouteTimeoutId = null;
+      // Only reset if the seq we captured still matches — prevents a late
+      // timeout from clobbering a just-applied reroute's state.
+      if (scheduledSeq !== rerouteSeq) return;
       if (state === "rerouting") {
         state = "navigating";
         offRouteHistory = [];
         inOffRouteState = false;
+        // Clear the cooldown too — the failure already burned 10 s;
+        // don't penalize the user with another 5 s of blocked reroutes.
+        lastRerouteTime = 0;
       }
     }, REROUTE_TIMEOUT);
 
@@ -651,6 +886,7 @@
         currentLng: lng,
         remainingWaypoints: route.remainingWaypoints || [],
         costing: route.costing,
+        costingOptions: route.costingOptions || null,
         _seq: rerouteSeq // caller passes back to confirmReroute
       });
     }
@@ -670,7 +906,10 @@
 
     drActive = true;
     currentManeuverIdx = findManeuverForSegment(drSnap.segmentIndex);
-    checkVoice(drSnap);
+    // G11 (spec v2): dead-reckoning is position-only. No voice — DR cannot
+    // reliably distinguish a legitimate TTM threshold crossing from an
+    // extrapolation artifact, and pre-locking announcedSet keys would
+    // silently skip prompts on GPS recovery.
     emitUpdate(buildState(drSnap, true));
   }
 
@@ -716,7 +955,8 @@
     lastSnap = null;
     drActive = false;
     announcedSet = {};
-    lastAnnouncementTime = 0;
+    suppressVoiceOnNextTick = false;
+    speedSamples = [];
     speedHistory = [];
     segmentDistances = null;
     cumulativeDistances = null;
@@ -775,10 +1015,22 @@
      * gpsData: { latitude, longitude, heading, speed, timestamp }
      */
     updateGPS: function (data) {
+      // Dedup on (lat, lng): the UI polls feedGPS every 500 ms but the
+      // GPS source is ~1 Hz, so half the ticks carry an unchanged
+      // position. The off-route hysteresis window (5-tick, 3-of-5) is
+      // designed for 1 Hz; duplicate ticks would fill it in half the
+      // intended time and cause false reroutes while stationary. (B7)
+      //
+      // We still refresh lastGPSTime so the stale-checker doesn't fire
+      // DR on a stationary-but-fresh-GPS vehicle.
+      var positionChanged = !lastGPS ||
+        lastGPS.latitude !== data.latitude ||
+        lastGPS.longitude !== data.longitude;
+
       lastGPS = data;
       lastGPSTime = Date.now();
 
-      if (state !== "idle") {
+      if (state !== "idle" && positionChanged) {
         tick(data);
       }
     },
@@ -793,28 +1045,37 @@
       if (seq !== rerouteSeq) return;
       if (rerouteTimeoutId) { clearTimeout(rerouteTimeoutId); rerouteTimeoutId = null; }
 
+      // Advance rerouteSeq: any in-flight timeout that captured the old seq
+      // will now see scheduledSeq !== rerouteSeq and bail out harmlessly.
+      // Also clear lastRerouteTime so the next legitimate off-route event
+      // is not blocked by the cooldown that was set when the reroute fired.
+      rerouteSeq++;
+      lastRerouteTime = 0;
+
       route = routeData;
       lastIndex = 0;
       currentManeuverIdx = 0;
       offRouteHistory = [];
       inOffRouteState = false;
-      // Clear only forward maneuvers' thresholds
-      var newSet = {};
-      for (var key in announcedSet) {
-        var idx = parseInt(key.split('-')[0]);
-        if (idx <= currentManeuverIdx) {
-          newSet[key] = true;
-        }
-      }
-      announcedSet = newSet;
+      // Full reset: old keys refer to a route that no longer exists.
+      // announcedSet clears so TTM tiers re-arm on the new route.
+      announcedSet = {};
       speedHistory = [];
       precomputeDistances();
 
       state = "navigating";
 
-      if (lastGPS) {
-        tick(lastGPS);
-      }
+      // suppressVoiceOnNextTick: the re-tick below fires checkVoice which
+      // would announce from a 1-sample warmup window at the worst moment.
+      // Skip voice on this synthetic tick; the next real GPS update fires
+      // normally. (R1 F1.3)
+      suppressVoiceOnNextTick = true;
+      if (lastGPS) tick(lastGPS);
+
+      // Clear speedSamples AFTER the re-tick so the single warmup sample
+      // pushed by tick() does not persist into the new route's smoothing
+      // window. On the first real GPS update the window starts fresh.
+      speedSamples = [];
     },
 
     /** Toggle voice announcements. */
@@ -849,6 +1110,27 @@
 
     /** Register callback for voice announcement text. */
     onVoice: function (cb) { onVoiceCb = cb; }
+  };
+
+  // Test hook: expose tuning constants + minimal state inspectors so tests
+  // can assert on behavior without re-parsing the source. No-op in production
+  // (only read by unit tests).
+  window._geographicaNavEngineInternals = {
+    VOICE_TTM: VOICE_TTM,
+    VOICE_DISTANCE_FLOOR: VOICE_DISTANCE_FLOOR,
+    MIN_SPEED_FLOOR: MIN_SPEED_FLOOR,
+    SPEED_WINDOW_SIZE: SPEED_WINDOW_SIZE,
+    MAX_SPEED_DELTA_PER_TICK: MAX_SPEED_DELTA_PER_TICK,
+    _getSpeedSamples: function () { return Array.from(speedSamples); },
+    _speedMedian: function () { return speedMedian(); },
+    _getAnnouncedKeys: function () { return Object.keys(announcedSet).sort(); },
+    _useImperial: _geographicaUseImperial,
+    _formatDistancePrefix: formatDistancePrefix,
+    _stripBakedDistance: stripBakedDistance,
+    _consumeGPSRecoveryFlag: consumeGPSRecoveryFlag,
+    _peekGPSRecoveryFlag: function () { return prevTickWasStaleOrDR; },
+    _setLastGPSTime: function (t) { lastGPSTime = t; },
+    _setGPSRecoveryFlag: function (b) { prevTickWasStaleOrDR = !!b; }
   };
 
 })();
