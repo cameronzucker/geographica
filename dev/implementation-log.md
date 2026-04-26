@@ -2,7 +2,7 @@
 
 ## 2026-04-25 — Nav voice floor-fire prefix suppression (B1 from field-test bug hunt)
 
-**Released as:** not yet released (shipped on `dev`; ship gate is Cameron's re-drive of Villa Rita → Costco).
+**Released as:** not yet released (shipped on `dev`; **field-verified by Cameron 2026-04-25** — his words: "We have NAILED TTM now. It works perfectly and is a very impressive feature I don't think is present in any other open source project like this." Ready for `dev → main` merge.).
 **Plan / spec:** [dev/plans/2026-04-25-nav-distance-floor-fire-suppression-plan.md](plans/2026-04-25-nav-distance-floor-fire-suppression-plan.md) · spec v3 update at [docs/superpowers/specs/2026-04-24-nav-voice-followup-design.md](../docs/superpowers/specs/2026-04-24-nav-voice-followup-design.md).
 **Bug hunt:** [dev/bug-hunts/2026-04-24-nav-distance-post-m1-consolidated.md](bug-hunts/2026-04-24-nav-distance-post-m1-consolidated.md) — 3-hunter bug-hunt-cycle, all hunters HIGH-confidence convergence on the floor-bucket interaction.
 **Execution protocol:** `superpowers:subagent-driven-development` — single implementer dispatch executing 3 sequential commits, then one final code-quality review.
