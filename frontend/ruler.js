@@ -714,11 +714,16 @@
     // Phase 4.5+ adds renderElevation().
     updateCursor();
 
-    // Body class for active-mode CSS hooks. While drawing/inserting, the
-    // sidebar overlay's pointer-events are suppressed so map clicks reach
-    // the MapLibre canvas instead of the overlay's close-sidebar handler.
+    // Body class for active-mode CSS hooks. While ANY measurement is in
+    // progress (drawing / inserting / editing), the sidebar overlay's
+    // pointer-events are suppressed so map clicks and drag-mouseups reach
+    // the MapLibre canvas / window listeners instead of the overlay's
+    // close-sidebar handler. Phase 3's drag-to-reposition surfaced the
+    // need to extend coverage to editing — releasing a vertex drag over
+    // the sidebar/overlay area would otherwise be eaten before the
+    // window-level mouseup listener could commit the new position.
     if (typeof document !== 'undefined' && document.body && document.body.classList) {
-      if (state.status === 'drawing' || state.status === 'inserting') {
+      if (state.status !== 'idle') {
         document.body.classList.add('ruler-active');
       } else {
         document.body.classList.remove('ruler-active');
