@@ -28,14 +28,16 @@ Built for [AREDN](https://www.arednmesh.org/) mesh networks and field teams oper
 ## Features
 
 <p align="center">
-<img src="docs/screenshots/3d-terrain.png" alt="3D terrain with hillshade and exaggeration slider" width="600" />
+<img src="docs/screenshots/3d-terrain.png" alt="3D terrain with hillshade and exaggeration slider" width="100%" />
 <br>
 <em>3D terrain with hillshade — one of three rendering modes for any region.</em>
 </p>
 
 ### Mapping & imagery
 
-<img src="docs/screenshots/public-lands.png" alt="Public lands layer with agency-colored fills and tribal stripes" width="500" align="right" />
+<p align="center">
+<img src="docs/screenshots/public-lands.png" alt="Public lands layer with agency-colored fills and tribal stripes" width="100%" />
+</p>
 
 - **Vector basemaps** — three themes (Positron light, Dark Matter dark, Hybrid imagery+roads) with house-number labels.
 - **Aerial imagery** — five acquisition modes (USGS Direct, NOAA NAIP, National Map ImageServer, USGS M2M API, BYO GeoTIFF). Per-source toggles, opacity slider, dynamic basemap restyling when imagery is active.
@@ -46,7 +48,9 @@ Built for [AREDN](https://www.arednmesh.org/) mesh networks and field teams oper
 
 ### Spatial intelligence
 
-<img src="docs/screenshots/voice-search.png" alt="Voice search active with result list and numbered map pins" width="500" align="right" />
+<p align="center">
+<img src="docs/screenshots/voice-search.png" alt="Voice search active with result list and numbered map pins" width="100%" />
+</p>
 
 - **Natural-language spatial search** — "nearest gas station", "hospitals near me", "gas stations along my route", "fuel every 50 miles", "gas stations in Flagstaff", "restaurants in Phoenix along my route". Distance-ranked results, numbered map pins, city-aware geocoding.
 - **Voice search** — push-to-hold mic button for hands-free queries via Whisper (base.en, CPU). Requires HTTPS.
