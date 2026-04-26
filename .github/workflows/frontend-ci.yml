@@ -38,7 +38,13 @@ jobs:
           node-version: '20'
 
       - name: Run JS unit tests (node:test)
-        run: node --test frontend/tests/
+        # --test-force-exit: closes the event loop after tests complete.
+        # Without this flag, `node --test` waits for all timers/intervals to
+        # release — but the nav engine's initBootstrap setInterval, voice-
+        # picker, and wake-lock helpers never naturally clear theirs, so the
+        # job hangs until GitHub's 6-hour timeout cancels it. (See repeated
+        # cancellations 2026-04-20 → 2026-04-26 in CI history.)
+        run: node --test --test-force-exit frontend/tests/
 
       - name: Set up Python
         uses: actions/setup-python@v5
