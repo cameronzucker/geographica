@@ -16,6 +16,14 @@ Install dependencies (run once):
 Deps live in ~/.local (user site-packages) so this script runs under
 /usr/bin/python3 without coupling to setup/.venv. Chromium browser binary
 is cached at ~/.cache/ms-playwright/ (user-account-scoped, not venv-scoped).
+
+DPI / scale-factor note: shots are captured at device_scale_factor=1
+(1280×800 source). README displays them at <600px so a 2× source provides
+no visible benefit, and 2× pushes Pi 5 chromium past its 30s screenshot
+timeout on tile-heavy shots (DEM raycasting + 2× rendering). To re-bump
+later (e.g., for crisp Retina display in docs hosted off-Pi), extend the
+SHOTS tuple to (fn, viewport, dpr, color_scheme) so individual shots can
+opt back into 2×.
 """
 import argparse
 import asyncio
@@ -193,6 +201,14 @@ async def shot_setup_wizard(page, url):
     # Wizard JS is in an IIFE — showStep() isn't on window. Replicate the
     # DOM mutations directly: hide all steps except #step-3, mark wizard-tab
     # 3 as active and 1+2 as completed.
+    #
+    # FRAGILITY POINTER: this block replicates the side-effects of
+    # showStep(3) defined at setup/static/setup.js:134. If you edit that
+    # function (e.g., add a new class toggle, change the "completed" rule,
+    # rename a selector), update this replica to match — or migrate the
+    # wizard to a query-string entry-point (e.g., ?step=3) and delete this
+    # function entirely. Grep for "setup/static/setup.js:134" to find this
+    # caller from the JS side.
     await page.evaluate(
         """(targetStep) => {
             document.querySelectorAll('.step').forEach((el, i) => {
@@ -227,9 +243,18 @@ async def shot_kmz_overlay(page, url):
     # Use the explicit file input by id (more robust than attr-substring match).
     kmz_path = str(Path(__file__).resolve().parent.parent / "docs" / "Ham Radio Deployment Sites.kmz")
     await page.set_input_files("#file-input", kmz_path)
-    # The KMZ contains Ham Radio sites (Arizona-area) — give it time to
-    # parse + render icons + auto-fit bounds.
-    await page.wait_for_timeout(3500)
+    # KMZ import is async (JSZip.loadAsync → DOMParser → toGeoJSON → icon
+    # fetching). frontend/app.js:3425 sets #import-status.className to
+    # 'success' (or 'warning' if some icons failed) when the pipeline
+    # completes — wait for that state instead of guessing a timeout.
+    await page.wait_for_selector(
+        "#import-status.success, #import-status.warning",
+        timeout=15000,
+    )
+    # Brief settle so auto-fitBounds animation + icon-render frame land
+    # before the screenshot. The status flip can fire before the final
+    # paint, so this small visual buffer is the right primitive here.
+    await page.wait_for_timeout(800)
     await page.screenshot(
         path=str(GALLERY_DIR / "kmz-overlay.png"),
         full_page=False,
@@ -267,8 +292,18 @@ async def shot_imagery_before_after(page, url):
             if (s) s.classList.remove('open');
         }"""
     )
-    # Wait for tiles to load — NAIP at z14 is heavy.
-    await page.wait_for_timeout(5000)
+    # Wait for NAIP tiles to finish loading via map's idle event (same pattern
+    # _fly_to uses). NAIP at z14 is heavy — the previous fixed 5000ms guess
+    # was either too short on slow networks or too long on fast ones.
+    # 8s ceiling guards against a missing imagery source hanging the script.
+    await page.evaluate(
+        """() => new Promise((resolve) => {
+            const m = window._geographicaMap;
+            if (!m) { resolve(); return; }
+            const t = setTimeout(resolve, 8000);
+            m.once('idle', () => { clearTimeout(t); resolve(); });
+        })"""
+    )
     after = await page.screenshot(
         full_page=False, animations="disabled", timeout=60000
     )
@@ -322,10 +357,8 @@ async def run(shots_to_capture, url):
                 print(f"  ⚠ unknown shot: {name}; valid: {','.join(SHOTS)}")
                 continue
             shot_fn, viewport, color_scheme = SHOTS[name]
-            # device_scale_factor=2 is desirable for crisp README shots, but on
-            # the Pi 5 the combination of DEM raycasting + 2x rendering can
-            # push screenshot() past its default 30s timeout. Use 1x for now;
-            # bump to 2 once benchmarked.
+            # device_scale_factor=1 — see module docstring "DPI / scale-factor
+            # note" for the rationale and the per-shot opt-back-in path.
             ctx = await browser.new_context(
                 viewport=viewport,
                 device_scale_factor=1,
