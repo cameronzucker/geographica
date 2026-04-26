@@ -176,28 +176,27 @@ async def shot_admin_pipeline(page, url):
 
 
 async def shot_setup_wizard(page, url):
-    """Setup wizard — clean dark mode, progress dots, professional.
+    """Setup wizard step 3 (Credentials) — dark mode, progress dots.
 
     The wizard runs as an on-demand FastAPI app on localhost:8099 and is
     launched separately via setup.sh; this function expects it to be
     already up and reachable.
+
+    Note: dark mode is opt-in via prefers-color-scheme; the browser context
+    is created with colorScheme='dark' in run() for this shot.
+
+    Step navigation is internal — wizard-tab elements are display-only;
+    showStep(n) is the JS API used by the SPA. We call it directly.
     """
     await page.goto(WIZARD_URL)
     await page.wait_for_load_state("networkidle")
-    # Wizard is a single-page app — scroll/advance to step 3 if a control
-    # is exposed; otherwise the landing page is acceptable for the gallery.
-    # We try common step-3 affordances, but tolerate their absence.
-    for selector in (
-        "[data-step='3']",
-        "a[href$='/step/3']",
-        "button:has-text('Step 3')",
-    ):
-        try:
-            await page.locator(selector).first.click(timeout=1000)
-            break
-        except Exception:
-            continue
-    await page.wait_for_timeout(1500)
+    # Advance to step 3 (Credentials) via the SPA's own state-change function.
+    await page.evaluate(
+        """() => {
+            if (typeof showStep === 'function') showStep(3);
+        }"""
+    )
+    await page.wait_for_timeout(800)
     await page.screenshot(
         path=str(GALLERY_DIR / "setup-wizard.png"),
         full_page=False,
@@ -290,13 +289,16 @@ async def shot_imagery_before_after(page, url):
 
 
 SHOTS = {
-    "3d-terrain":            (shot_3d_terrain,            VIEWPORT),
-    "voice-search":          (shot_voice_search,          VIEWPORT),
-    "public-lands":          (shot_public_lands,          VIEWPORT),
-    "admin-pipeline":        (shot_admin_pipeline,        VIEWPORT),
-    "setup-wizard":          (shot_setup_wizard,          VIEWPORT),
-    "kmz-overlay":           (shot_kmz_overlay,           VIEWPORT),
-    "imagery-before-after":  (shot_imagery_before_after,  VIEWPORT),
+    # name: (shot_fn, viewport, color_scheme)
+    "3d-terrain":            (shot_3d_terrain,            VIEWPORT, "light"),
+    "voice-search":          (shot_voice_search,          VIEWPORT, "light"),
+    "public-lands":          (shot_public_lands,          VIEWPORT, "light"),
+    # admin-config and setup-wizard both honor prefers-color-scheme; force
+    # dark to match the README aesthetic + spec ('clean dark mode').
+    "admin-pipeline":        (shot_admin_pipeline,        VIEWPORT, "dark"),
+    "setup-wizard":          (shot_setup_wizard,          VIEWPORT, "dark"),
+    "kmz-overlay":           (shot_kmz_overlay,           VIEWPORT, "light"),
+    "imagery-before-after":  (shot_imagery_before_after,  VIEWPORT, "light"),
 }
 
 
@@ -309,12 +311,16 @@ async def run(shots_to_capture, url):
             if name not in SHOTS:
                 print(f"  ⚠ unknown shot: {name}; valid: {','.join(SHOTS)}")
                 continue
-            shot_fn, viewport = SHOTS[name]
+            shot_fn, viewport, color_scheme = SHOTS[name]
             # device_scale_factor=2 is desirable for crisp README shots, but on
             # the Pi 5 the combination of DEM raycasting + 2x rendering can
             # push screenshot() past its default 30s timeout. Use 1x for now;
             # bump to 2 once benchmarked.
-            ctx = await browser.new_context(viewport=viewport, device_scale_factor=1)
+            ctx = await browser.new_context(
+                viewport=viewport,
+                device_scale_factor=1,
+                color_scheme=color_scheme,
+            )
             page = await ctx.new_page()
             print(f"  → capturing {name} …")
             try:
