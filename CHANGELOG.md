@@ -15,6 +15,13 @@ Conventional Commits.
 - Screen keep-awake during active navigation — prevents phone auto-dim/auto-lock from silently stopping nav on mobile. Uses the Screen Wake Lock API on HTTPS, and a first-party silent-video fallback (`SilentVideoLock`) on plain HTTP (AREDN mesh, Pi-hotspot, LAN). No UI change; the existing nav banner is the evidence that keep-awake is active.
   - **Known limitation:** On iOS, Low Power Mode may disable screen keep-awake. Disable Low Power Mode or keep the phone plugged in for uninterrupted navigation.
 
+## [1.5.3](https://github.com/cameronzucker/geographica/compare/v1.5.2...v1.5.3) (2026-04-20)
+
+
+### Bug Fixes
+
+* **pipeline:** use public catalog endpoint for PAD-US download ([1f597aa](https://github.com/cameronzucker/geographica/commit/1f597aaf866c8d97e45cf00a9f186e35fdf4af07))
+
 ## [1.5.2](https://github.com/cameronzucker/geographica/compare/v1.5.1...v1.5.2) (2026-04-19)
 
 
