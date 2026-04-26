@@ -7,7 +7,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Version](https://img.shields.io/github/v/release/cameronzucker/geographica)](CHANGELOG.md)
-[![CI](https://github.com/cameronzucker/geographica/actions/workflows/ci.yml/badge.svg)](https://github.com/cameronzucker/geographica/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/cameronzucker/geographica/frontend-ci.yml?label=CI)](https://github.com/cameronzucker/geographica/actions/workflows/frontend-ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](#)
 [![Built in](https://img.shields.io/badge/built_in-19_days-d29922.svg)](docs/PROCESS.md)
 [![Agents](https://img.shields.io/badge/agents-25-7c3aed.svg)](docs/PROCESS.md)
