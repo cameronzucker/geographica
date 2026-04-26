@@ -175,10 +175,17 @@ def test_index_html_scripts_have_cache_buster():
         "navigation.js",
         "nav-ui.js",
     ]
+    # Accept both ?v=YYYYMMDD and ?v=YYYYMMDD-slug forms. The slug form was
+    # standardized in docs/pitfalls/implementation-pitfalls.md §16 (added
+    # 2026-04-25) for differentiation when multiple bumps land in one day.
+    # tests/test_frontend_cache_busting.py is the broader canonical check;
+    # this test retains its narrower per-file pin for the wake-lock-relevant
+    # scripts but accepts the slug suffix.
     for t in targets:
-        pattern = rf'<script\s+src="{re.escape(t)}\?v=\d+"'
+        pattern = rf'<script\s+src="{re.escape(t)}\?v=\d+(?:-[A-Za-z0-9-]+)?"'
         assert re.search(pattern, html), (
-            f"{t} script tag must have a ?v=NNNNNNNN cache-buster query"
+            f"{t} script tag must have a ?v=YYYYMMDD or ?v=YYYYMMDD-slug "
+            f"cache-buster query"
         )
 
 
