@@ -1,5 +1,89 @@
 # Implementation Log
 
+## 2026-04-26 — v2.0.0 SHIPPED — README close-out, layout iteration, repo cleanup, dev → main merge
+
+**Released as:** v2.0.0 (tagged 2026-04-26 07:32 UTC, [GitHub release](https://github.com/cameronzucker/geographica/releases/tag/v2.0.0)).
+**Major bump triggered by:** `feat(noaa)!: accept --state slug or --bbox; remove --year` (commit `bf27867`).
+**Merge PR:** [#14 v2.0.0 — Nav voice TTM + Ruler + README overhaul + NOAA CLI breaking change](https://github.com/cameronzucker/geographica/pull/14) (372 commits dev → main, merged 07:18 UTC by parallel agent session).
+**Release PR:** [#15 chore(main): release 2.0.0](https://github.com/cameronzucker/geographica/pull/15) (release-please-bot, merged 07:32 UTC).
+**Agent moniker:** sotol (Opus 4.7, 1M context). Session continuation from the 2026-04-25 README overhaul Phase 5 partial entry below.
+**Handoff:** [memory/handoff_20260426_v2_0_0_shipped_close_out.md](../../.claude/projects/-home-administrator-Code-geographica/memory/handoff_20260426_v2_0_0_shipped_close_out.md)
+
+### Summary
+
+Continuation of sotol's 2026-04-25 session. The README overhaul work (T5.1, T5.2-5.6, T5.8, T6.3) had landed in the prior log entry. This continuation handled (a) Cameron's manual screenshot recaptures + post-processing + embedding, (b) layout iteration as Cameron evaluated in-situ, (c) the broken-CI-badge investigation + fix, (d) repo-root garbage collection, and (e) the dev → main merge analysis (with Cameron's parallel agent ultimately driving the merge while sotol handled the close-out).
+
+### Major shifts during the session
+
+1. **Hero shot embedded** — Cameron dropped his manual `hero-everything.png` capture (Sedona route with NAIP + GPS + active route + maneuver banner). Embedded at full content width after Cameron flagged the plan-prescribed `width="640"` was leaving ~370px of empty real estate. `width="100%"` rendered at ~1012px on GitHub's content column with ~2.2× DPR — Retina-crisp.
+
+2. **Cameron rejected Playwright captures for marketing aesthetic** — All 5 inline shots (3d-terrain, voice-search, public-lands, admin-pipeline, mobile-nav) replaced with manual captures. Saved as feedback memory `feedback_screenshot_aesthetic_judgment.md`: Playwright captures are technically correct but lack human framing instinct; default to manual for hero/marketing shots, agent runs post-processor for border/shadow polish.
+
+3. **Layout iteration** (full-width → composite) — When all replacements went full-width, Cameron noted the alternating-text-wrap pattern broke. Composed `terrain-public-lands.png` — vertically stacked composite (3D hillshade top half, public lands overlay bottom half, 2px GitHub-muted separator at the seam). Replaced both individual shots in the README with the single composite at full-width hero slot. The unframed-then-recompose recipe (`unframe()` to crop the post-processor's 24px padding + 8px shadow gutter) generalizes for future fusions.
+
+4. **Voice-search composite proposed + rejected** — Composed a candidate fusion (zoomed result-panel detail + map view side-by-side). Cameron evaluated and rejected: "comes across as a bit too busy. We leave it as-is for now." Composite candidate deleted.
+
+5. **Mobile-nav width parity fix** — Bumped from `width="280"` to `width="400"` after Cameron noted it felt diminutive vs admin (500w × ~764h). At 400px, mobile-nav renders at ~758h — near-exact parity with admin.
+
+### CI badge investigation + fix
+
+Badge displayed "failing" because:
+- Plan-original badge URL pointed at `ci.yml` workflow which doesn't exist (404 fallback rendered as plain text). **Fixed** by replacing with shields.io-styled badge pointing at the real `frontend-ci.yml`.
+- After fixing the URL, badge still showed "failing" because the most recent COMPLETED frontend-ci run was a cancelled run from 2026-04-22, and shields.io conflates `cancelled` with `failing`.
+- Investigation showed the latest run (24945157190) had been stuck in_progress for 4+ hours — picked up by a runner, didn't make progress, went silent.
+- **Fix:** cancelled the stuck run, manually triggered a fresh `workflow_dispatch` on dev HEAD. Fresh run completed successful → badge resolves to "passing".
+
+### Repo-root garbage collection
+
+Repo root had ~10 MB of zero-reference field-test PNGs + a stray `hailort.log` from early NPU debugging:
+
+- 8 field-test PNGs → `git mv`'d to `dev/field-tests/2026-04-20/` (history preserved via R 100% renames)
+- `session-productivity-analysis.md` (16 KB working doc) → `git mv` to `dev/archive/`
+- `hailort.log` deleted; `*.log` added to `.gitignore` so log artifacts don't re-accumulate
+- `TODOS.md` kept at root (3 incoming references in older specs/plans)
+
+Repo root now: README + LICENSE + project-metadata docs (CHANGELOG/CONTRIBUTING/AGENTS/CLAUDE/UPGRADING/VERSIONING) + canonical entry-points (bootstrap.sh/setup.sh) + compose files + .env files + dotfiles + TODOS.md + the `data` symlink. Everything earns its place.
+
+### Project memories captured during the session
+
+Three new memories saved for future sessions:
+
+- `feedback_screenshot_aesthetic_judgment.md` — Playwright captures don't substitute for human aesthetic judgment on marketing shots
+- `project_state_bbox_vs_polygon_distinction.md` — `STATE_BBOXES` is axis-aligned rectangles; corners overlap; multi-state guard false-positives. Cameron approved Option B (centroid + polygon containment) for fix cycle post-v2.0.0
+- `project_gps_default_to_device_when_available.md` — GPS source should auto-prefer `navigator.geolocation` when available; persist user manual override in localStorage. Queued post-v2.0.0
+
+### Merge mechanics (driven by parallel agent)
+
+Cameron flagged the dev/main divergence (363 commits at the time of analysis). Sotol probed for conflicts:
+- 3 expected conflicts on `CHANGELOG.md`, `CLAUDE.md`, `docs/pitfalls/implementation-pitfalls.md`
+- All resolvable by inspection (CHANGELOG: append v1.5.3 entry to dev's state; CLAUDE.md + pitfalls: dev already had the worktree-ban content from independent edits)
+- Manifest `.release-please-manifest.json` auto-merges (main's 1.5.3 wins, dev never moved past 1.5.2)
+
+Cameron's parallel agent session ultimately drove the merge while sotol handled the close-out. The merge produced PR#14 → 372-commit dev → main merge → release-please opened PR#15 → v2.0.0 tagged.
+
+### Numbers
+
+Sotol-session-attributable on top of the prior 2026-04-25 README overhaul Phase 5 partial entry: ~7 additional commits (hero embed, hero width fix, CI badge URL fix, 3 manual screenshot recaptures, layout width changes, mobile-nav width parity, composite hero, repo cleanup, impl-log update). All on dev, all carrying `Agent: sotol` (note: moniker collision with parallel ruler stream's `sotol` — separately filed).
+
+### What's NOT in v2.0.0 (deferred)
+
+- T5.9 phone-frame composite for `mobile-nav.png` — deferred (current desktop-framed version reads fine)
+- T6.1 OG image — deferred (post-ship polish)
+- T6.2 GitHub social preview upload — Cameron-only GitHub UI step
+- T6.4 Mermaid render verification — implicitly done; Cameron called the interactive flowchart "super high production value"
+- T7.1/T7.2 final close-out — this entry serves as that close-out
+
+### Carry-forward queue (post-v2.0.0)
+
+- Multi-state NAIP polygon fix (Option B: centroid + polygon containment) — fresh feature cycle
+- GPS source default to "this device" — fresh feature cycle
+- Ruler Phases 3–5 (23 tasks remain on the existing plan)
+- NOAA NAIP CONUS expansion Phases 2–6 (29 of 39 tasks remain on `feat/noaa-conus`; worktrees BANNED so check out the branch in main repo)
+- Various deferred bug-hunt follow-ups (B6, B8, NAIP/Sentinel state-file misnaming, NAIP/Sentinel TileServer registration, MapLibre base imagery cache refresh, docker.io → docker-ce + cgroup_enable=memory reboot)
+- 3 release-please post-merge commits on main need back-merge to dev (standard post-release dance)
+
+---
+
 ## 2026-04-25 — Nav voice floor-fire prefix suppression (B1 from field-test bug hunt)
 
 **Released as:** not yet released (shipped on `dev`; **field-verified by Cameron 2026-04-25** — his words: "We have NAILED TTM now. It works perfectly and is a very impressive feature I don't think is present in any other open source project like this." Ready for `dev → main` merge.).
