@@ -1183,6 +1183,14 @@
         if (searchContainer) searchContainer.classList.add('sidebar-open');
         if (sidebarToggle) sidebarToggle.classList.add('hidden');
         map.setPadding({ left: 320, top: 0, right: 0, bottom: 0 });
+        // Defensive: re-assert the saved tab whenever the sidebar becomes
+        // visible. pageshow / visibilitychange / DOMContentLoaded cover the
+        // page-lifecycle paths (Scenario B). This call covers Scenario A —
+        // the in-page hamburger / overlay-tap close-and-reopen loop where no
+        // lifecycle event fires. restoreLastSidebarTab is idempotent (early-
+        // returns if target tab is already active), so unconditional invocation
+        // here is safe even when the sidebar's tab state was preserved.
+        restoreLastSidebarTab();
       } else {
         sidebar.classList.remove('open');
         overlay.classList.remove('open');

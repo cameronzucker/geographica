@@ -149,14 +149,23 @@ def test_sidebar_tab_persistence_wired() -> None:
     # Restore function exists
     assert "restoreLastSidebarTab" in src, \
         "restoreLastSidebarTab helper must exist"
-    # Restore is called AFTER initAdmin in DOMContentLoaded (admin-polling race fix)
-    init_admin_pos = src.find("initAdmin()")
-    restore_pos = src.find("restoreLastSidebarTab()")
-    assert init_admin_pos != -1, "initAdmin() call not found in app.js"
-    assert restore_pos != -1, "restoreLastSidebarTab() call not found in app.js"
+    # Inside the DOMContentLoaded callback, restoreLastSidebarTab() must be
+    # called AFTER initAdmin() — otherwise restored-to-admin loses polling
+    # (adversarial-review finding). Other call sites (e.g., the Scenario A
+    # in-page-toggle defense in setSidebarOpen, the pageshow / visibilitychange
+    # listeners) are intentionally outside the DCL block and don't share the
+    # admin-polling race because they run after initAdmin has already wired
+    # its handler on the original DCL pass.
+    dcl_start = src.find("addEventListener('DOMContentLoaded'")
+    assert dcl_start != -1, "DOMContentLoaded listener not found in app.js"
+    init_admin_pos = src.find("initAdmin()", dcl_start)
+    restore_pos = src.find("restoreLastSidebarTab()", dcl_start)
+    assert init_admin_pos != -1, "initAdmin() call not found inside DOMContentLoaded"
+    assert restore_pos != -1, "restoreLastSidebarTab() call not found inside DOMContentLoaded"
     assert init_admin_pos < restore_pos, (
-        "restoreLastSidebarTab() must be called AFTER initAdmin() — "
-        "otherwise restored-to-admin loses polling (adversarial-review finding)"
+        "Inside DOMContentLoaded, restoreLastSidebarTab() must be called AFTER "
+        "initAdmin() — otherwise restored-to-admin loses polling (adversarial-"
+        "review finding)."
     )
 
     # Null-guard on target panel prevents crash if future refactor drops a panel
