@@ -190,11 +190,21 @@ async def shot_setup_wizard(page, url):
     """
     await page.goto(WIZARD_URL)
     await page.wait_for_load_state("networkidle")
-    # Advance to step 3 (Credentials) via the SPA's own state-change function.
+    # Wizard JS is in an IIFE — showStep() isn't on window. Replicate the
+    # DOM mutations directly: hide all steps except #step-3, mark wizard-tab
+    # 3 as active and 1+2 as completed.
     await page.evaluate(
-        """() => {
-            if (typeof showStep === 'function') showStep(3);
-        }"""
+        """(targetStep) => {
+            document.querySelectorAll('.step').forEach((el, i) => {
+                el.style.display = (i + 1 === targetStep) ? '' : 'none';
+            });
+            document.querySelectorAll('.wizard-tab').forEach((tab) => {
+                const s = parseInt(tab.getAttribute('data-step'), 10);
+                tab.classList.toggle('active', s === targetStep);
+                tab.classList.toggle('completed', s < targetStep);
+            });
+        }""",
+        3,
     )
     await page.wait_for_timeout(800)
     await page.screenshot(
