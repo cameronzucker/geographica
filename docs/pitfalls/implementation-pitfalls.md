@@ -170,3 +170,33 @@ The common failure mode: subagents treat "current directory" as ambient state an
 4. Do not execute the recovery without user OK. Destructive mistakes do not get compounded by speculative fixes.
 
 If an incoming request from the user seems to require a destructive operation, ask for the underlying goal and propose a non-destructive plan before acting.
+
+## 16. Frontend cache-busters: every modified `frontend/*.js` script tag must bump `?v=` in `index.html`
+
+**Every `<script src="*.js">` tag in `frontend/index.html` (excluding `vendor/`) must have a `?v=...` query string AND that query string must be bumped whenever the file's content changes.** Without this, iOS Safari (and other aggressively-caching browsers / PWAs) serve the cached version indefinitely — sometimes for *days* — even though the bind-mounted file on the Pi is current.
+
+**The specific triggering incident (2026-04-25):** Cameron lost two field-test drives to fixes that weren't actually loaded in his browser:
+- `app.js` had **no cache-buster query string at all** despite five months of active development. The just-shipped sidebar BFCache fix (`0257bca`) and Scenario A defense (`aff590a`) both lived in `app.js`. Cameron's iOS Safari served the pre-fix `app.js` from cache through every test.
+- `navigation.js` was pinned at `?v=20260420` for **5 days** while the file received the entire nav-voice TTM follow-up cycle (Issues 1+2, ~21 commits) plus the just-shipped B1 floor-fire suppression fix. Every nav-voice change since 2026-04-20 was potentially served from cache.
+
+The user's symptom looks like "the fix didn't work" — but the fix never reached the browser. Engineers iterate on already-correct code. Hours of field-test time + driver attention burned.
+
+**Required discipline:**
+- Every new `<script src="frontend/*.js">` MUST include `?v=YYYYMMDD` (or `?v=YYYYMMDD-slug` for additional differentiation within a day).
+- Every modification to a `frontend/*.js` file MUST be paired with a bump of that file's cache-buster in `index.html` in the SAME commit.
+- The date prefix must be ≥ the file's most recent git mtime. A bumped buster with an older date is just as bad as no bump.
+
+**Enforcement:**
+- `tests/test_frontend_cache_busting.py` enforces this at test time (added 2026-04-25). Two assertions:
+  1. Every non-vendor `<script src="*.js">` tag has a `?v=...` query string. Catches "forgot entirely."
+  2. Every cache-buster with a `YYYYMMDD` date prefix has a date ≥ the file's most recent git commit date. Catches "forgot to bump."
+- The tests are part of the standard `pytest tests/` run and run in CI. They will fail-loud if a future commit modifies a `frontend/*.js` file without bumping.
+
+**Why not content hashes / a build step?** Date-based busters are simpler for an offline-first project with bind-mounts and no build pipeline. The trade-off (a bumper has to remember to update the index.html string) is enforced by the test suite. If the project adopts a build step in the future, hash-based busters would be a strict upgrade and the tests can be relaxed.
+
+**Why not no-cache headers?** The frontend is served via nginx with default static-file caching. Adding `Cache-Control: no-cache` to `.js` files would defeat the legitimate caching for users who *haven't* changed code and would penalize first-load. Query-string-based cache-busting gives us per-file control: changed files get a new URL → fresh fetch; unchanged files keep cached content.
+
+**Acceptable cache-buster formats:**
+- `?v=YYYYMMDD` — minimum.
+- `?v=YYYYMMDD-slug` — date + descriptive slug, useful when multiple bumps land in one day. (Example: `?v=20260425-floor-fire-suppression`.)
+- Non-date busters (e.g., short content hashes from a future build step) — the test's stale-date check skips files whose buster doesn't begin with `YYYYMMDD`. The presence-check (every script has *some* `?v=`) still applies.
