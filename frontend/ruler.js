@@ -132,7 +132,8 @@
     canvas.addEventListener('touchstart',  handleTouchStart,  { passive: false });
     canvas.addEventListener('touchmove',   handleTouchMove,   { passive: false });
     canvas.addEventListener('touchend',    handleTouchEnd,    { passive: false });
-    canvas.addEventListener('touchcancel', cancelActiveDrag,  { passive: false });
+    // touchcancel never calls preventDefault — passive:true is the honest signal.
+    canvas.addEventListener('touchcancel', cancelActiveDrag);
 
     // ── visibilitychange — abort active drag on alt-tab / iOS app-switch ──
     // (CQ-3.3 #1 fix) Prevents window mousemove/mouseup listeners from
@@ -895,9 +896,11 @@
     var pt = mapTouchPoint(e.touches[0], canvas);
     var hits = map.queryRenderedFeatures(pt, { layers: [LAYER_VERTEX_HIT_CIRCLES] });
     if (!hits || hits.length === 0) return;
+    var idx = hits[0].properties.index;
+    if (typeof idx !== 'number') return;   // consistency with handleVertexMouseDown
     e.preventDefault();
     view.dragging = {
-      index: hits[0].properties.index,
+      index: idx,
       startX: pt.x, startY: pt.y, startT: Date.now(),
       mode: 'touch',
     };
@@ -909,6 +912,13 @@
     if (!e.touches) return;
     if (e.touches.length > 1) {
       cancelActiveDrag();    // multitouch → cancel drag, let pinch-zoom proceed
+      // Commit the vertex at its last-dragged position so the panel reflects
+      // what the user sees on the map (otherwise distances stay stale at the
+      // pre-drag values until the next user action).
+      relabel();
+      recompute();
+      refreshMapData();
+      renderPanel();
       return;
     }
     e.preventDefault();

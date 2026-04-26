@@ -46,6 +46,10 @@ test('multitouch arriving during drag cancels the drag', () => {
     queryRenderedFeatures: () => [{ properties: { index: 0 } }],
     dragPan: { disable: () => {}, enable: () => { ctx.window._geographicaTestDragPanReenabled = true; } },
     unproject: ([x, y]) => ({ lng: -112, lat: 33 }),
+    // Multitouch path commits the panel (relabel/recompute/refreshMapData/renderPanel)
+    // so the user sees up-to-date distances. refreshMapData calls map.getSource —
+    // null is safe (refreshMapData early-returns on null source).
+    getSource: () => null,
   };
   t.installTestMap(ctx.window._geographicaTestMap);
   t.startNewMeasurement();
