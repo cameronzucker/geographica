@@ -6,5 +6,9 @@ numpy
 rasterio
 scipy
 
+# README screenshot capture (capture_readme_screenshots.py)
+playwright>=1.40
+Pillow>=10
+
 # test dependencies
 aioresponses

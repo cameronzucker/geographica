@@ -8,6 +8,14 @@ subset via --shots argument:
 
 Pre-flight: live stack must be running (`docker compose ps` shows 7 services
 Up (healthy)). Default base URL is http://localhost:8093.
+
+Install dependencies (run once):
+    pip install --user --break-system-packages -r scripts/requirements.txt
+    python3 -m playwright install chromium
+
+Deps live in ~/.local (user site-packages) so this script runs under
+/usr/bin/python3 without coupling to setup/.venv. Chromium browser binary
+is cached at ~/.cache/ms-playwright/ (user-account-scoped, not venv-scoped).
 """
 import argparse
 import asyncio
@@ -28,10 +36,9 @@ async def shot_3d_terrain(page, url):
     await page.goto(url)
     await page.wait_for_load_state("networkidle")
     # Open Layers panel
-    await page.locator("button[aria-label='Layers']").click()
-    # Toggle 3D terrain
+    await page.locator("button.tab-btn[data-panel='layers-panel']").click()
+    # Toggle 3D terrain (slider auto-reveals when terrain toggle is on)
     await page.locator("text=3D Terrain").click()
-    # Show exaggeration slider
     await page.wait_for_timeout(2000)  # let tiles render
     await page.screenshot(path=str(OUT_DIR / "3d-terrain.png"), full_page=False)
 
@@ -41,8 +48,8 @@ async def shot_voice_search(page, url):
     await page.goto(url)
     await page.wait_for_load_state("networkidle")
     # Type query directly (skip mic since Playwright can't easily mock audio input)
-    await page.locator("input[type='search']").fill("gas stations along my route")
-    await page.locator("input[type='search']").press("Enter")
+    await page.locator("#search-input").fill("gas stations along my route")
+    await page.locator("#search-input").press("Enter")
     await page.wait_for_selector(".search-result", timeout=10000)
     await page.wait_for_timeout(1500)
     await page.screenshot(path=str(OUT_DIR / "voice-search.png"), full_page=False)
@@ -52,9 +59,9 @@ async def shot_public_lands(page, url):
     """Public lands layer with agency-colored fills + tribal stripes + legend."""
     await page.goto(url)
     await page.wait_for_load_state("networkidle")
-    await page.locator("button[aria-label='Layers']").click()
+    await page.locator("button.tab-btn[data-panel='layers-panel']").click()
     await page.locator("text=Public Lands").click()
-    # Pan to Arizona/Utah border for good public-lands density
+    # (default view; T5.4 will tune framing if needed)
     await page.wait_for_timeout(2000)
     await page.screenshot(path=str(OUT_DIR / "public-lands.png"), full_page=False)
 
@@ -95,7 +102,7 @@ async def shot_imagery_before_after(page, url):
     before = await page.screenshot(full_page=False)
 
     # Toggle NAIP imagery
-    await page.locator("button[aria-label='Layers']").click()
+    await page.locator("button.tab-btn[data-panel='layers-panel']").click()
     await page.locator("text=NOAA NAIP").click()
     await page.wait_for_timeout(3000)  # let imagery tiles load
     after = await page.screenshot(full_page=False)
