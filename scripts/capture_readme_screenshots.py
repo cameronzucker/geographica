@@ -40,6 +40,23 @@ SCENE_PHX = {"center": [-112.10, 33.55], "zoom": 12}
 SCENE_GRAND_CANYON = {"center": [-112.14, 36.06], "zoom": 12, "pitch": 60, "bearing": -20}
 
 
+async def _open_sidebar(page):
+    """Click the hamburger button to open the sidebar (it's translateX(-100%) by default)."""
+    try:
+        await page.locator("#sidebar-toggle").click(timeout=3000)
+        # transition is 0.3s
+        await page.wait_for_timeout(400)
+    except Exception:
+        # Already open, or toggle not present — fall back to direct class add.
+        await page.evaluate(
+            """() => {
+                const s = document.getElementById('sidebar');
+                if (s && !s.classList.contains('open')) s.classList.add('open');
+            }"""
+        )
+        await page.wait_for_timeout(200)
+
+
 async def _fly_to(page, scene):
     """Jump the map to a scene and wait for tiles to settle.
 
@@ -71,14 +88,20 @@ async def shot_3d_terrain(page, url):
     await page.wait_for_load_state("networkidle")
     # Frame the Grand Canyon at a tilted angle so the 3D effect is dramatic.
     await _fly_to(page, SCENE_GRAND_CANYON)
-    # Open Layers panel
+    # Open the sidebar (hidden by default at this viewport) and Layers panel.
+    await _open_sidebar(page)
     await page.locator("button.tab-btn[data-panel='layers-panel']").click()
     # Enable hillshade first (richer terrain shading visible behind 3D mesh)
     await page.locator("#toggle-hillshade").check()
     # Enable 3D terrain (slider auto-reveals when terrain toggle is on)
     await page.locator("#toggle-terrain").check()
     await page.wait_for_timeout(3500)  # let DEM tiles render at the new tilt
-    await page.screenshot(path=str(OUT_DIR / "3d-terrain.png"), full_page=False)
+    await page.screenshot(
+        path=str(OUT_DIR / "3d-terrain.png"),
+        full_page=False,
+        animations="disabled",
+        timeout=60000,
+    )
 
 
 async def shot_voice_search(page, url):
@@ -95,7 +118,12 @@ async def shot_voice_search(page, url):
     await page.wait_for_selector("#search-results li:not(.search-intent-subtitle)", timeout=15000)
     # Let fitBounds animate to the result extent + tiles to render at new zoom.
     await page.wait_for_timeout(3000)
-    await page.screenshot(path=str(OUT_DIR / "voice-search.png"), full_page=False)
+    await page.screenshot(
+        path=str(OUT_DIR / "voice-search.png"),
+        full_page=False,
+        animations="disabled",
+        timeout=60000,
+    )
 
 
 async def shot_public_lands(page, url):
@@ -105,10 +133,16 @@ async def shot_public_lands(page, url):
     # Northern Arizona — heavy Tribal + Forest + BLM + Park overlap; great
     # mosaic for showing agency colors and tribal stripes side-by-side.
     await _fly_to(page, {"center": [-110.5, 35.7], "zoom": 8})
+    await _open_sidebar(page)
     await page.locator("button.tab-btn[data-panel='layers-panel']").click()
     await page.locator("#toggle-public-lands").check()
     await page.wait_for_timeout(2500)
-    await page.screenshot(path=str(OUT_DIR / "public-lands.png"), full_page=False)
+    await page.screenshot(
+        path=str(OUT_DIR / "public-lands.png"),
+        full_page=False,
+        animations="disabled",
+        timeout=60000,
+    )
 
 
 async def shot_admin_pipeline(page, url):
@@ -131,7 +165,12 @@ async def shot_admin_pipeline(page, url):
         # Cards may not render if no sources are configured yet — capture anyway.
         pass
     await page.wait_for_timeout(2000)
-    await page.screenshot(path=str(OUT_DIR / "admin-pipeline.png"), full_page=False)
+    await page.screenshot(
+        path=str(OUT_DIR / "admin-pipeline.png"),
+        full_page=False,
+        animations="disabled",
+        timeout=60000,
+    )
 
 
 async def shot_setup_wizard(page, url):
@@ -157,7 +196,12 @@ async def shot_setup_wizard(page, url):
         except Exception:
             continue
     await page.wait_for_timeout(1500)
-    await page.screenshot(path=str(GALLERY_DIR / "setup-wizard.png"), full_page=False)
+    await page.screenshot(
+        path=str(GALLERY_DIR / "setup-wizard.png"),
+        full_page=False,
+        animations="disabled",
+        timeout=60000,
+    )
 
 
 async def shot_kmz_overlay(page, url):
@@ -167,6 +211,7 @@ async def shot_kmz_overlay(page, url):
     # Open Import panel so the drop-zone / file-input is in DOM context;
     # set_input_files works regardless of CSS visibility but we want the
     # panel's UI to be visible in the screenshot.
+    await _open_sidebar(page)
     await page.locator("button.tab-btn[data-panel='import-panel']").click()
     # Use the explicit file input by id (more robust than attr-substring match).
     kmz_path = str(Path(__file__).resolve().parent.parent / "docs" / "Ham Radio Deployment Sites.kmz")
@@ -174,7 +219,12 @@ async def shot_kmz_overlay(page, url):
     # The KMZ contains Ham Radio sites (Arizona-area) — give it time to
     # parse + render icons + auto-fit bounds.
     await page.wait_for_timeout(3500)
-    await page.screenshot(path=str(GALLERY_DIR / "kmz-overlay.png"), full_page=False)
+    await page.screenshot(
+        path=str(GALLERY_DIR / "kmz-overlay.png"),
+        full_page=False,
+        animations="disabled",
+        timeout=60000,
+    )
 
 
 async def shot_imagery_before_after(page, url):
@@ -186,10 +236,13 @@ async def shot_imagery_before_after(page, url):
     await _fly_to(page, {"center": [-112.074, 33.448], "zoom": 14})
     # Capture "before" (basemap only).
     await page.wait_for_timeout(1500)
-    before = await page.screenshot(full_page=False)
+    before = await page.screenshot(
+        full_page=False, animations="disabled", timeout=60000
+    )
 
     # Toggle NOAA NAIP imagery via its dynamic toggle — find by label text
     # ("NOAA NAIP") and click the sibling checkbox.
+    await _open_sidebar(page)
     await page.locator("button.tab-btn[data-panel='layers-panel']").click()
     # The dynamic toggle is a div containing a checkbox + label spans. Click
     # the checkbox directly using a chained locator.
@@ -197,7 +250,9 @@ async def shot_imagery_before_after(page, url):
     await noaa_row.locator("input[type='checkbox']").check()
     # Wait for tiles to load — NAIP at z14 is heavy.
     await page.wait_for_timeout(5000)
-    after = await page.screenshot(full_page=False)
+    after = await page.screenshot(
+        full_page=False, animations="disabled", timeout=60000
+    )
 
     # Composite side-by-side via Pillow.
     from PIL import Image, ImageDraw, ImageFont
@@ -245,7 +300,11 @@ async def run(shots_to_capture, url):
                 print(f"  ⚠ unknown shot: {name}; valid: {','.join(SHOTS)}")
                 continue
             shot_fn, viewport = SHOTS[name]
-            ctx = await browser.new_context(viewport=viewport, device_scale_factor=2)
+            # device_scale_factor=2 is desirable for crisp README shots, but on
+            # the Pi 5 the combination of DEM raycasting + 2x rendering can
+            # push screenshot() past its default 30s timeout. Use 1x for now;
+            # bump to 2 once benchmarked.
+            ctx = await browser.new_context(viewport=viewport, device_scale_factor=1)
             page = await ctx.new_page()
             print(f"  → capturing {name} …")
             try:
