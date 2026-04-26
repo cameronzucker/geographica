@@ -28,16 +28,12 @@ Built for [AREDN](https://www.arednmesh.org/) mesh networks and field teams oper
 ## Features
 
 <p align="center">
-<img src="docs/screenshots/3d-terrain.png" alt="3D terrain with hillshade and exaggeration slider" width="100%" />
+<img src="docs/screenshots/terrain-public-lands.png" alt="3D hillshade terrain (top) and public lands overlay with agency-colored fills (bottom)" width="100%" />
 <br>
-<em>3D terrain with hillshade — one of three rendering modes for any region.</em>
+<em>3D hillshade terrain (above) and public lands overlay with agency-colored fills (below).</em>
 </p>
 
 ### Mapping & imagery
-
-<p align="center">
-<img src="docs/screenshots/public-lands.png" alt="Public lands layer with agency-colored fills and tribal stripes" width="100%" />
-</p>
 
 - **Vector basemaps** — three themes (Positron light, Dark Matter dark, Hybrid imagery+roads) with house-number labels.
 - **Aerial imagery** — five acquisition modes (USGS Direct, NOAA NAIP, National Map ImageServer, USGS M2M API, BYO GeoTIFF). Per-source toggles, opacity slider, dynamic basemap restyling when imagery is active.
